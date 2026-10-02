@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { D1Client, D1Error, getD1Client, resetD1Client } from "../lib/d1";
+import { D1Client, D1Error, getD1Client, resetD1Client, localD1BaseUrl } from "../lib/d1";
 
 // Mock global fetch
 const mockFetch = vi.fn();
@@ -10,6 +10,33 @@ const TEST_CONFIG = {
   databaseId: "test-database-id",
   apiToken: "test-api-token",
 };
+
+describe("local D1 transport safety", () => {
+  const config = { accountId: "pew-local-test", databaseId: "pew-local-test", apiToken: "synthetic" };
+  const env = { NODE_ENV: "development", RESOURCE_ENV: "test", E2E_SKIP_AUTH: "true", PEW_LOCAL_D1_URL: "http://127.0.0.1:12345" };
+  it("keeps production API selection when no local override exists", () => {
+    expect(localD1BaseUrl(TEST_CONFIG, {})).toBeUndefined();
+    expect(localD1BaseUrl(config, env)).toBe(env.PEW_LOCAL_D1_URL);
+  });
+  it.each([
+    { NODE_ENV: "production" }, { RAILWAY_ENVIRONMENT: "production" },
+    { RESOURCE_ENV: "production" }, { E2E_SKIP_AUTH: "false" },
+    { PEW_LOCAL_D1_URL: "https://127.0.0.1:12345" },
+    { PEW_LOCAL_D1_URL: "http://example.com:12345" },
+    { PEW_LOCAL_D1_URL: "http://127.0.0.1" },
+    { PEW_LOCAL_D1_URL: "http://user@127.0.0.1:12345" },
+    { PEW_LOCAL_D1_URL: "http://:pass@127.0.0.1:12345" },
+    { PEW_LOCAL_D1_URL: "http://127.0.0.1:12345/query" },
+    { PEW_LOCAL_D1_URL: "http://127.0.0.1:12345/?unsafe=1" },
+    { PEW_LOCAL_D1_URL: "http://127.0.0.1:12345/#unsafe" },
+  ])("rejects unsafe local override %j", (change) => {
+    expect(() => localD1BaseUrl(config, { ...env, ...change })).toThrow();
+  });
+  it("rejects non-test account or database IDs", () => {
+    expect(() => localD1BaseUrl({ ...config, accountId: "production" }, env)).toThrow();
+    expect(() => localD1BaseUrl({ ...config, databaseId: "production" }, env)).toThrow();
+  });
+});
 
 function mockD1Response(results: unknown[], success = true) {
   return {

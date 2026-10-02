@@ -4,14 +4,7 @@
 # L1+G1 already enforced by pre-commit.
 # All three gates are independent — run in parallel.
 
-# L3 fail-fast guard: scripts/run-e2e-ui.ts loads packages/web/.env.local and
-# .env.test. Missing files surface as cryptic D1 errors deep inside the run;
-# stop early with a pointer to the README setup section instead.
-if [ ! -f packages/web/.env.local ] || [ ! -f packages/web/.env.test ]; then
-  echo "❌ pre-push FAILED: L3 Browser E2E needs packages/web/.env.local and packages/web/.env.test"
-  echo "   See README.md → 'E2E setup' section for the required env keys."
-  exit 1
-fi
+bun --no-env-file -e 'import { assertNoLocalEnv } from "./scripts/e2e-utils.ts"; assertNoLocalEnv();' || exit 1
 
 TMP_DIR=$(mktemp -d)
 E2E_OUT="$TMP_DIR/e2e.log"

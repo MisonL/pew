@@ -1,25 +1,29 @@
 import type { Metadata } from "next";
 import type { CSSProperties } from "react";
-import { Inter, Space_Grotesk, Caveat } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { AppProviders } from "@/components/app-providers";
 import { CHART_ANIMATION } from "@/lib/chart-animation";
 
-const inter = Inter({
+const inter = localFont({
+  src: "./fonts/inter-latin-wght-normal.woff2",
   variable: "--font-inter",
-  subsets: ["latin"],
+  weight: "100 900",
+  display: "swap",
 });
 
-const spaceGrotesk = Space_Grotesk({
+const spaceGrotesk = localFont({
+  src: "./fonts/space-grotesk-latin-wght-normal.woff2",
   variable: "--font-space-grotesk",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  weight: "400 700",
+  display: "swap",
 });
 
-const caveat = Caveat({
+const caveat = localFont({
+  src: "./fonts/caveat-latin-wght-normal.woff2",
   variable: "--font-caveat",
-  subsets: ["latin"],
-  weight: ["700"],
+  weight: "700",
+  display: "swap",
 });
 
 type HexlyShare = {

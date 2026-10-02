@@ -29,4 +29,6 @@ for PID in "${PIDS[@]}"; do
   wait $PID || EXIT_CODE=1
 done
 
+tsc --noEmit -p tsconfig.e2e.json || EXIT_CODE=1
+
 exit $EXIT_CODE

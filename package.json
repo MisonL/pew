@@ -11,7 +11,7 @@
     "test:coverage": "vitest run --coverage",
     "dev": "bun run --cwd packages/web dev",
     "build": "rm -f packages/*/tsconfig.tsbuildinfo && bun run --filter @pew/core build && bun run --filter @pew/web build",
-    "typecheck": "bun run --filter '*' typecheck",
+    "typecheck": "bun run --filter '*' typecheck && tsc --noEmit -p tsconfig.e2e.json",
     "lint": "bun run typecheck && biome check --no-errors-on-unmatched --error-on-warnings --max-diagnostics=500 . && bun run gate:dynamic-delete && bun run gate:ts-expect-error",
     "lint:typecheck": "bash scripts/parallel-typecheck.sh",
     "gate:dynamic-delete": "bun run scripts/check-dynamic-delete.ts",
@@ -53,7 +53,7 @@
     "picomatch": "^4.0.7",
     "postcss": "^8.5.26",
     "sharp": "^0.35.4",
-    "undici": "^7.29.0",
+    "undici": "7.29.1",
     "yaml": "^2.8.3"
   }
 }

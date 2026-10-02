@@ -1,84 +1,137 @@
-#!/usr/bin/env bun
-/**
- * Shared E2E utilities.
- *
- * - ensurePortFree: kill any process occupying the target port
- * - cleanupBuildDir: remove build artifacts after test run
- * - loadEnvLocal: parse packages/web/.env.local for D1/auth credentials
- */
+import { existsSync, readdirSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { verifyLocalMarker } from "./local-e2e-bindings";
 
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { execSync } from "node:child_process";
-import { resolve } from "node:path";
-
-/** Kill any process occupying the given port, then wait for release. */
-export async function ensurePortFree(port: string): Promise<void> {
+async function deadline<Result>(promise: Promise<Result>, milliseconds: number, label: string): Promise<Result> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const result = execSync(`lsof -ti:${port}`, { encoding: "utf-8" }).trim();
-    if (result) {
-      console.log(`⚠️  Port ${port} is occupied by PID ${result}, killing...`);
-      execSync(`kill -9 ${result}`);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-  } catch {
-    // lsof returns non-zero when no process found — port is free
-  }
+    return await Promise.race([promise, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out`)), milliseconds);
+    })]);
+  } finally { clearTimeout(timer); }
 }
 
-/** Remove a build directory if it exists. */
-export function cleanupBuildDir(dir: string): void {
-  if (existsSync(dir)) {
-    rmSync(dir, { recursive: true, force: true });
-    console.log(`🗑️  Removed ${dir}`);
-  }
-}
-
-/**
- * Load .env.local from packages/web so D1 credentials are available
- * to both the Next.js server and the test process.
- */
-export function loadEnvLocal(): Record<string, string> {
-  const envPath = resolve("packages/web/.env.local");
-  return loadEnvFile(envPath, ".env.local");
-}
-
-/**
- * Load .env.test from packages/web for D1 test isolation overrides.
- * Contains CF_D1_DATABASE_ID_TEST, WORKER_INGEST_URL_TEST, WORKER_READ_URL_TEST.
- */
-export function loadEnvTest(): Record<string, string> {
-  const envPath = resolve("packages/web/.env.test");
-  return loadEnvFile(envPath, ".env.test");
-}
-
-/** Shared env file parser. */
-function loadEnvFile(envPath: string, label: string): Record<string, string> {
-  try {
-    const content = readFileSync(envPath, "utf-8");
-    const vars: Record<string, string> = {};
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const eqIdx = trimmed.indexOf("=");
-      if (eqIdx === -1) continue;
-      const key = trimmed.slice(0, eqIdx).trim();
-      let value = trimmed.slice(eqIdx + 1).trim();
-      // Strip a matching pair of wrapping quotes so KEY="value" parses to
-      // `value`, matching how Next.js / bun / standard dotenv parsers
-      // behave. Otherwise a Bearer token carries literal `"` bytes and
-      // Cloudflare returns 401 despite the token itself being valid.
-      if (
-        value.length >= 2 &&
-        ((value.startsWith('"') && value.endsWith('"')) ||
-          (value.startsWith("'") && value.endsWith("'")))
-      ) {
-        value = value.slice(1, -1);
+export async function startLocalBindings(signal: AbortSignal, timeoutMs = 30_000) {
+  signal.throwIfAborted();
+  let receive: (value: { env: Record<string, string>; state: string }) => void;
+  const ready = new Promise<{ env: Record<string, string>; state: string }>((done) => { receive = done; });
+  const child = Bun.spawn([process.execPath, "--no-env-file", "scripts/serve-local-e2e.ts"], {
+    env: { PATH: process.env.PATH ?? "", TMPDIR: tmpdir(), WRANGLER_SEND_METRICS: "false" },
+    detached: true,
+    ipc: (message) => receive(message as { env: Record<string, string>; state: string }),
+    stdout: "inherit", stderr: "inherit",
+  });
+  let stop: (() => void) | undefined;
+  const interrupted = new Promise<never>((_, reject) => {
+    stop = () => reject(signal.reason);
+    signal.addEventListener("abort", stop, { once: true });
+  });
+  const dispose = async () => {
+    let code: number;
+    try {
+      if (child.exitCode === null) child.send("dispose");
+      code = await deadline(child.exited, timeoutMs, "Local bindings disposal");
+    } catch (error) {
+      if (child.exitCode === null) {
+        process.kill(-child.pid, "SIGKILL");
+        await deadline(child.exited, timeoutMs, "Local bindings forced exit");
       }
-      vars[key] = value;
+      throw error;
     }
-    return vars;
-  } catch {
-    console.warn(`⚠️  Could not load packages/web/${label}`);
-    return {};
+    if (code) throw new Error(`Local bindings process failed (${code})`);
+  };
+  try {
+    const result = await deadline(Promise.race([ready, interrupted, child.exited.then((code) => { throw new Error(`Local bindings failed before ready (${code})`); })]), timeoutMs, "Local bindings startup");
+    signal.throwIfAborted();
+    return { ...result, dispose };
+  } catch (error) {
+    await dispose();
+    throw error;
+  } finally { if (stop) signal.removeEventListener("abort", stop); }
+}
+
+export async function ensurePortFree(port: string): Promise<void> {
+  const numeric = Number(port);
+  if (!/^\d+$/.test(port) || numeric < 1024 || numeric > 65535) throw new Error("Invalid E2E port");
+  const probe = createServer();
+  await new Promise<void>((done, reject) => {
+    probe.once("error", reject);
+    probe.listen(numeric, "127.0.0.1", () => probe.close((error) => error ? reject(error) : done()));
+  });
+}
+
+export function assertNoLocalEnv(): void {
+  for (const directory of [".", "packages/web"]) {
+    const files = readdirSync(directory).filter((name) => /^\.env(?:$|\.)/.test(name) && !name.endsWith(".example"));
+    if (files.length) throw new Error(`Isolated E2E refuses local environment files in ${directory}: ${files.join(", ")}`);
+  }
+}
+
+export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Promise<number> {
+  assertNoLocalEnv();
+  const port = tier === "api" ? process.env.E2E_PORT ?? "17020" : process.env.E2E_UI_PORT ?? "27020";
+  await ensurePortFree(port);
+  const abort = new AbortController();
+  const stop = () => abort.abort(new Error("E2E interrupted"));
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  let local: Awaited<ReturnType<typeof startLocalBindings>> | undefined;
+  let server: ReturnType<typeof Bun.spawn> | undefined;
+  let tests: ReturnType<typeof Bun.spawn> | undefined;
+  const killChildren = () => { server?.kill(); tests?.kill(); };
+  abort.signal.addEventListener("abort", killChildren);
+  const dist = tier === "api" ? ".next-e2e" : ".next-e2e-ui";
+  try {
+    local = await startLocalBindings(abort.signal);
+    abort.signal.throwIfAborted();
+    const env = {
+      ...local.env,
+      NEXT_DIST_DIR: dist,
+      E2E_TEST_USER_ID: `e2e-test-user-${local.env.PEW_TEST_RUN_ID}`,
+      E2E_TEST_USER_EMAIL: `e2e-${local.env.PEW_TEST_RUN_ID}@test.invalid`,
+      E2E_ADMIN_BYPASS: tier === "ui" ? "true" : "false",
+      E2E_PORT: port,
+      E2E_UI_PORT: port,
+      PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH ?? join(homedir(), process.platform === "darwin" ? "Library/Caches/ms-playwright" : ".cache/ms-playwright"),
+    };
+    await verifyLocalMarker(env);
+    server = Bun.spawn(["node", resolve("packages/web/node_modules/next/dist/bin/next"), "dev", "--hostname", "127.0.0.1", "--port", port], {
+      cwd: "packages/web", env, stdout: "inherit", stderr: "inherit",
+    });
+    const started = Date.now();
+    while (true) {
+      abort.signal.throwIfAborted();
+      if (server.exitCode !== null) throw new Error(`E2E server exited ${server.exitCode}`);
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/api/live`, { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(1000)]) });
+        if (response.ok) break;
+      } catch {
+        abort.signal.throwIfAborted();
+      }
+      if (Date.now() - started > 60_000) throw new Error("E2E server readiness timed out");
+      await Bun.sleep(200);
+    }
+    await verifyLocalMarker(env);
+    tests = Bun.spawn(tier === "api"
+      ? [process.execPath, "--no-env-file", "test", "packages/web/src/__tests__/e2e", "--timeout", "30000"]
+      : ["node", resolve("node_modules/@playwright/test/cli.js"), "test", "--config", "packages/web/e2e/playwright.config.ts", ...args],
+    { env, stdout: "inherit", stderr: "inherit" });
+    return await tests.exited;
+  } finally {
+    for (const child of [tests, server]) {
+      if (child && child.exitCode === null) {
+        child.kill();
+        await Promise.race([child.exited, Bun.sleep(5000)]);
+        if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; }
+      }
+    }
+    try { await local?.dispose(); } finally {
+      if (local && existsSync(join("packages/web", dist))) rmSync(join("packages/web", dist), { recursive: true });
+      process.removeListener("SIGINT", stop);
+      process.removeListener("SIGTERM", stop);
+      abort.signal.removeEventListener("abort", killChildren);
+    }
   }
 }

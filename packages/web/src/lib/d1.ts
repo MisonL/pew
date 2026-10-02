@@ -17,6 +17,19 @@ export interface D1Config {
   apiToken: string;
 }
 
+export function localD1BaseUrl(config: D1Config, env: Record<string, string | undefined>): string | undefined {
+  if (!env.PEW_LOCAL_D1_URL) return undefined;
+  const url = new URL(env.PEW_LOCAL_D1_URL);
+  if (
+    env.NODE_ENV === "production" || env.RAILWAY_ENVIRONMENT ||
+    env.RESOURCE_ENV !== "test" || env.E2E_SKIP_AUTH !== "true" ||
+    config.accountId !== "pew-local-test" || config.databaseId !== "pew-local-test" ||
+    url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port ||
+    url.username || url.password || url.pathname !== "/" || url.search || url.hash
+  ) throw new Error("Local D1 requires an isolated loopback test environment");
+  return url.origin;
+}
+
 export interface D1Meta {
   changes: number;
   duration: number;
@@ -63,7 +76,8 @@ export class D1Client {
     if (!config.databaseId) throw new Error("databaseId is required");
     if (!config.apiToken) throw new Error("apiToken is required");
 
-    this.baseUrl = `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/d1/database/${config.databaseId}`;
+    this.baseUrl = localD1BaseUrl(config, process.env) ??
+      `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/d1/database/${config.databaseId}`;
     this.headers = {
       Authorization: `Bearer ${config.apiToken}`,
       "Content-Type": "application/json",

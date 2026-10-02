@@ -118,3 +118,13 @@ Independent review reproduced account deletion between the snapshot route's sepa
 ## 2026-09-25 — Review lockfile transport changes before staging a release
 
 A version-only `bun install` against the permitted temporary mirror expanded 445 tarball locations in the lockfile. The release commit was started before separating this transport churn from the version diff. Normalized only those mirror URLs after asserting every package resolution and integrity was otherwise unchanged, then reran the normal commit gate for the corrected staged release. Inspect the lockfile diff before staging; a successful no-dependency-change install can still persist machine-specific registry locations.
+
+## 2026-10-03 — Exercise isolation failures before trusting local E2E
+
+The first local E2E attempt checked health instead of SQL ownership, reused a fixed directory and tolerated duplicate migration errors. Replaced these shortcuts with per-run native Wrangler migrations, exact environment/run marker rows, authenticated loopback bindings and failure cleanup. Only three historical ALTER files are excluded because the checked-in initial schema explicitly supersedes them; invalid and duplicate SQL still fail. Strict checking caught a malformed table-driven guard fixture, so the harness and its regressions now belong to both normal typecheck paths.
+
+A later SIGTERM regression showed that importing Wrangler in the runner installs Miniflare's immediate-exit hooks, interrupting asynchronous cleanup despite a `finally` block. The runtime now lives in a subprocess, imports Wrangler only after isolating its configuration directory, and closes via IPC after test/server children stop. Real D1 regressions cover interruption during migration, interruption after Next startup, failed startup, schema preservation, native Worker RPC and a corrupted ownership marker that must fail and retain files. Test the cleanup result, not just the presence of a cleanup function.
+
+## 2026-10-03 — Make font builds independent of the Google resolver
+
+Next 16.3.6 Turbopack rejected the generated Google-font URL query before compiling the production build. Bundled the same licensed Latin Inter, Space Grotesk and Caveat assets through `next/font/local`, retaining the existing weight declarations and CSS variables. Record font provenance and verify the original browser suite rather than substituting typography or treating a development server as build evidence.
