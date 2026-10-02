@@ -128,3 +128,7 @@ A later SIGTERM regression showed that importing Wrangler in the runner installs
 ## 2026-10-03 — Make font builds independent of the Google resolver
 
 Next 16.3.6 Turbopack rejected the generated Google-font URL query before compiling the production build. Bundled the same licensed Latin Inter, Space Grotesk and Caveat assets through `next/font/local`, retaining the existing weight declarations and CSS variables. Record font provenance and verify the original browser suite rather than substituting typography or treating a development server as build evidence.
+
+## 2026-10-03 — Distinguish visible skeletons from ready chart geometry
+
+The first pushed isolation repair passed local gates but CI's 2560px annual-calendar test read a null bounding box. Activity and Goal Tracker reuse the same region names while annual usage is loading; that response replaces the skeleton nodes independently of the main usage and salary content. A visible region was not proof of stable calendar DOM. The test now waits for the real 365 cells and non-busy regions, then retries the original strict alignment/order assertions without changing tolerances. Its wide-screen case deliberately holds the annual response until the loading state is observed, using the browser's local-year boundary rather than an assumed UTC date. The scrubbed child environment also now explicitly forwards only the CI flag so Playwright retains its configured CI policy; negative tests prove arbitrary parent values still do not cross the boundary.

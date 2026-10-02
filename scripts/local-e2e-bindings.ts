@@ -61,6 +61,7 @@ export async function localIsolatedEnv(migrations = resolve("scripts/migrations"
     WORKER_READ_SECRET: readSecret,
     PEW_TEST_RUN_ID: runId,
     WRANGLER_SEND_METRICS: "false",
+    CI: process.env.CI ?? "",
   };
   let proxy: PlatformProxy<Bindings> | undefined;
   let server: ReturnType<typeof Bun.serve> | undefined;

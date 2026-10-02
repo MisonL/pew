@@ -18,7 +18,7 @@ export async function startLocalBindings(signal: AbortSignal, timeoutMs = 30_000
   let receive: (value: { env: Record<string, string>; state: string }) => void;
   const ready = new Promise<{ env: Record<string, string>; state: string }>((done) => { receive = done; });
   const child = Bun.spawn([process.execPath, "--no-env-file", "scripts/serve-local-e2e.ts"], {
-    env: { PATH: process.env.PATH ?? "", TMPDIR: tmpdir(), WRANGLER_SEND_METRICS: "false" },
+    env: { PATH: process.env.PATH ?? "", TMPDIR: tmpdir(), WRANGLER_SEND_METRICS: "false", CI: process.env.CI ?? "" },
     detached: true,
     ipc: (message) => receive(message as { env: Record<string, string>; state: string }),
     stdout: "inherit", stderr: "inherit",

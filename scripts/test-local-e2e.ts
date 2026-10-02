@@ -16,6 +16,8 @@ try {
   await verifyLocalMarker(local.env);
   assert.equal(local.env.RAILWAY_ENVIRONMENT, undefined);
   assert.equal(local.env.CLOUDFLARE_API_TOKEN, undefined);
+  assert.equal(local.env.CI, "true");
+  assert.equal(local.env.PEW_SYNTHETIC_PARENT_SECRET, undefined);
   const unauthorized = await fetch(`${local.env.PEW_LOCAL_D1_URL}/query`, { method: "POST", body: JSON.stringify({ sql: "SELECT 1" }) });
   assert.equal(unauthorized.status, 401);
   assert.equal((await unauthorized.json() as { success: boolean }).success, false);

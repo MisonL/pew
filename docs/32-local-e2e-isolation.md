@@ -17,3 +17,5 @@ All credentials and users are synthetic. The child environment is an explicit al
 Run `bun run --filter @pew/core build`, `bun run test:e2e`, and `bun run test:e2e:ui`. `scripts/__tests__/local-e2e-bindings.test.ts` covers guard failures and real D1 lifecycle; `scripts/test-local-e2e.ts` is the Bun runtime fixture invoked by Vitest. Existing API, browser, CLI, coverage and security gates remain required.
 
 IPC readiness and disposal each have a 30-second deadline. Abort interrupts readiness immediately. If graceful disposal stops responding, the parent terminates only the subprocess group it created, reports failure and leaves unverified state in place. A no-IPC regression covers both startup timeout and abort; real-process regressions cover migration interruption, running-server interruption and failed Next startup.
+
+The explicit child allowlist forwards `CI` through both process boundaries so Playwright preserves its existing CI worker/retry policy. It does not forward arbitrary parent variables or credentials. Local acceptance additionally runs all browser cases with `CI=true` and `--retries=0` to expose first-attempt failures.

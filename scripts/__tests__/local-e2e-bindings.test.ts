@@ -31,7 +31,7 @@ describe("local D1 marker", () => {
 
 describe("real D1 lifecycle", () => {
   it("preserves full fresh schema, native Worker RPC and failure cleanup", () => {
-    const result = spawnSync("bun", ["--no-env-file", "scripts/test-local-e2e.ts"], { encoding: "utf8", timeout: 60_000 });
+    const result = spawnSync("bun", ["--no-env-file", "scripts/test-local-e2e.ts"], { encoding: "utf8", timeout: 60_000, env: { ...process.env, CI: "true", PEW_SYNTHETIC_PARENT_SECRET: "must-not-forward" } });
     expect(result.status, result.stdout + result.stderr).toBe(0);
   }, 60_000);
   it.each(["THIS IS NOT SQL;", "CREATE TABLE duplicate(id TEXT); CREATE TABLE duplicate(id TEXT);"])("fails invalid or duplicate SQL and cleans only fresh state: %s", (sql) => {

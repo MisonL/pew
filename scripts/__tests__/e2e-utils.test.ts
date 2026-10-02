@@ -11,7 +11,10 @@ describe("E2E process isolation", () => {
     let exit: (code: number) => void;
     const exited = new Promise<number>((done) => { exit = done; });
     const child = { pid: 123456, exitCode: null, exited, send: vi.fn() };
-    vi.stubGlobal("Bun", { spawn: vi.fn(() => child) });
+    const spawnChild = vi.fn(() => child);
+    vi.stubGlobal("Bun", { spawn: spawnChild });
+    vi.stubEnv("CI", "true");
+    vi.stubEnv("PEW_SYNTHETIC_PARENT_SECRET", "must-not-forward");
     const kill = vi.spyOn(process, "kill").mockImplementation(() => { exit(137); return true; });
     try {
       const abort = new AbortController();
@@ -20,7 +23,9 @@ describe("E2E process isolation", () => {
       await expect(pending).rejects.toThrow("disposal timed out");
       expect(child.send).toHaveBeenCalledWith("dispose");
       expect(kill).toHaveBeenCalledExactlyOnceWith(-123456, "SIGKILL");
-    } finally { vi.unstubAllGlobals(); kill.mockRestore(); }
+      expect(spawnChild).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ env: expect.objectContaining({ CI: "true" }) }));
+      expect(spawnChild).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ env: expect.not.objectContaining({ PEW_SYNTHETIC_PARENT_SECRET: "must-not-forward" }) }));
+    } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); kill.mockRestore(); }
   });
 
   it("refuses an occupied port without killing its owner", async () => {

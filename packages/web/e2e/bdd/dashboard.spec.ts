@@ -76,19 +76,43 @@ test.describe("Feature: Overview", () => {
   for (const width of [1440, 1920, 2560, 768, 390]) {
     test(`activity and goals retain one annual strip of circular days beside salary at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 1000 });
+      let releaseAnnual: (() => void) | undefined;
+      if (width === 2560) {
+        const annualFrom = await page.evaluate(() => new Date(2026, 0, 1).toISOString());
+        const annualReady = new Promise<void>((resolve) => { releaseAnnual = resolve; });
+        await page.route("**/api/usage?*", async (route) => {
+          const params = new URL(route.request().url()).searchParams;
+          if (params.get("granularity") === "day" && params.get("from") === annualFrom) await annualReady;
+          await route.fallback();
+        });
+      }
       await page.goto("/dashboard");
       const regions = ["Activity", "Goal Tracker", "Salary calculator"].map((name) => page.getByRole("region", { name, exact: true }));
-      for (const region of regions) await expect(region).toBeVisible();
-      const boxes = await Promise.all(regions.map((region) => region.boundingBox()));
-      if (width >= 1280) {
-        expect(Math.max(...boxes.map((box) => box!.y)) - Math.min(...boxes.map((box) => box!.y))).toBeLessThan(2);
-        expect(Math.max(...boxes.map((box) => box!.height)) - Math.min(...boxes.map((box) => box!.height))).toBeLessThan(2);
-        expect(boxes[2]!.x).toBeGreaterThan(boxes[1]!.x);
-        expect(boxes[0]!.height).toBeLessThan(300);
-      } else {
-        expect(boxes[1]!.y).toBeGreaterThan(boxes[0]!.y);
-        expect(boxes[2]!.y).toBeGreaterThan(boxes[1]!.y);
+      if (releaseAnnual) {
+        try {
+          await expect(regions[2]).toBeVisible();
+          await expect(regions[0]).toHaveAttribute("aria-busy", "true");
+        } finally { releaseAnnual(); }
       }
+      for (const region of regions) await expect(region).toBeVisible();
+      for (const region of regions.slice(0, 2)) await expect(region.getByRole("img", { name: /^2026-/ })).toHaveCount(365);
+      await expect(async () => {
+        for (const region of regions) await expect(region).not.toHaveAttribute("aria-busy", "true");
+        const boxes = await Promise.all(regions.map(async (region) => {
+          const box = await region.boundingBox();
+          if (!box) throw new Error("Overview region detached before layout measurement");
+          return box;
+        }));
+        if (width >= 1280) {
+          expect(Math.max(...boxes.map((box) => box.y)) - Math.min(...boxes.map((box) => box.y))).toBeLessThan(2);
+          expect(Math.max(...boxes.map((box) => box.height)) - Math.min(...boxes.map((box) => box.height))).toBeLessThan(2);
+          expect(boxes[2].x).toBeGreaterThan(boxes[1].x);
+          expect(boxes[0].height).toBeLessThan(300);
+        } else {
+          expect(boxes[1].y).toBeGreaterThan(boxes[0].y);
+          expect(boxes[2].y).toBeGreaterThan(boxes[1].y);
+        }
+      }).toPass({ timeout: 15_000 });
       for (const region of regions.slice(0, 2)) {
         const box = (await region.boundingBox())!;
         const dates = region.getByRole("img", { name: /^2026-/ });
