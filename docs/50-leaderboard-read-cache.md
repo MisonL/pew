@@ -1,6 +1,6 @@
 # Leaderboard read cache
 
-Status: implemented locally; production cutover and v3.1.0 publication pending.
+Status: implemented and verified locally; v3.1.0 production release authorized.
 
 ## Baseline
 
@@ -59,7 +59,9 @@ need caching; do not add wide covering or speculative model indexes.
    expiry, capacity, failure and restart checks.
 4. Run full staged L1 and isolated L2/L3/G2, build web and CLI, bump the requested
    minor version, apply migrations before Worker deployment, verify production,
-   then publish Git/GitHub and npm artifacts through normal gates.
+   then publish Git/GitHub through normal gates. The owner explicitly excluded
+   npm publication for this Web/Worker-only release; the prepared CLI package
+   is an unsubmitted verification artifact, not a published npm version.
 
 No materialized token totals, Redis, Durable Objects, cron prewarming, or
 all-RPC caching is introduced. Active/frozen season and private dashboard cache
@@ -74,13 +76,12 @@ Railway deploy separately; either final component deployed first would break
 the other component's old protocol. Do not claim a zero-interruption rollout
 by ordering those two incompatible deployments alone.
 
-Publication waits for explicit owner approval of a one-time protocol overlap,
-or a separately approved blue/green deployment. With overlap approval, deploy
-a tested committed Worker supporting both RPC sets, push the final Web through
-normal gates, verify the exact Railway deployment and drain the old instance,
-then deploy the final Worker removing old RPCs. Do not retain a fallback client
-or compatibility layer in the final release. Rollback to old Web requires the
-overlap Worker first; retain additive schema changes during application rollback.
+On 2026-10-03 the owner authorized direct publication and accepted a temporary
+service interruption. Apply the additive migrations, deploy the final Worker
+without obsolete RPCs, then push the matching Web through normal gates. Verify
+the exact Railway deployment and public leaderboard before claiming completion.
+No protocol overlap or compatibility layer is introduced. An application rollback
+must restore a matching Web/Worker pair; retain the additive schema changes.
 
 ## Verification receipts
 
@@ -105,5 +106,11 @@ overlap Worker first; retain additive schema changes during application rollback
 - Full-gate wall time is not certified below thirty seconds. Machine-wide
   concurrent browser/build work can exhaust the existing lifecycle startup
   deadline; serialize heavy acceptance lanes rather than weakening assertions.
+- Release commit `57328e18` passed 4,545 tests with coverage
+  98.01/95.20/97.76/98.94, the production Web/CLI builds, 99 real-HTTP cases,
+  77 browser cases and nine synthetic CLI cases. The actual outgoing seven
+  commits passed gitleaks and a fresh dependency scan. The exact npm tarball
+  passed isolated installation and publish dry-run but is intentionally not
+  submitted to npm.
 
 These are local receipts, not production savings or release completion.
