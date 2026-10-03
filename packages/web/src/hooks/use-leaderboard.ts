@@ -230,6 +230,13 @@ export function useLeaderboard(
       snapshotRef.current = null;
       controllerRef.current?.abort();
       ++requestIdRef.current;
+      setEntries([]);
+      setOffset(0);
+      setLoading(false);
+      setLoadingMore(false);
+      setHasMore(false);
+      setError(null);
+      setAnimationStartIndex(0);
       return;
     }
 

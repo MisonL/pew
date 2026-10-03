@@ -18,7 +18,7 @@
  * Anonymous requests with scope params are silently downgraded to global.
  */
 
-import { Buffer } from "node:buffer";
+import { MAX_STRING_LENGTH } from "@pew/core";
 import { NextResponse } from "next/server";
 import { getDbRead } from "@/lib/db";
 import { resolveUser } from "@/lib/auth-helpers";
@@ -110,9 +110,9 @@ export async function GET(request: Request) {
     );
   }
 
-  if (modelFilter && Buffer.byteLength(modelFilter) > 256) {
+  if (modelFilter && modelFilter.length > MAX_STRING_LENGTH) {
     return NextResponse.json(
-      { error: "model must be at most 256 bytes" },
+      { error: `model must be at most ${MAX_STRING_LENGTH} characters` },
       { status: 400 },
     );
   }

@@ -63,8 +63,8 @@ describe("GET /api/leaderboard", () => {
     [{ offset: "1e2" }, "offset must be"],
     [{ offset: "9007199254740992" }, "offset must be"],
     [{ limit: "2x" }, "limit must be"],
-    [{ model: "x".repeat(257) }, "model must be"],
-    [{ model: "\u4e2d".repeat(86) }, "model must be"],
+    [{ model: "x".repeat(1025) }, "model must be"],
+    [{ model: "\u4e2d".repeat(1025) }, "model must be"],
     [{ snapshot: "x".repeat(129) }, "snapshot must be"],
     [{ snapshot: "\u4e2d" }, "snapshot must be"],
     [{ snapshot: "bad/id" }, "snapshot must be"],
@@ -210,8 +210,8 @@ describe("GET /api/leaderboard", () => {
     expect((await GET(makeGetRequest("/api/leaderboard", { [scope]: "scope-id" }))).status).toBe(403);
   });
 
-  it("accepts bounded strings intact without truncating model names", async () => {
-    const model = "x".repeat(256);
+  it.each(["x", "\u4e2d"])("accepts 1024 JS characters intact for model names using %s", async (character) => {
+    const model = character.repeat(1024);
     const id = "a".repeat(128);
     mockDb.getLeaderboardSnapshot.mockResolvedValue(snapshot([], { id }));
     expect((await GET(makeGetRequest("/api/leaderboard", { model, snapshot: id, offset: String(Number.MAX_SAFE_INTEGER) }))).status).toBe(200);

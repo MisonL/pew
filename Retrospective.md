@@ -1,5 +1,15 @@
 # Retrospective
 
+## 2026-10-03 - Cache review must include admission races and ingest bounds
+
+The first leaderboard cache implementation measured a returned snapshot using
+the current map entry's byte count after an await. A concurrent fill could put
+a different object in that slot. Admission now measures the actual object and
+has a delayed-fill regression. Review also caught a model-filter length limit
+smaller than the ingest contract and extra cached envelope fields reaching the
+response validator. Reuse ingest limits and project cache payloads explicitly;
+successful cache shape validation does not authorize unrelated stored fields.
+
 ## 2026-10-03 - Local migration completion still waited on npm
 
 The cache optimization commit was rejected twice by the staged L1 gate because

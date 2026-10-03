@@ -474,7 +474,7 @@ let _write: DbWrite | undefined;
 export async function getDbRead(): Promise<DbRead> {
   if (!_read) {
     const { createWorkerDbRead } = await import("./db-worker");
-    _read = createWorkerDbRead();
+    _read ??= createWorkerDbRead();
   }
   return _read;
 }

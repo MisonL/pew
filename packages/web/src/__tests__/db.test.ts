@@ -101,6 +101,19 @@ describe("getDbRead", () => {
     expect(createWorkerDbRead).toHaveBeenCalledOnce();
   });
 
+  it("creates one reader for concurrent cold calls", async () => {
+    vi.stubEnv("WORKER_READ_URL", "https://pew.test.workers.dev");
+    vi.stubEnv("WORKER_READ_SECRET", "test-secret");
+    try {
+      const readers = await Promise.all(Array.from({ length: 20 }, () => getDbRead()));
+      expect(new Set(readers).size).toBe(1);
+      expect(createWorkerDbRead).toHaveBeenCalledOnce();
+      expect(await getDbRead()).toBe(readers[0]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("returns a fresh instance after resetDb()", async () => {
     const db1 = await getDbRead();
     resetDb();

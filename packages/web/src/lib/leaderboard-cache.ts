@@ -80,7 +80,7 @@ export async function getCachedLeaderboard(db: DbRead, filters: LeaderboardFilte
       }
 
       const result = structuredClone(snapshot);
-      const bytes = cache.entries.get(key)?.bytes ?? Buffer.byteLength(JSON.stringify(snapshot));
+      const bytes = Buffer.byteLength(JSON.stringify(snapshot));
       const currentRevision = await db.getLeaderboardRevision();
       if (currentRevision !== revision || !isFresh(snapshot, currentRevision)) continue;
 

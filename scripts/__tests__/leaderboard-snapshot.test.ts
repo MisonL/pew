@@ -157,9 +157,28 @@ describe("versioned leaderboard snapshots against SQLite", () => {
   });
 
   it("bounds filters and rejects invalid database counts before persisting", async () => {
-    await expect(getLeaderboardSnapshot({ model: "x".repeat(257) }, db, kv)).rejects.toThrow("Invalid leaderboard filter");
+    await expect(getLeaderboardSnapshot({ model: "x".repeat(1025) }, db, kv)).rejects.toThrow("Invalid leaderboard filter");
     sqlite.exec("UPDATE usage_records SET total_tokens=1.5 WHERE user_id='a'");
     await expect(getLeaderboardSnapshot({}, db, kv)).rejects.toThrow("Invalid leaderboard snapshot");
+    expect(kv.put).not.toHaveBeenCalled();
+  });
+
+  it("preserves ingest model names up to 1024 characters without byte truncation", async () => {
+    const model = "\u4e2d".repeat(1024);
+    sqlite.prepare("UPDATE usage_records SET model=? WHERE user_id='a'").run(model);
+    expect((await getLeaderboardSnapshot({ model }, db, kv)).rows.map((r) => r.user_id)).toEqual(["a"]);
+  });
+
+  it("projects only known fields from cached payloads before response count validation", async () => {
+    const first = await getLeaderboardSnapshot({}, db, kv);
+    for (const key of stored.keys()) stored.set(key, JSON.stringify({ ...first, total_tokens: -1, secret: "never returned" }));
+    expect(await getLeaderboardSnapshot({}, db, kv)).toEqual(first);
+    expect(batches).toBe(1);
+  });
+
+  it("does not persist an explicitly failed D1 batch", async () => {
+    vi.spyOn(db, "batch").mockResolvedValueOnce([{ success: false, results: [] }] as never);
+    await expect(getLeaderboardSnapshot({}, db, kv)).rejects.toThrow("Leaderboard query failed");
     expect(kv.put).not.toHaveBeenCalled();
   });
 });

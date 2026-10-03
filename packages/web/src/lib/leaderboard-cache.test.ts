@@ -1,8 +1,11 @@
 import type { LeaderboardSnapshot } from "@pew/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as React from "react";
 import { createMockDbRead } from "@/__tests__/test-utils";
 import { getCachedLeaderboard, getLeaderboardCacheStats } from "./leaderboard-cache";
-import { fetchLeaderboardPage } from "@/hooks/use-leaderboard";
+import { fetchLeaderboardPage, useLeaderboard } from "@/hooks/use-leaderboard";
+
+vi.mock("react", { spy: true });
 
 function snapshot(overrides: Partial<LeaderboardSnapshot> = {}): LeaderboardSnapshot {
   return { key: "opaque-worker-key", revision: "1", id: "snapshot-1", generatedAt: Date.now(), expiresAt: Date.now() + 600_000, rows: [], ...overrides };
@@ -213,6 +216,36 @@ describe("leaderboard memory cache", () => {
     expect(db.getLeaderboardSnapshot).toHaveBeenCalledTimes(2);
   });
 
+  it("measures the actual cold snapshot when a smaller warm result is reinserted then evicted", async () => {
+    await getCachedLeaderboard(db, {});
+    const warmRevision = deferred<string>();
+    db.getLeaderboardRevision.mockResolvedValueOnce("1").mockReturnValueOnce(warmRevision.promise);
+    const warm = getCachedLeaderboard(db, {});
+    await vi.waitFor(() => expect(db.getLeaderboardRevision).toHaveBeenCalledTimes(4));
+    for (let i = 0; i < 128; i++) await getCachedLeaderboard(db, { model: `first-${i}` });
+
+    const coldSnapshot = deferred<LeaderboardSnapshot>();
+    db.getLeaderboardSnapshot.mockReturnValueOnce(coldSnapshot.promise);
+    const cold = getCachedLeaderboard(db, {});
+    await vi.waitFor(() => expect(db.getLeaderboardSnapshot).toHaveBeenCalledTimes(130));
+    warmRevision.resolve("1");
+    await warm;
+
+    const coldRevision = deferred<string>();
+    db.getLeaderboardRevision.mockReturnValueOnce(coldRevision.promise);
+    vi.advanceTimersByTime(1);
+    const oversized = snapshot({ id: "x".repeat(300 * 1024) });
+    coldSnapshot.resolve(oversized);
+    const revisionCalls = db.getLeaderboardRevision.mock.calls.length;
+    await vi.waitFor(() => expect(db.getLeaderboardRevision).toHaveBeenCalledTimes(revisionCalls + 1));
+    for (let i = 0; i < 128; i++) await getCachedLeaderboard(db, { model: `second-${i}` });
+    coldRevision.resolve("1");
+    expect(await cold).toEqual(oversized);
+    const fills = db.getLeaderboardSnapshot.mock.calls.length;
+    expect((await getCachedLeaderboard(db, {})).id === "snapshot-1").toBe(true);
+    expect(db.getLeaderboardSnapshot).toHaveBeenCalledTimes(fills + 1);
+  });
+
   it("isolates every returned snapshot, including nested rows and teams", async () => {
     const data = snapshot({ rows: [{
       user_id: "u1", name: "Alice", nickname: null, image: null, slug: null,
@@ -323,5 +356,38 @@ describe("leaderboard client pagination", () => {
     controller.abort();
     parsed.resolve(data);
     await expect(pending).rejects.toThrow();
+  });
+});
+
+describe("disabled leaderboard state", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("clears visible pagination and loading state while invalidating the pending request", () => {
+    const initial = [[{ user: { id: "old-user" } }], 40, true, true, "old error", true, 20];
+    const setters = initial.map(() => vi.fn());
+    const state = vi.spyOn(React, "useState");
+    initial.forEach((value, index) => { state.mockReturnValueOnce([value, setters[index]!]); });
+    const controller = new AbortController();
+    const requestId = { current: 5 };
+    const snapshot = { current: { filterKey: "old", id: "old-snapshot" } };
+    const lastFilter = { current: "old" };
+    vi.spyOn(React, "useRef")
+      .mockReturnValueOnce(requestId)
+      .mockReturnValueOnce({ current: controller })
+      .mockReturnValueOnce(snapshot)
+      .mockReturnValueOnce(lastFilter);
+    vi.spyOn(React, "useCallback").mockImplementation((callback) => callback);
+    const effect = vi.spyOn(React, "useEffect").mockImplementation(() => {});
+
+    useLeaderboard({ enabled: false, teamId: "old-team" });
+    effect.mock.calls[0]![0]();
+
+    [[], 0, false, false, null, false, 0].forEach((value, index) => {
+      expect(setters[index]).toHaveBeenCalledWith(value);
+    });
+    expect(controller.signal.aborted).toBe(true);
+    expect(requestId.current).toBe(6);
+    expect(snapshot.current).toBeNull();
+    expect(lastFilter.current).toBeNull();
   });
 });

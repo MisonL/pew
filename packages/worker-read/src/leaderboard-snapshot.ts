@@ -1,5 +1,5 @@
 import type { D1Database, KVNamespace } from "@cloudflare/workers-types";
-import type { LeaderboardFilters, LeaderboardSnapshot, LeaderboardSnapshotRow } from "@pew/core";
+import { MAX_STRING_LENGTH, type LeaderboardFilters, type LeaderboardSnapshot, type LeaderboardSnapshotRow } from "@pew/core";
 
 const REVISION_SQL = "SELECT revision FROM leaderboard_revision WHERE id = 1";
 const MAX_ROWS = 5000;
@@ -34,6 +34,17 @@ function valid(value: unknown, key: string, revision: string, ttl: number): valu
       [r.name, r.nickname, r.image, r.slug].every(nullableString) && COUNTS.every((field) => count(r[field])) &&
       (r.session_count === null || count(r.session_count)) && (r.total_duration_seconds === null || count(r.total_duration_seconds)) &&
       Array.isArray(r.teams) && r.teams.every((t) => t && typeof t.id === "string" && typeof t.name === "string" && nullableString(t.logoUrl)));
+}
+
+function projectSnapshot(s: LeaderboardSnapshot): LeaderboardSnapshot {
+  return { key: s.key, revision: s.revision, id: s.id, generatedAt: s.generatedAt, expiresAt: s.expiresAt,
+    rows: s.rows.map((r) => ({
+      user_id: r.user_id, name: r.name, nickname: r.nickname, image: r.image, slug: r.slug,
+      total_tokens: r.total_tokens, input_tokens: r.input_tokens, output_tokens: r.output_tokens,
+      cached_input_tokens: r.cached_input_tokens, session_count: r.session_count, total_duration_seconds: r.total_duration_seconds,
+      teams: r.teams.map((t) => ({ id: t.id, name: t.name, logoUrl: t.logoUrl })),
+    })),
+  };
 }
 
 async function buildSnapshot(filters: LeaderboardFilters, db: D1Database, key: string, ttl: number): Promise<LeaderboardSnapshot> {
@@ -103,7 +114,7 @@ async function buildSnapshot(filters: LeaderboardFilters, db: D1Database, key: s
 }
 
 export async function getLeaderboardSnapshot(filters: LeaderboardFilters, db: D1Database, kv: KVNamespace): Promise<LeaderboardSnapshot> {
-  if (Object.values(filters).some((v) => v !== undefined && (typeof v !== "string" || new TextEncoder().encode(v).byteLength > 256))) {
+  if (Object.values(filters).some((v) => v !== undefined && (typeof v !== "string" || v.length > MAX_STRING_LENGTH))) {
     throw new Error("Invalid leaderboard filter");
   }
   const key = await hash([filters.fromDate ?? "", filters.teamId ?? "", filters.orgId ?? "", filters.source ?? "", filters.model ?? ""]);
@@ -118,7 +129,7 @@ export async function getLeaderboardSnapshot(filters: LeaderboardFilters, db: D1
     }
     catch { console.warn("Leaderboard cache read unavailable"); }
     let snapshot: LeaderboardSnapshot;
-    if (valid(cached, key, revision, ttl) && cached.rows.length <= MAX_ROWS && cached.id === await hash([revision, key, cached.rows])) snapshot = cached;
+    if (valid(cached, key, revision, ttl) && cached.rows.length <= MAX_ROWS && cached.id === await hash([revision, key, cached.rows])) snapshot = projectSnapshot(cached);
     else {
       snapshot = await buildSnapshot(filters, db, key, ttl);
       if (snapshot.revision !== revision) continue;
