@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { verifyLocalMarker } from "../local-e2e-bindings";
+import { localIsolatedEnv, verifyLocalMarker } from "../local-e2e-bindings";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -30,6 +30,22 @@ describe("local D1 marker", () => {
 });
 
 describe("real D1 lifecycle", () => {
+  it("disables the migration CLI banner's network update check", async () => {
+    for (const key of ["HOME", "XDG_CONFIG_HOME", "WRANGLER_SEND_METRICS"]) vi.stubEnv(key, process.env[key]);
+    const spawn = vi.fn(() => ({
+      stdout: new Response("").body,
+      stderr: new Response("synthetic migration failure").body,
+      exited: Promise.resolve(1),
+    }));
+    vi.stubGlobal("Bun", { spawn });
+    try {
+      await expect(localIsolatedEnv()).rejects.toThrow("synthetic migration failure");
+      expect(spawn).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({
+        env: expect.objectContaining({ WRANGLER_HIDE_BANNER: "true", WRANGLER_SEND_METRICS: "false" }),
+      }));
+    } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+  });
+
   it("preserves full fresh schema, native Worker RPC and failure cleanup", () => {
     const result = spawnSync("bun", ["--no-env-file", "scripts/test-local-e2e.ts"], { encoding: "utf8", timeout: 60_000, env: { ...process.env, CI: "true", PEW_SYNTHETIC_PARENT_SECRET: "must-not-forward" } });
     expect(result.status, result.stdout + result.stderr).toBe(0);

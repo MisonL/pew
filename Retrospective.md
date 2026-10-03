@@ -1,5 +1,15 @@
 # Retrospective
 
+## 2026-10-03 - Local migration completion still waited on npm
+
+The cache optimization commit was rejected twice by the staged L1 gate because
+the local D1 lifecycle exceeded its existing deadlines. Wrangler logs showed
+that every SQL migration had already completed; its banner's asynchronous npm
+update check retained the process on this machine's blocked registry route.
+Disabling the banner for isolated migration subprocesses avoids that unrelated
+network operation. Keep the actual migrations, ownership checks, failure tests
+and original deadlines; reducing test parallelism alone did not fix the cause.
+
 Accident narratives and detailed root causes live here; recurring project rules stay in `AGENTS.md`.
 Historical instructions describe their time; the current handbook takes precedence.
 The entries below were migrated verbatim from the former root `CLAUDE.md` during handbook normalization; they were originally undated.
