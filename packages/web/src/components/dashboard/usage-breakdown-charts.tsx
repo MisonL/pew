@@ -14,7 +14,8 @@ import { formatTokens } from "@/lib/utils";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { DashboardResponsiveContainer } from "./dashboard-responsive-container";
 import { ChartLegendMore } from "./chart-legend-more";
-import { ChartTooltip, ChartTooltipRow, ChartTooltipSummary } from "./chart-tooltip";
+import { ChartTooltip, ChartTooltipRow } from "./chart-tooltip";
+import { ChartSeriesTooltip } from "./chart-series-tooltip";
 
 const DIMENSIONS = { model: "Model", harness: "Harness", device: "Device" } as const;
 
@@ -28,11 +29,7 @@ function BreakdownTooltip({ active, payload, label }: {
   label?: string;
 }) {
   if (!active || !payload?.length) return null;
-  const entries = payload.filter((entry) => entry.value > 0).sort((a, b) => b.value - a.value);
-  return <ChartTooltip title={label ? dateLabel(label) : undefined}>
-    {entries.map((entry) => <ChartTooltipRow key={entry.dataKey} label={entry.name} color={entry.color} value={formatTokens(entry.value)} />)}
-    <ChartTooltipSummary label="Total" value={formatTokens(entries.reduce((n, entry) => n + entry.value, 0))} />
-  </ChartTooltip>;
+  return <ChartSeriesTooltip title={label ? dateLabel(label) : undefined} entries={payload} />;
 }
 
 /** Daily stacks and period shares always use the same series and accounting totals. */

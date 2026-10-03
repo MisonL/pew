@@ -17,11 +17,7 @@ import { MODEL_SERIES_LIMIT, rankUsageByRecency, toLocalDateStr } from "@/lib/us
 import { accountedTotal } from "@/lib/accounting";
 import { DashboardResponsiveContainer } from "./dashboard-responsive-container";
 import { ChartLegendMore } from "./chart-legend-more";
-import {
-  ChartTooltip,
-  ChartTooltipRow,
-  ChartTooltipSummary,
-} from "./chart-tooltip";
+import { ChartSeriesTooltip } from "./chart-series-tooltip";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -151,23 +147,7 @@ function ModelTooltip({
   label?: string;
 }) {
   if (!active || !payload?.length) return null;
-
-  const sorted = payload.filter((entry) => entry.value > 0).sort((a, b) => b.value - a.value);
-  const total = sorted.reduce((sum, e) => sum + e.value, 0);
-
-  return (
-    <ChartTooltip title={label ? fmtSlotFull(label) : undefined}>
-      {sorted.map((entry) => (
-        <ChartTooltipRow
-          key={entry.dataKey}
-          color={entry.color}
-          label={shortModel(entry.dataKey)}
-          value={formatTokens(entry.value)}
-        />
-      ))}
-      <ChartTooltipSummary label="Total" value={formatTokens(total)} />
-    </ChartTooltip>
-  );
+  return <ChartSeriesTooltip title={label ? fmtSlotFull(label) : undefined} entries={payload} />;
 }
 
 // ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ import { shortModel } from "@/lib/model-helpers";
 import type { ModelEra } from "@/lib/model-helpers";
 import { DashboardResponsiveContainer } from "./dashboard-responsive-container";
 import { ChartLegendMore } from "./chart-legend-more";
-import { ChartTooltip, ChartTooltipRow } from "./chart-tooltip";
+import { ChartSeriesTooltip } from "./chart-series-tooltip";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -69,21 +69,7 @@ function ModelTrendTooltip({
   label?: string;
 }) {
   if (!active || !payload?.length) return null;
-
-  const items = payload.filter((entry) => entry.value > 0).reverse();
-
-  return (
-    <ChartTooltip title={label ? fmtDate(label) : undefined}>
-      {items.map((entry) => (
-        <ChartTooltipRow
-          key={entry.dataKey}
-          color={entry.color}
-          label={shortModel(entry.dataKey)}
-          value={`${entry.value.toFixed(1)}%`}
-        />
-      ))}
-    </ChartTooltip>
-  );
+  return <ChartSeriesTooltip title={label ? fmtDate(label) : undefined} entries={payload} percentage />;
 }
 
 // ---------------------------------------------------------------------------

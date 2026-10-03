@@ -33,17 +33,17 @@ describe("toUsageBreakdown", () => {
   });
 
   it("keeps all long-tail usage in Other and avoids model names becoming chart paths", () => {
-    const ids = ["date", "__proto__", "gpt-5.6", "models/a[b]", "Other", ...Array.from({ length: 27 }, (_, i) => `model-${i}`)];
-    const result = toUsageBreakdown(ids.map((model, i) => row({ model, input_tokens: 3200 - i * 100,
-      cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 3200 - i * 100,
+    const ids = ["date", "__proto__", "gpt-5.6", "models/a[b]", "Other", ...Array.from({ length: 97 }, (_, i) => `model-${i}`)];
+    const result = toUsageBreakdown(ids.map((model, i) => row({ model, input_tokens: 10200 - i * 100,
+      cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 10200 - i * 100,
     })), [], "model", range, 0);
-    expect(result.total).toBe(52_800);
-    expect(result.series).toHaveLength(31);
+    expect(result.total).toBe(525_300);
+    expect(result.series).toHaveLength(101);
     expect(result.series.at(-1)).toMatchObject({ id: null, total: 300 });
-    expect(result.series.find((s) => s.id === "Other")?.total).toBe(2800);
-    expect(new Set(result.series.map((s) => s.key)).size).toBe(31);
+    expect(result.series.find((s) => s.id === "Other")?.total).toBe(9800);
+    expect(new Set(result.series.map((s) => s.key)).size).toBe(101);
     expect(result.daily[1]?.date).toBe("2026-09-02");
-    expect(result.series.reduce((n, s) => n + Number(result.daily[1]?.[s.key]), 0)).toBe(52_800);
+    expect(result.series.reduce((n, s) => n + Number(result.daily[1]?.[s.key]), 0)).toBe(525_300);
   });
 
   it("shows recent models in both charts while preserving every historical token and share", () => {
@@ -56,13 +56,14 @@ describe("toUsageBreakdown", () => {
     ];
     for (const input of [records, [...records].reverse()]) {
       const result = toUsageBreakdown(input, [], "model", { start: "2026-01-04", end: "2026-09-15" }, -480);
-      expect(result.series.map((s) => s.id)).toEqual([...Array.from({ length: 30 }, (_, i) => `current-${i}`), null]);
-      expect(result.series.map((s) => s.total)).toEqual([2200, ...Array.from({ length: 29 }, (_, i) => 99 - i), 60_000]);
+      expect(result.series.map((s) => s.id)).toEqual([...Array.from({ length: 30 }, (_, i) => `current-${i}`), ...Array.from({ length: 6 }, (_, i) => `retired-${i}`)]);
+      expect(result.series.map((s) => s.total)).toEqual([2200, ...Array.from({ length: 29 }, (_, i) => 99 - i), ...Array(6).fill(10_000)]);
       expect(result.total).toBe(64_665);
       for (const series of result.series) {
         expect(result.daily.reduce((n, point) => n + Number(point[series.key]), 0)).toBe(series.total);
       }
-      expect(result.daily.at(-1)?.other).toBe(0);
+      expect(result.series.some((s) => s.id === null)).toBe(false);
+      expect(result.daily[0]?.[result.series.find((s) => s.id === "retired-0")!.key]).toBe(10_000);
     }
   });
 
@@ -75,16 +76,17 @@ describe("toUsageBreakdown", () => {
     ];
     const result = toUsageBreakdown(records, [], "model", { start: "2026-03-01", end: "2026-03-31" }, -480);
     expect(result.series.slice(0, 2).map((s) => s.id)).toEqual(["current", "latest"]);
-    expect(result.series).toHaveLength(31);
-    expect(result.series.at(-1)).toMatchObject({ id: null, total: 2000 });
+    expect(result.series).toHaveLength(32);
+    expect(result.series.some((s) => s.id === null)).toBe(false);
     expect(result.total).toBe(30_300);
   });
 
-  it("only groups models beyond thirty, independently of the smaller legend", () => {
-    for (const count of [6, 30]) {
+  it("only groups models beyond one hundred, independently of the smaller legend", () => {
+    for (const count of [6, 30, 83, 100, 101]) {
       const result = toUsageBreakdown(Array.from({ length: count }, (_, i) => row({ model: `model-${i}` })), [], "model", range, 0);
-      expect(result.series).toHaveLength(count);
-      expect(result.series.every((series) => series.id !== null)).toBe(true);
+      expect(result.series).toHaveLength(Math.min(count, 101));
+      expect(result.series.filter((series) => series.id !== null)).toHaveLength(Math.min(count, 100));
+      expect(result.series.some((series) => series.id === null)).toBe(count > 100);
       expect(result.total).toBe(count * 180);
     }
     const harnesses = toUsageBreakdown(Array.from({ length: 7 }, (_, i) => row({ source: `harness-${i}` })), [], "harness", range, 0);

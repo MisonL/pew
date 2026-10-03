@@ -39,7 +39,7 @@ export interface ModelEra {
  * Produce daily model evolution data points.
  *
  * Identifies the top N models by recent usage within the selected period
- * (default 30), optionally groups the rest as "Other", and returns one
+ * (default 100), optionally groups the rest as "Other", and returns one
  * entry per date with per-model token counts (zero-filled for missing
  * models on a given day).
  */

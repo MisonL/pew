@@ -4,9 +4,45 @@ import { describe, expect, it } from "vitest";
 import { ModelDonutChart } from "./compact-donut-charts";
 import { ModelAreaChart } from "./model-area-chart";
 import { toModelTimeline } from "./timeline-model-chart";
+import { ChartSeriesTooltip } from "./chart-series-tooltip";
+import { toModelEvolutionPoints } from "@/lib/model-helpers";
+import { MODEL_SERIES_LIMIT, toHourlyByModel } from "@/lib/usage-helpers";
 import type { UsageRow } from "@/lib/usage-transforms";
 
 describe("model chart series", () => {
+  it.each([83, 100, 101])("uses one hundred model slots across daily, hourly and timeline views: %s models", (count) => {
+    const rows: UsageRow[] = Array.from({ length: count }, (_, i) => ({ source: "codex", model: `raw/model-${i}`,
+      hour_start: "2026-09-15T00:00:00Z", input_tokens: count - i, output_tokens: 0, cached_input_tokens: 0,
+      reasoning_output_tokens: 0, total_tokens: count - i }));
+    const daily = toModelEvolutionPoints(rows);
+    const hourly = toHourlyByModel(rows, { from: "2026-09-15", to: "2026-09-15" });
+    const timeline = toModelTimeline(rows, 0, "2026-09-15T00:00:00Z", "2026-09-15T00:00:00Z", MODEL_SERIES_LIMIT);
+    expect(MODEL_SERIES_LIMIT).toBe(100);
+    for (const point of [daily[0]!.models, hourly[0]!.models]) {
+      expect(Object.keys(point)).toHaveLength(Math.min(count, 101));
+      expect(Object.values(point).reduce((n, value) => n + value, 0)).toBe(count * (count + 1) / 2);
+      expect(Object.keys(point).includes("Other")).toBe(count > 100);
+    }
+    expect(timeline.modelKeys).toHaveLength(Math.min(count, 101));
+    expect(timeline.modelKeys.reduce((n, key) => n + Number(timeline.data[0]![key]), 0)).toBe(count * (count + 1) / 2);
+    expect(renderToStaticMarkup(createElement(ModelAreaChart, { data: daily }))).toContain(`Show all ${Math.min(count, 101)} series`);
+  });
+
+  it("limits point details without losing hidden values or percentage totals", () => {
+    const entries = Array.from({ length: 22 }, (_, i) => ({ dataKey: `model-${i}`, name: `original/model-${i}`, value: i < 20 ? 4.5 : 5, color: "red" }));
+    const html = renderToStaticMarkup(createElement(ChartSeriesTooltip, { entries, title: "Sep 15", percentage: true }));
+    expect(html).toContain("2 more series");
+    expect(html).toContain("9.0%");
+    expect(html).toContain("100.0%");
+    expect(html.match(/title="original\/model-/g)).toHaveLength(20);
+    expect(html).toContain("max-h-[calc(100dvh-2rem)]");
+    expect(renderToStaticMarkup(createElement(ChartSeriesTooltip, { entries: [{ dataKey: "zero", value: 0, color: "red" }] }))).toBe("");
+    const tokens = renderToStaticMarkup(createElement(ChartSeriesTooltip, { entries: [{ dataKey: "bare", value: 1000, color: "red" }] }));
+    expect(tokens).toContain("bare");
+    expect(tokens).toContain("1.0K");
+    expect(tokens).not.toContain("more series");
+  });
+
   it("limits visible legends without removing hidden models from share denominators", () => {
     const modelEvolution = [{ date: "2026-09-15", models: { newest: 1, a: 2, b: 3, c: 4, d: 5, Other: 85 } }];
     const donut = renderToStaticMarkup(createElement(ModelDonutChart, { modelEvolution }));

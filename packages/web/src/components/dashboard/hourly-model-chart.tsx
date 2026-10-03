@@ -16,11 +16,7 @@ import { shortModel } from "@/lib/model-helpers";
 import type { HourlyByModelPoint } from "@/lib/usage-helpers";
 import { DashboardResponsiveContainer } from "./dashboard-responsive-container";
 import { ChartLegendMore } from "./chart-legend-more";
-import {
-  ChartTooltip,
-  ChartTooltipRow,
-  ChartTooltipSummary,
-} from "./chart-tooltip";
+import { ChartSeriesTooltip } from "./chart-series-tooltip";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -51,24 +47,7 @@ function ModelTooltip({
   label?: string;
 }) {
   if (!active || !payload?.length) return null;
-
-  // Sort by value descending for display
-  const sorted = payload.filter((entry) => entry.value > 0).sort((a, b) => b.value - a.value);
-  const total = sorted.reduce((sum, p) => sum + p.value, 0);
-
-  return (
-    <ChartTooltip title={typeof label === "number" ? fmtHour(label) : label}>
-      {sorted.map((entry) => (
-        <ChartTooltipRow
-          key={entry.dataKey}
-          color={entry.color}
-          label={shortModel(entry.dataKey)}
-          value={formatTokens(entry.value)}
-        />
-      ))}
-      <ChartTooltipSummary label="Total" value={formatTokens(total)} />
-    </ChartTooltip>
-  );
+  return <ChartSeriesTooltip title={typeof label === "number" ? fmtHour(label) : label} entries={payload} />;
 }
 
 // ---------------------------------------------------------------------------

@@ -73,10 +73,10 @@ export function ChartTooltipRow({
         className="h-2 w-2 shrink-0 rounded-full"
         style={{ backgroundColor: color }}
       />
-      <span className="text-muted-foreground">{label}</span>
+      <span className="min-w-0 truncate text-muted-foreground" title={label}>{label}</span>
       <span
         className={cn(
-          "ml-auto font-medium text-popover-foreground",
+          "ml-auto shrink-0 font-medium text-popover-foreground",
           tabularNums && "tabular-nums"
         )}
       >
