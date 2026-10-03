@@ -9,10 +9,19 @@ test.describe("Feature: Compact usage information", () => {
 
   for (const [path, label] of pages) {
     test(`keeps explanatory text out of ${path} and offers hover/focus information`, async ({ page }) => {
-      await page.clock.setFixedTime(new Date("2026-09-15T12:00:00Z"));
+      const now = new Date();
+      await page.clock.setFixedTime(now);
       const records = DASHBOARD_USAGE_FIXTURE.records.map((row) => ({ ...row,
-        hour_start: "2026-09-15T00:00:00.000Z", approximate_tokens: 1644 }));
+        hour_start: new Date(now.getTime() - 60 * 60_000).toISOString(), approximate_tokens: 1644 }));
       await mockDashboardApis(page, { usage: { ...DASHBOARD_USAGE_FIXTURE, records }, pricing: DASHBOARD_PRICING_FIXTURE });
+      if (path === "/devices") {
+        await page.route("**/api/usage/by-device?*", (route) => route.fulfill({ json: {
+          deviceDetails: records.map((row) => ({ ...row, device_id: "work" })),
+          timeline: records.map((row) => ({ ...row, date: now.toISOString().slice(0, 10), device_id: "work" })),
+          devices: [{ ...records[0], device_id: "work", alias: "Work Mac", sources: ["claude-code"], models: [records[0]!.model],
+            first_seen: now.toISOString(), last_seen: now.toISOString(), estimated_cost: 1 }],
+        } }));
+      }
       await page.goto(path);
       const trigger = page.getByRole("button", { name: label, exact: true });
       await expect(trigger).toBeVisible();
@@ -33,6 +42,11 @@ test.describe("Feature: Compact usage information", () => {
       await expect(tooltip).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(trigger).toBeFocused();
+      if (path === "/dashboard") {
+        await page.getByRole("button", { name: "Salary estimate information", exact: true }).hover();
+        await expect(tooltip).toContainText("not actual income");
+        await page.keyboard.press("Escape");
+      }
     });
   }
 
@@ -73,7 +87,10 @@ test.describe("Feature: Compact usage information", () => {
   test("model prices hide backend state and error details while retaining freshness guidance", async ({ page }) => {
     await mockDashboardApis(page, { usage: DASHBOARD_USAGE_FIXTURE, pricing: DASHBOARD_PRICING_FIXTURE });
     await page.route("**/api/pricing/models", (route) => route.fulfill({ json: {
-      entries: [], servedFrom: "baseline", meta: { lastSyncedAt: "2026-01-01", modelCount: 0,
+      entries: [{ model: "test/model", provider: "Test", displayName: "Test Model", origin: "baseline",
+        updatedAt: "2026-01-01", inputPerMillion: 1, outputPerMillion: 2, cachedPerMillion: 0.1, contextWindow: 100_000,
+        contextTiers: [{ minInputTokens: 200_000, inputPerMillion: 2, outputPerMillion: 4, cachedPerMillion: 0.2 }] }],
+      servedFrom: "baseline", meta: { lastSyncedAt: "2026-01-01", modelCount: 1,
         baselineCount: 0, openRouterCount: 0, modelsDevCount: 0,
         lastErrors: [{ source: "kv", message: "PRIVATE_BACKEND_ERROR", at: "2026-01-01" }] },
     } }));
@@ -82,5 +99,9 @@ test.describe("Feature: Compact usage information", () => {
     await page.getByRole("button", { name: "Model price information", exact: true }).hover();
     await expect(page.getByRole("tooltip")).toContainText("Some prices may be out of date");
     await expect(page.getByRole("tooltip")).not.toContainText("PRIVATE_BACKEND_ERROR");
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Additional prices for test/model", exact: true }).hover();
+    await expect(page.getByRole("tooltip")).toContainText("Input ≥ 200,000");
+    await expect(page.locator("details")).toHaveCount(0);
   });
 });

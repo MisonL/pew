@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@nocoo/basalt/components/button";
 import { Empty } from "@nocoo/basalt/components/empty";
 import { Input } from "@nocoo/basalt/components/input";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 import {
   Select,
   SelectContent,
@@ -205,12 +206,11 @@ export function PricingTable({ entries }: Props) {
                 className="border-b border-border/50 last:border-0 hover:bg-accent/50 transition-colors"
               >
                 <td className="px-4 py-3 text-sm font-mono text-foreground" title={e.aliases?.join(", ")}>
-                  {e.model}
+                  <div className="flex items-start justify-between gap-2">
+                  <span>{e.model}</span>
                   {(e.contextTiers?.length || Object.keys(e.routePrices ?? {}).length > 0) ? (
-                    <details className="mt-1 font-sans text-xs text-muted-foreground">
-                      <summary className="cursor-pointer">Rates by route and context</summary>
-                      <div className="mt-2 space-y-1 min-w-80">
-                        <p>Base route: {e.route ?? (e.origin === "openrouter" ? "openrouter" : "direct")}</p>
+                    <InfoTooltip label={`Additional prices for ${e.model}`}>
+                        <p>Prices vary with provider and input length.</p>
                         {e.contextTiers?.map((t) => <p key={t.minInputTokens}>
                           {`Input ≥ ${t.minInputTokens.toLocaleString()}: input ${formatPrice(t.inputPerMillion)}, output ${formatPrice(t.outputPerMillion)}, read ${formatPrice(t.cachedPerMillion)}, write ${formatPrice(t.cacheWritePerMillion ?? null)}, write 1h ${formatPrice(t.cacheWrite1hPerMillion ?? null)}`}
                         </p>)}
@@ -218,9 +218,9 @@ export function PricingTable({ entries }: Props) {
                           <p>{`${route}: input ${formatPrice(p.inputPerMillion)}, output ${formatPrice(p.outputPerMillion)}, read ${formatPrice(p.cachedPerMillion)}, write ${formatPrice(p.cacheWritePerMillion ?? null)}, write 1h ${formatPrice(p.cacheWrite1hPerMillion ?? null)}`}</p>
                           {p.contextTiers?.map((t) => <p key={t.minInputTokens}>{`${route}, input ≥ ${t.minInputTokens.toLocaleString()}: input ${formatPrice(t.inputPerMillion)}, output ${formatPrice(t.outputPerMillion)}, read ${formatPrice(t.cachedPerMillion)}, write ${formatPrice(t.cacheWritePerMillion ?? null)}`}</p>)}
                         </div>)}
-                      </div>
-                    </details>
+                    </InfoTooltip>
                   ) : null}
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-sm">
                   <span className="inline-flex items-center gap-1.5">
