@@ -29,7 +29,26 @@ describe("createWorkerDbRead", () => {
     const db = createWorkerDbRead();
     expect(db).not.toHaveProperty("query");
     expect(db).not.toHaveProperty("firstOrNull");
+    expect(db).not.toHaveProperty("getGlobalLeaderboard");
+    expect(db).not.toHaveProperty("getLeaderboardUserTeams");
+    expect(db).not.toHaveProperty("getLeaderboardSessionStats");
   });
+
+  it("reads the authoritative leaderboard revision", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ result: "42" }));
+    expect(await createWorkerDbRead().getLeaderboardRevision()).toBe("42");
+    expect(JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string)).toEqual({ method: "leaderboard.getRevision" });
+  });
+
+  it.each([{}, { fromDate: "2026-09-01T00:00:00Z", teamId: "t1", source: "codex" }, { orgId: "o1", model: "o3" }])(
+    "requests a full leaderboard snapshot with filters %j",
+    async (options) => {
+      const snapshot = { key: "opaque", revision: "42", id: "snapshot-42", generatedAt: 1, expiresAt: 600001, rows: [] };
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ result: snapshot }));
+      expect(await createWorkerDbRead().getLeaderboardSnapshot(options)).toEqual(snapshot);
+      expect(JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string)).toEqual({ method: "leaderboard.getSnapshot", ...options });
+    },
+  );
 
   it("sends only method parameters to the RPC endpoint", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(

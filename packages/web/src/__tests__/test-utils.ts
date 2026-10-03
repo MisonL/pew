@@ -148,9 +148,8 @@ export function createMockDbRead() {
     getAllAppSettings: vi.fn(),
     getAllUserSettings: vi.fn(),
     // Leaderboard RPC methods
-    getGlobalLeaderboard: vi.fn(),
-    getLeaderboardUserTeams: vi.fn(),
-    getLeaderboardSessionStats: vi.fn(),
+    getLeaderboardRevision: vi.fn(),
+    getLeaderboardSnapshot: vi.fn(),
     // Live RPC methods
     ping: vi.fn(),
   } as unknown as DbRead & {
@@ -233,9 +232,8 @@ export function createMockDbRead() {
     checkUserHasUnusedInvite: ReturnType<typeof vi.fn>;
     getAllAppSettings: ReturnType<typeof vi.fn>;
     getAllUserSettings: ReturnType<typeof vi.fn>;
-    getGlobalLeaderboard: ReturnType<typeof vi.fn>;
-    getLeaderboardUserTeams: ReturnType<typeof vi.fn>;
-    getLeaderboardSessionStats: ReturnType<typeof vi.fn>;
+    getLeaderboardRevision: ReturnType<typeof vi.fn>;
+    getLeaderboardSnapshot: ReturnType<typeof vi.fn>;
     ping: ReturnType<typeof vi.fn>;
   };
 }
@@ -278,9 +276,8 @@ export function createMockClient() {
     getUserFirstSeen: vi.fn(),
     getPublicUserBySlugOrId: vi.fn(),
     // Leaderboard RPC methods
-    getGlobalLeaderboard: vi.fn(),
-    getLeaderboardUserTeams: vi.fn(),
-    getLeaderboardSessionStats: vi.fn(),
+    getLeaderboardRevision: vi.fn(),
+    getLeaderboardSnapshot: vi.fn(),
     // Pricing RPC methods (consumed by loadPricingMap on cost paths)
     getDynamicPricing: vi.fn().mockResolvedValue({ entries: [], servedFrom: "baseline" }),
   };

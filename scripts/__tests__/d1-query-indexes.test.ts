@@ -19,24 +19,35 @@ describe("D1 query indexes against native SQLite", () => {
 
   beforeEach(() => {
     sqlite = new DatabaseSync(":memory:");
-    for (const name of ["001-init", "010-query-optimization", "022-usage-evidence", "026-usage-accounting"]) {
+    for (const name of ["001-init", "010-query-optimization", "019-organizations", "022-usage-evidence", "026-usage-accounting", "029-leaderboard-revision"]) {
       sqlite.exec(migration(name));
     }
     sqlite.exec(`INSERT INTO users(id,email,is_public) VALUES
       ('u1','one@test.invalid',1), ('u2','two@test.invalid',1), ('private','private@test.invalid',0)`);
     queries = [];
-    db = {
-      prepare: (sql: string) => ({
-        bind: (...params: SQLInputValue[]) => {
-          queries.push({ sql, params });
-          const statement = sqlite.prepare(sql);
-          return {
-            first: async () => statement.get(...params) ?? null,
-            all: async () => ({ results: statement.all(...params) }),
-          };
-        },
-      }),
-    } as unknown as D1Database;
+    const prepare = (sql: string, params: SQLInputValue[] = []) => ({
+      bind: (...values: SQLInputValue[]) => prepare(sql, values),
+      first: async () => {
+        queries.push({ sql, params });
+        return sqlite.prepare(sql).get(...params) ?? null;
+      },
+      all: async () => {
+        queries.push({ sql, params });
+        return { success: true, results: sqlite.prepare(sql).all(...params) };
+      },
+    });
+    db = { prepare, batch: async (statements: ReturnType<typeof prepare>[]) => {
+      sqlite.exec("BEGIN");
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.all());
+        sqlite.exec("COMMIT");
+        return results;
+      } catch (error) {
+        sqlite.exec("ROLLBACK");
+        throw error;
+      }
+    } } as unknown as D1Database;
   });
 
   afterEach(() => sqlite.close());
@@ -157,17 +168,19 @@ describe("D1 query indexes against native SQLite", () => {
       { source: undefined, suffix: "time", range: "hour_start>?", totals: [["u2", 40], ["u1", 35]] },
       { source: "codex", suffix: "source_time", range: "source=? AND hour_start>?", totals: [["u2", 40], ["u1", 15]] },
     ])("uses $suffix range indexes in the actual leaderboard query", async ({ source, suffix, range, totals }) => {
-      const request = { method: "leaderboard.getGlobal", fromDate: early, source, limit: 100 } as const;
+      const request = { method: "leaderboard.getSnapshot", fromDate: early, source } as const;
       const before = await (await handleLeaderboardRpc(request, db, memoryKv())).json();
-      expect(before.result.map((row: { user_id: string; total_tokens: number }) => [row.user_id, row.total_tokens])).toEqual(totals);
-      expect(explain(queries[0])).not.toContain(`idx_usage_${suffix}`);
-      expect(explain(queries[0])).not.toContain(`idx_evidence_${suffix}`);
+      expect(before.result.rows.map((row: { user_id: string; total_tokens: number }) => [row.user_id, row.total_tokens])).toEqual(totals);
+      const beforeQuery = queries.find(({ sql }) => sql.includes("WITH totals AS"));
+      expect(beforeQuery).toBeDefined();
+      expect(explain(beforeQuery!)).not.toContain(`idx_usage_${suffix}`);
+      expect(explain(beforeQuery!)).not.toContain(`idx_evidence_${suffix}`);
 
       sqlite.exec(migration("028-leaderboard-indexes"));
       sqlite.exec("ANALYZE");
       queries.length = 0;
       const after = await (await handleLeaderboardRpc(request, db, memoryKv())).json();
-      expect(after.result).toEqual(before.result);
+      expect(after.result.rows).toEqual(before.result.rows);
       const query = queries.find(({ sql }) => sql.includes("WITH totals AS"));
       expect(query).toBeDefined();
       const plan = explain(query!);

@@ -5,6 +5,7 @@
  * replacing the D1 REST API with native D1 binding for lower latency.
  */
 
+import type { LeaderboardFilters, LeaderboardSnapshot } from "@pew/core";
 import type { DbRead } from "./db";
 import type {
   OrgMemberAdminRow,
@@ -51,9 +52,6 @@ import type {
   InviteCodeById,
   AppSettingRow,
   UserSettingRow,
-  LeaderboardEntryRow,
-  LeaderboardUserTeamRow,
-  LeaderboardSessionStatsRow,
 } from "./rpc-types";
 import type { DynamicPricingEntry } from "./pricing";
 
@@ -724,47 +722,12 @@ export function createWorkerDbRead(): DbRead {
     // Leaderboard domain RPC methods
     // -------------------------------------------------------------------------
 
-    async getGlobalLeaderboard(options: {
-      fromDate?: string;
-      teamId?: string;
-      orgId?: string;
-      source?: string;
-      model?: string;
-      limit: number;
-      offset?: number;
-    }): Promise<LeaderboardEntryRow[]> {
-      return rpc<LeaderboardEntryRow[]>({
-        method: "leaderboard.getGlobal",
-        ...(options.fromDate !== undefined && { fromDate: options.fromDate }),
-        ...(options.teamId !== undefined && { teamId: options.teamId }),
-        ...(options.orgId !== undefined && { orgId: options.orgId }),
-        ...(options.source !== undefined && { source: options.source }),
-        ...(options.model !== undefined && { model: options.model }),
-        limit: options.limit,
-        ...(options.offset !== undefined && { offset: options.offset }),
-      });
+    async getLeaderboardRevision(): Promise<string> {
+      return rpc<string>({ method: "leaderboard.getRevision" });
     },
 
-    async getLeaderboardUserTeams(
-      userIds: string[],
-    ): Promise<LeaderboardUserTeamRow[]> {
-      return rpc<LeaderboardUserTeamRow[]>({
-        method: "leaderboard.getUserTeams",
-        userIds,
-      });
-    },
-
-    async getLeaderboardSessionStats(
-      userIds: string[],
-      fromDate?: string,
-      source?: string,
-    ): Promise<LeaderboardSessionStatsRow[]> {
-      return rpc<LeaderboardSessionStatsRow[]>({
-        method: "leaderboard.getUserSessionStats",
-        userIds,
-        ...(fromDate !== undefined && { fromDate }),
-        ...(source !== undefined && { source }),
-      });
+    async getLeaderboardSnapshot(options: LeaderboardFilters): Promise<LeaderboardSnapshot> {
+      return rpc<LeaderboardSnapshot>({ method: "leaderboard.getSnapshot", ...options });
     },
 
     // -------------------------------------------------------------------------

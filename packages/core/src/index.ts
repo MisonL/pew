@@ -7,3 +7,4 @@ export * from "./accounting.js";
 export type * from "./pricing-types.js";
 export * from "./request-body.js";
 export * from "./count-math.js";
+export type * from "./leaderboard-types.js";

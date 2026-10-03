@@ -7,8 +7,9 @@
  * - Invalidate specific keys
  */
 
-import type { KVNamespace } from "@cloudflare/workers-types";
+import type { D1Database, KVNamespace } from "@cloudflare/workers-types";
 import { listAllCacheKeys, clearAllCache, invalidateKey } from "../cache";
+import { invalidateLeaderboard } from "../leaderboard-snapshot";
 
 // ---------------------------------------------------------------------------
 // RPC Request Types
@@ -40,7 +41,8 @@ export type CacheRpcRequest =
 
 export async function handleCacheRpc(
   request: CacheRpcRequest,
-  kv: KVNamespace
+  kv: KVNamespace,
+  db: D1Database,
 ): Promise<Response> {
   switch (request.method) {
     case "cache.list": {
@@ -49,6 +51,9 @@ export async function handleCacheRpc(
     }
 
     case "cache.clear": {
+      if (!request.prefix || "lb:".startsWith(request.prefix) || request.prefix.startsWith("lb:")) {
+        await invalidateLeaderboard(db);
+      }
       const result = await clearAllCache(kv, request.prefix);
       return Response.json({ result });
     }
@@ -57,6 +62,7 @@ export async function handleCacheRpc(
       if (!request.key) {
         return Response.json({ error: "key is required" }, { status: 400 });
       }
+      if (request.key.startsWith("lb:")) await invalidateLeaderboard(db);
       await invalidateKey(kv, request.key);
       return Response.json({ result: { invalidated: request.key } });
     }

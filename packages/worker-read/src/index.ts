@@ -180,7 +180,7 @@ async function handleRpc(body: unknown, env: Env): Promise<Response> {
       case "live":
         return handleLiveRpc(body as LiveRpcRequest, env.DB);
       case "cache":
-        return handleCacheRpc(body as CacheRpcRequest, env.CACHE);
+        return handleCacheRpc(body as CacheRpcRequest, env.CACHE, env.DB);
       default:
         return Response.json(
           { error: `Unknown RPC domain: ${domain}` },

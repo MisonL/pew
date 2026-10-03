@@ -5,6 +5,7 @@
  * binding). Write operations go through the D1 REST API.
  */
 
+import type { LeaderboardFilters, LeaderboardSnapshot } from "@pew/core";
 import type {
   OrgMemberAdminRow,
   AutoRegisterTeamRow,
@@ -50,9 +51,6 @@ import type {
   InviteCodeById,
   AppSettingRow,
   UserSettingRow,
-  LeaderboardEntryRow,
-  LeaderboardUserTeamRow,
-  LeaderboardSessionStatsRow,
 } from "./rpc-types";
 import type { D1QueryResult } from "./d1";
 import type { DynamicPricingEntry } from "./pricing";
@@ -416,26 +414,8 @@ export interface DbRead {
   // Leaderboard domain RPC methods
   // ---------------------------------------------------------------------------
 
-  /** Get global leaderboard entries */
-  getGlobalLeaderboard(options: {
-    fromDate?: string;
-    teamId?: string;
-    orgId?: string;
-    source?: string;
-    model?: string;
-    limit: number;
-    offset?: number;
-  }): Promise<LeaderboardEntryRow[]>;
-
-  /** Get user team memberships for leaderboard display */
-  getLeaderboardUserTeams(userIds: string[]): Promise<LeaderboardUserTeamRow[]>;
-
-  /** Get user session stats for leaderboard display */
-  getLeaderboardSessionStats(
-    userIds: string[],
-    fromDate?: string,
-    source?: string,
-  ): Promise<LeaderboardSessionStatsRow[]>;
+  getLeaderboardRevision(): Promise<string>;
+  getLeaderboardSnapshot(options: LeaderboardFilters): Promise<LeaderboardSnapshot>;
 
   // ---------------------------------------------------------------------------
   // Live domain RPC methods

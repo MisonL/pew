@@ -628,6 +628,29 @@ describe("GET /api/leaderboard", () => {
     expect(body.entries.length).toBeLessThanOrEqual(5);
   });
 
+  it("reuses ranked snapshots and revokes them immediately after privacy changes", async () => {
+    const settings = async (is_public: boolean) => fetch(`${BASE_URL}/api/settings`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_public }),
+    });
+    expect((await settings(true)).status).toBe(200);
+    try {
+      const first = await (await fetch(`${BASE_URL}/api/leaderboard?period=all&limit=100`)).json();
+      expect(first.entries.some((entry: { user: { id: string } }) => entry.user.id === TEST_USER_ID)).toBe(true);
+      expect(first.snapshotId).toMatch(/^[a-f0-9]{64}$/);
+      const warm = await (await fetch(`${BASE_URL}/api/leaderboard?period=all&limit=1`)).json();
+      expect(warm.snapshotId).toBe(first.snapshotId);
+      expect(warm.expiresAt).toBe(first.expiresAt);
+      expect((await settings(false)).status).toBe(200);
+      const stale = await fetch(`${BASE_URL}/api/leaderboard?period=all&offset=1&snapshot=${first.snapshotId}`);
+      expect(stale.status).toBe(409);
+      expect((await stale.json()).code).toBe("LEADERBOARD_CHANGED");
+      const fresh = await fetch(`${BASE_URL}/api/leaderboard?period=all&limit=100`);
+      expect(fresh.status).toBe(200);
+      expect(fresh.headers.get("Cache-Control")).toBe("private, no-store");
+      expect((await fresh.json()).entries.some((entry: { user: { id: string } }) => entry.user.id === TEST_USER_ID)).toBe(false);
+    } finally { expect((await settings(true)).status).toBe(200); }
+  });
+
   it("should reject invalid period", async () => {
     const res = await fetch(`${BASE_URL}/api/leaderboard?period=invalid`);
     expect(res.status).toBe(400);

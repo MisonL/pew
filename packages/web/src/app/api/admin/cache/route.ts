@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import { resolveAdmin } from "@/lib/admin";
 import { getDbRead } from "@/lib/db";
+import { getLeaderboardCacheStats } from "@/lib/leaderboard-cache";
 
 // ---------------------------------------------------------------------------
 // Response Types
@@ -17,6 +18,7 @@ export interface CacheListResponse {
   keys: string[];
   count: number;
   truncated: boolean;
+  leaderboardMemory: ReturnType<typeof getLeaderboardCacheStats>;
 }
 
 export interface CacheClearResponse {
@@ -42,7 +44,10 @@ export async function GET(request: Request): Promise<Response> {
     const db = await getDbRead();
     const result = await db.getCacheKeys(prefix);
 
-    return NextResponse.json(result satisfies CacheListResponse);
+    return NextResponse.json(
+      { ...result, leaderboardMemory: getLeaderboardCacheStats(db) } satisfies CacheListResponse,
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   } catch (err) {
     console.error("Failed to list cache keys:", err);
     return NextResponse.json(

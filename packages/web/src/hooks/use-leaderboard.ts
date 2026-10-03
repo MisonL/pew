@@ -34,6 +34,33 @@ interface LeaderboardData {
   scopeId?: string;
   entries: LeaderboardEntry[];
   hasMore: boolean;
+  snapshotId: string;
+  generatedAt: number;
+  expiresAt: number;
+}
+
+export async function fetchLeaderboardPage(
+  params: URLSearchParams,
+  snapshotId: string | null,
+  onRestart: () => void,
+  signal: AbortSignal,
+): Promise<{ data: LeaderboardData; restarted: boolean }> {
+  const query = new URLSearchParams(params);
+  if (snapshotId !== null) query.set("snapshot", snapshotId);
+  let res = await fetch(`/api/leaderboard?${query}`, { signal });
+  signal.throwIfAborted();
+  const restarted = res.status === 409;
+  if (restarted) {
+    onRestart();
+    query.delete("offset");
+    query.delete("snapshot");
+    res = await fetch(`/api/leaderboard?${query}`, { signal });
+    signal.throwIfAborted();
+  }
+  if (!res.ok) await throwApiError(res);
+  const data = await res.json() as LeaderboardData;
+  signal.throwIfAborted();
+  return { data, restarted };
 }
 
 // ---------------------------------------------------------------------------
@@ -77,8 +104,9 @@ function makeFilterKey(
   orgId: string | null | undefined,
   source: string | null | undefined,
   model: string | null | undefined,
+  limit: number,
 ): string {
-  return `${period}|${teamId ?? ""}|${orgId ?? ""}|${source ?? ""}|${model ?? ""}`;
+  return JSON.stringify([period, teamId ?? null, orgId ?? null, source ?? null, model ?? null, limit]);
 }
 
 export function useLeaderboard(
@@ -102,24 +130,35 @@ export function useLeaderboard(
   // Request counter for stale response detection
   // Each new request increments this; responses check if their ID matches current
   const requestIdRef = useRef(0);
+  const controllerRef = useRef<AbortController | null>(null);
+  const snapshotRef = useRef<{ filterKey: string; id: string } | null>(null);
 
   // Track last fetched filter key to detect changes
   const lastFilterKeyRef = useRef<string | null>(null);
 
   // Current filter key
-  const filterKey = makeFilterKey(period, teamId, orgId, source, model);
+  const filterKey = makeFilterKey(period, teamId, orgId, source, model, limit);
 
   // Fetch a single page
   const fetchPage = useCallback(
     async (pageOffset: number, isLoadMore: boolean, requestId: number) => {
+      controllerRef.current?.abort();
+      const controller = new AbortController();
+      controllerRef.current = controller;
+      const resetPagination = () => {
+        snapshotRef.current = null;
+        setOffset(0);
+        setEntries([]);
+        setHasMore(false);
+        setAnimationStartIndex(0);
+        setLoading(true);
+        setLoadingMore(false);
+      };
       // Set appropriate loading state
       if (isLoadMore) {
         setLoadingMore(true);
       } else {
-        setLoading(true);
-        // Clear entries immediately on filter change
-        setEntries([]);
-        setAnimationStartIndex(0);
+        resetPagination();
       }
       setError(null);
 
@@ -142,25 +181,20 @@ export function useLeaderboard(
           params.set("model", model);
         }
 
-        const res = await fetch(`/api/leaderboard?${params.toString()}`);
-
-        // Check if this request is stale (a newer request has been issued)
-        if (requestId !== requestIdRef.current) {
-          return; // Stale response, discard
-        }
-
-        if (!res.ok) {
-          await throwApiError(res);
-        }
-
-        const json = (await res.json()) as LeaderboardData;
+        const snapshotId = isLoadMore && snapshotRef.current?.filterKey === filterKey
+          ? snapshotRef.current.id : null;
+        const { data: json, restarted } = await fetchLeaderboardPage(
+          params, snapshotId, resetPagination, controller.signal,
+        );
 
         // Double-check staleness after JSON parse (in case another request started)
         if (requestId !== requestIdRef.current) {
           return; // Stale response, discard
         }
 
-        if (isLoadMore) {
+        snapshotRef.current = { filterKey, id: json.snapshotId };
+        setOffset(restarted ? 0 : pageOffset);
+        if (isLoadMore && !restarted) {
           // Append to existing entries
           setEntries((prev) => {
             setAnimationStartIndex(prev.length);
@@ -185,7 +219,7 @@ export function useLeaderboard(
         }
       }
     },
-    [period, limit, teamId, orgId, source, model],
+    [period, limit, teamId, orgId, source, model, filterKey],
   );
 
   // Fetch when filters change or on initial mount (when enabled)
@@ -193,6 +227,9 @@ export function useLeaderboard(
     if (!enabled) {
       // Reset so re-enabling with the same filter key will refetch
       lastFilterKeyRef.current = null;
+      snapshotRef.current = null;
+      controllerRef.current?.abort();
+      ++requestIdRef.current;
       return;
     }
 
@@ -206,15 +243,20 @@ export function useLeaderboard(
     }
   }, [enabled, filterKey, fetchPage]);
 
+  useEffect(() => () => {
+    controllerRef.current?.abort();
+    ++requestIdRef.current;
+    lastFilterKeyRef.current = null;
+  }, []);
+
   // Load more handler
   const loadMore = useCallback(() => {
-    if (loadingMore || loading || !hasMore) return;
+    if (!enabled || loadingMore || loading || !hasMore) return;
     const newOffset = offset + limit;
-    setOffset(newOffset);
     // Increment request ID for this pagination request
     const requestId = ++requestIdRef.current;
     fetchPage(newOffset, true, requestId);
-  }, [loadingMore, loading, hasMore, offset, limit, fetchPage]);
+  }, [enabled, loadingMore, loading, hasMore, offset, limit, fetchPage]);
 
   // Refetch from beginning
   const refetch = useCallback(() => {

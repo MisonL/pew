@@ -1,678 +1,271 @@
+import type { LeaderboardSnapshot, LeaderboardSnapshotRow } from "@pew/core";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { GET } from "@/app/api/leaderboard/route";
 import * as dbModule from "@/lib/db";
+import { isAdminUser } from "@/lib/admin";
 import { createMockDbRead, loadMockedAuthHelpers, makeGetRequest } from "./test-utils";
 
-// Mock DB
-vi.mock("@/lib/db", () => ({
-  getDbRead: vi.fn(),
-  getDbWrite: vi.fn(),
-  resetDb: vi.fn(),
-}));
-
-// Mock auth-helpers for scoped leaderboard tests
-vi.mock("@/lib/auth-helpers", () => ({
-  resolveUser: vi.fn(),
-}));
-
-vi.mock("@/auth", () => ({
-  shouldUseSecureCookies: vi.fn(() => false),
-}));
-
+vi.mock("@/lib/db", () => ({ getDbRead: vi.fn() }));
+vi.mock("@/lib/auth-helpers", () => ({ resolveUser: vi.fn() }));
+vi.mock("@/lib/admin", () => ({ isAdminUser: vi.fn() }));
 const { resolveUser } = await loadMockedAuthHelpers();
+
+function row(overrides: Partial<LeaderboardSnapshotRow> = {}): LeaderboardSnapshotRow {
+  return {
+    user_id: "u1", name: "Alice", nickname: null, image: null, slug: "alice",
+    total_tokens: 1000, input_tokens: 500, output_tokens: 400, cached_input_tokens: 100,
+    teams: [], session_count: 0, total_duration_seconds: 0, ...overrides,
+  };
+}
+
+function snapshot(rows: LeaderboardSnapshotRow[] = [], overrides: Partial<LeaderboardSnapshot> = {}): LeaderboardSnapshot {
+  return { key: "opaque", revision: "1", id: "snapshot-1", generatedAt: Date.now(), expiresAt: Date.now() + 600_000, rows, ...overrides };
+}
 
 describe("GET /api/leaderboard", () => {
   let mockDb: ReturnType<typeof createMockDbRead>;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-03T10:01:02.345Z"));
     mockDb = createMockDbRead();
-    vi.mocked(dbModule.getDbRead).mockResolvedValue(mockDb as any);
-    // Default to authenticated user for scope tests
+    vi.mocked(dbModule.getDbRead).mockResolvedValue(mockDb);
     resolveUser.mockResolvedValue({ userId: "test-user" });
+    vi.mocked(isAdminUser).mockResolvedValue(false);
+    mockDb.getLeaderboardRevision.mockResolvedValue("1");
+    mockDb.getLeaderboardSnapshot.mockImplementation(async () => snapshot());
   });
 
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
-  it.each(["week", "month"])("reuses a UTC ten-minute window for %s tokens and sessions", async (period) => {
-    vi.useFakeTimers();
-    mockDb.getGlobalLeaderboard.mockResolvedValue([{ user_id: "u1", total_tokens: 1 }]);
-    mockDb.getLeaderboardUserTeams.mockResolvedValue([]);
-    mockDb.getLeaderboardSessionStats.mockResolvedValue([]);
+  it.each(["week", "month"])("reuses a UTC ten-minute window for %s snapshots", async (period) => {
     for (const now of ["2026-09-19T10:01:02.345Z", "2026-09-19T10:09:59.999Z", "2026-09-19T10:10:00.000Z"]) {
       vi.setSystemTime(new Date(now));
-      await GET(makeGetRequest("/api/leaderboard", { period }));
+      expect((await GET(makeGetRequest("/api/leaderboard", { period }))).status).toBe(200);
     }
     const day = period === "week" ? "2026-09-12" : "2026-08-20";
-    const windows = mockDb.getGlobalLeaderboard.mock.calls.map(([req]) => req.fromDate);
-    expect(windows).toEqual([`${day}T10:00:00.000Z`, `${day}T10:00:00.000Z`, `${day}T10:10:00.000Z`]);
-    expect(mockDb.getLeaderboardSessionStats.mock.calls.map((args) => args[1])).toEqual(windows);
+    expect(mockDb.getLeaderboardSnapshot.mock.calls.map(([req]) => req.fromDate)).toEqual([
+      `${day}T10:00:00.000Z`, `${day}T10:10:00.000Z`,
+    ]);
+    expect(mockDb.getLeaderboardRevision).toHaveBeenCalledTimes(6);
   });
 
-  describe("query params validation", () => {
-    it("should reject invalid period", async () => {
-      const res = await GET(makeGetRequest("/api/leaderboard", { period: "year" }));
-
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toContain("Invalid period");
-    });
-
-    it("should accept valid periods", async () => {
-      for (const period of ["week", "month", "all"]) {
-        mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-        mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-        const res = await GET(makeGetRequest("/api/leaderboard", { period }));
-        expect(res.status).toBe(200);
-      }
-    });
-
-    it("should reject limit < 1", async () => {
-      const res = await GET(makeGetRequest("/api/leaderboard", { limit: "0" }));
-
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toContain("limit must be");
-    });
-
-    it("should reject limit > 100", async () => {
-      const res = await GET(makeGetRequest("/api/leaderboard", { limit: "200" }));
-
-      expect(res.status).toBe(400);
-    });
-
-    it("should reject non-numeric limit", async () => {
-      const res = await GET(makeGetRequest("/api/leaderboard", { limit: "abc" }));
-
-      expect(res.status).toBe(400);
-    });
-
-    it("should reject negative offset", async () => {
-      const res = await GET(makeGetRequest("/api/leaderboard", { offset: "-1" }));
-
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toContain("offset must be");
-    });
-
-    it("should reject non-numeric offset", async () => {
-      const res = await GET(makeGetRequest("/api/leaderboard", { offset: "abc" }));
-
-      expect(res.status).toBe(400);
-    });
-
-    it("should accept valid offset", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { offset: "20" }));
-
-      expect(res.status).toBe(200);
-      expect(mockDb.getGlobalLeaderboard).toHaveBeenCalledWith(
-        expect.objectContaining({
-          offset: 20,
-        }),
-      );
-    });
+  it.each([
+    [{ period: "year" }, "Invalid period"],
+    [{ limit: "0" }, "limit must be"],
+    [{ limit: "200" }, "limit must be"],
+    [{ limit: "abc" }, "limit must be"],
+    [{ offset: "-1" }, "offset must be"],
+    [{ offset: "abc" }, "offset must be"],
+    [{ offset: "1x" }, "offset must be"],
+    [{ offset: "1.5" }, "offset must be"],
+    [{ offset: "1e2" }, "offset must be"],
+    [{ offset: "9007199254740992" }, "offset must be"],
+    [{ limit: "2x" }, "limit must be"],
+    [{ model: "x".repeat(257) }, "model must be"],
+    [{ model: "\u4e2d".repeat(86) }, "model must be"],
+    [{ snapshot: "x".repeat(129) }, "snapshot must be"],
+    [{ snapshot: "\u4e2d" }, "snapshot must be"],
+    [{ snapshot: "bad/id" }, "snapshot must be"],
+    [{ snapshot: "" }, "snapshot must be"],
+    [{ team: "t1", org: "o1" }, "Cannot specify both"],
+    [{ source: "bogus" }, "Invalid source"],
+    [{ source: "codex", model: "o3" }, "Cannot specify both source and model"],
+  ])("rejects invalid parameters %j before reading shared data", async (params, message) => {
+    const res = await GET(makeGetRequest("/api/leaderboard", params));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain(message);
+    expect(mockDb.getLeaderboardSnapshot).not.toHaveBeenCalled();
+    expect(mockDb.getLeaderboardRevision).not.toHaveBeenCalled();
   });
 
-  describe("default behavior", () => {
-    it("should default to period=week and limit=20", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard"));
-      const body = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(body.period).toBe("week");
-      expect(body.entries).toEqual([]);
-      expect(body.hasMore).toBe(false);
-
-      // Check RPC call includes fromDate (week has a date condition)
-      // limit is requested as limit+1 to detect hasMore
-      expect(mockDb.getGlobalLeaderboard).toHaveBeenCalledWith(
-        expect.objectContaining({
-          fromDate: expect.any(String),
-          limit: 21, // DEFAULT_LIMIT (20) + 1
-        }),
-      );
-    });
+  it.each(["week", "month", "all"])("accepts period %s", async (period) => {
+    const res = await GET(makeGetRequest("/api/leaderboard", { period }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).period).toBe(period);
   });
 
-  describe("successful response", () => {
-    it("should return ranked entries with user info and teams", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([
-        {
-          user_id: "u1",
-          name: "Alice",
-          nickname: null,
-          image: "https://example.com/alice.jpg",
-          slug: "alice",
-          total_tokens: 5000000,
-          input_tokens: 3000000,
-          output_tokens: 1500000,
-          cached_input_tokens: 500000,
-        },
-        {
-          user_id: "u2",
-          name: "Bob",
-          nickname: null,
-          image: null,
-          slug: "bob",
-          total_tokens: 3000000,
-          input_tokens: 2000000,
-          output_tokens: 800000,
-          cached_input_tokens: 200000,
-        },
-      ]);
-      mockDb.getLeaderboardUserTeams.mockResolvedValueOnce([
-        { user_id: "u1", team_id: "t1", team_name: "Team Alpha", logo_url: "https://s.zhe.to/apps/pew/teams-logo/t1/abc.jpg" },
-        { user_id: "u2", team_id: "t1", team_name: "Team Alpha", logo_url: "https://s.zhe.to/apps/pew/teams-logo/t1/abc.jpg" },
-        { user_id: "u2", team_id: "t2", team_name: "Team Beta", logo_url: "https://s.zhe.to/apps/pew/teams-logo/t2/def.jpg" },
-      ]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { period: "month" }));
-      const body = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(body.period).toBe("month");
-      expect(body.entries).toHaveLength(2);
-
-      expect(body.entries[0]).toEqual({
-        rank: 1,
-        user: {
-          id: "u1",
-          name: "Alice",
-          image: "https://example.com/alice.jpg",
-          slug: "alice",
-        },
-        teams: [{ id: "t1", name: "Team Alpha", logoUrl: "https://s.zhe.to/apps/pew/teams-logo/t1/abc.jpg" }],
-        total_tokens: 5000000,
-        input_tokens: 3000000,
-        output_tokens: 1500000,
-        cached_input_tokens: 500000,
-        session_count: 0,
-        total_duration_seconds: 0,
-      });
-
-      expect(body.entries[1].rank).toBe(2);
-      expect(body.entries[1].user.name).toBe("Bob");
-      expect(body.entries[1].teams).toEqual([
-        { id: "t1", name: "Team Alpha", logoUrl: "https://s.zhe.to/apps/pew/teams-logo/t1/abc.jpg" },
-        { id: "t2", name: "Team Beta", logoUrl: "https://s.zhe.to/apps/pew/teams-logo/t2/def.jpg" },
-      ]);
-    });
-
-    it("should not include date filter for period=all", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      await GET(makeGetRequest("/api/leaderboard", { period: "all" }));
-
-      // With conditional spread, fromDate is omitted (not present) for period=all
-      const callArg = mockDb.getGlobalLeaderboard.mock.calls[0]?.[0];
-      expect(callArg).not.toHaveProperty("fromDate");
-    });
-
-    it("should pass limit to RPC (with +1 for hasMore detection)", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      await GET(makeGetRequest("/api/leaderboard", { limit: "10" }));
-
-      expect(mockDb.getGlobalLeaderboard).toHaveBeenCalledWith(
-        expect.objectContaining({
-          limit: 11, // requested limit + 1
-        }),
-      );
-    });
+  it("defaults to a global week with 20 entries and exposes snapshot metadata", async () => {
+    mockDb.getLeaderboardSnapshot.mockResolvedValue(snapshot(Array.from({ length: 21 }, (_, i) => row({ user_id: `u${i}` }))));
+    const res = await GET(makeGetRequest("/api/leaderboard"));
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ period: "week", scope: "global", hasMore: true, snapshotId: "snapshot-1", generatedAt: Date.now(), expiresAt: Date.now() + 600_000 });
+    expect(body.scopeId).toBeUndefined();
+    expect(body.entries).toHaveLength(20);
+    expect(mockDb.getLeaderboardSnapshot).toHaveBeenCalledWith({ fromDate: "2026-09-26T10:00:00.000Z" });
   });
 
-  describe("error handling", () => {
-    it("should return 500 on D1 failure", async () => {
-      mockDb.getGlobalLeaderboard.mockRejectedValueOnce(new Error("D1 down"));
-
-      const res = await GET(makeGetRequest("/api/leaderboard"));
-
-      expect(res.status).toBe(500);
-      const body = await res.json();
-      expect(body.error).toBe("Failed to load leaderboard");
-    });
+  it("omits the date filter for all-time snapshots", async () => {
+    await GET(makeGetRequest("/api/leaderboard", { period: "all" }));
+    expect(mockDb.getLeaderboardSnapshot).toHaveBeenCalledWith({});
   });
 
-  describe("team filter", () => {
-    it("should pass teamId when team param is provided", async () => {
-      mockDb.checkTeamMembershipExists.mockResolvedValueOnce(true);
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { team: "team-abc" }));
-
-      expect(res.status).toBe(200);
-      expect(mockDb.getGlobalLeaderboard).toHaveBeenCalledWith(
-        expect.objectContaining({
-          teamId: "team-abc",
-        }),
-      );
+  it("maps full snapshot rows without dropping identity, teams or session totals", async () => {
+    const teams = [{ id: "t1", name: "Alpha", logoUrl: "https://example.com/t1.jpg" }, { id: "t2", name: "Beta", logoUrl: null }];
+    mockDb.getLeaderboardSnapshot.mockResolvedValue(snapshot([
+      row({ nickname: "alice-nick", image: "https://example.com/alice.jpg", teams, session_count: 42, total_duration_seconds: 3600 }),
+      row({ user_id: "u2", name: "Bob", slug: null }),
+    ]));
+    const body = await (await GET(makeGetRequest("/api/leaderboard"))).json();
+    expect(body.entries[0]).toEqual({
+      rank: 1, user: { id: "u1", name: "alice-nick", image: "https://example.com/alice.jpg", slug: "alice" }, teams,
+      total_tokens: 1000, input_tokens: 500, output_tokens: 400, cached_input_tokens: 100, session_count: 42, total_duration_seconds: 3600,
     });
-
-    it("should silently ignore team param for anonymous users", async () => {
-      resolveUser.mockResolvedValueOnce(null); // Anonymous
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { team: "team-abc" }));
-      const body = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(body.scope).toBe("global");
-      // Should NOT have team filter - with conditional spread, teamId is omitted entirely
-      const callArg = mockDb.getGlobalLeaderboard.mock.calls[0]?.[0];
-      expect(callArg).not.toHaveProperty("teamId");
-    });
-
-    it("should set Cache-Control: private, no-store for anonymous team-scoped request", async () => {
-      resolveUser.mockResolvedValueOnce(null); // Anonymous
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { team: "team-abc" }));
-
-      expect(res.status).toBe(200);
-      // Even though data is global, scope param was present so must not be public cached
-      expect(res.headers.get("Cache-Control")).toBe("private, no-store");
-    });
+    expect(body.entries[1]).toMatchObject({ rank: 2, user: { name: "Bob", slug: null }, teams: [], session_count: 0, total_duration_seconds: 0 });
+    expect(body.hasMore).toBe(false);
   });
 
-  describe("nickname fallback", () => {
-    it("should use nickname when available", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([
-        {
-          user_id: "u1",
-          name: "Alice Smith",
-          nickname: "alice",
-          image: null,
-          slug: "alice-s",
-          total_tokens: 1000,
-          input_tokens: 500,
-          output_tokens: 400,
-          cached_input_tokens: 100,
-        },
-      ]);
-      mockDb.getLeaderboardUserTeams.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard"));
-      const body = await res.json();
-
-      expect(body.entries[0].user.name).toBe("alice");
-    });
-
-    it("should fall back to name when nickname is null", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([
-        {
-          user_id: "u1",
-          name: "Bob Jones",
-          nickname: null,
-          image: null,
-          slug: "bob",
-          total_tokens: 1000,
-          input_tokens: 500,
-          output_tokens: 400,
-          cached_input_tokens: 100,
-        },
-      ]);
-      mockDb.getLeaderboardUserTeams.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard"));
-      const body = await res.json();
-
-      expect(body.entries[0].user.name).toBe("Bob Jones");
-    });
+  it("returns no entries for an empty snapshot", async () => {
+    const body = await (await GET(makeGetRequest("/api/leaderboard"))).json();
+    expect(body.entries).toEqual([]);
+    expect(body.hasMore).toBe(false);
   });
 
-  describe("organization filter", () => {
-    it("should pass orgId when org param is provided", async () => {
-      mockDb.checkOrgMembership.mockResolvedValueOnce(true);
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { org: "org-123" }));
-
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body.scope).toBe("org");
-      expect(body.scopeId).toBe("org-123");
-
-      expect(mockDb.getGlobalLeaderboard).toHaveBeenCalledWith(
-        expect.objectContaining({
-          orgId: "org-123",
-        }),
-      );
-    });
-
-    it("should return 400 when both org and team are provided", async () => {
-      const res = await GET(makeGetRequest("/api/leaderboard", { org: "org-123", team: "team-abc" }));
-
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toContain("Cannot specify both");
-    });
-
-    it("should silently ignore org param for anonymous users", async () => {
-      resolveUser.mockResolvedValueOnce(null); // Anonymous
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { org: "org-123" }));
-      const body = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(body.scope).toBe("global");
-      expect(body.scopeId).toBeUndefined();
-      // Should NOT have org filter - with conditional spread, orgId is omitted entirely
-      const callArg = mockDb.getGlobalLeaderboard.mock.calls[0]?.[0];
-      expect(callArg).not.toHaveProperty("orgId");
-    });
-
-    it("should set Cache-Control: private, no-store for anonymous org-scoped request", async () => {
-      resolveUser.mockResolvedValueOnce(null); // Anonymous
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { org: "org-123" }));
-
-      expect(res.status).toBe(200);
-      // Even though data is global, scope param was present so must not be public cached
-      expect(res.headers.get("Cache-Control")).toBe("private, no-store");
-    });
-
-    it("should set Cache-Control: private, no-store for org-scoped leaderboard", async () => {
-      mockDb.checkOrgMembership.mockResolvedValueOnce(true);
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { org: "org-123" }));
-
-      expect(res.status).toBe(200);
-      expect(res.headers.get("Cache-Control")).toBe("private, no-store");
-    });
+  it("slices one cached full ranking across page sizes, preserving absolute ranks", async () => {
+    mockDb.getLeaderboardSnapshot.mockResolvedValue(snapshot(Array.from({ length: 5 }, (_, i) => row({ user_id: `u${i}` }))));
+    const first = await (await GET(makeGetRequest("/api/leaderboard", { limit: "2" }))).json();
+    const second = await (await GET(makeGetRequest("/api/leaderboard", { limit: "3", offset: "2", snapshot: first.snapshotId }))).json();
+    expect(first.entries.map((entry: { rank: number }) => entry.rank)).toEqual([1, 2]);
+    expect(first.hasMore).toBe(true);
+    expect(second.entries.map((entry: { rank: number }) => entry.rank)).toEqual([3, 4, 5]);
+    expect(second.hasMore).toBe(false);
+    expect(second.snapshotId).toBe(first.snapshotId);
+    expect(mockDb.getLeaderboardSnapshot).toHaveBeenCalledTimes(1);
   });
 
-  describe("response shape", () => {
-    it("should include scope='global' when no scope params", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard"));
-      const body = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(body.scope).toBe("global");
-      expect(body.scopeId).toBeUndefined();
-    });
-
-    it("should include scope='team' and scopeId when team param is provided", async () => {
-      mockDb.checkTeamMembershipExists.mockResolvedValueOnce(true);
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { team: "team-xyz" }));
-      const body = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(body.scope).toBe("team");
-      expect(body.scopeId).toBe("team-xyz");
-    });
-
-    it("should include scope='org' and scopeId when org param is provided", async () => {
-      mockDb.checkOrgMembership.mockResolvedValueOnce(true);
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { org: "org-abc" }));
-      const body = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(body.scope).toBe("org");
-      expect(body.scopeId).toBe("org-abc");
-    });
+  it("supports offset-only HTTP clients without requiring a snapshot", async () => {
+    mockDb.getLeaderboardSnapshot.mockResolvedValue(snapshot([row(), row({ user_id: "u2" })]));
+    const res = await GET(makeGetRequest("/api/leaderboard", { offset: "1" }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).entries[0]).toMatchObject({ rank: 2, user: { id: "u2" } });
   });
 
-  describe("cache headers", () => {
-    it("prevents HTTP caches from retaining revoked public identities", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard"));
-
-      expect(res.status).toBe(200);
-      expect(res.headers.get("Cache-Control")).toBe(
-        "private, no-store",
-      );
-    });
-
-    it("should NOT set cache headers for team-scoped leaderboard", async () => {
-      mockDb.checkTeamMembershipExists.mockResolvedValueOnce(true);
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { team: "team-abc" }));
-
-      expect(res.status).toBe(200);
-      expect(res.headers.get("Cache-Control")).toBe(
-        "private, no-store",
-      );
-    });
+  it("rejects a supplied mismatched snapshot without exposing rows", async () => {
+    const id = "old-snapshot";
+    const res = await GET(makeGetRequest("/api/leaderboard", { snapshot: id, offset: "20" }));
+    expect(res.status).toBe(409);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await res.json()).toEqual({ error: "Leaderboard changed. Restart pagination.", code: "LEADERBOARD_CHANGED" });
   });
 
-  describe("teams in response", () => {
-    it("should return empty teams array when no results", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard"));
-      const body = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(body.entries).toEqual([]);
-    });
-
-    it("should fetch teams for leaderboard users", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([
-        {
-          user_id: "u1",
-          name: "Alice",
-          nickname: null,
-          image: null,
-          slug: null,
-          total_tokens: 1000,
-          input_tokens: 500,
-          output_tokens: 400,
-          cached_input_tokens: 100,
-        },
-      ]);
-      mockDb.getLeaderboardUserTeams.mockResolvedValueOnce([
-        { user_id: "u1", team_id: "t1", team_name: "Eng", logo_url: "https://s.zhe.to/apps/pew/teams-logo/t1/xyz.jpg" },
-      ]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard"));
-      const body = await res.json();
-
-      expect(body.entries[0].teams).toEqual([{ id: "t1", name: "Eng", logoUrl: "https://s.zhe.to/apps/pew/teams-logo/t1/xyz.jpg" }]);
-      expect(mockDb.getLeaderboardUserTeams).toHaveBeenCalledWith(["u1"]);
-    });
+  it("rejects old pagination after revocation instead of exposing a cached identity", async () => {
+    mockDb.getLeaderboardSnapshot.mockResolvedValueOnce(snapshot([row()]));
+    const first = await (await GET(makeGetRequest("/api/leaderboard"))).json();
+    mockDb.getLeaderboardRevision.mockResolvedValue("2");
+    mockDb.getLeaderboardSnapshot.mockResolvedValue(snapshot([], { revision: "2", id: "snapshot-2" }));
+    expect((await GET(makeGetRequest("/api/leaderboard", { snapshot: first.snapshotId, offset: "1" }))).status).toBe(409);
+    const restarted = await (await GET(makeGetRequest("/api/leaderboard"))).json();
+    expect(restarted.entries).toEqual([]);
+    expect(restarted.snapshotId).toBe("snapshot-2");
   });
 
-  describe("session stats in response", () => {
-    it("should include session stats for users", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([
-        {
-          user_id: "u1",
-          name: "Alice",
-          nickname: null,
-          image: null,
-          slug: "alice",
-          total_tokens: 1000,
-          input_tokens: 500,
-          output_tokens: 400,
-          cached_input_tokens: 100,
-        },
-      ]);
-      mockDb.getLeaderboardUserTeams.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([
-        { user_id: "u1", session_count: 42, total_duration_seconds: 3600 },
-      ]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard"));
-      const body = await res.json();
-
-      expect(body.entries[0].session_count).toBe(42);
-      expect(body.entries[0].total_duration_seconds).toBe(3600);
-    });
-
-    it("should default session stats to 0 when not found", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([
-        {
-          user_id: "u1",
-          name: "Alice",
-          nickname: null,
-          image: null,
-          slug: "alice",
-          total_tokens: 1000,
-          input_tokens: 500,
-          output_tokens: 400,
-          cached_input_tokens: 100,
-        },
-      ]);
-      mockDb.getLeaderboardUserTeams.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]); // No stats for u1
-
-      const res = await GET(makeGetRequest("/api/leaderboard"));
-      const body = await res.json();
-
-      expect(body.entries[0].session_count).toBe(0);
-      expect(body.entries[0].total_duration_seconds).toBe(0);
-    });
+  it("rejects old pagination when absolute expiry produces a new snapshot", async () => {
+    const first = await (await GET(makeGetRequest("/api/leaderboard", { period: "all" }))).json();
+    vi.advanceTimersByTime(600_000);
+    mockDb.getLeaderboardSnapshot.mockResolvedValue(snapshot([], { id: "snapshot-2" }));
+    expect((await GET(makeGetRequest("/api/leaderboard", { period: "all", snapshot: first.snapshotId }))).status).toBe(409);
   });
 
-  describe("source/model filters", () => {
-    it("should reject invalid source", async () => {
-      const res = await GET(makeGetRequest("/api/leaderboard", { source: "not-a-real-agent" }));
+  it("continues pagination if a refreshed snapshot has the same content ID", async () => {
+    const first = await (await GET(makeGetRequest("/api/leaderboard", { period: "all" }))).json();
+    vi.advanceTimersByTime(600_000);
+    const res = await GET(makeGetRequest("/api/leaderboard", { period: "all", snapshot: first.snapshotId }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).snapshotId).toBe(first.snapshotId);
+    expect(mockDb.getLeaderboardSnapshot).toHaveBeenCalledTimes(2);
+  });
 
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toContain("Invalid source");
-    });
+  it.each(["team", "org"] as const)("checks live %s membership before every shared cache read", async (scope) => {
+    const membership = scope === "team" ? mockDb.checkTeamMembershipExists : mockDb.checkOrgMembership;
+    membership.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const params = { [scope]: "scope-id" };
+    const first = await GET(makeGetRequest("/api/leaderboard", params));
+    expect((await first.json())).toMatchObject({ scope, scopeId: "scope-id" });
+    expect(mockDb.getLeaderboardSnapshot).toHaveBeenCalledWith(expect.objectContaining({ [`${scope}Id`]: "scope-id" }));
+    const denied = await GET(makeGetRequest("/api/leaderboard", params));
+    expect(denied.status).toBe(403);
+    expect(membership).toHaveBeenCalledTimes(2);
+    expect(membership).toHaveBeenLastCalledWith("scope-id", "test-user");
+    expect(mockDb.getLeaderboardRevision).toHaveBeenCalledTimes(4);
+    expect(mockDb.getLeaderboardSnapshot).toHaveBeenCalledTimes(1);
+  });
 
-    it("should reject both source and model together", async () => {
-      const res = await GET(makeGetRequest("/api/leaderboard", { source: "claude-code", model: "o3" }));
+  it.each(["team", "org"] as const)("fails closed when %s membership changes while authorization is pending", async (scope) => {
+    const membership = scope === "team" ? mockDb.checkTeamMembershipExists : mockDb.checkOrgMembership;
+    let finishAuthorization!: (value: boolean) => void;
+    membership.mockReturnValueOnce(new Promise<boolean>((resolve) => { finishAuthorization = resolve; }));
+    const response = GET(makeGetRequest("/api/leaderboard", { [scope]: "scope-id" }));
+    await vi.waitFor(() => expect(membership).toHaveBeenCalledTimes(1));
+    expect(mockDb.getLeaderboardRevision).toHaveBeenCalledTimes(1);
+    mockDb.getLeaderboardRevision.mockResolvedValue("2");
+    mockDb.getLeaderboardSnapshot.mockResolvedValue(snapshot([row()], { revision: "2", id: "snapshot-2" }));
+    finishAuthorization(true);
+    const res = await response;
+    expect(res.status).toBe(409);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await res.json()).toEqual({ error: "Leaderboard changed. Restart pagination.", code: "LEADERBOARD_CHANGED" });
+    membership.mockResolvedValue(false);
+    expect((await GET(makeGetRequest("/api/leaderboard", { [scope]: "scope-id" }))).status).toBe(403);
+  });
 
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toContain("Cannot specify both source and model");
-    });
+  it("accepts bounded strings intact without truncating model names", async () => {
+    const model = "x".repeat(256);
+    const id = "a".repeat(128);
+    mockDb.getLeaderboardSnapshot.mockResolvedValue(snapshot([], { id }));
+    expect((await GET(makeGetRequest("/api/leaderboard", { model, snapshot: id, offset: String(Number.MAX_SAFE_INTEGER) }))).status).toBe(200);
+    expect(mockDb.getLeaderboardSnapshot).toHaveBeenCalledWith(expect.objectContaining({ model }));
+  });
 
-    it("should pass source filter to getGlobalLeaderboard", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
+  it.each(["team", "org"] as const)("downgrades anonymous %s requests to global without permission caching", async (scope) => {
+    resolveUser.mockResolvedValue(null);
+    const res = await GET(makeGetRequest("/api/leaderboard", { [scope]: "scope-id" }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await res.json()).toMatchObject({ scope: "global" });
+    expect(mockDb.getLeaderboardSnapshot.mock.calls[0]?.[0]).not.toHaveProperty(`${scope}Id`);
+    expect(mockDb.checkTeamMembershipExists).not.toHaveBeenCalled();
+    expect(mockDb.checkOrgMembership).not.toHaveBeenCalled();
+  });
 
-      const res = await GET(makeGetRequest("/api/leaderboard", { source: "claude-code" }));
+  it.each(["team", "org"])("preserves the live admin bypass for %s scopes", async (scope) => {
+    vi.mocked(isAdminUser).mockResolvedValue(true);
+    const res = await GET(makeGetRequest("/api/leaderboard", { [scope]: "scope-id" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ scope, scopeId: "scope-id" });
+    expect(mockDb.checkTeamMembershipExists).not.toHaveBeenCalled();
+    expect(mockDb.checkOrgMembership).not.toHaveBeenCalled();
+  });
 
-      expect(res.status).toBe(200);
-      expect(mockDb.getGlobalLeaderboard).toHaveBeenCalledWith(
-        expect.objectContaining({ source: "claude-code" }),
-      );
-    });
+  it.each(["claude-code", "codex", "copilot-cli", "gemini-cli", "grok", "hermes", "kosmos", "omp", "opencode", "openclaw", "pi", "pmstudio", "vscode-copilot", "zcode"])("preserves source filtering for %s", async (source) => {
+    mockDb.getLeaderboardSnapshot.mockResolvedValue(snapshot([row({ session_count: 2, total_duration_seconds: 10 })]));
+    const res = await GET(makeGetRequest("/api/leaderboard", { source }));
+    expect(res.status).toBe(200);
+    expect(mockDb.getLeaderboardSnapshot).toHaveBeenCalledWith(expect.objectContaining({ source }));
+    expect((await res.json()).entries[0]).toMatchObject({ session_count: 2, total_duration_seconds: 10 });
+  });
 
-    it("should pass source filter to getLeaderboardSessionStats", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([
-        {
-          user_id: "u1", name: "Alice", nickname: null, image: null,
-          slug: "alice", total_tokens: 1000, input_tokens: 500,
-          output_tokens: 400, cached_input_tokens: 100,
-        },
-      ]);
-      mockDb.getLeaderboardUserTeams.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
+  it("preserves model-filtered null session statistics", async () => {
+    mockDb.getLeaderboardSnapshot.mockResolvedValue(snapshot([row({ session_count: null, total_duration_seconds: null })]));
+    const res = await GET(makeGetRequest("/api/leaderboard", { model: "o3" }));
+    expect(mockDb.getLeaderboardSnapshot).toHaveBeenCalledWith(expect.objectContaining({ model: "o3" }));
+    expect((await res.json()).entries[0]).toMatchObject({ session_count: null, total_duration_seconds: null });
+  });
 
-      await GET(makeGetRequest("/api/leaderboard", { source: "codex" }));
+  it.each([{}, { source: "codex" }, { model: "o3" }, { team: "t1", source: "codex" }, { org: "o1" }])("prevents HTTP caching for %j", async (params) => {
+    mockDb.checkTeamMembershipExists.mockResolvedValue(true);
+    mockDb.checkOrgMembership.mockResolvedValue(true);
+    const res = await GET(makeGetRequest("/api/leaderboard", params));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+  });
 
-      expect(mockDb.getLeaderboardSessionStats).toHaveBeenCalledWith(
-        ["u1"],
-        expect.any(String), // fromDate
-        "codex",
-      );
-    });
-
-    it("should pass model filter to getGlobalLeaderboard", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { model: "claude-sonnet-4-20250514" }));
-
-      expect(res.status).toBe(200);
-      expect(mockDb.getGlobalLeaderboard).toHaveBeenCalledWith(
-        expect.objectContaining({ model: "claude-sonnet-4-20250514" }),
-      );
-    });
-
-    it("should skip session stats and return null when model filter is active", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([
-        {
-          user_id: "u1", name: "Alice", nickname: null, image: null,
-          slug: "alice", total_tokens: 1000, input_tokens: 500,
-          output_tokens: 400, cached_input_tokens: 100,
-        },
-      ]);
-      mockDb.getLeaderboardUserTeams.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { model: "o3" }));
-      const body = await res.json();
-
-      expect(res.status).toBe(200);
-      // Session stats should be null, not 0
-      expect(body.entries[0].session_count).toBeNull();
-      expect(body.entries[0].total_duration_seconds).toBeNull();
-      // getLeaderboardSessionStats should NOT have been called
-      expect(mockDb.getLeaderboardSessionStats).not.toHaveBeenCalled();
-    });
-
-    it("should disable HTTP cache for source-filtered requests", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { source: "claude-code" }));
-
-      expect(res.status).toBe(200);
-      expect(res.headers.get("Cache-Control")).toBe(
-        "private, no-store",
-      );
-    });
-
-    it("should disable HTTP cache for model-filtered requests", async () => {
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { model: "gpt-4.1" }));
-
-      expect(res.status).toBe(200);
-      expect(res.headers.get("Cache-Control")).toBe(
-        "private, no-store",
-      );
-    });
-
-    it("should use private cache when source + team are combined", async () => {
-      mockDb.checkTeamMembershipExists.mockResolvedValueOnce(true);
-      mockDb.getGlobalLeaderboard.mockResolvedValueOnce([]);
-      mockDb.getLeaderboardSessionStats.mockResolvedValueOnce([]);
-
-      const res = await GET(makeGetRequest("/api/leaderboard", { source: "claude-code", team: "t1" }));
-
-      expect(res.status).toBe(200);
-      expect(res.headers.get("Cache-Control")).toBe("private, no-store");
-    });
+  it.each(["getLeaderboardRevision", "getLeaderboardSnapshot"] as const)("fails closed on %s failure", async (method) => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockDb[method].mockRejectedValue(new Error("D1 down"));
+    const res = await GET(makeGetRequest("/api/leaderboard"));
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Failed to load leaderboard" });
   });
 });

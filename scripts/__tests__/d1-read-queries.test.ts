@@ -19,7 +19,7 @@ describe("D1 read queries against real SQLite", () => {
     vi.mocked(kv.get).mockReset();
     vi.mocked(kv.get).mockResolvedValue(null);
     sqlite = new DatabaseSync(":memory:");
-    for (const name of ["001-init", "009-device-aliases", "019-organizations", "022-usage-evidence", "026-usage-accounting"]) {
+    for (const name of ["001-init", "009-device-aliases", "019-organizations", "022-usage-evidence", "026-usage-accounting", "029-leaderboard-revision"]) {
       sqlite.exec(readFileSync(`scripts/migrations/${name}.sql`, "utf8"));
     }
     sqlite.exec(`INSERT INTO users(id,email,name,is_public) VALUES ('u1','a@test.invalid','A',1), ('u2','b@test.invalid','B',1), ('private','c@test.invalid','C',0);
@@ -35,25 +35,26 @@ describe("D1 read queries against real SQLite", () => {
       VALUES ('u1','d1','codex','m1','${fromDate}','',NULL,1,1,1,1,10,20,30,5,65,'[]'),
         ('u1','d1','codex','m1','${fromDate}','e1',2,1,1,1,1,3,4,5,6,18,'[]');`);
     queries = [];
-    db = { prepare: (sql: string) => ({ bind: (...params: unknown[]) => {
-      queries.push({ sql, params });
-      const statement = sqlite.prepare(sql);
-      return {
-        all: async () => ({ results: statement.all(...params as never[]) }),
-        first: async () => statement.get(...params as never[]) ?? null,
-      };
-    } }) } as unknown as D1Database;
+    const prepare = (sql: string, params: unknown[] = []) => ({
+      bind: (...values: unknown[]) => prepare(sql, values),
+      all: async () => {
+        queries.push({ sql, params });
+        return { success: true, results: sqlite.prepare(sql).all(...params as never[]) };
+      },
+      first: async () => { queries.push({ sql, params }); return sqlite.prepare(sql).get(...params as never[]) ?? null; },
+    });
+    db = { prepare, batch: async (statements: ReturnType<typeof prepare>[]) => Promise.all(statements.map((s) => s.all())) } as unknown as D1Database;
   });
   afterEach(() => sqlite.close());
 
   it("ranks additive legacy and evidence counters without reading accounting details", async () => {
-    const body = await (await handleLeaderboardRpc({ method: "leaderboard.getGlobal", limit: 100 }, db, kv)).json();
-    expect(body.result.map((r: { user_id: string; total_tokens: number }) => [r.user_id, r.total_tokens])).toEqual([["u1", 1182], ["u2", 200]]);
-    const { sql, params } = queries[0];
+    const body = await (await handleLeaderboardRpc({ method: "leaderboard.getSnapshot" }, db, kv)).json();
+    expect(body.result.rows.map((r: { user_id: string; total_tokens: number }) => [r.user_id, r.total_tokens])).toEqual([["u1", 1182], ["u2", 200]]);
+    const { sql, params } = queries.find((q) => q.sql.includes("WITH totals"))!;
     const plan = sqlite.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params as never[]);
     expect(JSON.stringify(plan)).not.toMatch(/usage_details|SEARCH d /);
-    const filtered = await (await handleLeaderboardRpc({ method: "leaderboard.getGlobal", source: "codex", model: "m1", fromDate, limit: 1, offset: 1 }, db, kv)).json();
-    expect(filtered.result).toMatchObject([{ user_id: "u2", total_tokens: 200 }]);
+    const filtered = await (await handleLeaderboardRpc({ method: "leaderboard.getSnapshot", source: "codex", model: "m1", fromDate }, db, kv)).json();
+    expect(filtered.result.rows.slice(1, 2)).toMatchObject([{ user_id: "u2", total_tokens: 200 }]);
   });
 
   it("paginates current public users after a cached-page user becomes private or is deleted", async () => {
@@ -63,20 +64,20 @@ describe("D1 read queries against real SQLite", () => {
       insert.run(`page${i}`, `page${i}@test.invalid`, `Page ${i}`);
       usage.run(`page${i}`, fromDate, 10000 - i, 10000 - i);
     }
-    const request = { method: "leaderboard.getGlobal", limit: 21 } as const;
+    const request = { method: "leaderboard.getSnapshot" } as const;
     const original = await (await handleLeaderboardRpc(request, db, kv)).json();
     vi.mocked(kv.get).mockResolvedValue(original.result);
     sqlite.exec("UPDATE users SET is_public=0 WHERE id='page0'");
     const first = await (await handleLeaderboardRpc(request, db, kv)).json();
-    const next = await (await handleLeaderboardRpc({ ...request, offset: 20 }, db, kv)).json();
-    expect(first.result).toHaveLength(21);
-    expect(first.result[0].user_id).toBe("page1");
-    expect(next.result[0].user_id).toBe("page21");
+    const next = await (await handleLeaderboardRpc(request, db, kv)).json();
+    expect(first.result.rows.slice(0, 21)).toHaveLength(21);
+    expect(first.result.rows[0].user_id).toBe("page1");
+    expect(next.result.rows[20].user_id).toBe("page21");
     sqlite.exec("DELETE FROM usage_records WHERE user_id='page1'; DELETE FROM users WHERE id='page1'");
-    const full = await (await handleLeaderboardRpc({ ...request, limit: 101 }, db, kv)).json();
-    expect(full.result).toHaveLength(101);
-    expect(full.result[0].user_id).toBe("page2");
-    expect(full.result.some((row: { user_id: string }) => ["page0", "page1"].includes(row.user_id))).toBe(false);
+    const full = await (await handleLeaderboardRpc(request, db, kv)).json();
+    expect(full.result.rows).toHaveLength(101);
+    expect(full.result.rows[0].user_id).toBe("page2");
+    expect(full.result.rows.some((row: { user_id: string }) => ["page0", "page1"].includes(row.user_id))).toBe(false);
     expect(queries.every(({ params }) => params.length <= 100)).toBe(true);
   });
 
@@ -86,9 +87,8 @@ describe("D1 read queries against real SQLite", () => {
       INSERT INTO organizations(id,name,slug,created_by) VALUES ('o1','O','o','u1');
       INSERT INTO organization_members(id,org_id,user_id) VALUES ('om1','o1','u1'), ('om2','o1','private');`);
     for (const [scope, user] of [[{ teamId: "t1" }, "u2"], [{ orgId: "o1" }, "u1"]] as const) {
-      const body = await (await handleLeaderboardRpc({ method: "leaderboard.getGlobal", ...scope, limit: 100 }, db, kv)).json();
-      expect(body.result.map((r: { user_id: string }) => r.user_id)).toEqual([user]);
-      expect(body._cached).toBe(false);
+      const body = await (await handleLeaderboardRpc({ method: "leaderboard.getSnapshot", ...scope }, db, kv)).json();
+      expect(body.result.rows.map((r: { user_id: string }) => r.user_id)).toEqual([user]);
     }
   });
 

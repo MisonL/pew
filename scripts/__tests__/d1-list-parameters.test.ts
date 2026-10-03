@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 import type { D1Database, KVNamespace } from "@cloudflare/workers-types";
 import { handleLeaderboardRpc } from "../../packages/worker-read/src/rpc/leaderboard";
+import { readFileSync } from "node:fs";
 import { handleSeasonsRpc } from "../../packages/worker-read/src/rpc/seasons";
 
 import { GET } from "../../packages/web/src/app/api/leaderboard/route";
@@ -31,17 +32,19 @@ describe("D1 identifier lists within the 100-parameter limit", () => {
         INSERT INTO session_records VALUES ('u1','2026-01-15','codex',60);
         CREATE TABLE usage_totals(user_id TEXT,hour_start TEXT,total_tokens INTEGER,input_tokens INTEGER,output_tokens INTEGER,cached_input_tokens INTEGER,source TEXT,model TEXT,event_id TEXT);
         INSERT INTO usage_totals VALUES ('u1','2026-01-15',100,60,30,10,'codex','model','');
-        CREATE VIEW usage_bases AS SELECT * FROM usage_totals;`);
-      const db = { prepare: (sql: string) => ({ bind: (...params: unknown[]) => {
-        if (params.length > 100) throw new Error("too many SQL variables");
-        const statement = sqlite.prepare(sql);
-        return { all: async () => ({ results: statement.all(...params as never[]) }), first: async () => statement.get(...params as never[]) ?? null };
-      } }) } as unknown as D1Database;
+        CREATE VIEW usage_bases AS SELECT * FROM usage_totals;
+        CREATE TABLE organization_members(org_id TEXT,user_id TEXT);`);
+      sqlite.exec(readFileSync('scripts/migrations/029-leaderboard-revision.sql','utf8'));
+      const prepare = (sql: string, params: unknown[] = []) => ({
+        bind: (...values: unknown[]) => {
+          if (values.length > 100) throw new Error("too many SQL variables");
+          return prepare(sql, values);
+        },
+        all: async () => ({ success: true, results: sqlite.prepare(sql).all(...params as never[]) }),
+        first: async () => sqlite.prepare(sql).get(...params as never[]) ?? null,
+      });
+      const db = { prepare, batch: async (statements: ReturnType<typeof prepare>[]) => Promise.all(statements.map((s) => s.all())) } as unknown as D1Database;
       const kv = { get: async () => null, put: async () => {} } as unknown as KVNamespace;
-      for (const method of ["leaderboard.getUserTeams", "leaderboard.getUserSessionStats"] as const) {
-        const response = await handleLeaderboardRpc({ method, userIds: ids, fromDate: bounds.fromDate, source: "codex" }, db, kv);
-        expect((await response.json()).result).toHaveLength(1);
-      }
       for (const method of ["seasons.getMemberTokens", "seasons.getTeamSessionStats", "seasons.getMemberSessionStats", "seasons.aggregateMemberTokens"] as const) {
         const response = await handleSeasonsRpc({ method, seasonId: "s1", teamIds, ...bounds }, db, kv);
         expect((await response.json()).result).toHaveLength(1);
@@ -56,9 +59,8 @@ describe("D1 identifier lists within the 100-parameter limit", () => {
       }
       const read = createMockDbRead();
       const rpc = async (request: Parameters<typeof handleLeaderboardRpc>[0]) => (await (await handleLeaderboardRpc(request, db, kv)).json()).result;
-      read.getGlobalLeaderboard.mockImplementation(async (options) => rpc({ method: "leaderboard.getGlobal", ...options }));
-      read.getLeaderboardUserTeams.mockImplementation(async (userIds) => rpc({ method: "leaderboard.getUserTeams", userIds }));
-      read.getLeaderboardSessionStats.mockImplementation(async (userIds, fromDate, source) => rpc({ method: "leaderboard.getUserSessionStats", userIds, fromDate, source }));
+      read.getLeaderboardRevision.mockImplementation(async () => rpc({ method: "leaderboard.getRevision" }));
+      read.getLeaderboardSnapshot.mockImplementation(async (options) => rpc({ method: "leaderboard.getSnapshot", ...options }));
       vi.mocked(getDbRead).mockResolvedValue(read);
       for (const query of ["limit=100&period=week", "limit=99&period=week&source=codex"]) {
         const response = await GET(new Request(`http://localhost/api/leaderboard?${query}`));

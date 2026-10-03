@@ -9,6 +9,7 @@
  *   org    — organization ID for org-scoped leaderboard (optional, mutually exclusive with team)
  *   source — filter by agent source slug (optional, mutually exclusive with model)
  *   model  — filter by model name (optional, mutually exclusive with source)
+ *   snapshot — snapshot ID from the first page (optional)
  *
  * Returns { period, scope, scopeId?, entries[], hasMore } where each entry has user info + total tokens.
  * Only users with is_public = 1 are included.
@@ -17,10 +18,12 @@
  * Anonymous requests with scope params are silently downgraded to global.
  */
 
+import { Buffer } from "node:buffer";
 import { NextResponse } from "next/server";
 import { getDbRead } from "@/lib/db";
 import { resolveUser } from "@/lib/auth-helpers";
 import { isAdminUser } from "@/lib/admin";
+import { getCachedLeaderboard } from "@/lib/leaderboard-cache";
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -73,6 +76,7 @@ export async function GET(request: Request) {
   const orgIdParam = url.searchParams.get("org");
   const sourceFilter = url.searchParams.get("source");
   const modelFilter = url.searchParams.get("model");
+  const snapshotId = url.searchParams.get("snapshot");
 
   // Validate period
   if (!VALID_PERIODS.has(period)) {
@@ -106,11 +110,25 @@ export async function GET(request: Request) {
     );
   }
 
+  if (modelFilter && Buffer.byteLength(modelFilter) > 256) {
+    return NextResponse.json(
+      { error: "model must be at most 256 bytes" },
+      { status: 400 },
+    );
+  }
+
+  if (snapshotId !== null && !/^[a-zA-Z0-9:-]{1,128}$/.test(snapshotId)) {
+    return NextResponse.json(
+      { error: "snapshot must be 1-128 alphanumeric, colon or hyphen characters" },
+      { status: 400 },
+    );
+  }
+
   // Validate limit
   let limit = DEFAULT_LIMIT;
   if (limitParam) {
-    const parsed = parseInt(limitParam, 10);
-    if (Number.isNaN(parsed) || parsed < 1 || parsed > MAX_LIMIT) {
+    const parsed = Number(limitParam);
+    if (!/^\d+$/.test(limitParam) || !Number.isSafeInteger(parsed) || parsed < 1 || parsed > MAX_LIMIT) {
       return NextResponse.json(
         { error: `limit must be 1-${MAX_LIMIT}` },
         { status: 400 },
@@ -122,8 +140,8 @@ export async function GET(request: Request) {
   // Validate offset
   let offset = 0;
   if (offsetParam) {
-    const parsed = parseInt(offsetParam, 10);
-    if (Number.isNaN(parsed) || parsed < 0) {
+    const parsed = Number(offsetParam);
+    if (!/^\d+$/.test(offsetParam) || !Number.isSafeInteger(parsed) || parsed < 0) {
       return NextResponse.json(
         { error: "offset must be a non-negative integer" },
         { status: 400 },
@@ -132,95 +150,64 @@ export async function GET(request: Request) {
     offset = parsed;
   }
 
-  const db = await getDbRead();
+  try {
+    const db = await getDbRead();
+    let teamId: string | undefined;
+    let orgId: string | undefined;
+    let authorizedRevision: string | undefined;
 
-  // Check auth for scoped requests — anonymous users silently degrade to global.
-  // Authenticated users must be a member of the requested team/org (admins bypass).
-  let teamId: string | undefined;
-  let orgId: string | undefined;
+    if (teamIdParam || orgIdParam) {
+      // Bind live authorization to the same revision as the returned snapshot.
+      const beforeAuth = await db.getLeaderboardRevision();
+      const authResult = await resolveUser(request);
+      if (authResult) {
+        authorizedRevision = beforeAuth;
+        const isAdmin = await isAdminUser(authResult);
 
-  if (teamIdParam || orgIdParam) {
-    const authResult = await resolveUser(request);
-    if (authResult) {
-      const isAdmin = await isAdminUser(authResult);
-
-      if (teamIdParam) {
-        const isMember = isAdmin || await db.checkTeamMembershipExists(teamIdParam, authResult.userId);
-        if (!isMember) {
-          return NextResponse.json(
-            { error: "Not a member of this team" },
-            { status: 403 },
-          );
+        if (teamIdParam) {
+          const isMember = isAdmin || await db.checkTeamMembershipExists(teamIdParam, authResult.userId);
+          if (!isMember) {
+            return NextResponse.json(
+              { error: "Not a member of this team" },
+              { status: 403, headers: { "Cache-Control": "private, no-store" } },
+            );
+          }
+          teamId = teamIdParam;
         }
-        teamId = teamIdParam;
-      }
-      if (orgIdParam) {
-        const isMember = isAdmin || await db.checkOrgMembership(orgIdParam, authResult.userId);
-        if (!isMember) {
-          return NextResponse.json(
-            { error: "Not a member of this organization" },
-            { status: 403 },
-          );
+        if (orgIdParam) {
+          const isMember = isAdmin || await db.checkOrgMembership(orgIdParam, authResult.userId);
+          if (!isMember) {
+            return NextResponse.json(
+              { error: "Not a member of this organization" },
+              { status: 403, headers: { "Cache-Control": "private, no-store" } },
+            );
+          }
+          orgId = orgIdParam;
         }
-        orgId = orgIdParam;
       }
     }
-    // else: silently ignore scope params for anonymous users
-  }
 
-  const fromDate = periodStartDate(period);
-
-  try {
-    // Request one extra to detect if there are more pages
-    const leaderboardRows = await db.getGlobalLeaderboard({
+    const fromDate = periodStartDate(period);
+    const snapshot = await getCachedLeaderboard(db, {
       ...(fromDate !== undefined && { fromDate }),
       ...(teamId !== undefined && { teamId }),
       ...(orgId !== undefined && { orgId }),
       ...(sourceFilter && { source: sourceFilter }),
       ...(modelFilter && { model: modelFilter }),
-      limit: limit + 1,
-      ...(offset > 0 && { offset }),
     });
 
-    // Check if there are more results
-    const hasMore = leaderboardRows.length > limit;
-    const actualRows = hasMore ? leaderboardRows.slice(0, limit) : leaderboardRows;
-
-    // Fetch teams for all users in the leaderboard
-    const userIds = actualRows.map((r) => r.user_id);
-    const teamsByUser = new Map<string, { id: string; name: string; logoUrl: string | null }[]>();
-
-    if (userIds.length > 0) {
-      const teamRows = await db.getLeaderboardUserTeams(userIds);
-      for (const row of teamRows) {
-        const list = teamsByUser.get(row.user_id) ?? [];
-        list.push({ id: row.team_id, name: row.team_name, logoUrl: row.logo_url ?? null });
-        teamsByUser.set(row.user_id, list);
-      }
-    }
-
-    // Fetch session stats for all users
-    // When model filter is active, session stats are not meaningful (session_records
-    // has no reliable model column) — return null to signal "not applicable".
-    const skipSessionStats = !!modelFilter;
-    const sessionStatsByUser = new Map<string, { session_count: number; total_duration_seconds: number }>();
-
-    if (userIds.length > 0 && !skipSessionStats) {
-      const sessionRows = await db.getLeaderboardSessionStats(
-        userIds,
-        fromDate,
-        sourceFilter ?? undefined,
+    if ((snapshotId !== null && snapshotId !== snapshot.id)
+      || (authorizedRevision !== undefined && authorizedRevision !== snapshot.revision)) {
+      return NextResponse.json(
+        { error: "Leaderboard changed. Restart pagination.", code: "LEADERBOARD_CHANGED" },
+        { status: 409, headers: { "Cache-Control": "private, no-store" } },
       );
-      for (const row of sessionRows) {
-        sessionStatsByUser.set(row.user_id, {
-          session_count: row.session_count,
-          total_duration_seconds: row.total_duration_seconds,
-        });
-      }
     }
+
+    const hasMore = offset + limit < snapshot.rows.length;
+    const actualRows = snapshot.rows.slice(offset, offset + limit);
 
     const entries = actualRows.map((row, index) => {
-      const sessionStats = skipSessionStats ? null : sessionStatsByUser.get(row.user_id);
       return {
         rank: offset + index + 1,
         user: {
@@ -229,13 +216,13 @@ export async function GET(request: Request) {
           image: row.image,
           slug: row.slug,
         },
-        teams: teamsByUser.get(row.user_id) ?? [],
+        teams: row.teams,
         total_tokens: row.total_tokens,
         input_tokens: row.input_tokens,
         output_tokens: row.output_tokens,
         cached_input_tokens: row.cached_input_tokens,
-        session_count: skipSessionStats ? null : (sessionStats?.session_count ?? 0),
-        total_duration_seconds: skipSessionStats ? null : (sessionStats?.total_duration_seconds ?? 0),
+        session_count: row.session_count,
+        total_duration_seconds: row.total_duration_seconds,
       };
     });
 
@@ -244,14 +231,17 @@ export async function GET(request: Request) {
     const scopeId = orgId ?? teamId ?? undefined;
 
     return NextResponse.json(
-      { period, scope, ...(scopeId && { scopeId }), entries, hasMore },
+      {
+        period, scope, ...(scopeId && { scopeId }), entries, hasMore,
+        snapshotId: snapshot.id, generatedAt: snapshot.generatedAt, expiresAt: snapshot.expiresAt,
+      },
       { headers: { "Cache-Control": "private, no-store" } },
     );
   } catch (err) {
     console.error("Failed to query leaderboard:", err);
     return NextResponse.json(
       { error: "Failed to load leaderboard" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "private, no-store" } },
     );
   }
 }

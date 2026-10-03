@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import type { LeaderboardSnapshot } from "../packages/core/src/leaderboard-types";
 import type { D1Database } from "../packages/worker/node_modules/@cloudflare/workers-types";
 import { localIsolatedEnv, verifyLocalMarker } from "./local-e2e-bindings";
 
@@ -45,6 +46,26 @@ try {
   });
   assert.equal(rpc.status, 200);
   assert.ok(JSON.stringify(await rpc.json()).includes("fixture@test.invalid"));
+  await query("UPDATE users SET is_public=1 WHERE id=?", ["fixture-user"]);
+  await query("UPDATE usage_records SET input_tokens=10,output_tokens=5,total_tokens=15 WHERE user_id=?", ["fixture-user"]);
+  const readSnapshot = async () => {
+    const response = await fetch(`${local.env.WORKER_READ_URL}/api/rpc`, {
+      method: "POST", headers: { Authorization: `Bearer ${local.env.WORKER_READ_SECRET}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ method: "leaderboard.getSnapshot", source: "fixture" }),
+    });
+    const body = await response.json() as { result: LeaderboardSnapshot };
+    assert.equal(response.status, 200, JSON.stringify(body));
+    return body.result;
+  };
+  const cold = await readSnapshot();
+  assert.equal(cold.rows.length, 1);
+  assert.equal(cold.rows[0]?.user_id, "fixture-user");
+  assert.equal(cold.rows[0]?.total_tokens, 30);
+  assert.ok(cold.id);
+  await query("UPDATE usage_records SET input_tokens=20,total_tokens=25 WHERE user_id=?", ["fixture-user"]);
+  const warm = await readSnapshot();
+  assert.equal(warm.id, cold.id);
+  assert.deepEqual(warm, cold);
   await query("UPDATE _test_marker SET value='production' WHERE key='env'");
   await assert.rejects(verifyLocalMarker(local.env), /_test_marker/);
   await query("UPDATE _test_marker SET value='test' WHERE key='env'");
