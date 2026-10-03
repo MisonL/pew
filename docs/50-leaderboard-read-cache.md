@@ -1,6 +1,6 @@
 # Leaderboard read cache
 
-Status: implementation in progress for the explicitly requested v3.1.0 release.
+Status: implemented locally; production cutover and v3.1.0 publication pending.
 
 ## Baseline
 
@@ -30,6 +30,8 @@ the account). Three token leaderboard queries read 2,568,684,072 rows in
   data. Public HTTP responses remain private/no-store.
 - Pagination carries a snapshot identity. A changed snapshot causes a 409 and
   client restart, rather than appending rows from different rankings.
+  Identities hash the revision, filters and content, so identical concurrent
+  fills or unchanged refreshes do not unnecessarily restart pagination.
 - Next.js memory is process-local, limited to 128 snapshots and 8 MiB estimated
   serialized payload, with a 256 KiB per-entry admission ceiling. Coalesce
   identical in-flight loads there. Oversize results are not silently truncated.
@@ -37,6 +39,9 @@ the account). Three token leaderboard queries read 2,568,684,072 rows in
   store. Cache corruption and unavailability cannot admit unsafe counts or
   stale permissions. Admin clear changes the database revision before deleting
   old keys; physical deletion is not required for correctness.
+- Snapshot/revision transport has a fifteen-second deadline, including body
+  consumption. At most 64 distinct Node fills may be in flight. Cache counters
+  are available through the existing admin cache GET, per process only.
 
 ## SQL changes
 
@@ -61,3 +66,44 @@ all-RPC caching is introduced. Active/frozen season and private dashboard cache
 expansion is deferred until the four dominant workloads are measured again.
 Compare complete post-deployment windows, including cold starts, using D1 rows,
 expensive query executions, KV reads/writes, request latency and error rates.
+
+## Cutover constraint
+
+The final source removes the old three leaderboard RPC methods. Worker and
+Railway deploy separately; either final component deployed first would break
+the other component's old protocol. Do not claim a zero-interruption rollout
+by ordering those two incompatible deployments alone.
+
+Publication waits for explicit owner approval of a one-time protocol overlap,
+or a separately approved blue/green deployment. With overlap approval, deploy
+a tested committed Worker supporting both RPC sets, push the final Web through
+normal gates, verify the exact Railway deployment and drain the old instance,
+then deploy the final Worker removing old RPCs. Do not retain a fallback client
+or compatibility layer in the final release. Rollback to old Web requires the
+overlap Worker first; retain additive schema changes during application rollback.
+
+## Verification receipts
+
+- `881666b7`: indexed first-seen and leaderboard scans, 4,478 tests in the
+  staged-snapshot gate; coverage 97.97/95.09/97.74/98.92.
+- `877932d8`: versioned full snapshots and memory/pagination, 4,532 tests;
+  coverage 98.00/95.19/97.75/98.94. Real local D1/KV proves cold construction,
+  native batch handling and a warm read retaining its original snapshot.
+- `2a2002bc`: RPC deadlines, 4,538 tests; same four coverage percentages.
+- `0a05f234`: independent-review boundary fixes, 4,545 tests; coverage
+  98.01/95.20/97.76/98.94. Concurrent byte admission and cold reader creation,
+  disabled scope UI, full ingest model names and cache envelope projection are
+  covered by regressions.
+- Root production build and nine synthetic CLI E2E cases passed in the clean
+  task clone at `2a2002bc`. Dependency links must resolve inside that clone:
+  reusing absolute `.bin` launchers with a copied Bun store creates duplicate
+  Next.js runtimes and a misleading workStore prerender failure.
+- At `2a2002bc`, isolated real-HTTP acceptance passed 99 cases, browser acceptance
+  passed 77 cases, and the dependency scan passed. That clone's initial secret
+  scan had an empty local-upstream range; publication must set the actual GitHub
+  upstream and scan all outgoing commits again rather than reuse that receipt.
+- Full-gate wall time is not certified below thirty seconds. Machine-wide
+  concurrent browser/build work can exhaust the existing lifecycle startup
+  deadline; serialize heavy acceptance lanes rather than weakening assertions.
+
+These are local receipts, not production savings or release completion.

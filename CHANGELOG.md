@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## v3.1.0
+
+### Added
+- Cache complete leaderboard rankings and session statistics in revision-scoped KV snapshots and bounded server memory, shared across page sizes and offsets.
+- Invalidate rankings atomically on privacy, account and membership changes while preserving live scoped authorization.
+- Restart pagination when its snapshot changes; expose process-local cache counters through the admin cache API.
+
+### Fixed
+- Use indexed first-seen lookups and time/source range indexes instead of scanning unrelated usage history.
+- Bound leaderboard RPC duration, in-flight fills and cache admission; preserve absolute expiry and exact token accounting.
+- Keep model-filter limits aligned with ingest and reject corrupt cache fields without disclosing stale identities.
+- Keep isolated D1 migration processes offline and verify the actual Worker/KV cold and warm paths.
+- Restore isolated API/browser release gates and await ready calendar geometry in browser tests.
+
+### Removed
+- Replace the three page-level leaderboard RPCs with revision and complete-snapshot reads; do not retain obsolete query paths in the final release.
+
 ## v3.0.6
 
 ### Fixed
