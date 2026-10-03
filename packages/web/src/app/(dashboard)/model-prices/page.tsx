@@ -12,7 +12,7 @@ import type {
   DynamicPricingMetaDto,
 } from "@/lib/rpc-types";
 import { PricingTable } from "./pricing-table";
-import { PricingMetaBanner } from "./pricing-meta-banner";
+import { PricingInformation } from "./pricing-information";
 import { ForceSyncButton } from "./force-sync-button";
 
 interface ModelsResponse {
@@ -46,21 +46,18 @@ export default function ModelPricesPage() {
     <div className="space-y-4 md:space-y-6">
       <PageHeader
         title="Model Prices"
-        description="Dynamic pricing entries published by the worker-read sync (baseline JSON, openrouter, models.dev). Read-only view."
+        description="Compare published model prices."
+        actions={<>
+          <PricingInformation meta={data?.meta} servedFrom={data?.servedFrom} />
+          {isAdmin && <ForceSyncButton onComplete={() => { void mutate(); invalidatePricingEntries(); }} />}
+        </>}
       />
 
       <ErrorBanner messagePrefix="Failed to load" error={error} />
 
       {loading && !data && <PageSkeleton />}
 
-      {data && (
-        <>
-          <PricingMetaBanner meta={data.meta} servedFrom={data.servedFrom}>
-            {isAdmin && <ForceSyncButton onComplete={() => { void mutate(); invalidatePricingEntries(); }} />}
-          </PricingMetaBanner>
-          <PricingTable entries={data.entries} />
-        </>
-      )}
+      {data && <PricingTable entries={data.entries} />}
     </div>
   );
 }

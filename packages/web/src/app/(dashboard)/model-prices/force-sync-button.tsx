@@ -45,13 +45,11 @@ export function ForceSyncButton({ onComplete }: Props) {
         onComplete?.(outcome);
         return;
       }
-      const message =
-        (body as { error?: string }).error ?? `Sync failed (HTTP ${res.status})`;
-      setState({ kind: "error", message });
-    } catch (err) {
+      setState({ kind: "error", message: "Could not refresh prices. Please try again." });
+    } catch {
       setState({
         kind: "error",
-        message: err instanceof Error ? err.message : "Network error",
+        message: "Could not refresh prices. Please try again.",
       });
     }
   };
@@ -59,20 +57,20 @@ export function ForceSyncButton({ onComplete }: Props) {
   return (
     <span className="inline-flex items-center gap-2">
       <Button onClick={handleClick} disabled={state.kind === "syncing"} variant="secondary" size="sm">
-        {state.kind === "syncing" ? "Syncing…" : "Force sync"}
+        {state.kind === "syncing" ? "Refreshing…" : "Refresh prices"}
       </Button>
       {state.kind === "ok" && (
         <Banner
           variant="secondary"
           size="sm"
-          description={`Synced ${state.outcome.entriesWritten} entries`}
+          description="Prices updated"
         />
       )}
       {state.kind === "partial" && (
         <Banner
           variant="alert"
           size="sm"
-          description={`Partial: ${state.outcome.entriesWritten} written, ${state.outcome.errors.length} failed`}
+          description="Some prices could not be refreshed"
         />
       )}
       {state.kind === "error" && (

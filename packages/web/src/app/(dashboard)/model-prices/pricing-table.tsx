@@ -96,14 +96,13 @@ export function PricingTable({ entries }: Props) {
       <Empty
         className="rounded-basalt-card bg-basalt-secondary p-8"
         title="No pricing data available"
-        description="Check the meta banner for sync status."
+        description="Try refreshing the page."
       />
     );
   }
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">USD per million tokens at base context rates. Cache writes replace the normal input rate; “—” means unreported.</p>
       <div className="flex flex-wrap gap-2 items-center">
         <Input
           type="search"
