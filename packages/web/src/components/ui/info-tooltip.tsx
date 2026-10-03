@@ -9,7 +9,7 @@ export function InfoTooltip({ label, children }: { label: string; children: Reac
   const [open, setOpen] = useState(false);
   return <Tooltip open={open} onOpenChange={setOpen} delayDuration={0}>
     <TooltipTrigger asChild onPointerDown={(event) => event.preventDefault()}
-      onClick={(event) => { event.preventDefault(); setOpen(true); }}>
+      onClick={(event) => { event.preventDefault(); event.currentTarget.focus(); setOpen(true); }}>
       <Button type="button" variant="ghost" size="icon" aria-label={label} className="h-8 w-8 shrink-0 text-muted-foreground">
         <Info className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
       </Button>

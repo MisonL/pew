@@ -13,7 +13,7 @@ export function usageInformation(records: readonly (AccountedUsage & { approxima
   else if (!complete) notes.push("Some cost details are unavailable.");
   notes.push(`Cache details: reads ${coverage(summary.readCoverage)}; writes ${coverage(summary.writeCoverage)}.`);
   notes.push(complete && !loading
-    ? `Net cache savings: ${formatCost(costs.reduce((sum, c) => sum + (c.netSavings ?? 0), 0))}.`
+    ? `Net cache savings: ${formatCost(costs.reduce((sum, c) => sum + Number(c.netSavings), 0))}.`
     : "Net cache savings unavailable.");
   if (records.some((r) => (r.approximate_tokens ?? 0) > 0)) notes.push("Some usage times are estimated; daily and hourly totals may shift.");
   return notes;
