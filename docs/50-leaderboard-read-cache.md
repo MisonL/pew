@@ -1,6 +1,6 @@
 # Leaderboard read cache
 
-Status: implemented and verified locally; v3.1.0 production release authorized.
+Status: v3.1.0 released; v3.1.1 session range-scan fix verified locally and awaiting release.
 
 ## Baseline
 
@@ -114,3 +114,33 @@ must restore a matching Web/Worker pair; retain the additive schema changes.
   submitted to npm.
 
 These are local receipts, not production savings or release completion.
+
+## v3.1.1 session scan correction
+
+v3.1.0 shipped at `37d786cf` with successful CI and Railway deployment; production
+Web and both Workers were verified. npm publication was intentionally excluded.
+The first equal-length pre/post observation (2026-10-03T04:00:00Z--07:15:00Z
+and 07:30:00Z--10:45:00Z) showed token query scans down about 80%, but session
+query scans up about 5.76-fold. Database-wide scanned rows stayed approximately
+flat, so the release did not meet its overall D1 savings objective.
+
+The session aggregate's public-user JOIN let SQLite scan the complete session
+user/time index even for recent windows. `8d5c51e2` replaces the JOIN with a
+public-user membership subquery, preserving complete results, source/team/org
+filters, snapshot transactions, privacy revisions and existing cache lifetimes.
+No new index, migration, dependency or approximate counter is introduced.
+
+Read-only production A/B queries used the same batch and cutoff
+2026-09-26T11:10:00.000Z. All result rows matched exactly:
+
+| Query | Old rows read | New rows read | Old SQL ms | New SQL ms |
+| --- | ---: | ---: | ---: | ---: |
+| Week + Codex | 1,070,122 | 1,503 | 177.42 | 2.34 |
+| Week, all sources | 1,070,278 | 1,503 | 175.41 | 2.48 |
+| All time | 2,138,932 | 1,011,493 | 6,755.66 | 1,268.10 |
+
+These are single-query execution receipts, not steady-state site savings.
+Eight native SQLite cases verify result equality and index SEARCH plans across
+time, source, team and organization filters. Existing privacy, replay, expiry,
+KV failure and pagination checks remain. Publish Z+1 without npm, verify deployed
+query plans and cold/warm RPC behavior, then compare a complete traffic window.

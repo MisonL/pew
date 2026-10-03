@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v3.1.1
+
+### Fixed
+- Use indexed public-user/time searches for leaderboard session aggregates instead of scanning all session history on every snapshot fill.
+- Preserve exact results for time, source, team and organization filters, with native SQLite query-plan regression coverage.
+
 ## v3.1.0
 
 ### Added
