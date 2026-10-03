@@ -210,7 +210,8 @@ export function auditPew(files: ReadonlyMap<string, string>, db: AuditDatabase) 
 
   const badRead = [...ast.keys()].filter((p) => /packages\/(?:worker-read\/src\/rpc|web\/src\/app\/api)\//.test(p) && !/\.test\./.test(p))
     .filter((p) => literals(p).some((s) => /\b(?:FROM|JOIN)\s+(?:["`]|\[)?usage_records\b/i.test(s) &&
-      !(p === "packages/web/src/app/api/account/delete/route.ts" && /^DELETE FROM usage_records WHERE user_id = \?$/.test(s))));
+      !(p === "packages/web/src/app/api/account/delete/route.ts" && /^DELETE FROM usage_records WHERE user_id = \?$/.test(s)) &&
+      !(p === "packages/worker-read/src/rpc/users.ts" && /^SELECT MIN\(first_seen\) AS first_seen FROM \( SELECT \( SELECT hour_start FROM usage_records WHERE user_id = \? ORDER BY hour_start LIMIT 1 \) AS first_seen UNION ALL SELECT \( SELECT hour_start FROM usage_evidence WHERE user_id = \? AND total_tokens > 0 ORDER BY hour_start LIMIT 1 \) \)$/.test(s.replace(/\s+/g, " ").trim()))));
   check("api.combined-read", "api", badRead.length === 0, badRead[0] ?? required.api[0], "A usage read bypasses the combined evidence view.");
   const accountDelete = required.api[2];
   const batches = nodes(accountDelete).filter((n) => n.type === "AwaitExpression" && member((n.argument as Node)?.callee) === "dbWrite.batch");

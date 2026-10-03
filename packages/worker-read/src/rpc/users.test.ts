@@ -740,6 +740,10 @@ describe("Users RPC handlers", () => {
       const req: GetUserFirstSeenRequest = { method: "users.getFirstSeen", userId: "u1" };
       const res = await handleUsersRpc(req, db);
       expect(await res.json()).toEqual({ result: "2026-01-15T00:00:00Z" });
+      expect(db.bind).toHaveBeenCalledWith("u1", "u1");
+      expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("FROM usage_records"));
+      expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("FROM usage_evidence"));
+      expect(db.prepare).not.toHaveBeenCalledWith(expect.stringContaining("usage_totals"));
     });
 
     it("should return null when no usage rows", async () => {
@@ -757,6 +761,7 @@ describe("Users RPC handlers", () => {
     it("should return 400 when userId missing", async () => {
       const req = { method: "users.getFirstSeen", userId: "" } as GetUserFirstSeenRequest;
       expect((await handleUsersRpc(req, db)).status).toBe(400);
+      expect(db.prepare).not.toHaveBeenCalled();
     });
   });
 

@@ -93,6 +93,15 @@ describe("Pew ponytail readonly audit", { timeout: 60_000 }, () => {
     }
   });
 
+  it("rejects losing evidence or checkpoint filtering in the indexed first-seen read", () => {
+    for (const change of [
+      (s: string) => s.replace("FROM usage_evidence\n           WHERE", "FROM usage_records\n           WHERE"),
+      (s: string) => s.replace("user_id = ? AND total_tokens > 0 ORDER BY hour_start", "user_id = ? ORDER BY hour_start"),
+    ]) {
+      expect(hasError(run(mutate("packages/worker-read/src/rpc/users.ts", change)), "api.combined-read")).toBe(true);
+    }
+  });
+
   it("catches the evidence cursor committing before its ledger promise completes", () => {
     const journal = "packages/cli/src/storage/sync-commit.ts";
     const sync = "packages/cli/src/commands/sync.ts";
