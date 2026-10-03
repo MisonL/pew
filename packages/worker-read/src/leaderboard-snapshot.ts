@@ -61,7 +61,7 @@ async function buildSnapshot(filters: LeaderboardFilters, db: D1Database, key: s
     conditions.push("EXISTS (SELECT 1 FROM organization_members om WHERE om.user_id=ur.user_id AND om.org_id=?)");
     params.push(filters.orgId);
   }
-  const sessionConditions = ["u.is_public = 1"];
+  const sessionConditions = ["sr.user_id IN (SELECT id FROM users WHERE is_public = 1)"];
   const sessionParams: string[] = [];
   if (filters.fromDate) { sessionConditions.push("sr.started_at >= ?"); sessionParams.push(filters.fromDate); }
   if (filters.source) { sessionConditions.push("sr.source = ?"); sessionParams.push(filters.source); }
@@ -89,7 +89,7 @@ async function buildSnapshot(filters: LeaderboardFilters, db: D1Database, key: s
       ORDER BY tm.user_id, t.id`),
     ...(!filters.model ? [db.prepare(`SELECT sr.user_id, COUNT(*) AS session_count,
       COALESCE(SUM(sr.duration_seconds),0) AS total_duration_seconds
-      FROM session_records sr JOIN users u ON u.id=sr.user_id
+      FROM session_records sr
       WHERE ${sessionConditions.join(" AND ")} GROUP BY sr.user_id`).bind(...sessionParams)] : []),
   ]);
   if (results.some((r) => !r.success)) throw new Error("Leaderboard query failed");

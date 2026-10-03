@@ -1,5 +1,20 @@
 # Retrospective
 
+## 2026-10-03 - A session index scan erased leaderboard savings
+
+The v3.1.0 read-cache rollout reduced token leaderboard scans by about 80% in
+the first comparable observation window, but session aggregates grew about
+5.76-fold. Replacing the selected-user list with a join to all public users
+made SQLite scan the entire session user/time index, including for recent
+windows. Functional cold/warm and privacy tests passed because the totals were
+correct; they did not verify the expensive session query's access path.
+
+Use a public-user membership subquery so the existing user/time index performs
+bounded searches. Regression tests now compare the complete results and inspect
+the actual session SQL plan across time, source, team and organization filters.
+Check every heavyweight query in a cache fill, not only the ranking query, and
+distinguish an index scan from an index range search before claiming savings.
+
 ## 2026-10-03 - Cache review must include admission races and ingest bounds
 
 The first leaderboard cache implementation measured a returned snapshot using

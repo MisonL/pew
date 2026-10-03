@@ -2,6 +2,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { D1Database, KVNamespace } from "@cloudflare/workers-types";
+import type { LeaderboardFilters } from "@pew/core";
 import { getLeaderboardRevision, getLeaderboardSnapshot } from "../../packages/worker-read/src/leaderboard-snapshot";
 
 describe("versioned leaderboard snapshots against SQLite", () => {
@@ -13,6 +14,7 @@ describe("versioned leaderboard snapshots against SQLite", () => {
   let onRead: (() => void) | undefined;
   let onWrite: (() => void) | undefined;
   let onBatch: (() => void) | undefined;
+  let queries: Array<{ sql: string; params: SQLInputValue[] }>;
 
   beforeEach(() => {
     sqlite = new DatabaseSync(":memory:");
@@ -31,10 +33,14 @@ describe("versioned leaderboard snapshots against SQLite", () => {
       INSERT INTO team_members(id,team_id,user_id,joined_at) VALUES ('tm','t','a','2026-09-01');
       INSERT INTO organizations(id,name,slug,created_by) VALUES ('o','Org','org','a');
       INSERT INTO organization_members(id,org_id,user_id) VALUES ('om','o','b');`);
+    queries = [];
     const prepare = (sql: string, params: SQLInputValue[] = []) => ({
       bind: (...values: SQLInputValue[]) => prepare(sql, values),
       first: async () => sqlite.prepare(sql).get(...params) ?? null,
-      all: async () => ({ success: true, results: sqlite.prepare(sql).all(...params) }),
+      all: async () => {
+        queries.push({ sql, params });
+        return { success: true, results: sqlite.prepare(sql).all(...params) };
+      },
     });
     batches = 0;
     db = { prepare, batch: async (statements: ReturnType<typeof prepare>[]) => {
@@ -71,6 +77,44 @@ describe("versioned leaderboard snapshots against SQLite", () => {
     const result = await getLeaderboardSnapshot({ fromDate: "2026-09-29T00:00:00.000Z", model: "m" }, db, kv);
     expect(result.expiresAt - result.generatedAt).toBe(600_000);
     expect(result.rows.map((r) => r.session_count)).toEqual([null, null]);
+  });
+
+  it.each<LeaderboardFilters>([
+    {}, { source: "codex" }, { teamId: "t" }, { orgId: "o" },
+    { fromDate: "2026-09-30T00:00:00.000Z" },
+    { fromDate: "2026-09-30T00:00:00.000Z", source: "codex" },
+    { fromDate: "2026-09-30T00:00:00.000Z", teamId: "t", source: "codex" },
+    { fromDate: "2026-09-30T00:00:00.000Z", orgId: "o", source: "codex" },
+  ])("bounds session reads by public user and time without changing results: %j", async (filters) => {
+    sqlite.exec(`INSERT INTO session_records(user_id,session_key,source,started_at,last_message_at,duration_seconds,snapshot_at) VALUES
+      ('b','boundary','codex','2026-09-30T00:00:00.000Z','2026-09-30T00:01:00.000Z',120,'2026-09-30'),
+      ('a','other','grok','2026-10-01T00:00:00.000Z','2026-10-01T00:01:00.000Z',30,'2026-10-01'),
+      ('private','hidden','codex','2026-10-01T00:00:00.000Z','2026-10-01T00:01:00.000Z',999,'2026-10-01');
+      WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<1024)
+      INSERT INTO session_records(user_id,session_key,source,started_at,last_message_at,duration_seconds,snapshot_at)
+      SELECT 'a','old-'||i,'codex','2020-01-01T00:00:00.000Z','2020-01-01T00:01:00.000Z',1,'2020-01-01' FROM n;
+      ANALYZE;`);
+    const expected = sqlite.prepare(`SELECT sr.user_id, COUNT(*) AS session_count,
+      SUM(sr.duration_seconds) AS total_duration_seconds FROM session_records sr
+      JOIN users u ON u.id=sr.user_id WHERE u.is_public=1
+      AND (? IS NULL OR sr.started_at>=?) AND (? IS NULL OR sr.source=?)
+      AND (? IS NULL OR EXISTS (SELECT 1 FROM team_members tm WHERE tm.user_id=sr.user_id AND tm.team_id=?))
+      AND (? IS NULL OR EXISTS (SELECT 1 FROM organization_members om WHERE om.user_id=sr.user_id AND om.org_id=?))
+      GROUP BY sr.user_id`).all(
+      filters.fromDate ?? null, filters.fromDate ?? null, filters.source ?? null, filters.source ?? null,
+      filters.teamId ?? null, filters.teamId ?? null, filters.orgId ?? null, filters.orgId ?? null,
+    );
+    const result = await getLeaderboardSnapshot(filters, db, kv);
+    expect(result.rows.map(({ user_id, session_count, total_duration_seconds }) => ({ user_id, session_count, total_duration_seconds }))).toEqual(expected);
+    const query = queries.find(({ sql }) => sql.includes("FROM session_records sr"));
+    expect(query).toBeDefined();
+    if (!query) throw new Error("Missing session aggregate");
+    const plan = sqlite.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(...query.params).map((row) => row.detail).join("\n");
+    const access = filters.source && !filters.fromDate
+      ? "idx_session_user_source_project (user_id=? AND source=?)"
+      : `idx_session_user_time (user_id=?${filters.fromDate ? " AND started_at>?" : ""})`;
+    expect(plan).toContain(`SEARCH sr USING INDEX ${access}`);
+    expect(plan).not.toMatch(/SCAN sr\b/);
   });
 
   it("invalidates all pages after privacy, identity and membership changes", async () => {
