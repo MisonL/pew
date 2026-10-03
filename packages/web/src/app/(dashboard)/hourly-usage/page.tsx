@@ -507,7 +507,7 @@ export default function RecentPage() {
                       tzOffset={tzOffset}
                       fromISO={recentFrom}
                       toISO={recentTo}
-                      topN={5}
+                      topN={MODEL_SERIES_LIMIT}
                     />
                   </div>
 
