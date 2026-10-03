@@ -50,7 +50,50 @@ describe("createWorkerDbRead", () => {
     },
   );
 
+  it.each(["getLeaderboardRevision", "getLeaderboardSnapshot"] as const)(
+    "%s uses a 15-second transport deadline and bypasses the fetch cache",
+    async (method) => {
+      const deadline = vi.spyOn(AbortSignal, "timeout");
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ result: null }));
+      await createWorkerDbRead()[method]({});
+      expect(deadline).toHaveBeenCalledExactlyOnceWith(15_000);
+      expect(fetchSpy.mock.calls[0]![1]).toMatchObject({ cache: "no-store", signal: deadline.mock.results[0]!.value });
+    },
+  );
+
+  it.each([
+    ["getLeaderboardRevision", "headers"],
+    ["getLeaderboardRevision", "body"],
+    ["getLeaderboardSnapshot", "headers"],
+    ["getLeaderboardSnapshot", "body"],
+  ] as const)("%s rejects when its deadline expires while reading %s", async (method, phase) => {
+    const controller = new AbortController();
+    const timeout = new DOMException("The operation timed out", "TimeoutError");
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    const response = Response.json({ result: null });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, options) => {
+      const signal = options?.signal;
+      if (!signal) throw new Error("Missing RPC deadline");
+      if (phase === "headers") {
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      }
+      vi.spyOn(response, "json").mockImplementation(() => new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }));
+      return response;
+    });
+    const pending = createWorkerDbRead()[method]({});
+    const assertion = expect(pending).rejects.toBe(timeout);
+    if (phase === "body") await vi.waitFor(() => expect(response.json).toHaveBeenCalledOnce());
+    controller.abort(timeout);
+    await assertion;
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
   it("sends only method parameters to the RPC endpoint", async () => {
+    const deadline = vi.spyOn(AbortSignal, "timeout");
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({ result: [] }),
     );
@@ -58,9 +101,11 @@ describe("createWorkerDbRead", () => {
     await db.getAdminUsageComparison(["u1", "u2"], "2026-01-01", "2026-02-01", { tzOffset: -480, source: "s", model: "m" });
     expect(fetchSpy).toHaveBeenCalledWith("https://pew.test.workers.dev/api/rpc", {
       method: "POST",
+      cache: "no-store",
       headers: { "Content-Type": "application/json", Authorization: "Bearer test-secret" },
       body: JSON.stringify({ method: "admin.getUsageComparison", userIds: ["u1", "u2"], fromDate: "2026-01-01", toDate: "2026-02-01", tzOffset: -480, source: "s", model: "m" }),
     });
+    expect(deadline).not.toHaveBeenCalled();
   });
 
   it.each([

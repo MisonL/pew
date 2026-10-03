@@ -66,9 +66,11 @@ export function createWorkerDbRead(): DbRead {
   /**
    * Call the RPC endpoint with a typed request.
    */
-  async function rpc<T>(request: Record<string, unknown>): Promise<T> {
+  async function rpc<T>(request: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     const res = await fetch(`${url}/api/rpc`, {
       method: "POST",
+      cache: "no-store",
+      ...(signal && { signal }),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${secret}`,
@@ -723,11 +725,11 @@ export function createWorkerDbRead(): DbRead {
     // -------------------------------------------------------------------------
 
     async getLeaderboardRevision(): Promise<string> {
-      return rpc<string>({ method: "leaderboard.getRevision" });
+      return rpc<string>({ method: "leaderboard.getRevision" }, AbortSignal.timeout(15_000));
     },
 
     async getLeaderboardSnapshot(options: LeaderboardFilters): Promise<LeaderboardSnapshot> {
-      return rpc<LeaderboardSnapshot>({ method: "leaderboard.getSnapshot", ...options });
+      return rpc<LeaderboardSnapshot>({ method: "leaderboard.getSnapshot", ...options }, AbortSignal.timeout(15_000));
     },
 
     // -------------------------------------------------------------------------
