@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { CHART_RESIZE_DEBOUNCE_MS } from "../../src/lib/sidebar-animation";
 import { test, expect, DASHBOARD_USAGE_FIXTURE, DASHBOARD_PRICING_FIXTURE, mockDashboardApis } from "./fixtures";
 
 const animationTime = new Date("2026-09-15T12:00:00Z");
@@ -65,6 +66,8 @@ test.describe("Feature: Shared chart animation", () => {
     await page.clock.runFor(150);
     await expect(css).toHaveCSS("animation-play-state", "running");
     await page.waitForTimeout(50);
+    // ResizeObserver runs outside the JS clock; finish its debounce before timing the new series animation.
+    await page.clock.runFor(CHART_RESIZE_DEBOUNCE_MS);
     await page.clock.runFor(550);
     const finished = await frames(page);
     await page.clock.runFor(150);

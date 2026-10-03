@@ -7,6 +7,7 @@
 ### Fixed
 - Use indexed public-user/time searches for leaderboard session aggregates instead of scanning all session history on every snapshot fill.
 - Preserve exact results for time, source, team and organization filters, with native SQLite query-plan regression coverage.
+- Wait for the existing resize debounce before checking chart animation completion in browser acceptance tests.
 
 ## v3.1.0
 

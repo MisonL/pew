@@ -1,5 +1,15 @@
 # Retrospective
 
+## 2026-10-03 - Account for resize debounce before animation completion
+
+The v3.1.1 push was rejected twice by the unchanged sidebar animation browser
+test. After resuming, a real ResizeObserver notification schedules the existing
+300 ms JS debounce; that later measurement can start a fresh 500 ms series
+animation. The test advanced only 550 ms before asserting a final stable frame.
+Advance the documented resize debounce before the animation interval and retain
+the subsequent exact-frame equality check. Do not weaken the assertion, disable
+animation or increase retries to hide the two-clock scheduling boundary.
+
 ## 2026-10-03 - A session index scan erased leaderboard savings
 
 The v3.1.0 read-cache rollout reduced token leaderboard scans by about 80% in
