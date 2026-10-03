@@ -54,4 +54,33 @@ test.describe("Feature: Compact usage information", () => {
     await expect(tooltip).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   });
+
+  test("public profiles offer a compact information control without billing diagnostics", async ({ page }) => {
+    await mockDashboardApis(page, { usage: DASHBOARD_USAGE_FIXTURE, pricing: DASHBOARD_PRICING_FIXTURE });
+    await page.route("**/api/users/info-fixture?*", (route) => route.fulfill({ json: {
+      user: { name: "Profile Fixture", nickname: null, image: null, slug: "info-fixture", created_at: "2026-01-01", first_seen: "2026-01-01" },
+      ...DASHBOARD_USAGE_FIXTURE,
+      records: DASHBOARD_USAGE_FIXTURE.records.map((row) => ({ ...row, approximate_tokens: 1644 })),
+    } }));
+    await page.goto("/u/info-fixture");
+    const trigger = page.getByRole("button", { name: "Usage information", exact: true });
+    await expect(trigger).toBeVisible();
+    await expect(page.getByText(/Usage, cache.*cost details|Public price snapshot|tokens have approximate timing/)).toHaveCount(0);
+    await trigger.hover();
+    await expect(page.getByRole("tooltip")).toContainText("Some usage times are estimated");
+  });
+
+  test("model prices hide backend state and error details while retaining freshness guidance", async ({ page }) => {
+    await mockDashboardApis(page, { usage: DASHBOARD_USAGE_FIXTURE, pricing: DASHBOARD_PRICING_FIXTURE });
+    await page.route("**/api/pricing/models", (route) => route.fulfill({ json: {
+      entries: [], servedFrom: "baseline", meta: { lastSyncedAt: "2026-01-01", modelCount: 0,
+        baselineCount: 0, openRouterCount: 0, modelsDevCount: 0,
+        lastErrors: [{ source: "kv", message: "PRIVATE_BACKEND_ERROR", at: "2026-01-01" }] },
+    } }));
+    await page.goto("/model-prices");
+    await expect(page.getByText(/worker-read|baseline JSON|KV cache|PRIVATE_BACKEND_ERROR|Last synced:/)).toHaveCount(0);
+    await page.getByRole("button", { name: "Model price information", exact: true }).hover();
+    await expect(page.getByRole("tooltip")).toContainText("Some prices may be out of date");
+    await expect(page.getByRole("tooltip")).not.toContainText("PRIVATE_BACKEND_ERROR");
+  });
 });

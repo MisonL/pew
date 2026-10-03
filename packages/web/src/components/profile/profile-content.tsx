@@ -194,7 +194,7 @@ export function ProfileContent({
 
   return (
     <>
-      <div className="mb-5 flex items-start justify-between gap-2">
+      <div className="mb-5 flex items-start justify-end gap-2">
       {/* Tab bar — hidden when only 1 tab */}
       {tabs.length > 1 && (
         <div className="flex min-w-0 flex-1 gap-1 rounded-lg bg-secondary p-1">
@@ -214,7 +214,7 @@ export function ProfileContent({
           ))}
         </div>
       )}
-      <UsageInformation records={data?.records ?? []} pricingMap={pricingMap} loading={pricingLoading} />
+      <UsageInformation records={!error && !notFound ? data?.records ?? [] : []} pricingMap={pricingMap} loading={pricingLoading} />
       </div>
 
       {/* Season date range indicator */}
