@@ -135,7 +135,7 @@ describe("Pew ponytail readonly audit", { timeout: 60_000 }, () => {
     expect(hasError(run(files), "tests.required-suites")).toBe(true);
     const skipped = run(mutate("packages/cli/src/__tests__/hermes-auxiliary-usage.test.ts", (s) => s.replace('it("captures', 'it.skip("captures')));
     expect(hasError(skipped, "tests.no-skips")).toBe(true);
-    const ui = run(mutate("packages/web/src/app/(dashboard)/daily-usage/page.tsx", (s) => s.replace("<UsageTimingNotice records={data?.records} />", "")));
+    const ui = run(mutate("packages/web/src/app/(dashboard)/daily-usage/page.tsx", (s) => s.replace(/<UsageInformation[^>]+\/>/, "")));
     expect(hasError(ui, "ui.timing-disclosure")).toBe(true);
   });
 });

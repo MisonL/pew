@@ -11,8 +11,7 @@ import {
 import { useDeviceData } from "@/hooks/use-device-data";
 import { useTzOffset } from "@/hooks/use-tz-offset";
 import { ErrorBanner } from "@/components/ui/error-banner";
-import { AccountingNotice } from "@/components/dashboard/accounting-notice";
-import { UsageTimingNotice } from "@/components/dashboard/usage-timing-notice";
+import { UsageInformation } from "@/components/dashboard/usage-information";
 import { formatTokens } from "@/lib/utils";
 import { usePricingMap, formatCost } from "@/hooks/use-pricing";
 import type { PricingMap } from "@/hooks/use-pricing";
@@ -397,14 +396,13 @@ export default function DailyUsagePage() {
             >
               <ChevronRight strokeWidth={1.5} />
             </Button>
+            <UsageInformation records={data?.records ?? []} pricingMap={pricingMap} loading={pricingLoading} />
           </div>
         }
       />
 
       {/* Error */}
       <ErrorBanner messagePrefix="Failed to load usage data" error={error} />
-      <UsageTimingNotice records={data?.records} />
-      <AccountingNotice records={data?.records ?? []} pricingMap={pricingMap} loading={pricingLoading} />
 
       {/* Loading */}
       {loading && <DailySkeleton />}

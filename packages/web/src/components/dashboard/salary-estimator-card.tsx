@@ -1,5 +1,7 @@
 "use client";
 
+import { InfoTooltip } from "@/components/ui/info-tooltip";
+
 import { CHART_ANIMATION } from "@/lib/chart-animation";
 import { useState, useMemo, createContext, useContext } from "react";
 import {
@@ -549,6 +551,10 @@ export function SalaryCalculatorCard({
               <p className="text-xs text-muted-foreground">{rangeLabel} · {dailyCosts.length} days</p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              <InfoTooltip label="Salary estimate information">
+                <p>A salary equivalent based on estimated token spend, not actual income.</p>
+                {incomplete && <p>Some cost details are unavailable.</p>}
+              </InfoTooltip>
               <div className="text-right">
                 <output aria-label="Monthly salary equivalent" className="block font-display text-2xl font-bold tracking-tight">{disabled ? "—" : formatSalary(yearlySalary / 12)}</output>
                 <p className="text-xs text-muted-foreground">/ month</p>
@@ -575,7 +581,6 @@ export function SalaryCalculatorCard({
                 <dd className="mt-1 font-medium tabular-nums">{disabled ? "—" : value}</dd>
               </div>)}
             </dl>
-            <p className="mt-2 text-[10px] text-muted-foreground">{incomplete ? "Salary equivalent · incomplete price details" : "Salary equivalent based on estimated token spend"}</p>
           </div>
         </section>
         <DialogContent size="xl" className="sm:w-[72rem] p-4 sm:p-7">
@@ -590,7 +595,6 @@ export function SalaryCalculatorCard({
               <Button variant="ghost" size="icon" aria-label="Close salary settings" className="shrink-0"><X className="h-4 w-4" aria-hidden="true" /></Button>
             </DialogClose>
           </div>
-          {incomplete && <p className="mb-4 text-xs text-muted-foreground">The underlying public-price estimate includes assumptions where cache or pricing details are unavailable.</p>}
           <div className="grid grid-cols-1 gap-3 md:gap-4 lg:grid-cols-2">
             <SalaryEstimatorCard dailyAvgCost={dailyAverageCost} rangeLabel={rangeLabel} />
             <SalaryTrendChart data={dailyCosts} />

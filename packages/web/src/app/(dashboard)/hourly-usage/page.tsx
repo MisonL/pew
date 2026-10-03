@@ -10,8 +10,7 @@ import {
 import type { UsageRow } from "@/hooks/use-usage-data";
 import { useTzOffset } from "@/hooks/use-tz-offset";
 import { ErrorBanner } from "@/components/ui/error-banner";
-import { AccountingNotice } from "@/components/dashboard/accounting-notice";
-import { UsageTimingNotice } from "@/components/dashboard/usage-timing-notice";
+import { UsageInformation } from "@/components/dashboard/usage-information";
 import { Button } from "@nocoo/basalt/components/button";
 import { Empty } from "@nocoo/basalt/components/empty";
 import { useDeviceData } from "@/hooks/use-device-data";
@@ -464,12 +463,11 @@ export default function RecentPage() {
       <PageHeader
         title="Hourly Usage"
         description="Token usage over the last 72 hours."
+        actions={<UsageInformation records={data?.records ?? []} pricingMap={pricingMap} loading={pricingLoading} />}
       />
 
       {/* Error */}
       <ErrorBanner messagePrefix="Failed to load usage data" error={error} />
-      <UsageTimingNotice records={data?.records} />
-      <AccountingNotice records={data?.records ?? []} pricingMap={pricingMap} loading={pricingLoading} />
 
       {/* Loading */}
       {allLoading && <RecentSkeleton />}

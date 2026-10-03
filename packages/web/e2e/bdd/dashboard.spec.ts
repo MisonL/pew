@@ -50,9 +50,8 @@ test.describe("Feature: Overview", () => {
     await expect(summary.locator(".border-dashed")).toBeVisible();
     await summary.getByRole("button", { name: "More information", exact: true }).focus();
     await expect(page.getByRole("tooltip")).toContainText("TD compares the same elapsed days");
-    await page.getByText("Cache & cost details", { exact: true }).click();
-    await expect(page.getByText(/Cache reads:.*300.0K/)).toBeVisible();
-    await expect(page.getByText(/Cache writes:.*unavailable/)).toBeVisible();
+    await page.getByRole("button", { name: "Overview information", exact: true }).click();
+    await expect(page.getByRole("tooltip")).toContainText("Cache details: reads 100% covered; writes unavailable.");
   });
 
   test("full week and month comparisons return without expanding the summary into extra rows", async ({ page }) => {
@@ -178,7 +177,7 @@ test.describe("Feature: Overview", () => {
         await expect(header.getByRole("button", { name, exact: true })).toBeVisible();
         await expect(summary.getByRole("button", { name, exact: true })).toHaveCount(0);
       }
-      await expect(page.getByText(/tokens have approximate timing/)).toHaveCount(0);
+      await expect(page.getByText(/Some usage times are estimated/)).toHaveCount(0);
       const info = header.getByRole("button", { name: "Overview information", exact: true });
       if (width >= 1024) {
         await info.focus();
@@ -186,12 +185,12 @@ test.describe("Feature: Overview", () => {
       } else {
         await info.click();
       }
-      const disclosure = page.getByRole("dialog", { name: "Overview information", exact: true });
+      const disclosure = page.getByRole("tooltip");
       await expect(disclosure).toBeVisible();
-      await expect(disclosure).toContainText("Usage Summary, Salary Calculator, Trends and Insights");
-      await expect(disclosure).toContainText("Activity and Goal Tracker always show 2026");
-      await expect(disclosure).toContainText("Monthly Forecast and Daily Average always use this month");
-      await expect(disclosure).toContainText("1,234 tokens have approximate timing");
+      await expect(disclosure).toContainText("The selected period applies to usage, trends and salary estimates.");
+      await expect(disclosure).toContainText("Activity and goals show 2026");
+      await expect(disclosure).toContainText("comparisons and forecasts use calendar weeks or months");
+      await expect(disclosure).toContainText("Some usage times are estimated");
       const box = (await disclosure.boundingBox())!;
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
@@ -202,7 +201,7 @@ test.describe("Feature: Overview", () => {
       await expect(page.getByText("No usage in this period.", { exact: true })).toBeVisible();
       await info.click();
       await expect(disclosure).toBeVisible();
-      await expect(disclosure.getByText(/tokens have approximate timing/)).toHaveCount(0);
+      await expect(disclosure.getByText(/Some usage times are estimated/)).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1);
     });
 
@@ -370,10 +369,9 @@ test.describe("Feature: Overview", () => {
     await expect(stat(page, "Cache Hit Rate").getByText("—", { exact: true })).toBeVisible();
     await expect(stat(page, "Cache Hit Rate").getByText("Read counts unavailable", { exact: true })).toBeVisible();
     await expect(page.getByText("Avg —", { exact: true })).toBeVisible();
-    await page.getByText("Cache & cost details", { exact: true }).click();
-    await expect(page.getByText(/Cache reads:.*unavailable/)).toBeVisible();
-    await expect(page.getByText(/Cache writes:.*unavailable/)).toBeVisible();
-    await expect(page.getByText(/Net cache savings:.*—/)).toBeVisible();
+    await page.getByRole("button", { name: "Overview information", exact: true }).click();
+    await expect(page.getByRole("tooltip")).toContainText("Cache details: reads unavailable; writes unavailable.");
+    await expect(page.getByRole("tooltip")).toContainText("Net cache savings unavailable.");
   });
 
   test("mixed clients use a weighted hit rate over covered input and disclose partial reads and writes", async ({ page }) => {
@@ -387,9 +385,8 @@ test.describe("Feature: Overview", () => {
     await expect(stat(page, "Cache Hit Rate").getByText(/60% read coverage.*partial/i)).toBeVisible();
     await expect(stat(page, "Total Tokens").getByText("2.6M", { exact: true })).toBeVisible();
     await expect(page.getByText("Avg 41.7%", { exact: true })).toBeVisible();
-    await page.getByText("Cache & cost details", { exact: true }).click();
-    await expect(page.getByText(/Cache reads:.*500.0K.*60%.*partial/i)).toBeVisible();
-    await expect(page.getByText(/Cache writes:.*50.0K.*20%.*partial/i)).toBeVisible();
+    await page.getByRole("button", { name: "Overview information", exact: true }).click();
+    await expect(page.getByRole("tooltip")).toContainText("Cache details: reads 60% covered; writes 20% covered.");
     await expect(page.getByRole("figure", { name: "Token share" }).getByText("2.6M tokens", { exact: true })).toBeVisible();
   });
 
@@ -401,10 +398,9 @@ test.describe("Feature: Overview", () => {
     await mockDashboardApis(page, { usage: { records: [record], summary: DASHBOARD_USAGE_FIXTURE.summary }, pricing });
     await page.goto("/dashboard");
     await expect(stat(page, "Cache Hit Rate").getByText("25.0%", { exact: true })).toBeVisible();
-    await page.getByText("Cache & cost details", { exact: true }).click();
-    await expect(page.getByText(/Cache reads:.*100.0K.*100%/)).toBeVisible();
-    await expect(page.getByText(/Cache writes:.*50.0K.*100%/)).toBeVisible();
-    await expect(page.getByText("Net cache savings: $0.23", { exact: false })).toBeVisible();
+    await page.getByRole("button", { name: "Overview information", exact: true }).click();
+    await expect(page.getByRole("tooltip")).toContainText("Cache details: reads 100% covered; writes 100% covered.");
+    await expect(page.getByRole("tooltip").getByText("Net cache savings: $0.23.", { exact: true })).toBeVisible();
 
     const counts = record.accounting[0]!.groups[0]!.counts;
     counts.cache_read_input_tokens = 0;
@@ -415,8 +411,8 @@ test.describe("Feature: Overview", () => {
     await expect(stat(page, "Cache Hit Rate").getByText("0.0%", { exact: true })).toBeVisible();
     await expect(stat(page, "Cache Hit Rate").getByText(/100% read coverage/)).toBeVisible();
     await expect(page.getByText("Avg 0.0%", { exact: true })).toBeVisible();
-    await page.getByText("Cache & cost details", { exact: true }).click();
-    await expect(page.getByText(/Net cache savings:.*-\$0\.30/)).toBeVisible();
+    await page.getByRole("button", { name: "Overview information", exact: true }).click();
+    await expect(page.getByRole("tooltip").getByText("Net cache savings: -$0.30.", { exact: true })).toBeVisible();
   });
 
   test("device query failures offer retry and do not hide model or harness usage", async ({ page }) => {

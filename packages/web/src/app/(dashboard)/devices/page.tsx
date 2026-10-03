@@ -17,7 +17,7 @@ import { Empty } from "@nocoo/basalt/components/empty";
 import { PageHeader } from "@nocoo/basalt/components/page-header";
 import { CHART_COLORS } from "@/lib/palette";
 import { DeviceTrendChart } from "@/components/dashboard/device-trend-chart";
-import { AccountingNotice } from "@/components/dashboard/accounting-notice";
+import { UsageInformation } from "@/components/dashboard/usage-information";
 import { DeviceShareChart } from "@/components/dashboard/device-share-chart";
 import { DeviceBreakdownChart } from "@/components/dashboard/device-breakdown-chart";
 import { DeviceAgentChart } from "@/components/dashboard/device-agent-chart";
@@ -265,7 +265,7 @@ export default function ByDevicePage() {
       <PageHeader
         title="By Device"
         description={`Compare usage across your devices (${subtitle}).`}
-        actions={<PeriodSelector value={period} onChange={setPeriod} />}
+        actions={<><PeriodSelector value={period} onChange={setPeriod} /><UsageInformation records={deviceDetails} pricingMap={pricingMap} loading={pricingLoading} /></>}
       />
 
       {/* Error */}
@@ -448,8 +448,6 @@ export default function ByDevicePage() {
                   </tfoot>
                 </table>
               </div>
-
-              <AccountingNotice records={deviceDetails} pricingMap={pricingMap} loading={pricingLoading} />
 
               {/* Deep Dive — agent × model drill-down */}
               <DashboardSegment

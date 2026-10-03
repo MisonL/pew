@@ -6,7 +6,7 @@ import { useTzOffset } from "@/hooks/use-tz-offset";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { formatTokens } from "@/lib/utils";
 import { usePricingMap, formatCost } from "@/hooks/use-pricing";
-import { AccountingNotice } from "@/components/dashboard/accounting-notice";
+import { UsageInformation } from "@/components/dashboard/usage-information";
 import { groupByModel, toSourceTrendPoints } from "@/lib/usage-helpers";
 import { MODEL_SERIES_LIMIT, toModelEvolutionPoints } from "@/lib/model-helpers";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -131,12 +131,11 @@ export default function ModelsPage() {
       <PageHeader
         title="By Model"
         description={`Token usage grouped by AI model (${subtitle}).`}
-        actions={<PeriodSelector value={period} onChange={setPeriod} />}
+        actions={<><PeriodSelector value={period} onChange={setPeriod} /><UsageInformation records={data?.records ?? []} pricingMap={pricingMap} loading={pricingLoading} /></>}
       />
 
       {/* Error */}
       <ErrorBanner messagePrefix="Failed to load usage data" error={error} />
-      <AccountingNotice records={data?.records ?? []} pricingMap={pricingMap} loading={pricingLoading} />
 
       {/* Loading */}
       {loading && <ModelsSkeleton />}

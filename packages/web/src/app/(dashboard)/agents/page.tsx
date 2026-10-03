@@ -6,7 +6,7 @@ import { useUsageData } from "@/hooks/use-usage-data";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { formatTokens } from "@/lib/utils";
 import { usePricingMap, formatCost } from "@/hooks/use-pricing";
-import { AccountingNotice } from "@/components/dashboard/accounting-notice";
+import { UsageInformation } from "@/components/dashboard/usage-information";
 import { groupByAgent } from "@/lib/usage-helpers";
 import type { AgentGroup } from "@/lib/usage-helpers";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -179,12 +179,11 @@ export default function AgentsPage() {
       <PageHeader
         title="By Agent"
         description={`Token usage grouped by AI coding tool (${subtitle}).`}
-        actions={<PeriodSelector value={period} onChange={setPeriod} />}
+        actions={<><PeriodSelector value={period} onChange={setPeriod} /><UsageInformation records={data?.records ?? []} pricingMap={pricingMap} loading={pricingLoading} /></>}
       />
 
       {/* Error */}
       <ErrorBanner messagePrefix="Failed to load usage data" error={error} />
-      <AccountingNotice records={data?.records ?? []} pricingMap={pricingMap} loading={pricingLoading} />
 
       {/* Loading */}
       {loading && <AgentsSkeleton />}

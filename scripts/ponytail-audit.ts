@@ -23,7 +23,7 @@ const required: Record<Stage, string[]> = {
   upload: ["packages/cli/src/commands/upload.ts", "packages/cli/src/commands/upload-engine.ts", "packages/web/src/app/api/ingest/evidence/route.ts"],
   worker: ["packages/worker/src/index.ts", "packages/worker/src/evidence-sql.ts", "packages/core/src/evidence-validation.ts", "scripts/migrations/022-usage-evidence.sql"],
   api: ["packages/worker-read/src/rpc/usage.ts", "packages/web/src/app/api/usage/route.ts", "packages/web/src/app/api/account/delete/route.ts"],
-  ui: ["packages/web/src/components/dashboard/usage-timing-notice.tsx", "packages/web/src/app/(dashboard)/dashboard/page.tsx",
+  ui: ["packages/web/src/components/dashboard/usage-information.tsx", "packages/web/src/app/(dashboard)/dashboard/page.tsx",
     "packages/web/src/app/(dashboard)/daily-usage/page.tsx", "packages/web/src/app/(dashboard)/hourly-usage/page.tsx", "packages/web/src/components/profile/profile-content.tsx"],
 };
 const suites = [
@@ -32,7 +32,7 @@ const suites = [
   "packages/cli/src/__tests__/evidence-queue.test.ts", "packages/cli/src/__tests__/evidence-sync.test.ts",
   "packages/core/src/__tests__/evidence-validation.test.ts", "scripts/__tests__/usage-evidence-pipeline.test.ts",
   "packages/web/src/__tests__/evidence-ingest.test.ts", "packages/web/src/__tests__/account-delete.test.ts",
-  "packages/web/src/components/dashboard/usage-timing-notice.test.tsx", "scripts/__tests__/ponytail-audit.test.ts",
+  "packages/web/src/lib/usage-information.test.ts", "scripts/__tests__/ponytail-audit.test.ts",
 ];
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 
@@ -232,7 +232,7 @@ export function auditPew(files: ReadonlyMap<string, string>, db: AuditDatabase) 
   const userDeletes = deletePositions("users", "id");
   check("api.account-deletion", "api", evidenceDeletes.length === 1 && userDeletes.length === 1 && evidenceDeletes[0] < userDeletes[0],
     accountDelete, "Account deletion must await a batch that deletes user-scoped evidence before the user, even without foreign-key cascades.");
-  check("ui.timing-disclosure", "ui", required.ui.slice(1).every((p) => nodes(p).some((n) => n.type === "JSXOpeningElement" && (n.name as Node)?.name === "UsageTimingNotice")), required.ui[0], "Time charts must disclose approximate supplementary timing.");
+  check("ui.timing-disclosure", "ui", required.ui.slice(1).every((p) => nodes(p).some((n) => n.type === "JSXOpeningElement" && (n.name as Node)?.name === "UsageInformation")), required.ui[0], "Time charts must offer usage and approximate timing information.");
   const validRecord = { source: "hermes", model: "audit-model", device_id: "audit-device", timestamp: "2026-09-06T16:00:00.000Z",
     hour_start: "2026-09-06T16:00:00.000Z", input_tokens: 10, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 10,
     evidence: { eventId: "a".repeat(64), groupId: "b".repeat(64), callType: "approval", origin: "hermes-aux-ledger", provider: "openai",

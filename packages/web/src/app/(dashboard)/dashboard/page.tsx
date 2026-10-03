@@ -1,10 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowDownToLine, ArrowUpFromLine, DollarSign, Gauge, Info, TrendingUp, Zap, type LucideIcon } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, DollarSign, Gauge, TrendingUp, Zap, type LucideIcon } from "lucide-react";
 import { Button } from "@nocoo/basalt/components/button";
 import { PageHeader } from "@nocoo/basalt/components/page-header";
-import { Popover, PopoverContent, PopoverTrigger } from "@nocoo/basalt/components/popover";
 import { useUsageData, toHeatmapData, type DailyPoint } from "@/hooks/use-usage-data";
 import { useTzOffset } from "@/hooks/use-tz-offset";
 import { usePricingMap, formatCost } from "@/hooks/use-pricing";
@@ -27,8 +26,7 @@ import { HourlyChart } from "@/components/dashboard/hourly-chart";
 import { DashboardSegment } from "@/components/dashboard/dashboard-segment";
 import { PeriodSelector } from "@/components/dashboard/period-selector";
 import { SalaryCalculatorCard } from "@/components/dashboard/salary-estimator-card";
-import { AccountingNotice } from "@/components/dashboard/accounting-notice";
-import { UsageTimingNotice } from "@/components/dashboard/usage-timing-notice";
+import { UsageInformation } from "@/components/dashboard/usage-information";
 import { SnapshotAlert } from "@/components/dashboard/snapshot-alert";
 import { DashboardSkeleton } from "@/components/dashboard/dashboard-skeleton";
 import { DashboardEmptyState } from "@/components/dashboard/empty-state";
@@ -102,20 +100,10 @@ export default function DashboardPage() {
       <PageHeader title="Overview" description="Token usage and cache efficiency for your AI coding tools."
         actions={<>
           <PeriodSelector value={period} onChange={setPeriod} options={OVERVIEW_PERIOD_OPTIONS} />
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button type="button" variant="ghost" size="icon" aria-label="Overview information">
-                <Info className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent aria-label="Overview information" align="end" collisionPadding={16}
-              className="w-80 max-w-[calc(100vw-2rem)] space-y-3 text-sm">
-              <p>The selected period applies to Usage Summary, Salary Calculator, Trends and Insights. Month ranges roll back from today in your local time.</p>
-              <p>Activity and Goal Tracker always show {currentYear}. Week / month comparisons use their own calendar periods; Monthly Forecast and Daily Average always use this month.</p>
-              <p>Model charts show up to 100 models, prioritizing usage in the seven days ending on this period’s latest usage date, then earlier weeks. Token counts and shares cover the full selected period. Only additional models are grouped as Other. Legends show five entries; tooltips show up to twenty active entries for the selected point and summarize any remainder without hiding chart data.</p>
-              <UsageTimingNotice records={records} />
-            </PopoverContent>
-          </Popover>
+          <UsageInformation records={records} pricingMap={pricingMap} loading={pricingLoading} label="Overview information">
+            <p>The selected period applies to usage, trends and salary estimates. Activity and goals show {currentYear}; comparisons and forecasts use calendar weeks or months.</p>
+            <p>Charts retain up to 100 models. Legends show five; point details show up to twenty active models.</p>
+          </UsageInformation>
         </>} />
       <ErrorBanner messagePrefix="Failed to load usage data" error={error} />
       {error && <button type="button" className="text-sm underline underline-offset-4" onClick={refetch}>Retry usage</button>}
@@ -210,12 +198,7 @@ export default function DashboardPage() {
               ]} />
             </StatCard>
           </StatGrid>
-          {hasRecords && <details className="text-xs text-muted-foreground">
-            <summary className="cursor-pointer rounded-lg py-1 underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-              Cache & cost details
-            </summary>
-            <div className="mt-3"><AccountingNotice records={records} pricingMap={pricingMap} loading={pricingLoading} /></div>
-          </details>}
+
         </DashboardSegment>
 
         <DashboardSegment title="Trends">

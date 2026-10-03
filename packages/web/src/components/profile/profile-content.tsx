@@ -1,6 +1,6 @@
 "use client";
 
-import { AccountingNotice } from "@/components/dashboard/accounting-notice";
+import { UsageInformation } from "@/components/dashboard/usage-information";
 import { summarizeAccounting } from "@/lib/accounting";
 import { useState, useMemo } from "react";
 import {
@@ -20,7 +20,6 @@ import { computeTotalCost } from "@/lib/cost-helpers";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatCard, StatGrid } from "@/components/dashboard/stat-card";
 import { UsageTrendChart } from "@/components/dashboard/usage-trend-chart";
-import { UsageTimingNotice } from "@/components/dashboard/usage-timing-notice";
 import { SourceDonutChart } from "@/components/dashboard/source-donut-chart";
 import { ModelBreakdownChart } from "@/components/dashboard/model-breakdown-chart";
 import { HeatmapCalendar } from "@/components/dashboard/heatmap-calendar";
@@ -195,9 +194,10 @@ export function ProfileContent({
 
   return (
     <>
+      <div className="mb-5 flex items-start justify-between gap-2">
       {/* Tab bar — hidden when only 1 tab */}
       {tabs.length > 1 && (
-        <div className="flex gap-1 rounded-lg bg-secondary p-1 mb-5">
+        <div className="flex min-w-0 flex-1 gap-1 rounded-lg bg-secondary p-1">
           {tabs.map((t) => (
             <button type="button"
               key={t.id}
@@ -214,6 +214,8 @@ export function ProfileContent({
           ))}
         </div>
       )}
+      <UsageInformation records={data?.records ?? []} pricingMap={pricingMap} loading={pricingLoading} />
+      </div>
 
       {/* Season date range indicator */}
       {tab === "season" && season && (
@@ -324,17 +326,6 @@ export function ProfileContent({
               )}
             </div>
 
-            {data.records.length > 0 && (
-              <details className="text-xs text-muted-foreground">
-                <summary className="cursor-pointer rounded-lg py-1 underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-                  Usage, cache &amp; cost details
-                </summary>
-                <div className="mt-3 space-y-3">
-                  <UsageTimingNotice records={data.records} />
-                  <AccountingNotice records={data.records} pricingMap={pricingMap} loading={pricingLoading} />
-                </div>
-              </details>
-            )}
           </div>
         ) : null)}
     </>
