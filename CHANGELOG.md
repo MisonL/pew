@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## v3.2.0
+
+### Added
+
+- Clarify usage trends and agent charts
+- Retain one hundred chart models
+
+### Changed
+
+- Settle responsive trend acceptance frames
+- Require populated page and module readiness
+- Bound native migration startup budgets
+- Reject hidden api and gate failures
+- Keep pricing details in info overlays
+- Cover compact info across public pages
+- Simplify public pricing information
+- Move usage notes into header info
+
+### Fixed
+
+- Size standalone agent share charts
+- Bound accounting aggregation row size
+- Retain focus on information triggers
+- Align hourly timeline model limit
+
 ## v3.1.1
 
 ### Fixed

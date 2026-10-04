@@ -1,5 +1,9 @@
 # Retrospective
 
+## 2026-10-04: Installed dependencies diverged from the release lockfile
+
+The manifest and lockfile required Basalt 2.2.0, but the daily workspace still linked 2.1.8. Copying installed dependencies into an isolated acceptance checkout preserved that drift, so early green browser tests did not prove the locked release. The release installation exposed the mismatch; the corporate mirror lacked the exact tarball. Install from a verified allowed mirror, keep mirror URLs out of the lockfile, verify the resolved package version, and rerun build, coverage and browser gates before publication. A matching manifest alone is not installed-version evidence.
+
 ## 2026-10-04: Standalone agent share chart lacked a definite height
 
 Reusing the overview donut as a standalone By Agent panel exposed its implicit dependency on a stretched parent. Its percentage-height responsive container rendered labels but no SVG when the flex parent had only a minimum height. The new real-data browser regression rejected the missing series at desktop and mobile widths. Give the shared donut an explicit chart height, and require populated marks rather than a title or legend before declaring a reused visualization ready.
