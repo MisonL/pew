@@ -7,13 +7,16 @@ import { ErrorBanner } from "@/components/ui/error-banner";
 import { formatTokens } from "@/lib/utils";
 import { usePricingMap, formatCost } from "@/hooks/use-pricing";
 import { UsageInformation } from "@/components/dashboard/usage-information";
-import { groupByAgent } from "@/lib/usage-helpers";
+import { groupByAgent, toSourceTrendPoints } from "@/lib/usage-helpers";
 import type { AgentGroup } from "@/lib/usage-helpers";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ChartCardSkeleton } from "@/components/dashboard/chart-card-skeleton";
+import { SourceTrendChart } from "@/components/dashboard/source-trend-chart";
+import { SourceDonutChart } from "@/components/dashboard/source-donut-chart";
 import { agentColor } from "@/lib/palette";
 import { PeriodSelector } from "@/components/dashboard/period-selector";
 import { ModelInfoTooltip } from "@/components/dashboard/model-info-tooltip";
-import { periodToDateRange, periodLabel } from "@/lib/date-helpers";
+import { periodToDateRange, periodLabel, getLocalToday, fillDateRange } from "@/lib/date-helpers";
 import type { Period } from "@/lib/date-helpers";
 import { useTzOffset } from "@/hooks/use-tz-offset";
 import { Button } from "@nocoo/basalt/components/button";
@@ -133,6 +136,8 @@ function AgentCard({ group, color }: { group: AgentGroup; color: string }) {
 function AgentsSkeleton() {
   return (
     <div className="space-y-4">
+      <ChartCardSkeleton titleWidth="w-24" chartHeight="h-[240px] md:h-[280px]" />
+      <ChartCardSkeleton titleWidth="w-24" chartHeight="h-[240px]" />
       {Array.from({ length: 3 }).map((_, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: static skeleton loader; array order and length are stable within a single render pass so index is a legitimate key.
         <div key={`slot-${i}`} className="rounded-xl bg-secondary p-5">
@@ -160,12 +165,18 @@ export default function AgentsPage() {
   const tzOffset = useTzOffset();
   const { from, to } = periodToDateRange(period, tzOffset);
 
-  const { data, loading, error } = useUsageData({
+  const { data, sources, loading, error } = useUsageData({
     from,
     ...(to ? { to } : {}),
   });
 
   const { pricingMap, loading: pricingLoading } = usePricingMap();
+  const today = useMemo(() => getLocalToday(tzOffset), [tzOffset]);
+  const trend = useMemo(() => {
+    const sparse = toSourceTrendPoints(data?.records ?? [], tzOffset);
+    const zero = Object.fromEntries(Object.keys(sparse[0]?.sources ?? {}).map((source) => [source, 0]));
+    return fillDateRange(sparse, "date", (date) => ({ date, sources: { ...zero } }), today);
+  }, [data, tzOffset, today]);
 
   const agentGroups = useMemo(
     () => (data ? groupByAgent(data.records, pricingMap) : []),
@@ -198,6 +209,8 @@ export default function AgentsPage() {
             />
           ) : (
             <div className="space-y-4">
+              <SourceTrendChart data={trend} />
+              <SourceDonutChart data={sources} />
               {agentGroups.map((group) => (
                 <AgentCard
                   key={group.source}

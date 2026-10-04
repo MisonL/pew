@@ -8,7 +8,6 @@ import { formatTokens } from "@/lib/utils";
 import { usePricingMap, formatCost } from "@/hooks/use-pricing";
 import { UsageInformation } from "@/components/dashboard/usage-information";
 import { groupByModel, toSourceTrendPoints } from "@/lib/usage-helpers";
-import { MODEL_SERIES_LIMIT, toModelEvolutionPoints } from "@/lib/model-helpers";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChartCardSkeleton } from "@/components/dashboard/chart-card-skeleton";
 import { modelColor, agentColor, withAlpha } from "@/lib/palette";
@@ -29,8 +28,7 @@ import { PageHeader } from "@nocoo/basalt/components/page-header";
 function ModelsSkeleton() {
   return (
     <div className="space-y-4 md:space-y-6">
-      {/* 2-col chart grid (SourceTrend + ModelEvolution) */}
-      <div className="grid gap-4 md:gap-6 lg:grid-cols-2">
+      <div className="grid gap-4 md:gap-6">
         {Array.from({ length: 2 }).map((_, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: static skeleton loader; array order and length are stable within a single render pass so index is a legitimate key.
           <ChartCardSkeleton key={`slot-${i}`} titleWidth="w-24" chartHeight="h-[240px] md:h-[280px]" />
@@ -114,16 +112,6 @@ export default function ModelsPage() {
     return fillDateRange(sparse, "date", (d) => ({ date: d, sources: { ...zeroSources } }), today);
   }, [data, tzOffset, today]);
 
-  const modelEvolutionData = useMemo(() => {
-    if (!data) return [];
-    const sparse = toModelEvolutionPoints(data.records, MODEL_SERIES_LIMIT, tzOffset);
-    if (sparse.length === 0) return sparse;
-    const allModels = Object.keys((sparse[0] as (typeof sparse)[number]).models);
-    const zeroModels: Record<string, number> = {};
-    for (const m of allModels) zeroModels[m] = 0;
-    return fillDateRange(sparse, "date", (d) => ({ date: d, models: { ...zeroModels } }), today);
-  }, [data, tzOffset, today]);
-
   const subtitle = periodLabel(period);
 
   return (
@@ -151,9 +139,9 @@ export default function ModelsPage() {
           ) : (
             <>
               {/* Evolution charts */}
-              <div className="grid gap-4 md:gap-6 lg:grid-cols-2">
+              <div className="grid gap-4 md:gap-6">
                 <SourceTrendChart data={sourceTrendData} />
-                <ModelEvolutionChart data={modelEvolutionData} />
+                <ModelEvolutionChart records={data.records} tzOffset={tzOffset} end={today} />
               </div>
 
               {/* Chart */}

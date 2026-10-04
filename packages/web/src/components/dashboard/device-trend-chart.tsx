@@ -11,6 +11,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { cn, formatTokens } from "@/lib/utils";
+import { Button } from "@nocoo/basalt/components/button";
 import { chartAxis, CHART_COLORS } from "@/lib/palette";
 import {
   toDeviceTrendPoints,
@@ -19,11 +20,8 @@ import {
 import { nextHiddenLegendKeys } from "@/lib/chart-legend-filter";
 import type { DeviceAggregate, DeviceTimelinePoint } from "@pew/core";
 import { DashboardResponsiveContainer } from "./dashboard-responsive-container";
-import {
-  ChartTooltip,
-  ChartTooltipRow,
-  ChartTooltipSummary,
-} from "./chart-tooltip";
+import { ChartSeriesTooltip } from "./chart-series-tooltip";
+import { ChartLegendMore } from "./chart-legend-more";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -48,13 +46,6 @@ function fmtDate(dateStr: string): string {
   });
 }
 
-function fmtAxisTokens(value: number): string {
-  if (value === 0) return "0";
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(0)}K`;
-  return String(value);
-}
-
 // ---------------------------------------------------------------------------
 // Custom tooltip
 // ---------------------------------------------------------------------------
@@ -74,26 +65,9 @@ function DeviceTrendTooltip({
 }) {
   if (!active || !payload?.length) return null;
 
-  const visible = payload.filter((e) => !hiddenDevices.has(e.dataKey));
-  if (!visible.length) return null;
-
-  const total = visible.reduce((sum, e) => sum + e.value, 0);
-
-  return (
-    <ChartTooltip title={label ? fmtDate(label) : undefined}>
-      {visible.map((entry) => (
-        <ChartTooltipRow
-          key={entry.dataKey}
-          color={entry.color}
-          label={labelMap.get(entry.dataKey) ?? entry.dataKey}
-          value={formatTokens(entry.value)}
-        />
-      ))}
-      {visible.length > 1 && (
-        <ChartTooltipSummary label="Total" value={formatTokens(total)} />
-      )}
-    </ChartTooltip>
-  );
+  return <ChartSeriesTooltip title={label ? fmtDate(label) : undefined}
+    entries={payload.filter((entry) => !hiddenDevices.has(entry.dataKey))
+      .map((entry) => ({ ...entry, name: labelMap.get(entry.dataKey) ?? entry.dataKey }))} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,37 +131,41 @@ export function DeviceTrendChart({
         className
       )}
     >
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 space-y-3">
         <p className="text-xs md:text-sm text-muted-foreground">
           Device Trend
         </p>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          {deviceKeys.map((deviceId, i) => {
+          {deviceKeys.slice(0, 5).map((deviceId, i) => {
             const isHidden = hiddenDevices.has(deviceId);
             return (
-              <button
+              <Button
                 key={deviceId}
                 type="button"
+                variant="ghost"
+                aria-pressed={!isHidden}
                 onClick={(event) =>
                   handleLegendClick(deviceId, event.metaKey || event.ctrlKey)
                 }
                 className={cn(
-                  "flex items-center gap-1.5 transition-opacity",
+                  "h-auto min-w-0 gap-1.5 p-0 text-xs font-normal transition-opacity",
                   isHidden && "opacity-40"
                 )}
               >
                 <div
-                  className="h-2 w-2 rounded-full"
+                  className="h-2 w-2 shrink-0 rounded-full"
                   style={{
                     background: CHART_COLORS[i % CHART_COLORS.length],
                   }}
                 />
-                <span className="text-xs text-muted-foreground">
+                <span className="max-w-[160px] truncate text-xs text-muted-foreground">
                   {labelMap.get(deviceId) ?? deviceId}
                 </span>
-              </button>
+              </Button>
             );
           })}
+          <ChartLegendMore items={deviceKeys.map((key, i) => ({ key, label: labelMap.get(key) ?? key, color: CHART_COLORS[i % CHART_COLORS.length] as string }))}
+            hiddenKeys={hiddenDevices} onSelect={handleLegendClick} />
         </div>
       </div>
 
@@ -211,7 +189,7 @@ export function DeviceTrendChart({
               tickLine={false}
             />
             <YAxis
-              tickFormatter={fmtAxisTokens}
+              tickFormatter={formatTokens}
               tick={{ fill: chartAxis, fontSize: 11 }}
               axisLine={false}
               tickLine={false}

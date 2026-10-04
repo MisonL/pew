@@ -28,7 +28,7 @@ async function chart(container: Locator): Promise<void> {
 
 async function namedChart(page: Page, name: string): Promise<void> {
   const title = page.locator("p").filter({ hasText: new RegExp(`^${name}$`) });
-  await chart(title.locator("xpath=ancestor::div[.//*[local-name()='svg' and contains(@class,'recharts-surface')]][1]"));
+  await chart(title.locator("xpath=ancestor::*[(self::div or self::figure) and .//*[local-name()='svg' and contains(@class,'recharts-surface')]][1]"));
 }
 
 async function stat(page: Page, title: string, value: string): Promise<void> {
@@ -76,6 +76,7 @@ const checks: Record<typeof READINESS_PAGES[number]["check"], (page: Page) => Pr
     for (const name of ["Device Trend", "Device Share", "Token Breakdown by Device", "By Agent", "By Model", "Agent Trend", "Model Mix"]) await namedChart(page, name);
   },
   agents: async (page) => {
+    for (const name of ["Tool Usage Trend", "By Agent"]) await namedChart(page, name);
     await expect(page.getByRole("heading", { name: "Claude Code", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Codex", exact: true })).toBeVisible();
     await expect(page.locator("tbody tr")).toHaveCount(2);

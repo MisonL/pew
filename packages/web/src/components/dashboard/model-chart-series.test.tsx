@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ModelDonutChart } from "./compact-donut-charts";
 import { ModelAreaChart } from "./model-area-chart";
+import { ModelEvolutionChart } from "./model-evolution-chart";
 import { toModelTimeline } from "./timeline-model-chart";
 import { ChartSeriesTooltip } from "./chart-series-tooltip";
 import { toModelEvolutionPoints } from "@/lib/model-helpers";
@@ -10,6 +11,19 @@ import { MODEL_SERIES_LIMIT, toHourlyByModel } from "@/lib/usage-helpers";
 import type { UsageRow } from "@/lib/usage-transforms";
 
 describe("model chart series", () => {
+  it("uses the overview series rules for evolution without conflating a model named Other", () => {
+    const records: UsageRow[] = ["Other", "gpt-5.6", "models/a[b]", ...Array.from({ length: 99 }, (_, i) => `model-${i}`)]
+      .map((model, i) => ({ source: "codex", model, hour_start: "2026-10-01", input_tokens: 102 - i,
+        output_tokens: 0, cached_input_tokens: 0, reasoning_output_tokens: 0, total_tokens: 102 - i }));
+    const html = renderToStaticMarkup(createElement(ModelEvolutionChart, { records, tzOffset: 0 }));
+    expect(html).toContain('aria-label="Model Evolution"');
+    expect(html).toContain("Show all 101 series");
+    expect(html).toContain('title="Other"');
+    expect(html).toContain('title="gpt-5.6"');
+    expect(html).toContain('title="models/a[b]"');
+    expect(renderToStaticMarkup(createElement(ModelEvolutionChart, { records: [], tzOffset: 0 }))).toContain("No model data yet");
+  });
+
   it.each([83, 100, 101])("uses one hundred model slots across daily, hourly and timeline views: %s models", (count) => {
     const rows: UsageRow[] = Array.from({ length: count }, (_, i) => ({ source: "codex", model: `raw/model-${i}`,
       hour_start: "2026-09-15T00:00:00Z", input_tokens: count - i, output_tokens: 0, cached_input_tokens: 0,

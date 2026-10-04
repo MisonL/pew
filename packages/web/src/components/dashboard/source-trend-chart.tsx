@@ -11,17 +11,15 @@ import {
   CartesianGrid,
 } from "recharts";
 import { cn, formatTokens } from "@/lib/utils";
+import { Button } from "@nocoo/basalt/components/button";
 import { chartAxis } from "@/lib/palette";
 import { agentColor } from "@/lib/palette";
 import { sourceLabel } from "@/hooks/use-usage-data";
 import type { SourceTrendPoint } from "@/lib/usage-helpers";
 import { nextHiddenLegendKeys } from "@/lib/chart-legend-filter";
 import { DashboardResponsiveContainer } from "./dashboard-responsive-container";
-import {
-  ChartTooltip,
-  ChartTooltipRow,
-  ChartTooltipSummary,
-} from "./chart-tooltip";
+import { ChartSeriesTooltip } from "./chart-series-tooltip";
+import { ChartLegendMore } from "./chart-legend-more";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -30,6 +28,7 @@ import {
 interface SourceTrendChartProps {
   data: SourceTrendPoint[];
   className?: string;
+  title?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -44,14 +43,6 @@ function fmtDate(dateStr: string): string {
     day: "numeric",
     timeZone: "UTC",
   });
-}
-
-/** Format Y-axis tokens: 0, 10K, 1.2M */
-function fmtAxisTokens(value: number): string {
-  if (value === 0) return "0";
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(0)}K`;
-  return String(value);
 }
 
 // ---------------------------------------------------------------------------
@@ -71,26 +62,8 @@ function SourceTrendTooltip({
 }) {
   if (!active || !payload?.length) return null;
 
-  const visible = payload.filter((e) => !hiddenSources.has(e.dataKey));
-  if (!visible.length) return null;
-
-  const total = visible.reduce((sum, e) => sum + e.value, 0);
-
-  return (
-    <ChartTooltip title={label ? fmtDate(label) : undefined}>
-      {visible.map((entry) => (
-        <ChartTooltipRow
-          key={entry.dataKey}
-          color={entry.color}
-          label={sourceLabel(entry.dataKey)}
-          value={formatTokens(entry.value)}
-        />
-      ))}
-      {visible.length > 1 && (
-        <ChartTooltipSummary label="Total" value={formatTokens(total)} />
-      )}
-    </ChartTooltip>
-  );
+  return <ChartSeriesTooltip title={label ? fmtDate(label) : undefined}
+    entries={payload.filter((e) => !hiddenSources.has(e.dataKey)).map((entry) => ({ ...entry, name: sourceLabel(entry.dataKey) }))} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +75,7 @@ function SourceTrendTooltip({
  * Each source gets a distinct colored line.
  * Click legend to isolate, cmd/ctrl+click legend to toggle visibility.
  */
-export function SourceTrendChart({ data, className }: SourceTrendChartProps) {
+export function SourceTrendChart({ data, className, title = "Tool Usage Trend" }: SourceTrendChartProps) {
   const [hiddenSources, setHiddenSources] = useState<Set<string>>(new Set());
 
   // Extract unique source keys from first data point (all points have same keys due to zero-fill)
@@ -146,45 +119,44 @@ export function SourceTrendChart({ data, className }: SourceTrendChartProps) {
   }
 
   return (
-    <div
+    <figure
+      aria-label={title}
       className={cn(
-        "rounded-card bg-secondary p-4 md:p-5",
+        "min-w-0 rounded-card bg-secondary p-4 md:p-5",
         className
       )}
     >
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <p className="text-xs md:text-sm text-muted-foreground">
-            Tool Usage Trend
-          </p>
-        </div>
-        <div className="flex items-center gap-4">
-          {sourceKeys.map((source) => {
+      <p className="mb-3 text-xs md:text-sm text-muted-foreground">{title}</p>
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+          {sourceKeys.slice(0, 5).map((source) => {
             const isHidden = hiddenSources.has(source);
             return (
-              <button
+              <Button
                 key={source}
                 type="button"
+                variant="ghost"
+                aria-pressed={!isHidden}
                 onClick={(event) =>
                   handleLegendClick(source, event.metaKey || event.ctrlKey)
                 }
                 className={cn(
-                  "flex items-center gap-1.5 transition-opacity",
+                  "h-auto min-w-0 gap-1.5 p-0 text-xs font-normal transition-opacity",
                   isHidden && "opacity-40"
                 )}
               >
                 <div
-                  className="h-2 w-2 rounded-full"
+                  className="h-2 w-2 shrink-0 rounded-full"
                   style={{ background: agentColor(source).color }}
                 />
-                <span className="text-xs text-muted-foreground">
+                <span className="max-w-[160px] truncate text-xs text-muted-foreground">
                   {sourceLabel(source)}
                 </span>
-              </button>
+              </Button>
             );
           })}
+          <ChartLegendMore items={sourceKeys.map((source) => ({ key: source, label: sourceLabel(source), color: agentColor(source).color }))}
+            hiddenKeys={hiddenSources} onSelect={handleLegendClick} />
         </div>
-      </div>
 
       <div className="h-[240px] md:h-[280px]">
         <DashboardResponsiveContainer width="100%" height="100%">
@@ -206,7 +178,7 @@ export function SourceTrendChart({ data, className }: SourceTrendChartProps) {
               tickLine={false}
             />
             <YAxis
-              tickFormatter={fmtAxisTokens}
+              tickFormatter={formatTokens}
               tick={{ fill: chartAxis, fontSize: 11 }}
               axisLine={false}
               tickLine={false}
@@ -231,6 +203,6 @@ export function SourceTrendChart({ data, className }: SourceTrendChartProps) {
           </LineChart>
         </DashboardResponsiveContainer>
       </div>
-    </div>
+    </figure>
   );
 }

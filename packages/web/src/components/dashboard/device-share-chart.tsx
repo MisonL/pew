@@ -18,7 +18,8 @@ import {
 } from "@/lib/device-helpers";
 import type { DeviceAggregate, DeviceTimelinePoint } from "@pew/core";
 import { DashboardResponsiveContainer } from "./dashboard-responsive-container";
-import { ChartTooltip, ChartTooltipRow } from "./chart-tooltip";
+import { ChartSeriesTooltip } from "./chart-series-tooltip";
+import { ChartLegendMore } from "./chart-legend-more";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -64,20 +65,8 @@ function DeviceShareTooltip({
 }) {
   if (!active || !payload?.length) return null;
 
-  const items = [...payload].reverse();
-
-  return (
-    <ChartTooltip title={label ? fmtDate(label) : undefined}>
-      {items.map((entry) => (
-        <ChartTooltipRow
-          key={entry.dataKey}
-          color={entry.color}
-          label={labelMap.get(entry.dataKey) ?? entry.dataKey}
-          value={`${entry.value.toFixed(1)}%`}
-        />
-      ))}
-    </ChartTooltip>
-  );
+  return <ChartSeriesTooltip title={label ? fmtDate(label) : undefined} percentage
+    entries={payload.map((entry) => ({ ...entry, name: labelMap.get(entry.dataKey) ?? entry.dataKey }))} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,24 +116,25 @@ export function DeviceShareChart({
         className
       )}
     >
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 space-y-3">
         <p className="text-xs md:text-sm text-muted-foreground">
           Device Share
         </p>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          {deviceKeys.map((deviceId, i) => (
-            <div key={deviceId} className="flex items-center gap-1.5">
+          {deviceKeys.slice(0, 5).map((deviceId, i) => (
+            <div key={deviceId} className="flex min-w-0 items-center gap-1.5">
               <div
-                className="h-2 w-2 rounded-full"
+                className="h-2 w-2 shrink-0 rounded-full"
                 style={{
                   background: CHART_COLORS[i % CHART_COLORS.length] as string,
                 }}
               />
-              <span className="text-xs text-muted-foreground">
+              <span className="max-w-[160px] truncate text-xs text-muted-foreground">
                 {labelMap.get(deviceId) ?? deviceId}
               </span>
             </div>
           ))}
+          <ChartLegendMore items={deviceKeys.map((key, i) => ({ key, label: labelMap.get(key) ?? key, color: CHART_COLORS[i % CHART_COLORS.length] as string }))} />
         </div>
       </div>
 

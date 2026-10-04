@@ -10,7 +10,6 @@ import { formatCost, usePricingMap } from "@/hooks/use-pricing";
 import { sourceLabel } from "@/hooks/use-usage-data";
 import { deviceLabel, shortDeviceId, toDeviceAgentBreakdown, toDeviceModelBreakdown } from "@/lib/device-helpers";
 import { toSourceTrendPoints } from "@/lib/usage-helpers";
-import { MODEL_SERIES_LIMIT, toModelEvolutionPoints } from "@/lib/model-helpers";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChartCardSkeleton } from "@/components/dashboard/chart-card-skeleton";
 import { Empty } from "@nocoo/basalt/components/empty";
@@ -22,8 +21,8 @@ import { DeviceShareChart } from "@/components/dashboard/device-share-chart";
 import { DeviceBreakdownChart } from "@/components/dashboard/device-breakdown-chart";
 import { DeviceAgentChart } from "@/components/dashboard/device-agent-chart";
 import { DeviceModelChart } from "@/components/dashboard/device-model-chart";
-import { DeviceAgentTrendChart } from "@/components/dashboard/device-agent-trend-chart";
-import { DeviceModelTrendChart } from "@/components/dashboard/device-model-trend-chart";
+import { SourceTrendChart } from "@/components/dashboard/source-trend-chart";
+import { ModelEvolutionChart } from "@/components/dashboard/model-evolution-chart";
 import { DashboardSegment } from "@/components/dashboard/dashboard-segment";
 import { FilterDropdown } from "@/components/dashboard/filter-dropdown";
 import { PeriodSelector } from "@/components/dashboard/period-selector";
@@ -49,8 +48,7 @@ function DevicesSkeleton() {
         ))}
       </div>
 
-      {/* 2-col chart grid (Trend + Share) */}
-      <div className="grid gap-4 md:gap-6 lg:grid-cols-2">
+      <div className="grid gap-4 md:gap-6">
         {Array.from({ length: 2 }).map((_, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: static skeleton loader; array order and length are stable within a single render pass so index is a legitimate key.
           <ChartCardSkeleton key={`slot-${i}`} titleWidth="w-24" chartHeight="h-[240px] md:h-[280px]" />
@@ -108,8 +106,7 @@ function DevicesSkeleton() {
             <ChartCardSkeleton key={`slot-${i}`} titleWidth="w-20" chartHeight="h-[200px]" />
           ))}
         </div>
-        {/* Trend charts skeleton row */}
-        <div className="grid gap-4 md:gap-6 lg:grid-cols-2">
+        <div className="grid gap-4 md:gap-6">
           {Array.from({ length: 2 }).map((_, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: static skeleton loader; array order and length are stable within a single render pass so index is a legitimate key.
             <ChartCardSkeleton key={`slot-${i}`} titleWidth="w-24" chartHeight="h-[240px] md:h-[280px]" />
@@ -241,7 +238,7 @@ export default function ByDevicePage() {
   );
 
   // Deep Dive: time-series data for selected device (reuse usage.get with deviceId filter)
-  const { data: deviceUsage } = useUsageData({
+  const { data: deviceUsage, error: deviceUsageError } = useUsageData({
     from,
     ...(to ? { to } : {}),
     ...(effectiveDevice ? { deviceId: effectiveDevice } : {}),
@@ -250,11 +247,6 @@ export default function ByDevicePage() {
 
   const agentTrend = useMemo(
     () => (deviceUsage ? toSourceTrendPoints(deviceUsage.records, tzOffset) : []),
-    [deviceUsage, tzOffset],
-  );
-
-  const modelTrend = useMemo(
-    () => (deviceUsage ? toModelEvolutionPoints(deviceUsage.records, MODEL_SERIES_LIMIT, tzOffset) : []),
     [deviceUsage, tzOffset],
   );
 
@@ -291,7 +283,7 @@ export default function ByDevicePage() {
 
               {/* Trend & Share */}
               <DashboardSegment title="Trend & Share">
-                <div className="grid gap-4 md:gap-6 lg:grid-cols-2">
+                <div className="grid gap-4 md:gap-6">
                   <DeviceTrendChart timeline={timeline} devices={devices} />
                   <DeviceShareChart timeline={timeline} devices={devices} />
                 </div>
@@ -466,9 +458,10 @@ export default function ByDevicePage() {
                   <DeviceAgentChart data={agentBreakdown} />
                   <DeviceModelChart data={modelBreakdown} />
                 </div>
-                <div className="grid gap-4 md:gap-6 lg:grid-cols-2">
-                  <DeviceAgentTrendChart data={agentTrend} />
-                  <DeviceModelTrendChart data={modelTrend} />
+                <ErrorBanner messagePrefix="Failed to load device trends" error={deviceUsageError} />
+                <div className="grid gap-4 md:gap-6">
+                  <SourceTrendChart data={agentTrend} title="Agent Trend" />
+                  <ModelEvolutionChart records={deviceUsage?.records ?? []} tzOffset={tzOffset} title="Model Mix" />
                 </div>
               </DashboardSegment>
             </>
