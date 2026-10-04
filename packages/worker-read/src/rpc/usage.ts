@@ -5,7 +5,8 @@
  */
 
 import type { D1Database } from "@cloudflare/workers-types";
-import { ACCOUNTED_USAGE_SQL, withAccounting } from "./accounting";
+import { ACCOUNTED_USAGE_SQL } from "./accounting";
+import { mergeUsageRows } from "./usage-aggregation";
 
 // ---------------------------------------------------------------------------
 // Response Types
@@ -173,10 +174,10 @@ async function handleGetUsage(
       SUM(total_tokens) AS total_tokens,
       SUM(evidence_tokens) AS evidence_tokens,
       SUM(approximate_tokens) AS approximate_tokens,
-      json_group_array(json(accounting_json)) AS accounting_json
+      accounting_json, COUNT(*) AS accounting_count
     FROM (${ACCOUNTED_USAGE_SQL})
     ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
-    GROUP BY ${groupBy}
+    GROUP BY ${groupBy}, accounting_json
     ORDER BY hour_start ASC, source, model
   `;
 
@@ -185,7 +186,7 @@ async function handleGetUsage(
     .bind(...prependParams, ...params)
     .all<UsageRow>();
 
-  return Response.json({ result: results.results.map((r) => withAccounting(r, req.includeReportedCosts === true)) });
+  return Response.json({ result: mergeUsageRows(results.results, ["hour_start", "source", "model"], req.includeReportedCosts === true) });
 }
 
 async function handleGetDeviceSummary(
@@ -211,19 +212,20 @@ async function handleGetDeviceSummary(
         SUM(ur.output_tokens) AS output_tokens,
         SUM(ur.cached_input_tokens) AS cached_input_tokens,
         SUM(ur.reasoning_output_tokens) AS reasoning_output_tokens,
-        json_group_array(json(ur.accounting_json)) AS accounting_json,
+        ur.accounting_json, COUNT(*) AS accounting_count,
         GROUP_CONCAT(DISTINCT ur.source) AS sources,
         GROUP_CONCAT(DISTINCT ur.model) AS models
       FROM (${ACCOUNTED_USAGE_SQL}) ur
       LEFT JOIN device_aliases da
         ON da.user_id = ur.user_id AND da.device_id = ur.device_id
-      GROUP BY ur.device_id
+      GROUP BY ur.device_id, ur.accounting_json
       ORDER BY total_tokens DESC`
     )
     .bind(req.userId, req.fromDate, req.toDate)
     .all<DeviceSummaryRow>();
 
-  return Response.json({ result: results.results.map((r) => withAccounting(r)) });
+  const rows = mergeUsageRows(results.results, ["device_id"]);
+  return Response.json({ result: rows.sort((a, b) => b.total_tokens - a.total_tokens) });
 }
 
 async function handleGetDeviceCostDetails(
@@ -247,14 +249,14 @@ async function handleGetDeviceCostDetails(
         SUM(ur.output_tokens) AS output_tokens,
         SUM(ur.cached_input_tokens) AS cached_input_tokens,
         SUM(ur.reasoning_output_tokens) AS reasoning_output_tokens,
-        json_group_array(json(ur.accounting_json)) AS accounting_json
+        ur.accounting_json, COUNT(*) AS accounting_count
       FROM (${ACCOUNTED_USAGE_SQL}) ur
-      GROUP BY ur.device_id, ur.source, ur.model`
+      GROUP BY ur.device_id, ur.source, ur.model, ur.accounting_json`
     )
     .bind(req.userId, req.fromDate, req.toDate)
     .all<CostDetailRow>();
 
-  return Response.json({ result: results.results.map((r) => withAccounting(r)) });
+  return Response.json({ result: mergeUsageRows(results.results, ["device_id", "source", "model"]) });
 }
 
 async function handleGetDeviceTimeline(
@@ -303,9 +305,9 @@ async function handleGetDeviceTimeline(
       SUM(ur.output_tokens) AS output_tokens,
       SUM(ur.cached_input_tokens) AS cached_input_tokens,
       SUM(ur.reasoning_output_tokens) AS reasoning_output_tokens,
-      json_group_array(json(ur.accounting_json)) AS accounting_json
+      ur.accounting_json, COUNT(*) AS accounting_count
     FROM (${ACCOUNTED_USAGE_SQL}) ur
-    GROUP BY ${groupBy}
+    GROUP BY ${groupBy}, ur.accounting_json
     ORDER BY date ASC
   `;
 
@@ -314,7 +316,8 @@ async function handleGetDeviceTimeline(
     .bind(...tzParams, req.userId, req.fromDate, req.toDate)
     .all<TimelineRow>();
 
-  return Response.json({ result: results.results.map((r) => withAccounting(r)) });
+  const rows = mergeUsageRows(results.results, ["date", "device_id"]);
+  return Response.json({ result: rows.sort((a, b) => Date.parse(a.date) - Date.parse(b.date)) });
 }
 
 // ---------------------------------------------------------------------------

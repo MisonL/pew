@@ -1,5 +1,23 @@
 # Retrospective
 
+## 2026-10-04 - A green page shell hid an all-time D1 failure
+
+By Device's default all-time request failed at its first Worker query with
+SQLITE_TOOBIG. One device had over 9 MB of valid accounting groups; the query
+concatenated the entire history into one D1 JSON value. Monthly fixtures and
+mocked arrays could not cross that limit. Browser tests accepted visible page
+headings even when their data calls failed; several API tests even accepted 500.
+
+Read annotations as bounded SQL partitions and combine them with checked
+arithmetic in the Worker, retaining all counters, per-request context, pending
+states and private-money boundaries. A synthetic >2 MiB history now exercises
+the real local D1/Worker path in L1 and all four usage read methods. Reject 500
+for known isolated schema, seed real page data, and require each page's key APIs
+and modules to be ready. Keep intentional failure/visual mocks separate from
+these readiness checks. Test the detector with a module returning 500 while its
+page heading still renders. The pre-push shell must collect every lane's failure
+and logs under Husky's `sh -e`, not exit before reporting the failed lane.
+
 ## 2026-10-03 - Account for resize debounce before animation completion
 
 The v3.1.1 push was rejected twice by the unchanged sidebar animation browser

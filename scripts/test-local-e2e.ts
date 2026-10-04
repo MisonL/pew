@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import type { LeaderboardSnapshot } from "../packages/core/src/leaderboard-types";
 import type { D1Database } from "../packages/worker/node_modules/@cloudflare/workers-types";
 import { localIsolatedEnv, verifyLocalMarker } from "./local-e2e-bindings";
+import { seedAccountingHistory, HISTORY_ROWS } from "./accounting-history-fixture";
 
 const local = await localIsolatedEnv();
 const query = async (sql: string, params: unknown[] = []) => {
@@ -66,6 +67,26 @@ try {
   const warm = await readSnapshot();
   assert.equal(warm.id, cold.id);
   assert.deepEqual(warm, cold);
+  const testDb = { prepare: (sql: string) => ({ bind: (...params: unknown[]) => ({ sql, params }) }),
+    batch: async (batch: unknown[]) => {
+      const response = await fetch(`${local.env.PEW_LOCAL_D1_URL}/query`, {
+        method: "POST", headers: { Authorization: `Bearer ${local.env.CF_D1_API_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ batch }),
+      });
+      const body = await response.json() as { success: boolean };
+      assert.equal(body.success, true, JSON.stringify(body));
+    } } as unknown as D1Database;
+  await seedAccountingHistory(testDb, "fixture-user");
+  for (const method of ["usage.get", "usage.getDeviceSummary", "usage.getDeviceCostDetails", "usage.getDeviceTimeline"]) {
+    const response = await fetch(`${local.env.WORKER_READ_URL}/api/rpc`, {
+      method: "POST", headers: { Authorization: `Bearer ${local.env.WORKER_READ_SECRET}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ method, userId: "fixture-user", fromDate: "2020-01-01", toDate: "2026-01-01", tzOffset: -480, granularity: "day" }),
+    });
+    const body = await response.json() as { result: Array<{ total_tokens?: number; input_tokens: number; cached_input_tokens: number; output_tokens: number; reasoning_output_tokens: number }> };
+    assert.equal(response.status, 200, `${method}: ${JSON.stringify(body)}`);
+    const tokens = body.result.reduce((n, row) => n + (row.total_tokens ?? row.input_tokens + row.cached_input_tokens + row.output_tokens + row.reasoning_output_tokens), 0);
+    assert.equal(tokens, HISTORY_ROWS * 940 + 11, method);
+  }
   await query("UPDATE _test_marker SET value='production' WHERE key='env'");
   await assert.rejects(verifyLocalMarker(local.env), /_test_marker/);
   await query("UPDATE _test_marker SET value='test' WHERE key='env'");

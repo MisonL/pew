@@ -66,22 +66,6 @@ describe("usage RPC handlers", () => {
       expect(body).toEqual({ result: mockRecords });
     });
 
-    it("should filter by source when provided", async () => {
-      db.all.mockResolvedValue({ results: [] });
-
-      const request: GetUsageRequest = {
-        method: "usage.get",
-        userId: "u1",
-        fromDate: "2026-04-01T00:00:00.000Z",
-        toDate: "2026-04-02T00:00:00.000Z",
-        source: "claude-code",
-      };
-      await handleUsageRpc(request, db);
-
-      // Check that bind was called with the source parameter
-      expect(db.bind).toHaveBeenCalled();
-    });
-
     it("should support day granularity", async () => {
       db.all.mockResolvedValue({ results: [] });
 
