@@ -91,7 +91,7 @@ export function SourceDonutChart({ data, className }: SourceDonutChartProps) {
       <p className="mb-3 text-xs md:text-sm text-muted-foreground">By Agent</p>
 
       <div className="flex flex-1 flex-col items-center">
-        <div className="flex-1 w-full max-w-[220px] min-h-[140px]">
+        <div className="h-[160px] w-full max-w-[220px] shrink-0">
           <DashboardResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie

@@ -17,7 +17,7 @@ async function stacked(first: Locator, second: Locator) {
 }
 
 for (const width of [1440, 390]) {
-  test(`trend panels stack and agent visualizations load real data at ${width}px`, async ({ page }) => {
+  test(`trend panels stack and agent visualizations load real data at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
     for (const [route, first, second] of [["/models", "Tool Usage Trend", "Model Evolution"],
       ["/devices", "Agent Trend", "Model Mix"], ["/agents", "Tool Usage Trend", "By Agent"]] as const) {
@@ -28,6 +28,8 @@ for (const width of [1440, 390]) {
       await expect(top.locator(".recharts-line-curve").first()).toBeAttached();
       await expect(bottom.locator(".recharts-area-area, .recharts-pie-sector").first()).toBeAttached();
       await stacked(top, bottom);
+      await top.screenshot({ path: testInfo.outputPath(`${route.slice(1)}-trend.png`) });
+      await bottom.screenshot({ path: testInfo.outputPath(`${route.slice(1)}-share.png`) });
       if (route === "/agents") {
         const group = page.getByRole("heading", { name: "Claude Code", exact: true });
         expect((await group.boundingBox())!.y).toBeGreaterThan((await bottom.boundingBox())!.y);
@@ -41,11 +43,21 @@ for (const width of [1440, 390]) {
 
 test("model evolution keeps one hundred models while point details and legends stay bounded", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.clock.setFixedTime(new Date("2026-10-02T12:00:00Z"));
+  const sources = ["claude-code", "codex", "gemini-cli", "grok", "hermes", "openclaw", "pi"];
   const models = ["Other", "raven-jp1/gpt-6-astra", "gpt-5.6", "models/a[b]", ...Array.from({ length: 98 }, (_, i) => `model-${i}`)];
-  const records = ["2026-10-01", "2026-10-02"].flatMap((date) => models.map((model, i) => ({ source: "codex", model,
+  const records = ["2026-10-01", "2026-10-02"].flatMap((date) => models.map((model, i) => ({ source: sources[i % sources.length], model,
     hour_start: date, input_tokens: 102 - i, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 102 - i })));
   await mockDashboardApis(page, { usage: { records, summary: { total_tokens: 10506 } }, pricing: DASHBOARD_PRICING_FIXTURE });
   await page.goto("/models");
+  const trend = card(page, "Tool Usage Trend");
+  await expect(trend.locator(".recharts-line-curve")).toHaveCount(7);
+  await trend.getByRole("button", { name: "Show all 7 series" }).click();
+  await page.getByRole("dialog", { name: "All chart series" }).getByRole("button", { name: "Pi", exact: true }).click();
+  await expect(trend.locator(".recharts-line-curve")).toHaveCount(1);
+  await page.getByRole("dialog", { name: "All chart series" }).getByRole("button", { name: "Pi", exact: true }).click();
+  await expect(trend.locator(".recharts-line-curve")).toHaveCount(7);
+  await page.keyboard.press("Escape");
   const evolution = card(page, "Model Evolution");
   await expect(evolution.locator(".recharts-area")).toHaveCount(101);
   await evolution.getByRole("button", { name: "Show all 101 series" }).click();

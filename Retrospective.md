@@ -1,5 +1,9 @@
 # Retrospective
 
+## 2026-10-04: Standalone agent share chart lacked a definite height
+
+Reusing the overview donut as a standalone By Agent panel exposed its implicit dependency on a stretched parent. Its percentage-height responsive container rendered labels but no SVG when the flex parent had only a minimum height. The new real-data browser regression rejected the missing series at desktop and mobile widths. Give the shared donut an explicit chart height, and require populated marks rather than a title or legend before declaring a reused visualization ready.
+
 ## 2026-10-04 - A green page shell hid an all-time D1 failure
 
 By Device's default all-time request failed at its first Worker query with
