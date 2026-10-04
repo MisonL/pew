@@ -1,4 +1,70 @@
-import { test as base, expect, type Page } from "@playwright/test";
+import { test as base, expect, type Page, type Request, type Response } from "@playwright/test";
+
+export function watchPageReadiness(page: Page, expectedErrors: Partial<Record<string, 403 | 404>> = {}) {
+  const errors: string[] = [];
+  const completed = new Set<string>();
+  const pending = new Set<Request>();
+  const bodies = new Set<Promise<void>>();
+  const isApi = (request: Request) => new URL(request.url()).pathname.startsWith("/api/");
+  const onRequest = (request: Request) => { if (isApi(request)) pending.add(request); };
+  const onFinished = (request: Request) => { pending.delete(request); };
+  const onFailed = (request: Request) => {
+    pending.delete(request);
+    if (isApi(request) && request.failure()?.errorText !== "net::ERR_ABORTED") errors.push(`${request.failure()?.errorText} ${request.url()}`);
+  };
+  const onPageError = (error: Error) => { errors.push(error.message); };
+  const onResponse = (response: Response) => {
+    const path = new URL(response.url()).pathname;
+    if (!isApi(response.request())) {
+      if (response.status() >= 500) errors.push(`${response.status()} ${path}`);
+      return;
+    }
+    const expected = expectedErrors[path] ?? 200;
+    if (response.status() !== expected) errors.push(`${response.status()} ${path} (expected ${expected})`);
+    const body = (async () => {
+      try {
+        const json = await response.json();
+        if (expected === 200 && json?.error) errors.push(`${path}: ${JSON.stringify(json.error)}`);
+        if (response.status() === expected) completed.add(response.url());
+      } catch (error) {
+        if (response.request().failure()?.errorText !== "net::ERR_ABORTED") errors.push(`${path}: ${String(error)}`);
+      }
+    })();
+    bodies.add(body);
+    void body.finally(() => bodies.delete(body));
+  };
+  page.on("request", onRequest);
+  page.on("requestfinished", onFinished);
+  page.on("requestfailed", onFailed);
+  page.on("response", onResponse);
+  page.on("pageerror", onPageError);
+  return {
+    async ready(required: readonly string[]) {
+      if (errors.length) throw new Error(errors.join("\n"));
+      await expect.poll(() => ({
+        errors,
+        pending: pending.size + bodies.size,
+        missing: required.filter((api) => {
+          const target = new URL(api, "http://readiness.invalid");
+          const count = Number(target.hash.slice(1) || 1);
+          return [...completed].filter((url) => {
+            const actual = new URL(url);
+            return actual.pathname === target.pathname && [...target.searchParams].every(([key, value]) =>
+              value ? actual.searchParams.get(key) === value : actual.searchParams.has(key));
+          }).length < count;
+        }),
+      }), { message: "All required API requests must complete without page/module errors" })
+        .toEqual({ errors: [], pending: 0, missing: [] });
+    },
+    dispose() {
+      page.off("request", onRequest);
+      page.off("requestfinished", onFinished);
+      page.off("requestfailed", onFailed);
+      page.off("response", onResponse);
+      page.off("pageerror", onPageError);
+    },
+  };
+}
 
 export const DASHBOARD_USAGE_FIXTURE = {
   records: [
@@ -65,71 +131,28 @@ export type DashboardMockOptions = {
   pricing: unknown;
 };
 
-const LEADERBOARD_FIXTURE = {
-  period: "week",
-  scope: "global",
-  entries: [
-    {
-      rank: 1,
-      user: { id: "u1", name: "Alice Test", image: null, slug: "alice" },
-      teams: [],
-      total_tokens: 2_500_000,
-      input_tokens: 1_500_000,
-      output_tokens: 800_000,
-      cached_input_tokens: 500_000,
-      session_count: 42,
-      total_duration_seconds: 36_000,
-    },
-    {
-      rank: 2,
-      user: { id: "u2", name: "Bob Test", image: null, slug: "bob" },
-      teams: [],
-      total_tokens: 1_800_000,
-      input_tokens: 1_100_000,
-      output_tokens: 550_000,
-      cached_input_tokens: 350_000,
-      session_count: 31,
-      total_duration_seconds: 28_000,
-    },
-    {
-      rank: 3,
-      user: { id: "u3", name: "Charlie Test", image: null, slug: "charlie" },
-      teams: [],
-      total_tokens: 1_200_000,
-      input_tokens: 700_000,
-      output_tokens: 400_000,
-      cached_input_tokens: 200_000,
-      session_count: 25,
-      total_duration_seconds: 20_000,
-    },
-  ],
-  hasMore: false,
-} as const;
-
-export async function mockLeaderboardApi(page: Page): Promise<void> {
-  await page.route("**/api/leaderboard**", (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(LEADERBOARD_FIXTURE),
-    }),
-  );
-}
-
 export async function mockDashboardApis(
   page: Page,
   opts: DashboardMockOptions,
 ): Promise<void> {
   // Overview tests only consume synthetic data, including ancillary shell APIs.
-  await page.route("**/api/**", (route) => {
+  await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     const user = { id: "overview-test", name: "Overview Test", email: "overview@local.invalid", image: null };
-    const json = path === "/api/auth/session" ? { user, expires: "2099-01-01T00:00:00Z" }
-      : path === "/api/admin/check" ? { isAdmin: false }
-        : path === "/api/settings" ? { ...user, slug: "overview-test", is_public: 1 } : {};
-    return route.fulfill({ json });
+    const shell: Record<string, unknown> = {
+      "/api/auth/session": { user, expires: "2099-01-01T00:00:00Z" },
+      "/api/admin/check": { isAdmin: false },
+      "/api/settings": { ...user, slug: "overview-test", is_public: 1, cli_upgrade_notice_seen_at: "2026-01-01T00:00:00Z" },
+      "/api/cli-upgrade-notice": { show: false },
+      "/api/organizations/mine": { organizations: [] },
+      "/api/teams": { teams: [] },
+      "/api/pricing/models": { entries: [], meta: null, servedFrom: "baseline" },
+    };
+    if (Object.hasOwn(shell, path)) return route.fulfill({ json: shell[path] });
+    await route.abort();
+    throw new Error(`Unexpected dashboard mock request: ${route.request().method()} ${path}`);
   });
-  await page.route("**/api/usage*", (route) => {
+  await page.route("**/api/usage?*", (route) => {
     const usage = opts.usage as { records: Array<Record<string, unknown>>; summary: Record<string, number> };
     const params = new URL(route.request().url()).searchParams;
     const from = params.has("from") ? new Date(params.get("from")!).getTime() : -Infinity;
@@ -148,7 +171,7 @@ export async function mockDashboardApis(
     const params = new URL(route.request().url()).searchParams;
     const from = new Date(params.get("from")!).getTime();
     const to = new Date(params.get("to")!).getTime();
-    const details = records.filter((row) => {
+    const details: Array<Record<string, unknown> & { device_id: string }> = records.filter((row) => {
       const time = new Date(row.hour_start as string).getTime();
       return time >= from && time < to;
     }).map((row, i) => ({ ...row, device_id: i < 2 ? "work" : "home" }));

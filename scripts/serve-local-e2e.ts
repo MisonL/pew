@@ -9,7 +9,7 @@ process.on("message", (message) => {
 process.on("disconnect", () => { abort.abort(); release(); });
 let local: Awaited<ReturnType<typeof localIsolatedEnv>> | undefined;
 try {
-  local = await localIsolatedEnv(undefined, abort.signal);
+  local = await localIsolatedEnv(undefined, abort.signal, process.env.PEW_SEED_READINESS === "true");
   process.send?.({ env: local.env, state: local.state });
   await closing;
 } catch (error) {

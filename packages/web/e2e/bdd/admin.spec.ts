@@ -1,38 +1,6 @@
-// Covers old: admin.spec.ts, admin-seasons-crud.spec.ts
 import { test, expect } from "./fixtures";
 
-const ADMIN_HEADING_PAGES: ReadonlyArray<{ path: string; keyword: string }> = [
-  { path: "/admin/invites", keyword: "Invite" },
-  { path: "/admin/model-prices", keyword: "Model Prices" },
-  { path: "/admin/seasons", keyword: "Season" },
-  { path: "/admin/storage", keyword: "Storage" },
-];
-
 test.describe("Feature: Admin", () => {
-  test.describe("page loads", () => {
-    for (const { path, keyword } of ADMIN_HEADING_PAGES) {
-      test(`Given auth is bypassed, When I visit ${path}, Then the heading contains "${keyword}"`, async ({ page }) => {
-        // Given: E2E_SKIP_AUTH=true is set by the runner
-        // When: navigate to the admin sub-page
-        await page.goto(path);
-        // Then: top-level heading contains the expected keyword
-        await expect(page.getByRole("heading", { level: 1 })).toContainText(keyword);
-      });
-    }
-
-    test("Given auth is bypassed, When I visit /admin/compare and /admin/compare/result, Then both render the Compare heading", async ({ page }) => {
-      // Given: E2E_SKIP_AUTH=true is set by the runner
-      // When: visit the compare landing page
-      await page.goto("/admin/compare");
-      // Then: Compare heading is visible (covers old: admin.spec.ts "compare page loads")
-      await expect(page.getByRole("heading", { level: 1 })).toContainText("Compare");
-      // When: visit the compare result page
-      await page.goto("/admin/compare/result");
-      // Then: Compare heading is visible (covers old: admin.spec.ts "compare result page loads")
-      await expect(page.getByRole("heading", { level: 1 })).toContainText("Compare");
-    });
-  });
-
   test.describe("Seasons CRUD", () => {
     // Serial mode preserved from admin-seasons-crud.spec.ts — the edit scenario
     // operates on the season created by the previous scenario in shared state.

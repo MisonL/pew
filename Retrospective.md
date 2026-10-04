@@ -25,6 +25,11 @@ for binding startup and 120 seconds for the two-database lifecycle, with outer
 test deadlines above those bounds. These are reliability budgets, not evidence
 that the full L1 gate meets its separate 30-second performance target.
 
+Recovery shell commands must also fail closed: do not use zsh's special `path`
+variable as a loop variable, and stop immediately when partial-index staging
+fails. An incomplete commit attempt was stopped before it could commit; inspect
+the staged diff before starting the full gate again.
+
 ## 2026-10-03 - Account for resize debounce before animation completion
 
 The v3.1.1 push was rejected twice by the unchanged sidebar animation browser

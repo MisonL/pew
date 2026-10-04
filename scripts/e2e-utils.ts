@@ -13,12 +13,12 @@ async function deadline<Result>(promise: Promise<Result>, milliseconds: number, 
   } finally { clearTimeout(timer); }
 }
 
-export async function startLocalBindings(signal: AbortSignal, timeoutMs = 60_000) {
+export async function startLocalBindings(signal: AbortSignal, timeoutMs = 60_000, readiness = false) {
   signal.throwIfAborted();
   let receive: (value: { env: Record<string, string>; state: string }) => void;
   const ready = new Promise<{ env: Record<string, string>; state: string }>((done) => { receive = done; });
   const child = Bun.spawn([process.execPath, "--no-env-file", "scripts/serve-local-e2e.ts"], {
-    env: { PATH: process.env.PATH ?? "", TMPDIR: tmpdir(), WRANGLER_SEND_METRICS: "false", CI: process.env.CI ?? "" },
+    env: { PATH: process.env.PATH ?? "", TMPDIR: tmpdir(), WRANGLER_SEND_METRICS: "false", CI: process.env.CI ?? "", PEW_SEED_READINESS: readiness ? "true" : "false" },
     detached: true,
     ipc: (message) => receive(message as { env: Record<string, string>; state: string }),
     stdout: "inherit", stderr: "inherit",
@@ -84,7 +84,7 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
   abort.signal.addEventListener("abort", killChildren);
   const dist = tier === "api" ? ".next-e2e" : ".next-e2e-ui";
   try {
-    local = await startLocalBindings(abort.signal);
+    local = await startLocalBindings(abort.signal, undefined, tier === "ui");
     abort.signal.throwIfAborted();
     const env = {
       ...local.env,

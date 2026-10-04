@@ -36,7 +36,7 @@ export async function verifyLocalMarker(env: Record<string, string>): Promise<vo
   }
 }
 
-export async function localIsolatedEnv(migrations = resolve("scripts/migrations"), signal?: AbortSignal) {
+export async function localIsolatedEnv(migrations = resolve("scripts/migrations"), signal?: AbortSignal, readiness = false) {
   const state = mkdtempSync(join(tmpdir(), "pew-e2e-"));
   process.env.HOME = state;
   process.env.XDG_CONFIG_HOME = state;
@@ -118,6 +118,10 @@ export async function localIsolatedEnv(migrations = resolve("scripts/migrations"
     await bindings.DB.prepare("INSERT INTO users(id,email,name) VALUES (?,?,?)").bind(
       `e2e-test-user-${runId}`, `e2e-${runId}@test.invalid`, "E2E Test User",
     ).run();
+    if (readiness) {
+      const { seedReadiness } = await import("./readiness-seed");
+      Object.assign(env, await seedReadiness(bindings.DB, `e2e-test-user-${runId}`));
+    }
     const ingestWorker = await import(resolve("packages/worker/src/index.ts")) as LocalWorker;
     const readWorker = await import(resolve("packages/worker-read/src/index.ts")) as LocalWorker;
     server = Bun.serve({

@@ -55,6 +55,7 @@ test.describe("Feature: Compact usage information", () => {
     await page.clock.setFixedTime(new Date("2026-09-15T12:00:00Z"));
     await mockDashboardApis(page, { usage: DASHBOARD_USAGE_FIXTURE, pricing: DASHBOARD_PRICING_FIXTURE });
     await page.goto("/dashboard");
+    await expect(page.getByRole("region", { name: "Activity", exact: true })).toContainText("1.8M");
     const trigger = page.getByRole("button", { name: "Overview information", exact: true });
     await trigger.click();
     const tooltip = page.getByRole("tooltip");
