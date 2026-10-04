@@ -18,6 +18,13 @@ these readiness checks. Test the detector with a module returning 500 while its
 page heading still renders. The pre-push shell must collect every lane's failure
 and logs under Husky's `sh -e`, not exit before reporting the failed lane.
 
+During recovery, concurrent native migrations took 34 seconds and exceeded
+the 30-second startup deadline, masking the server-failure cleanup assertions.
+Keep the native migration path and explicit timeout/abort tests; allow 60 seconds
+for binding startup and 120 seconds for the two-database lifecycle, with outer
+test deadlines above those bounds. These are reliability budgets, not evidence
+that the full L1 gate meets its separate 30-second performance target.
+
 ## 2026-10-03 - Account for resize debounce before animation completion
 
 The v3.1.1 push was rejected twice by the unchanged sidebar animation browser

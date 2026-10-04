@@ -86,7 +86,7 @@ describe("E2E process isolation", () => {
     try {
       const started = Date.now();
       while (!output.includes("Local:")) {
-        if (child.exitCode !== null || Date.now() - started > 30_000) throw new Error(`Server did not start: ${output}`);
+        if (child.exitCode !== null || Date.now() - started > 70_000) throw new Error(`Server did not start: ${output}`);
         await new Promise((done) => setTimeout(done, 50));
       }
       child.kill("SIGTERM");
@@ -97,7 +97,7 @@ describe("E2E process isolation", () => {
       if (child.exitCode === null && child.signalCode === null) { child.kill("SIGTERM"); await exited; }
       rmSync(root, { recursive: true, maxRetries: 3, retryDelay: 100 });
     }
-  }, 45_000);
+  }, 90_000);
 
   it("cleans D1 when the Next process fails to start", async () => {
     const root = mkdtempSync(join(tmpdir(), "pew-start-failure-"));
@@ -118,5 +118,5 @@ describe("E2E process isolation", () => {
       if (child.exitCode === null && child.signalCode === null) { child.kill("SIGTERM"); await exited; }
       rmSync(root, { recursive: true, maxRetries: 3, retryDelay: 100 });
     }
-  }, 45_000);
+  }, 90_000);
 });

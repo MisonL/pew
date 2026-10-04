@@ -13,7 +13,7 @@ async function deadline<Result>(promise: Promise<Result>, milliseconds: number, 
   } finally { clearTimeout(timer); }
 }
 
-export async function startLocalBindings(signal: AbortSignal, timeoutMs = 30_000) {
+export async function startLocalBindings(signal: AbortSignal, timeoutMs = 60_000) {
   signal.throwIfAborted();
   let receive: (value: { env: Record<string, string>; state: string }) => void;
   const ready = new Promise<{ env: Record<string, string>; state: string }>((done) => { receive = done; });
