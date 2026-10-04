@@ -7,41 +7,30 @@
 bun --no-env-file -e 'import { assertNoLocalEnv } from "./scripts/e2e-utils.ts"; assertNoLocalEnv();' || exit 1
 
 TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
 E2E_OUT="$TMP_DIR/e2e.log"
 E2E_UI_OUT="$TMP_DIR/e2e_ui.log"
 G2_OUT="$TMP_DIR/g2.log"
-E2E_EXIT_FILE="$TMP_DIR/e2e_exit"
-E2E_UI_EXIT_FILE="$TMP_DIR/e2e_ui_exit"
-G2_EXIT_FILE="$TMP_DIR/g2_exit"
 
 # L2 Integration/API: real HTTP E2E against dev server on :17020
-(
-  bun run test:e2e > "$E2E_OUT" 2>&1
-  echo $? > "$E2E_EXIT_FILE"
-) &
+bun run test:e2e > "$E2E_OUT" 2>&1 &
 E2E_PID=$!
 
 # L3 Browser E2E: Playwright BDD against dev server on :27020
-(
-  bun run test:e2e:ui > "$E2E_UI_OUT" 2>&1
-  echo $? > "$E2E_UI_EXIT_FILE"
-) &
+bun run test:e2e:ui > "$E2E_UI_OUT" 2>&1 &
 E2E_UI_PID=$!
 
 # G2 Security: osv-scanner (dependency CVEs) + gitleaks (secret leak in commits)
-(
-  bun run test:security > "$G2_OUT" 2>&1
-  echo $? > "$G2_EXIT_FILE"
-) &
+bun run test:security > "$G2_OUT" 2>&1 &
 G2_PID=$!
 
-wait $E2E_PID
-wait $E2E_UI_PID
-wait $G2_PID
-
-E2E_EXIT=$(cat "$E2E_EXIT_FILE")
-E2E_UI_EXIT=$(cat "$E2E_UI_EXIT_FILE")
-G2_EXIT=$(cat "$G2_EXIT_FILE")
+# Husky invokes sh -e; capture each failed wait instead of exiting before logs.
+E2E_EXIT=0
+E2E_UI_EXIT=0
+G2_EXIT=0
+wait "$E2E_PID" || E2E_EXIT=$?
+wait "$E2E_UI_PID" || E2E_UI_EXIT=$?
+wait "$G2_PID" || G2_EXIT=$?
 
 echo "─── L2 Integration/API E2E ───"
 cat "$E2E_OUT"
@@ -49,21 +38,23 @@ echo "─── L3 Browser E2E (Playwright) ───"
 cat "$E2E_UI_OUT"
 echo "─── G2 Security ───"
 cat "$G2_OUT"
-rm -rf "$TMP_DIR"
 
+FAILED=0
 if [ "$E2E_EXIT" -ne 0 ]; then
   echo "❌ pre-push FAILED: API E2E tests did not pass."
-  exit 1
+  FAILED=1
 fi
 
 if [ "$E2E_UI_EXIT" -ne 0 ]; then
   echo "❌ pre-push FAILED: Browser E2E tests did not pass."
-  exit 1
+  FAILED=1
 fi
 
 if [ "$G2_EXIT" -ne 0 ]; then
   echo "❌ pre-push FAILED: G2 security gate."
-  exit 1
+  FAILED=1
 fi
+
+[ "$FAILED" -eq 0 ] || exit 1
 
 echo "✅ pre-push passed: L2 Integration/API + L3 Browser E2E + G2 Security"

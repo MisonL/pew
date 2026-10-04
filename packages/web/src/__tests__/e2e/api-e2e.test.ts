@@ -1,27 +1,15 @@
 /**
- * L3 API E2E tests — hit real Next.js dev server on port 17020 with real D1.
+ * L2 API E2E tests against Next.js and per-run local D1/Workers.
  *
  * The server runs with E2E_SKIP_AUTH=true, so all requests are authenticated
  * as E2E_TEST_USER_ID without needing OAuth.
  *
- * To prevent concurrent CI runs from colliding on pew-db-test, the E2E runner
- * (scripts/run-e2e.ts) generates a unique E2E_TEST_USER_ID per run and passes
- * it via environment variables to both the Next.js server and this test file.
- *
- * Prerequisites:
- *   - Next.js dev server running on E2E_PORT (default 17020) with E2E_SKIP_AUTH=true
- *   - Cloudflare D1 credentials in .env.local
- *   - Use `bun run test:e2e` which handles server lifecycle automatically
- *
- * Test strategy:
- *   1. Before all: seed the E2E test user in D1
- *   2. Ingest tests: POST records and verify response
- *   3. Usage tests: GET and verify records + summary match ingested data
- *   4. CLI auth tests: GET /api/auth/cli and verify redirect with api_key
- *   5. After all: clean up test user + usage records from D1
+ * Run `bun run test:e2e` from an environment-file-free task clone. The runner
+ * owns the schema, synthetic credentials, processes and temporary storage.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import type { ByDeviceResponse } from "@pew/core";
 import { D1Client } from "../../lib/d1";
 
 // ---------------------------------------------------------------------------
@@ -31,8 +19,7 @@ import { D1Client } from "../../lib/d1";
 const E2E_PORT = process.env.E2E_PORT || "17020";
 const BASE_URL = `http://localhost:${E2E_PORT}`;
 
-// Per-run unique user ID/email — set by scripts/run-e2e.ts to isolate
-// concurrent CI runs sharing the same pew-db-test D1 database.
+// Per-run identity supplied by the isolated runner.
 const TEST_USER_ID = process.env.E2E_TEST_USER_ID || "e2e-test-user-id";
 const TEST_USER_EMAIL = process.env.E2E_TEST_USER_EMAIL || "e2e@test.local";
 // Stable slug derived from user id so concurrent CI runs don't collide
@@ -71,12 +58,9 @@ async function seedTestUser(d1: D1Client): Promise<void> {
 }
 
 async function cleanupTestData(d1: D1Client): Promise<void> {
-  // Delete in reverse FK order — child tables first, then users
-  // Tables without ON DELETE CASCADE must be cleaned manually
-  // Use try/catch per table to handle missing tables in test DB (schema drift)
+  // Delete non-cascading fixture children before their user.
   const tables = [
     { sql: "DELETE FROM season_team_members WHERE user_id = ?", params: [TEST_USER_ID] },
-    { sql: "DELETE FROM season_leaderboard WHERE user_id = ?", params: [TEST_USER_ID] },
     { sql: "DELETE FROM device_aliases WHERE user_id = ?", params: [TEST_USER_ID] },
     { sql: "DELETE FROM session_records WHERE user_id = ?", params: [TEST_USER_ID] },
     { sql: "DELETE FROM usage_records WHERE user_id = ?", params: [TEST_USER_ID] },
@@ -85,14 +69,7 @@ async function cleanupTestData(d1: D1Client): Promise<void> {
   ];
 
   for (const { sql, params } of tables) {
-    try {
-      await d1.execute(sql, params);
-    } catch (err) {
-      // Ignore "no such table" errors — test DB may not have all tables
-      if (!(err instanceof Error && err.message.includes("no such table"))) {
-        throw err;
-      }
-    }
+    await d1.execute(sql, params);
   }
 }
 
@@ -314,14 +291,7 @@ describe("POST /api/ingest", () => {
     );
     expect(userRes.status).toBe(200);
     const userBody = await userRes.json();
-    const reasoning =
-      userBody.summary?.reasoning_output_tokens ??
-      userBody.reasoning_output_tokens ??
-      null;
-    if (reasoning !== null) {
-      expect(reasoning).toBeGreaterThanOrEqual(111);
-    }
-
+    expect(userBody.summary.reasoning_output_tokens).toBe(111);
   });
 
   it("accepts and reads back zcode source records — every whitelist entry point", async () => {
@@ -363,14 +333,7 @@ describe("POST /api/ingest", () => {
     );
     expect(userRes.status).toBe(200);
     const userBody = await userRes.json();
-    const cached =
-      userBody.summary?.cached_input_tokens ??
-      userBody.cached_input_tokens ??
-      null;
-    if (cached !== null) {
-      expect(cached).toBeGreaterThanOrEqual(52992);
-    }
-
+    expect(userBody.summary.cached_input_tokens).toBe(52992);
   });
 });
 
@@ -436,18 +399,13 @@ describe("GET /api/usage", () => {
     }
   });
 
-  it("should reject invalid source filter", async () => {
-    const res = await fetch(`${BASE_URL}/api/usage?source=invalid`);
+  it.each([
+    ["source=invalid", "Invalid source parameter"],
+    ["granularity=weekly", "Invalid granularity parameter"],
+  ])("rejects invalid usage parameter %s", async (query, error) => {
+    const res = await fetch(`${BASE_URL}/api/usage?${query}`);
     expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toContain("Invalid source");
-  });
-
-  it("should reject invalid granularity", async () => {
-    const res = await fetch(`${BASE_URL}/api/usage?granularity=weekly`);
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toContain("Invalid granularity");
+    expect(await res.json()).toEqual({ error });
   });
 
   it("should return empty when date range has no data", async () => {
@@ -750,12 +708,41 @@ describe("GET /api/seasons", () => {
 // ===========================================================================
 
 describe("GET /api/usage/by-device", () => {
-  it("should return usage grouped by device", async () => {
-    const res = await fetch(`${BASE_URL}/api/usage/by-device`);
+  it("returns all three ingested devices with consistent named counts across every breakdown", async () => {
+    const res = await fetch(`${BASE_URL}/api/usage/by-device?from=2020-01-01`);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body: ByDeviceResponse = await res.json();
+    const expected = [
+      { device_id: "default", date: "2026-03-01", input_tokens: 2300, cached_input_tokens: 300,
+        output_tokens: 1100, reasoning_output_tokens: 150, total_tokens: 3850 },
+      { device_id: "e2e-grok-device", date: "2026-03-15", input_tokens: 25315, cached_input_tokens: 63872,
+        output_tokens: 1571, reasoning_output_tokens: 111, total_tokens: 90869 },
+      { device_id: "e2e-zcode-device", date: "2026-07-10", input_tokens: 11242, cached_input_tokens: 52992,
+        output_tokens: 1329, reasoning_output_tokens: 0, total_tokens: 65563 },
+    ];
+    expect(body.devices).toHaveLength(3);
+    expect(body.timeline).toHaveLength(3);
+    expect(body.deviceDetails).toHaveLength(5);
+    for (const { date, ...device } of expected) {
+      expect(body.devices.find((row) => row.device_id === device.device_id)).toMatchObject(device);
+      expect(body.timeline.find((row) => row.device_id === device.device_id)).toMatchObject({ ...device, date });
+      expect(body.deviceDetails.filter((row) => row.device_id === device.device_id))
+        .toHaveLength(device.device_id === "default" ? 3 : 1);
+    }
 
-    expect(Array.isArray(body.devices)).toBe(true);
+    const usage = await fetch(`${BASE_URL}/api/usage?from=2020-01-01`);
+    expect(usage.status).toBe(200);
+    const { summary } = await usage.json();
+    for (const field of ["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"] as const) {
+      expect(summary[field]).toBe(expected.reduce((sum, row) => sum + row[field], 0));
+      for (const rows of [body.devices, body.timeline, body.deviceDetails]) {
+        expect(rows.reduce((sum, row) => sum + row[field], 0), field).toBe(summary[field]);
+        for (const device of expected) {
+          expect(rows.filter((row) => row.device_id === device.device_id)
+            .reduce((sum, row) => sum + row[field], 0), `${device.device_id}.${field}`).toBe(device[field]);
+        }
+      }
+    }
   });
 });
 
@@ -777,26 +764,11 @@ describe("GET /api/teams", () => {
 // GET /api/organizations
 // ===========================================================================
 
-describe("GET /api/organizations", () => {
-  it("should return organizations or handle missing table", async () => {
-    const res = await fetch(`${BASE_URL}/api/organizations`);
-    // Returns 200 with data or empty array; 500 only on unexpected errors
-    expect([200, 500]).toContain(res.status);
-    if (res.status === 200) {
-      const body = await res.json();
-      expect(Array.isArray(body.organizations)).toBe(true);
-    }
-  });
-});
-
-describe("GET /api/organizations/mine", () => {
-  it("should return user's organizations or handle missing table", async () => {
-    const res = await fetch(`${BASE_URL}/api/organizations/mine`);
-    expect([200, 500]).toContain(res.status);
-    if (res.status === 200) {
-      const body = await res.json();
-      expect(Array.isArray(body.organizations)).toBe(true);
-    }
+describe("organization lists", () => {
+  it.each(["/api/organizations", "/api/organizations/mine"])("returns an empty list from %s", async (path) => {
+    const res = await fetch(`${BASE_URL}${path}`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ organizations: [] });
   });
 });
 
@@ -901,23 +873,25 @@ describe("POST /api/auth/verify-invite", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: "INVALID-CODE" }),
     });
-    // Could be 400 or 404 depending on implementation
-    expect([400, 404]).toContain(res.status);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ valid: false, error: "Invalid invite code format" });
   });
 });
 
 describe("POST /api/auth/code", () => {
-  it("should generate auth code or handle missing table", async () => {
+  it("should generate and persist an expiring auth code", async () => {
+    const started = Date.now();
     const res = await fetch(`${BASE_URL}/api/auth/code`, {
       method: "POST",
     });
-    // May return 200 with code or 500 if auth_codes table doesn't exist
-    expect([200, 500]).toContain(res.status);
-    if (res.status === 200) {
-      const body = await res.json();
-      expect(body.code).toBeTruthy();
-      expect(body.code).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
-    }
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.code).toMatch(/^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/);
+    expect(new Date(body.expires_at).getTime()).toBeGreaterThan(started);
+    const row = await d1.firstOrNull(
+      "SELECT user_id, expires_at, used_at, failed_attempts FROM auth_codes WHERE code = ?", [body.code],
+    );
+    expect(row).toEqual({ user_id: TEST_USER_ID, expires_at: body.expires_at, used_at: null, failed_attempts: 0 });
   });
 });
 
@@ -928,8 +902,8 @@ describe("POST /api/auth/code/verify", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: "XXXX-YYYY" }),
     });
-    // 401 for invalid code, 500 if table doesn't exist
-    expect([401, 500]).toContain(res.status);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Invalid or expired code" });
   });
 });
 
@@ -938,10 +912,10 @@ describe("POST /api/auth/code/verify", () => {
 // ===========================================================================
 
 describe("GET /api/teams/[teamId]", () => {
-  it("should return 403/404/500 for non-existent team", async () => {
+  it("should return 403 for a non-member without revealing team existence", async () => {
     const res = await fetch(`${BASE_URL}/api/teams/non-existent-team-id`);
-    // 403 if not member, 404 if not found, 500 if table missing
-    expect([403, 404, 500]).toContain(res.status);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Not a member" });
   });
 });
 
@@ -961,7 +935,8 @@ describe("POST /api/teams/join", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ invite_code: "INVALID" }),
     });
-    expect([400, 404]).toContain(res.status);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid invite code format" });
   });
 });
 
@@ -969,34 +944,17 @@ describe("POST /api/teams/join", () => {
 // Organizations member routes
 // ===========================================================================
 
-describe("GET /api/organizations/[orgId]/members", () => {
-  it("should return 404 for non-existent org (or 503 if Worker unavailable)", async () => {
-    const res = await fetch(`${BASE_URL}/api/organizations/non-existent-org/members`);
-    // Expected: 404 (not found)
-    // Tolerated: 503 (Worker timeout), 500 (DB error)
-    expect([404, 500, 503]).toContain(res.status);
-  });
-});
-
-describe("POST /api/organizations/[orgId]/join", () => {
-  it("should return 404 for non-existent org (or 503 if Worker unavailable)", async () => {
-    const res = await fetch(`${BASE_URL}/api/organizations/non-existent-org/join`, {
-      method: "POST",
+describe("missing organization", () => {
+  it.each([
+    ["GET", "members"],
+    ["POST", "join"],
+    ["DELETE", "leave"],
+  ])("returns 404 for %s /api/organizations/[orgId]/%s", async (method, action) => {
+    const res = await fetch(`${BASE_URL}/api/organizations/non-existent-org/${action}`, {
+      method,
     });
-    // Expected: 404 (not found)
-    // Tolerated: 503 (Worker timeout), 500 (DB error)
-    expect([404, 500, 503]).toContain(res.status);
-  });
-});
-
-describe("DELETE /api/organizations/[orgId]/leave", () => {
-  it("should return 404 for non-existent org (or 503 if Worker unavailable)", async () => {
-    const res = await fetch(`${BASE_URL}/api/organizations/non-existent-org/leave`, {
-      method: "DELETE",
-    });
-    // Expected: 404 (not found)
-    // Tolerated: 503 (Worker timeout), 500 (DB error)
-    expect([404, 500, 503]).toContain(res.status);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "Organization not found" });
   });
 });
 
@@ -1005,24 +963,22 @@ describe("DELETE /api/organizations/[orgId]/leave", () => {
 // ===========================================================================
 
 describe("GET /api/seasons/[seasonId]/leaderboard", () => {
-  it("should return 404 for non-existent season (or 500 if DB error)", async () => {
+  it("should return 404 for non-existent season", async () => {
     const res = await fetch(`${BASE_URL}/api/seasons/non-existent-season/leaderboard`);
-    // Expected: 404 (not found)
-    // Tolerated: 500 (DB error), 503 (Worker timeout)
-    expect([404, 500, 503]).toContain(res.status);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "Season not found" });
   });
 });
 
 describe("POST /api/seasons/[seasonId]/register", () => {
-  it("should return 404 for non-existent season (or 500 if DB error)", async () => {
+  it("should return 404 for non-existent season", async () => {
     const res = await fetch(`${BASE_URL}/api/seasons/non-existent-season/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ team_id: "t1" }),
     });
-    // Expected: 404 (not found)
-    // Tolerated: 500 (DB error), 503 (Worker timeout)
-    expect([404, 500, 503]).toContain(res.status);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "Season not found" });
   });
 });
 
@@ -1031,8 +987,7 @@ describe("POST /api/seasons/[seasonId]/register", () => {
 // ===========================================================================
 
 // Admin routes require special admin user setup.
-// These tests verify the routes are accessible (return 403 for non-admin)
-// or handle gracefully when tables don't exist.
+// These tests verify the routes reject non-admin users with 403.
 
 describe("GET /api/admin/check", () => {
   it("should check admin status", async () => {
