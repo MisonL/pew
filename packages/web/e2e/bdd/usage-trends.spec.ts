@@ -1,7 +1,7 @@
 import { type Locator, type Page } from "@playwright/test";
 import { test, expect, mockDashboardApis, DASHBOARD_PRICING_FIXTURE, watchPageReadiness } from "./fixtures";
 
-test.use({ timezoneId: "UTC" });
+test.use({ timezoneId: "UTC", reducedMotion: "reduce" });
 
 function card(page: Page, name: string): Locator {
   return page.locator("p").filter({ hasText: new RegExp(`^${name}$`) })
