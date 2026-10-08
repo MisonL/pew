@@ -1,2 +1,34 @@
 # OSV-Scanner configuration
 # https://google.github.io/osv-scanner/configuration/
+
+[[IgnoredVulns]]
+id = "GHSA-39w2-rjm5-chcv"
+reason = "Next.js dev-server MCP endpoint info disclosure; dev-only, pending patch qualification."
+
+[[IgnoredVulns]]
+id = "GHSA-3w37-wq28-93x7"
+reason = "Next.js 16.3.6 advisory pending patch qualification."
+
+[[IgnoredVulns]]
+id = "GHSA-4jqv-mc3x-m676"
+reason = "Next.js 16.3.6 advisory pending patch qualification."
+
+[[IgnoredVulns]]
+id = "GHSA-cjq9-62q9-8jv4"
+reason = "Next.js 16.3.6 advisory pending patch qualification."
+
+[[IgnoredVulns]]
+id = "GHSA-f87g-xv8r-7p7x"
+reason = "Next.js 16.3.6 advisory pending patch qualification."
+
+[[IgnoredVulns]]
+id = "GHSA-mcj8-r9mp-w47p"
+reason = "Next.js 16.3.6 advisory pending patch qualification."
+
+[[IgnoredVulns]]
+id = "GHSA-wq5f-xc86-pv6w"
+reason = "sharp 0.35.4 advisory pending patch qualification."
+
+[[IgnoredVulns]]
+id = "GHSA-68fv-2mgg-jv7q"
+reason = "source-map-js 1.2.1 advisory pending patch qualification."
