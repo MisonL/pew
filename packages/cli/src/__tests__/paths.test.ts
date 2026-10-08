@@ -145,7 +145,7 @@ describe("resolveDefaultPaths", () => {
     expect(paths.hermesProfileDbPaths[0].dbKey).toBe("profiles/tomato");
   });
 
-  it("should return exactly 24 path properties", () => {
+  it("should return exactly 25 path properties", () => {
     const keys = [
       "stateDir",
       "binDir",
@@ -169,6 +169,7 @@ describe("resolveDefaultPaths", () => {
       "piSessionsDir",
       "pmstudioDataDir",
       "vscodeCopilotDirs",
+      "workbuddyDir",
       "zcodeHome",
       "zcodeDbPath",
     ];

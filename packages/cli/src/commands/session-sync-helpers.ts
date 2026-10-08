@@ -21,6 +21,7 @@ export type SessionSyncSourceKey =
   | "openclaw"
   | "pi"
   | "pmstudio"
+  | "workbuddy"
   | "zcode";
 
 /**
@@ -68,6 +69,7 @@ export function sourceKey(source: Source): SessionSyncSourceKey | null {
     case "pmstudio": return "pmstudio";
     case "vscode-copilot": return null;
     case "hermes": return null;
+    case "workbuddy": return "workbuddy";
     case "zcode": return "zcode";
     default: {
       // Exhaustiveness check — if Source adds a new value, this will fail to compile

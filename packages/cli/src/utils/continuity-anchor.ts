@@ -35,7 +35,8 @@ export function usesJsonlOffsetResume(source: Source, filePath: string): boolean
     source === "omp" ||
     source === "openclaw" ||
     source === "pi" ||
-    source === "vscode-copilot"
+    source === "vscode-copilot" ||
+    source === "workbuddy"
   );
 }
 

@@ -2,7 +2,7 @@
  * Type-level tests for @pew/core.
  *
  * These tests validate that the type definitions compile correctly
- * and that the Source enum contains exactly the 10 supported tools.
+ * and that the Source enum contains exactly the 15 supported tools.
  */
 import { describe, expect, it } from "vitest";
 import type {
@@ -30,7 +30,7 @@ import type {
 } from "../types.js";
 
 describe("Source type", () => {
-  it("should accept all 14 supported AI tools", () => {
+  it("should accept all 15 supported AI tools", () => {
     const sources: Source[] = [
       "claude-code",
       "codex",
@@ -45,9 +45,10 @@ describe("Source type", () => {
       "pi",
       "pmstudio",
       "vscode-copilot",
+      "workbuddy",
       "zcode",
     ];
-    expect(sources).toHaveLength(14);
+    expect(sources).toHaveLength(15);
   });
 
   it("should reject unsupported tools at type level", () => {

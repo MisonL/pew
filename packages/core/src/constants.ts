@@ -27,6 +27,7 @@ export const SOURCES: readonly Source[] = Object.freeze([
   "pi",
   "pmstudio",
   "vscode-copilot",
+  "workbuddy",
   "zcode",
 ] as const);
 

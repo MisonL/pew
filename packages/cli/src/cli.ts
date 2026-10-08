@@ -68,6 +68,7 @@ function isSource(value: string): value is Source {
     "vscode-copilot",
     "copilot-cli",
     "hermes",
+    "workbuddy",
     "zcode",
   ].includes(value);
 }
@@ -185,6 +186,7 @@ const SOURCE_LABELS: Record<string, string> = {
   vscodeCopilot: "VSCode Copilot",
   copilotCli: "Copilot CLI",
   hermes: "Hermes",
+  workbuddy: "WorkBuddy",
   zcode: "ZCode",
 };
 
@@ -303,6 +305,7 @@ export const syncCommand = defineCommand({
       copilotCliOtelPaths: paths.copilotCliOtelPaths,
       grokLogsPath: paths.grokLogsPath,
       grokSessionsDir: paths.grokSessionsDir,
+      workbuddyDir: paths.workbuddyDir,
       zcodeDbPath: paths.zcodeDbPath,
       openZcodeDb,
       onCorruptLine: handleCorruptLine,
@@ -334,6 +337,7 @@ export const syncCommand = defineCommand({
       if (result.sources.vscodeCopilot > 0) deltaParts.push(`VSCode Copilot: ${result.sources.vscodeCopilot}`);
       if (result.sources.copilotCli > 0) deltaParts.push(`Copilot CLI: ${result.sources.copilotCli}`);
       if (result.sources.hermes > 0) deltaParts.push(`Hermes: ${result.sources.hermes}`);
+      if (result.sources.workbuddy > 0) deltaParts.push(`WorkBuddy: ${result.sources.workbuddy}`);
       if (result.sources.zcode > 0) deltaParts.push(`ZCode: ${result.sources.zcode}`);
       if (deltaParts.length > 0) {
         log.text(pc.dim(deltaParts.join("  ")));
@@ -365,6 +369,7 @@ export const syncCommand = defineCommand({
       piSessionsDir: paths.piSessionsDir,
       grokLogsPath: paths.grokLogsPath,
       grokSessionsDir: paths.grokSessionsDir,
+      workbuddyDir: paths.workbuddyDir,
       zcodeDbPath: paths.zcodeDbPath,
       openZcodeSessionDb,
       onCorruptLine: handleCorruptLine,
@@ -392,6 +397,7 @@ export const syncCommand = defineCommand({
       if (sessionResult.sources.openclaw > 0) sessParts.push(`OpenClaw: ${sessionResult.sources.openclaw}`);
       if (sessionResult.sources.pi > 0) sessParts.push(`Pi: ${sessionResult.sources.pi}`);
       if (sessionResult.sources.pmstudio > 0) sessParts.push(`PM Studio: ${sessionResult.sources.pmstudio}`);
+      if (sessionResult.sources.workbuddy > 0) sessParts.push(`WorkBuddy: ${sessionResult.sources.workbuddy}`);
       if (sessionResult.sources.zcode > 0) sessParts.push(`ZCode: ${sessionResult.sources.zcode}`);
       if (sessParts.length > 0) {
         log.text(pc.dim(sessParts.join("  ")));
@@ -437,6 +443,7 @@ const statusCommand = defineCommand({
         copilotCliOtelPaths: paths.copilotCliOtelPaths,
         multicaCodexDirs: paths.multicaCodexDirs,
         grokHome: paths.grokHome,
+        workbuddyDir: paths.workbuddyDir,
       },
       notifierStatuses,
       onCorruptLine: handleCorruptLine,
@@ -752,6 +759,7 @@ const notifyCommand = defineCommand({
       copilotCliOtelPaths: paths.copilotCliOtelPaths,
       grokLogsPath: paths.grokLogsPath,
       grokSessionsDir: paths.grokSessionsDir,
+      workbuddyDir: paths.workbuddyDir,
       zcodeDbPath: paths.zcodeDbPath,
       openZcodeDb: openZcodeDb2,
       openZcodeSessionDb: openZcodeSessionDb2,

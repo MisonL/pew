@@ -99,6 +99,8 @@ export interface SyncOptions {
   zcodeDbPath?: string;
   /** Factory for opening the ZCode SQLite DB for tokens (DI for testability) */
   openZcodeDb?: (dbPath: string) => ZcodeUsageDb | null;
+  /** Override: WorkBuddy home directory (~/.workbuddy) */
+  workbuddyDir?: string;
   /** Progress callback */
   onProgress?: (event: ProgressEvent) => void;
   /** Callback invoked when a corrupted JSONL line is found in the queue */
@@ -144,6 +146,7 @@ export interface SyncResult {
     vscodeCopilot: number;
     copilotCli: number;
     hermes: number;
+    workbuddy: number;
     zcode: number;
   };
   /** Total files scanned per source */
@@ -161,6 +164,7 @@ export interface SyncResult {
     vscodeCopilot: number;
     copilotCli: number;
     hermes: number;
+    workbuddy: number;
     zcode: number;
   };
   /** Total SQLite databases scanned per source */
@@ -195,6 +199,7 @@ function sourceKey(source: Source): keyof SyncResult["sources"] {
     case "vscode-copilot": return "vscodeCopilot";
     case "copilot-cli": return "copilotCli";
     case "hermes": return "hermes";
+    case "workbuddy": return "workbuddy";
     case "zcode": return "zcode";
     default: {
       // Exhaustiveness check — if Source adds a new value, this will fail to compile
@@ -375,8 +380,8 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   let replayDetected = false;
 
   const allDeltas: ParsedDelta[] = [];
-  const sourceCounts = { claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, hermes: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, vscodeCopilot: 0, zcode: 0 };
-  const filesScanned = { claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, hermes: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, vscodeCopilot: 0, zcode: 0 };
+  const sourceCounts = { claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, hermes: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, vscodeCopilot: 0, workbuddy: 0, zcode: 0 };
+  const filesScanned = { claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, hermes: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, vscodeCopilot: 0, workbuddy: 0, zcode: 0 };
   const dbsScanned = { opencode: 0, hermes: 0, zcode: 0 };
 
   // Collect all discovered file paths (across all drivers) for knownFilePaths
@@ -446,6 +451,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     copilotCliOtelPaths: opts.copilotCliOtelPaths,
     grokLogsPath: opts.grokLogsPath,
     grokSessionsDir: opts.grokSessionsDir,
+    workbuddyDir: opts.workbuddyDir,
   };
 
   // ---------- Phase 1: File-based drivers (generic loop) ----------

@@ -10,7 +10,7 @@
 // Source: Supported AI coding tools
 // ---------------------------------------------------------------------------
 
-/** The 14 supported AI coding tools */
+/** The 15 supported AI coding tools */
 export type Source =
   | "claude-code"
   | "codex"
@@ -25,6 +25,7 @@ export type Source =
   | "pi"
   | "pmstudio"
   | "vscode-copilot"
+  | "workbuddy"
   | "zcode";
 
 // ---------------------------------------------------------------------------

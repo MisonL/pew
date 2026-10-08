@@ -79,6 +79,8 @@ export interface SessionSyncOptions {
   zcodeDbPath?: string;
   /** Factory for opening the ZCode SQLite DB for sessions (DI for testability) */
   openZcodeSessionDb?: (dbPath: string) => ZcodeSessionDb | null;
+  /** Override: WorkBuddy home directory (~/.workbuddy) */
+  workbuddyDir?: string;
   /** Progress callback */
   onProgress?: (event: SessionProgressEvent) => void;
   /** Callback invoked when a corrupted JSONL line is found in the queue */
@@ -110,6 +112,7 @@ export interface SessionSyncResult {
     openclaw: number;
     pi: number;
     pmstudio: number;
+    workbuddy: number;
     zcode: number;
   };
   /** Total files/directories scanned per source */
@@ -125,6 +128,7 @@ export interface SessionSyncResult {
     openclaw: number;
     pi: number;
     pmstudio: number;
+    workbuddy: number;
     zcode: number;
   };
   /** Total SQLite databases scanned per source */
@@ -169,8 +173,8 @@ async function sessionSyncLocked(
   const cursors = await cursorStore.load();
 
   const allSnapshots: SessionSnapshot[] = [];
-  const sourceCounts = { claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, zcode: 0 };
-  const filesScanned = { claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, zcode: 0 };
+  const sourceCounts = { claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, workbuddy: 0, zcode: 0 };
+  const filesScanned = { claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, workbuddy: 0, zcode: 0 };
   const dbsScanned = { opencode: 0, zcode: 0 };
 
   // Paths surfaced by discovery this run; consumed by the alias-prune
@@ -196,6 +200,7 @@ async function sessionSyncLocked(
     piSessionsDir: opts.piSessionsDir,
     grokLogsPath: opts.grokLogsPath,
     grokSessionsDir: opts.grokSessionsDir,
+    workbuddyDir: opts.workbuddyDir,
   };
 
   // ---------- Phase 1: File-based drivers (generic loop) ----------

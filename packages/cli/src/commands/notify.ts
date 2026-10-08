@@ -24,6 +24,8 @@ export interface NotifyOptions extends SyncOptions {
   openSessionDb?: SessionSyncOptions["openSessionDb"];
   /** Factory for opening the ZCode SQLite DB for sessions (DI for testability) */
   openZcodeSessionDb?: SessionSyncOptions["openZcodeSessionDb"];
+  /** Override: WorkBuddy home directory (~/.workbuddy) */
+  workbuddyDir?: string;
   /** CLI version string for run log */
   version?: string;
   /**
@@ -77,6 +79,7 @@ export async function executeNotify(
           copilotCliOtelPaths: opts.copilotCliOtelPaths,
           grokLogsPath: opts.grokLogsPath,
           grokSessionsDir: opts.grokSessionsDir,
+          workbuddyDir: opts.workbuddyDir,
           zcodeDbPath: opts.zcodeDbPath,
           openZcodeDb: opts.openZcodeDb,
         });
@@ -109,6 +112,7 @@ export async function executeNotify(
           piSessionsDir: opts.piSessionsDir,
           grokLogsPath: opts.grokLogsPath,
           grokSessionsDir: opts.grokSessionsDir,
+          workbuddyDir: opts.workbuddyDir,
           zcodeDbPath: opts.zcodeDbPath,
           openZcodeSessionDb: opts.openZcodeSessionDb,
         });

@@ -23,7 +23,7 @@ const sourceOptions: Record<Source, Array<keyof SyncOptions>> = {
   "copilot-cli": ["copilotCliLogsDir", "copilotCliOtelPaths"], grok: ["grokLogsPath", "grokSessionsDir"],
   hermes: ["hermesDbPath", "hermesProfileDbPaths", "openHermesDb"], kosmos: ["kosmosDataDir"], omp: ["ompSessionsDir"],
   opencode: ["openCodeMessageDir", "openCodeDbPath", "openMessageDb"], openclaw: ["openclawDir"], pi: ["piSessionsDir"],
-  pmstudio: ["pmstudioDataDir"], "vscode-copilot": ["vscodeCopilotDirs"], zcode: ["zcodeDbPath", "openZcodeDb"],
+  pmstudio: ["pmstudioDataDir"], "vscode-copilot": ["vscodeCopilotDirs"], workbuddy: ["workbuddyDir"], zcode: ["zcodeDbPath", "openZcodeDb"],
 };
 
 async function requireSettledState(stateDir: string): Promise<void> {
