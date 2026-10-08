@@ -26,7 +26,7 @@ Source logs remain read-only. Token uploads are aggregated into half-hour bucket
 - Estimate usage costs with dynamic model prices and fallback tables, including price sources and update times.
 - Configure automatic synchronization after sessions for supported tools, and use `pew sync` for other sources.
 
-Current token sources include Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, Grok, Hermes, Kosmos, Oh My Pi, OpenClaw, OpenCode, Pi, PM Studio, VS Code Copilot, and ZCode. Session statistics cover fewer sources and currently exclude Hermes and VS Code Copilot.
+Current token sources include Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, Grok, Hermes, Kosmos, Oh My Pi, OpenClaw, OpenCode, Pi, PM Studio, VS Code Copilot, WorkBuddy, and ZCode. Session statistics cover fewer sources and currently exclude Hermes and VS Code Copilot.
 
 ## Usage
 

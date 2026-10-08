@@ -26,7 +26,7 @@ pew 由本地 CLI 和 Web 仪表盘组成。CLI 读取 AI 编程工具的日志�
 - 从动态模型价格与回退价格表估算用量成本，查看价格来源和更新时间。
 - 为部分工具配置会话后的自动同步，其余来源可通过 `pew sync` 手动汇总。
 
-当前 token 来源包括 Claude Code、Codex、Gemini CLI、GitHub Copilot CLI、Grok、Hermes、Kosmos、Oh My Pi、OpenClaw、OpenCode、Pi、PM Studio、VS Code Copilot 和 ZCode。会话统计的来源范围较小，目前不含 Hermes 和 VS Code Copilot。
+当前 token 来源包括 Claude Code、Codex、Gemini CLI、GitHub Copilot CLI、Grok、Hermes、Kosmos、Oh My Pi、OpenClaw、OpenCode、Pi、PM Studio、VS Code Copilot、WorkBuddy 和 ZCode。会话统计的来源范围较小，目前不含 Hermes 和 VS Code Copilot。
 
 ## 使用
 

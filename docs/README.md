@@ -55,5 +55,6 @@
 | 44 | [44-biome-migration-ts7.md](44-biome-migration-ts7.md) | Biome migration + TypeScript 7 stable upgrade | done |
 | 45 | [45-codex-notifier-cycle-containment.md](45-codex-notifier-cycle-containment.md) | Codex notifier forwarding-cycle containment | proposed |
 | 46 | [46-omp-support.md](46-omp-support.md) | Oh My Pi (omp) token + session support — pi-format JSONL under `~/.omp/agent/sessions` | done |
+| 51 | [51-workbuddy-support.md](51-workbuddy-support.md) | WorkBuddy token + session support — session JSONL under `~/.workbuddy/projects` | done |
 
 > **Note:** Number 14 is intentionally vacant (original doc 14 was renumbered to 12 to fill a gap). Numbers 19, 36, and 40 have multiple entries (`Nb`, `Nc`) as history-preserving disambiguators.
