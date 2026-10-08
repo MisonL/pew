@@ -29,6 +29,7 @@ import { piTokenDriver } from "./token/pi-token-driver.js";
 import { ompTokenDriver } from "./token/omp-token-driver.js";
 import { kosmosTokenDriver, pmstudioTokenDriver } from "./token/kosmos-token-driver.js";
 import { grokTokenDriver } from "./token/grok-token-driver.js";
+import { workbuddyTokenDriver } from "./token/workbuddy-token-driver.js";
 import {
   createOpenCodeSqliteTokenDriver,
   type OpenCodeSqliteTokenDriverOpts,
@@ -50,6 +51,7 @@ import { piSessionDriver } from "./session/pi-session-driver.js";
 import { ompSessionDriver } from "./session/omp-session-driver.js";
 import { kosmosSessionDriver, pmstudioSessionDriver } from "./session/kosmos-session-driver.js";
 import { grokSessionDriver } from "./session/grok-session-driver.js";
+import { workbuddySessionDriver } from "./session/workbuddy-session-driver.js";
 import {
   createOpenCodeSqliteSessionDriver,
   type OpenCodeSqliteSessionDriverOpts,
@@ -81,6 +83,8 @@ export interface TokenDriverRegistryOpts {
   copilotCliOtelPaths?: string[];
   /** Grok CLI unified log path (~/.grok/logs/unified.jsonl) */
   grokLogsPath?: string;
+  /** WorkBuddy home (~/.workbuddy) */
+  workbuddyDir?: string;
   openCodeDbPath?: string;
   openMessageDb?: OpenCodeSqliteTokenDriverOpts["openMessageDb"];
   /** Default Hermes DB path (~/.hermes/state.db) */
@@ -146,6 +150,9 @@ export function createTokenDrivers(opts: TokenDriverRegistryOpts): TokenDriverSe
   }
   if (opts.vscodeCopilotDirs && opts.vscodeCopilotDirs.length > 0) {
     fileDrivers.push(vscodeCopilotTokenDriver);
+  }
+  if (opts.workbuddyDir) {
+    fileDrivers.push(workbuddyTokenDriver);
   }
 
   // DB drivers (alphabetical by source)
@@ -214,6 +221,8 @@ export interface SessionDriverRegistryOpts {
   piSessionsDir?: string;
   /** Grok CLI sessions root (~/.grok/sessions) */
   grokSessionsDir?: string;
+  /** WorkBuddy home (~/.workbuddy) */
+  workbuddyDir?: string;
   openCodeDbPath?: string;
   openSessionDb?: OpenCodeSqliteSessionDriverOpts["openSessionDb"];
   /** ZCode CLI SQLite database path (~/.zcode/cli/db/db.sqlite) */
@@ -268,6 +277,9 @@ export function createSessionDrivers(opts: SessionDriverRegistryOpts): SessionDr
   }
   if (opts.pmstudioDataDir) {
     fileDrivers.push(pmstudioSessionDriver);
+  }
+  if (opts.workbuddyDir) {
+    fileDrivers.push(workbuddySessionDriver);
   }
   if (opts.openCodeDbPath && opts.openSessionDb) {
     dbDrivers.push(

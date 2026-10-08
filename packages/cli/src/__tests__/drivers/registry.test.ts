@@ -225,7 +225,13 @@ describe("createTokenDrivers", () => {
     expect(fileDrivers[0].source).toBe("grok");
   });
 
-  it("returns all 11 file drivers when all dirs including kosmos, pmstudio and grok are set", () => {
+  it("includes workbuddy file driver when workbuddyDir is set", () => {
+    const { fileDrivers } = createTokenDrivers({ workbuddyDir: "/tmp/.workbuddy" });
+    expect(fileDrivers).toHaveLength(1);
+    expect(fileDrivers[0].source).toBe("workbuddy");
+  });
+
+  it("returns all 12 file drivers when every dir including workbuddy is set", () => {
     const { fileDrivers } = createTokenDrivers({
       claudeDir: "/tmp/claude",
       codexSessionsDir: "/tmp/codex",
@@ -238,8 +244,9 @@ describe("createTokenDrivers", () => {
       piSessionsDir: "/tmp/pi/sessions",
       pmstudioDataDir: "/tmp/pmstudio",
       vscodeCopilotDirs: ["/tmp/vsc"],
+      workbuddyDir: "/tmp/.workbuddy",
     });
-    expect(fileDrivers).toHaveLength(11);
+    expect(fileDrivers).toHaveLength(12);
   });
 });
 
@@ -403,7 +410,13 @@ describe("createSessionDrivers", () => {
     expect(fileDrivers[0].source).toBe("grok");
   });
 
-  it("returns all 10 file drivers when all dirs including kosmos, pmstudio and grok are set", () => {
+  it("includes workbuddy session driver when workbuddyDir is set", () => {
+    const { fileDrivers } = createSessionDrivers({ workbuddyDir: "/tmp/.workbuddy" });
+    expect(fileDrivers).toHaveLength(1);
+    expect(fileDrivers[0].source).toBe("workbuddy");
+  });
+
+  it("returns all 11 file drivers when every dir including workbuddy is set", () => {
     const { fileDrivers } = createSessionDrivers({
       claudeDir: "/tmp/claude",
       codexSessionsDir: "/tmp/codex",
@@ -415,7 +428,8 @@ describe("createSessionDrivers", () => {
       openclawDir: "/tmp/openclaw",
       piSessionsDir: "/tmp/pi/sessions",
       pmstudioDataDir: "/tmp/pmstudio",
+      workbuddyDir: "/tmp/.workbuddy",
     });
-    expect(fileDrivers).toHaveLength(10);
+    expect(fileDrivers).toHaveLength(11);
   });
 });
