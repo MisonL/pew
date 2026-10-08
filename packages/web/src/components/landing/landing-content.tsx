@@ -29,6 +29,7 @@ const AGENTS = [
   "pi",
   "pmstudio",
   "vscode-copilot",
+  "workbuddy",
   "zcode",
 ] as const;
 

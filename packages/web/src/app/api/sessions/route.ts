@@ -33,6 +33,7 @@ const VALID_SOURCES = new Set([
   "pi",
   "pmstudio",
   "vscode-copilot",
+  "workbuddy",
   "zcode",
 ]);
 
