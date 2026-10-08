@@ -102,16 +102,16 @@ bun run --filter '@nocoo/pew' build
 | --- | --- | --- |
 | 单元与组件逻辑 | `bun run test` | 已安装依赖 |
 | CLI 采集流水线集成 | `bun run test:e2e:cli` | 使用临时目录与测试数据，无需登录 |
-| API 端到端 | `bun run test:e2e` | 独立的远端测试 D1 与 Worker；端口 17020 |
-| 浏览器端到端 | `bun run test:e2e:ui` | 同一套测试资源、Chromium；端口 27020 |
+| API 端到端 | `bun run test:e2e` | 本地临时 D1/KV 隔离环境与 Worker bridge；端口 17020 |
+| 浏览器端到端 | `bun run test:e2e:ui` | 本地临时隔离环境、Chromium；端口 27020 |
 
 浏览器测试前运行 `bunx playwright install chromium`。可用 `bun run test:watch` 持续运行单元测试，或用 `bun run test:coverage` 查看报告。
 
-### E2E 配置
+### E2E 隔离机制
 
-API 和浏览器测试读取 `packages/web/.env.local` 与 `packages/web/.env.test`。前者提供应用连接、Cloudflare 凭据与共享密钥；后者提供 `CF_D1_DATABASE_ID_TEST`、`WORKER_INGEST_URL_TEST` 和 `WORKER_READ_URL_TEST`，分别指向独立测试数据库与测试 Worker。
+E2E 测试完全运行在本地隔离沙箱中（详见 [本地 E2E 隔离说明](docs/32-local-e2e-isolation.md)）。测试启动器每次自动在系统临时目录创建一次性 D1/KV SQLite 实例，执行本地迁移并启动本地 loopback bridge，测试完成后自动物理清理。
 
-测试脚本核对资源与应用环境不同，并要求测试库中存在 `_test_marker` 标记。准备方法见 [D1 测试环境说明](docs/31-d1-test-isolation.md)。API 测试会写入并清理测试用户数据；浏览器测试通过开发态测试登录运行，不验证真实 Google OAuth。运行前确认测试端口空闲。
+无需配置任何云端凭据或测试环境变量（存在本地 `.env` 文件时测试会主动熔断保护）。API 测试写入并清理合成测试用户数据；浏览器测试通过开发态测试登录运行，不依赖真实 Google OAuth。运行前确认测试端口空闲。
 
 ## 技术栈
 

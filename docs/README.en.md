@@ -102,16 +102,16 @@ The root `build` command builds core and web only; build the CLI separately. The
 | --- | --- | --- |
 | Unit and component logic | `bun run test` | Installed dependencies |
 | CLI collection-pipeline integration | `bun run test:e2e:cli` | Temporary test data and directories; no login |
-| API end-to-end | `bun run test:e2e` | Dedicated remote test D1 and Workers; port 17020 |
-| Browser end-to-end | `bun run test:e2e:ui` | The same test resources, Chromium; port 27020 |
+| API end-to-end | `bun run test:e2e` | Local isolated D1/KV runtime and Worker bridge; port 17020 |
+| Browser end-to-end | `bun run test:e2e:ui` | Local isolated runtime, Chromium; port 27020 |
 
 Run `bunx playwright install chromium` before browser tests. Use `bun run test:watch` for unit tests during development or `bun run test:coverage` for a report.
 
-### E2E setup
+### E2E isolation
 
-API and browser tests read `packages/web/.env.local` and `packages/web/.env.test`. The first supplies application connections, Cloudflare credentials, and shared secrets. The second supplies `CF_D1_DATABASE_ID_TEST`, `WORKER_INGEST_URL_TEST`, and `WORKER_READ_URL_TEST` for a separate test database and test Workers.
+E2E tests run in a fully isolated local sandbox (see [Local E2E isolation](32-local-e2e-isolation.md)). The runner provisions a temporary D1/KV SQLite directory per invocation, applies local migrations, starts a local loopback bridge, and cleans up upon completion.
 
-The runner checks that test resources differ from the application environment and requires a `_test_marker` entry in the test database. See the [D1 test-environment guide](31-d1-test-isolation.md) for setup. API tests write and clean up test-user data. Browser tests use development-mode test authentication and do not validate real Google OAuth. Ensure test ports are free before running.
+No cloud credentials or test environment files are required (in fact, local `.env` files trigger fail-fast rejection to prevent accidental leaks). API tests seed and clean synthetic test-user data. Browser tests use development test authentication without Google OAuth. Ensure test ports are free before running.
 
 ## Stack
 

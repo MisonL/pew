@@ -21,22 +21,3 @@ id = "5df59e90f9e34c5da40fd312eb83e4ee"
 [triggers]
 crons = ["0 3 * * *"]
 
-# ---------- Test environment ----------
-[env.test]
-name = "pew-test"
-
-[env.test.triggers]
-crons = ["0 3 * * *"]
-
-[[env.test.d1_databases]]
-binding = "DB"
-database_name = "pew-db-test"
-database_id = "aa08a894-6a65-4baf-b756-2e611dff437d"
-
-[[env.test.routes]]
-pattern = "pew-test.worker.hexly.ai"
-custom_domain = true
-
-[[env.test.kv_namespaces]]
-binding = "CACHE"
-id = "7feb8680f4e14f9d8b4b8f655df347a9"
