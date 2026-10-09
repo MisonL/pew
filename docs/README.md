@@ -56,6 +56,6 @@
 | 45 | [45-codex-notifier-cycle-containment.md](45-codex-notifier-cycle-containment.md) | Codex notifier forwarding-cycle containment | proposed |
 | 46 | [46-omp-support.md](46-omp-support.md) | Historical Oh My Pi collector design | archived; collector retired |
 | 51 | [51-antigravity-support.md](51-antigravity-support.md) | Antigravity CLI SQLite/Protobuf accounting and source safety | implemented |
-| 52 | [52-workbuddy-support.md](52-workbuddy-support.md) | WorkBuddy token + session support — session JSONL under `~/.workbuddy/projects` | done |
+| 52 | [52-workbuddy-support.md](52-workbuddy-support.md) | WorkBuddy token + session support — session JSONL under `~/.workbuddy/projects` and `~/.workbuddy-ai/projects` | done |
 
 > **Note:** Number 14 is intentionally vacant (original doc 14 was renumbered to 12 to fill a gap). Numbers 19, 36, and 40 have multiple entries (`Nb`, `Nc`) as history-preserving disambiguators.
