@@ -91,6 +91,9 @@ describe("sourceKey", () => {
     ["pi", "pi"],
     ["pmstudio", "pmstudio"],
     ["grok", "grok"],
+    ["workbuddy", "workbuddy"],
+    ["zcode", "zcode"],
+    ["omp", "omp"],
   ];
 
   for (const [src, key] of mapped) {
