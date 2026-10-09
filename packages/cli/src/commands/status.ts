@@ -3,6 +3,7 @@ import { CursorStore } from "../storage/cursor-store.js";
 import { LocalQueue } from "../storage/local-queue.js";
 import type { OnCorruptLine } from "../storage/base-queue.js";
 import { isRetiredCursorPath } from "../utils/retired-sources.js";
+import { relative, isAbsolute } from "node:path";
 
 /** Resolved source directory paths used for file classification */
 export interface SourceDirs {
@@ -55,11 +56,8 @@ function classifySource(filePath: string, dirs: SourceDirs): string {
 
   if (filePath.startsWith(dirs.copilotCliLogsDir)) return "copilot-cli";
   for (const path of dirs.copilotCliOtelPaths) {
-    if (
-      filePath === path
-      || filePath.startsWith(`${path}/`)
-      || filePath.startsWith(`${path}\\`)
-    ) return "copilot-cli";
+    const child = relative(path, filePath);
+    if (!isAbsolute(child) && child !== ".." && !child.startsWith("../") && !child.startsWith("..\\")) return "copilot-cli";
   }
   return "unknown";
 }
@@ -86,8 +84,8 @@ export async function executeStatus(opts: {
   // Count files by source using resolved directory paths
   const sources: Record<string, number> = {};
   for (const filePath of Object.keys(cursors.files)) {
-    if (isRetiredCursorPath(filePath)) continue;
     const source = classifySource(filePath, sourceDirs);
+    if (source === "unknown" && isRetiredCursorPath(filePath)) continue;
     sources[source] = (sources[source] || 0) + 1;
   }
   const antigravityDbs = cursors.antigravity?.dbCount ?? 0;

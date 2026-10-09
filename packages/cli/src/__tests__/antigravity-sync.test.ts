@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ParsedDelta } from "../parsers/claude.js";
 import { executeSync } from "../commands/sync.js";
 import { executeSessionSync } from "../commands/session-sync.js";
+import { executeReset } from "../commands/reset.js";
+import { executeUpload } from "../commands/upload.js";
+import { ConfigManager } from "../config/manager.js";
 import { readAntigravitySource } from "../parsers/antigravity.js";
 import { AccountingQueue } from "../storage/accounting-queue.js";
 import { CursorStore } from "../storage/cursor-store.js";
@@ -88,6 +91,50 @@ describe("Antigravity source-isolated sync", () => {
     await sync();
     expect((await records()).every((r) => r.total_tokens === 0)).toBe(true);
     expect((await accounting()).every((r) => r.basis.total_tokens === 0)).toBe(true);
+  });
+
+  it("preserves reset baselines and uploads corrections and deletions as tombstones", async () => {
+    await new ConfigManager(dir).save({ token: "synthetic" });
+    const remote = new Map<string, number>();
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
+      const batch = JSON.parse(String(init?.body));
+      if (String(url).endsWith("/details")) return Response.json({ details_version: 1, acknowledgments: batch.map((r: {
+        device_id: string; source: string; model: string; hour_start: string; event_id: string | null;
+        source_revision: number; parser_revision: number; detail_revision: number;
+      }) => ({ key: JSON.stringify([r.device_id, r.source, r.model, r.hour_start, r.event_id]),
+        source_revision: r.source_revision, parser_revision: r.parser_revision, detail_revision: r.detail_revision, status: "applied" })) });
+      for (const r of batch) remote.set(`${r.model}|${r.hour_start}`, r.total_tokens);
+      return Response.json({ ingested: batch.length });
+    });
+    const upload = () => executeUpload({ stateDir: dir, apiUrl: "https://synthetic.invalid", fetch });
+    await sync();
+    expect((await upload()).success).toBe(true);
+    reader.mockResolvedValue({ deltas: [delta(50, 900, "corrected-model", "2026-10-01T12:31:00.000Z")], snapshots: [], dbCount: 1 });
+    await executeReset({ stateDir: dir });
+    await sync();
+    expect((await upload()).success).toBe(true);
+    expect(remote.get("test-model|2026-10-01T12:00:00.000Z")).toBe(0);
+    expect(remote.get("corrected-model|2026-10-01T12:30:00.000Z")).toBe(1050);
+    expect((await accounting()).find((r) => r.model === "test-model")?.basis.total_tokens).toBe(0);
+    reader.mockResolvedValue({ deltas: [], snapshots: [], dbCount: 1 });
+    await executeReset({ stateDir: dir });
+    await sync();
+    expect((await upload()).success).toBe(true);
+    expect([...remote.values()]).toEqual([0, 0]);
+  });
+
+  it("preserves Antigravity usage and pending intent when reset is followed by source failure", async () => {
+    await sync();
+    const before = await records();
+    const queue = new LocalQueue(dir);
+    const pending = await queue.loadDirtyKeys();
+    const details = await accounting();
+    await executeReset({ stateDir: dir });
+    reader.mockRejectedValue(new Error("unstable WAL"));
+    await sync();
+    expect(await records()).toEqual(before);
+    expect(await queue.loadDirtyKeys()).toEqual(pending);
+    expect(await accounting()).toEqual(details);
   });
 
   it.each(["root missing", "corrupt wire", "unstable WAL", "schema unavailable"])("preserves old values and pending state on %s, even after cursor reset", async (reason) => {

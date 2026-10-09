@@ -1,12 +1,17 @@
 import type { Source } from "@pew/core";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative, isAbsolute } from "node:path";
 import type { QueueState } from "../storage/base-queue.js";
 
 export const RETIRED_SOURCES: Source[] = ["gemini-cli", "kosmos", "omp", "zcode", "pmstudio", "vscode-copilot"];
 export const isRetiredSource = (source: string): boolean => RETIRED_SOURCES.includes(source as Source);
 
-export function isRetiredCursorPath(path: string): boolean {
+export function isRetiredCursorPath(path: string, activePaths: ReadonlyArray<string | undefined> = []): boolean {
+  if (activePaths.some((root) => {
+    if (!root) return false;
+    const child = relative(root, path);
+    return !isAbsolute(child) && child !== ".." && !child.startsWith("../") && !child.startsWith("..\\");
+  })) return false;
   return /(?:^|[/\\])(?:\.gemini[/\\]tmp|\.omp|\.zcode|kosmos-app|pm-studio-app|Code(?: - Insiders)?[/\\]User)(?:[/\\]|$)/.test(path);
 }
 

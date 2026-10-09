@@ -152,7 +152,8 @@ describe("CLI E2E: real Antigravity SQLite/WAL accounting", () => {
     expect(await Promise.all([path, `${path}-wal`, `${path}-shm`].map((file) => readFile(file)))).toEqual(source);
     const missing = join(dir, "missing");
     const status = await executeStatus({ stateDir, sourceDirs: {
-      claudeDir: missing, codexSessionsDir: missing, geminiDir: missing, kosmosDataDir: missing, pmstudioDataDir: missing,
+      claudeDir: missing, codexSessionsDir: missing, openCodeMessageDir: missing, openclawDir: missing,
+      piSessionsDir: missing, copilotCliLogsDir: missing, copilotCliOtelPaths: [], multicaCodexDirs: [], grokHome: missing,
     } });
     expect(status).toMatchObject({ trackedFiles: 1, pendingRecords: 1, sources: { antigravity: 1 } });
     const remote = server();
@@ -191,6 +192,7 @@ describe("CLI E2E: real Antigravity SQLite/WAL accounting", () => {
     expect([...remote.usage.values()][0].total_tokens).toBe(120);
     step(10, 10, 0, "gemini-3-flash", 1_759_321_860);
     db.exec("DELETE FROM steps WHERE idx = 2; DELETE FROM gen_metadata WHERE idx = 102;");
+    await executeReset({ stateDir });
     await sync();
     await remote.upload();
     expect([...remote.usage.values()].find((record) => record.model === "gemini-3.1-pro")?.total_tokens).toBe(0);
@@ -201,6 +203,7 @@ describe("CLI E2E: real Antigravity SQLite/WAL accounting", () => {
     await remote.upload();
     expect([...remote.usage.values()].reduce((sum, record) => sum + record.total_tokens, 0)).toBe(40);
     db.exec("DELETE FROM steps WHERE step_type = 15");
+    await executeReset({ stateDir });
     await sync();
     await remote.upload();
     expect([...remote.usage.values()].every((record) => record.total_tokens === 0)).toBe(true);

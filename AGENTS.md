@@ -82,7 +82,7 @@ bun run --filter '@pew/web' dev
 NODE_TLS_REJECT_UNAUTHORIZED=0 bun packages/cli/dist/bin.js sync --dev
 ```
 
-A full reset invalidates token/session cursors before rebuilding active-source queues. Retired token/session records and their pending upload intent remain in Pew's own queues because their collectors no longer replay them. State files: `config.json` (prod API key `pk_...`), `config.dev.json` (dev API key), `cursors.json` (per-file byte offsets + directory mtimes, shared across dev/prod), `queue.jsonl` (pending upload records), `queue.state.json` (queue metadata).
+A full reset invalidates token/session cursors before rebuilding active-source queues. Retired token/session records and their pending upload intent remain in Pew's own queues because their collectors no longer replay them. Antigravity snapshot baselines also remain so corrected or removed keys can upload tombstones. State files: `config.json` (prod API key `pk_...`), `config.dev.json` (dev API key), `cursors.json` (per-file byte offsets + directory mtimes, shared across dev/prod), `queue.jsonl` (pending upload records), `queue.state.json` (queue metadata).
 
 ## Testing and quality contract
 

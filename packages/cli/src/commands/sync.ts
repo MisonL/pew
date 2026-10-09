@@ -258,8 +258,11 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   const priorEvidence = (await evidenceQueue.readFromOffset(0)).records;
   const priorAccounting = (await new AccountingQueue(stateDir).readFromOffset(0)).records;
   const cursors = Object.fromEntries(Object.entries(await cursorStore.load()).filter(([key]) => key !== "zcodeSqlite")) as CursorState;
-  cursors.files = Object.fromEntries(Object.entries(cursors.files).filter(([path]) => !isRetiredCursorPath(path)));
-  if (cursors.knownFilePaths) cursors.knownFilePaths = Object.fromEntries(Object.entries(cursors.knownFilePaths).filter(([path]) => !isRetiredCursorPath(path)));
+  const activePaths = [opts.claudeDir, opts.codexSessionsDir, ...(opts.multicaCodexDirs ?? []),
+    opts.openCodeMessageDir, opts.openclawDir, opts.piSessionsDir, opts.copilotCliLogsDir,
+    ...(opts.copilotCliOtelPaths ?? []), opts.grokLogsPath, opts.grokSessionsDir];
+  cursors.files = Object.fromEntries(Object.entries(cursors.files).filter(([path]) => !isRetiredCursorPath(path, activePaths)));
+  if (cursors.knownFilePaths) cursors.knownFilePaths = Object.fromEntries(Object.entries(cursors.knownFilePaths).filter(([path]) => !isRetiredCursorPath(path, activePaths)));
   if (cursors.knownDbSources) cursors.knownDbSources = Object.fromEntries(Object.entries(cursors.knownDbSources).filter(([key]) => key !== "zcodeSqlite"));
 
   // Migrate hermesSqlite from flat object (pre-multi-profile) to Record format.

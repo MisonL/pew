@@ -157,7 +157,9 @@ async function sessionSyncLocked(
   const cursorStore = new SessionCursorStore(stateDir);
   const queue = new SessionQueue(stateDir, opts.onCorruptLine);
   const cursors = Object.fromEntries(Object.entries(await cursorStore.load()).filter(([key]) => key !== "zcodeSqlite")) as SessionCursorState;
-  cursors.files = Object.fromEntries(Object.entries(cursors.files).filter(([path]) => !isRetiredCursorPath(path)));
+  const activePaths = [opts.claudeDir, opts.codexSessionsDir, ...(opts.multicaCodexDirs ?? []),
+    opts.openCodeMessageDir, opts.openclawDir, opts.piSessionsDir, opts.copilotCliLogsDir, opts.grokLogsPath, opts.grokSessionsDir];
+  cursors.files = Object.fromEntries(Object.entries(cursors.files).filter(([path]) => !isRetiredCursorPath(path, activePaths)));
 
   const allSnapshots: SessionSnapshot[] = [];
   const sourceCounts = { antigravity: 0, claude: 0, codex: 0, copilotCli: 0,  grok: 0,   opencode: 0, openclaw: 0, pi: 0, };

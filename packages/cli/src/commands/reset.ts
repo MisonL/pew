@@ -48,8 +48,9 @@ async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
   await recoverSyncCommit(opts.stateDir);
   const unlinkFn = opts.unlinkFn ?? unlink;
   const files: ResetFileResult[] = [];
-  const tokens = (await readAntigravityBaseline(opts.stateDir, true)).filter((r) => isRetiredSource(r.source));
+  const tokens = await readAntigravityBaseline(opts.stateDir, true);
   let sessions: SessionQueueRecord[] = [];
+  let sessionOffset = 0;
   try {
     const raw = await readFile(join(opts.stateDir, "session-queue.jsonl"), "utf8");
     const rows = raw.split("\n").filter(Boolean).map((line) => JSON.parse(line) as SessionQueueRecord);
@@ -58,6 +59,16 @@ async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
     if (sessions.some((r) => typeof r.session_key !== "string" || !r.session_key ||
       ![r.started_at, r.last_message_at, r.snapshot_at].every((t) => typeof t === "string" && Number.isFinite(Date.parse(t))) ||
       ![r.duration_seconds, r.user_messages, r.assistant_messages, r.total_messages].every((n) => Number.isSafeInteger(n) && n >= 0))) throw new Error();
+    if (sessions.length) {
+      const state = await readRetainedQueueState(opts.stateDir, "session-queue.state.json");
+      let offset = 0;
+      for (const line of raw.split("\n")) {
+        offset += Buffer.byteLength(line) + 1;
+        if (line && offset <= state.offset && isRetiredSource((JSON.parse(line) as SessionQueueRecord).source)) {
+          sessionOffset += Buffer.byteLength(`${JSON.stringify(JSON.parse(line))}\n`);
+        }
+      }
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Cannot verify previous session queue");
   }
@@ -73,8 +84,10 @@ async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
       "session_key" in r ? r.session_key : tokenRecordKey(r));
     const keys = new Set(records.map((r) => recordKey(r as QueueRecord & SessionQueueRecord)));
     preserved.push(async () => {
-      await queue.saveState({ offset: 0, dirtyKeys: pending.filter((key) => keys.has(key)) });
+      await queue.saveState(names[0] === "session-queue.jsonl" ? { offset: 0 }
+        : { offset: 0, dirtyKeys: pending.filter((key) => keys.has(key)) });
       await queue.overwrite(records as QueueRecord[] & SessionQueueRecord[]);
+      if (names[0] === "session-queue.jsonl") await queue.saveState({ offset: sessionOffset });
     });
     for (const name of names) keep.add(name);
   }
