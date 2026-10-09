@@ -21,6 +21,7 @@ import { executeReset } from "./commands/reset.js";
 import { isSSHSession } from "./utils/ssh.js";
 import { executeUpdate } from "./commands/update.js";
 import { resolveNotifierPaths } from "./notifier/paths.js";
+import { repairRetiredNotifyHandler } from "./notifier/notify-handler.js";
 import { statusAll } from "./notifier/registry.js";
 import { ConfigManager } from "./config/manager.js";
 
@@ -663,9 +664,14 @@ const notifyCommand = defineCommand({
       process.exitCode = 1;
       return;
     }
-    if (isRetiredSource(args.source)) return;
-
+    if (isRetiredSource(args.source) && parseNotBefore(args["not-before"]) === undefined) return;
     const paths = resolveDefaultPaths();
+    if (isRetiredSource(args.source)) {
+      if (!await repairRetiredNotifyHandler(paths.stateDir)) {
+        log.warn("Retired hook ignored: dispatcher ownership could not be verified; run pew init to repair it.");
+        return;
+      }
+    }
 
     // Dynamic import: opencode-sqlite-db.ts uses platform SQLite bindings
     // (bun:sqlite or node:sqlite) which may not be available on older Node.js.

@@ -2,6 +2,7 @@ import { unlink } from "node:fs/promises";
 import type { NotifierOperationResult, Source } from "@pew/core";
 import { removeNotifyHandler } from "../notifier/notify-handler.js";
 import { resolveNotifierPaths, type NotifierPaths } from "../notifier/paths.js";
+import { cleanupRetiredHooks } from "../notifier/retired-hook-cleanup.js";
 import {
   getAllDrivers,
   getDriver,
@@ -77,6 +78,7 @@ export async function executeUninstall(opts: UninstallOptions): Promise<Uninstal
   if (fullUninstall) {
     const uninstallAllFn = opts.uninstallAllFn ?? uninstallAll;
     hooks = await uninstallAllFn(paths, { spawn: opts.spawn });
+    hooks.push(...await cleanupRetiredHooks(opts.home, paths.notifyPath, opts.env));
   } else {
     const uninstallDriverFn =
       opts.uninstallDriverFn ??
@@ -112,7 +114,7 @@ export async function executeUninstall(opts: UninstallOptions): Promise<Uninstal
   const removeNotifyHandlerFn = opts.removeNotifyHandlerFn ?? removeNotifyHandler;
   const removeCodexBackupFn = opts.removeCodexBackupFn ?? removeOptionalFile;
 
-  const notifyHandler = fullUninstall
+  const notifyHandler = fullUninstall && hooks.every((hook) => !hook.warnings?.length)
     ? await removeNotifyHandlerFn({ notifyPath: paths.notifyPath })
     : {
       changed: false,

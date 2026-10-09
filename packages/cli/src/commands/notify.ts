@@ -1,6 +1,7 @@
 import { readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isRetiredSource } from "../utils/retired-sources.js";
+import { repairRetiredNotifyHandler } from "../notifier/notify-handler.js";
 import type { CoordinatorRunResult, Source, SyncCycleResult, SyncTrigger } from "@pew/core";
 import { executeSync, type SyncOptions } from "./sync.js";
 import {
@@ -45,7 +46,8 @@ export interface NotifyOptions extends SyncOptions {
 export async function executeNotify(
   opts: NotifyOptions,
 ): Promise<CoordinatorRunResult> {
-  if (isRetiredSource(opts.source)) return {
+  if (isRetiredSource(opts.source) && (typeof opts.notBefore !== "number" || !Number.isFinite(opts.notBefore) ||
+    !await repairRetiredNotifyHandler(opts.stateDir))) return {
     runId: "retired-source", triggers: [], cycles: [], hadFollowUp: false, followUpCount: 0,
     waitedForLock: false, skippedSync: true, skippedReason: "retired-source", degradedToUnlocked: false,
   };

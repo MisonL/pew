@@ -256,3 +256,20 @@ source to overwrite a retired session sharing its key. Require the stored source
 to match the submitted source and prove the original row remains unchanged in
 SQLite. Retiring ingestion must not make historical data mutable through another
 source or dependent on a successful multi-file reset.
+
+## 2026-10-09 — Exercise reset and installed-hook upgrades end to end
+
+The Antigravity reset tests initially checked unchanged input, missing the loss
+of old bucket keys required to clear remote snapshots after model/time moves or
+step deletion. Preserve that baseline through reset and verify actual upload
+bodies against a synthetic remote store. A directory-name heuristic also deleted
+active Copilot cursors under custom retired-looking paths, causing repeated SUM;
+configured active roots now take precedence with native path-boundary checks.
+
+Retiring generated hook templates did not update already installed dispatchers
+or remove their upstream references during explicit uninstall. Repair only exact
+Pew-owned dispatcher versions and consume the already admitted active sync window;
+remove exact owned retired hooks on uninstall and retain the dispatcher on
+ownership conflicts. Test old installed artifacts, not only new templates.
+Session reset retains the existing byte-offset protocol rather than saving dirty
+keys that its upload engine does not consume; failure leaves a safe replay offset.
