@@ -26,11 +26,11 @@ Source logs remain read-only. Token uploads are aggregated into half-hour bucket
 - Estimate usage costs with dynamic model prices and fallback tables, including price sources and update times.
 - Configure automatic synchronization after sessions for supported tools, and use `pew sync` for other sources.
 
-Current token sources include Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, Grok, Hermes, Kosmos, Oh My Pi, OpenClaw, OpenCode, Pi, PM Studio, VS Code Copilot, and ZCode. Session statistics cover fewer sources and currently exclude Hermes and VS Code Copilot.
+Current token sources include Antigravity CLI, Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, Grok, Hermes, Kosmos, Oh My Pi, OpenClaw, OpenCode, Pi, PM Studio, VS Code Copilot, and ZCode. Session statistics cover fewer sources and currently exclude Hermes and VS Code Copilot.
 
 ## Usage
 
-Node.js 24 or newer is recommended. The npm package declares Node.js 18 support, but SQLite sources for OpenCode, Hermes, and ZCode require built-in SQLite support and cannot be read on older Node.js versions.
+Node.js 24 or newer is recommended. The npm package declares Node.js 18 support, but SQLite sources for Antigravity CLI, OpenCode, Hermes, and ZCode require built-in SQLite support and cannot be read on older Node.js versions.
 
 ```bash
 npm install -g @nocoo/pew
@@ -54,6 +54,8 @@ pew status
 Automatic synchronization supports Claude Code, Codex, Gemini CLI, Oh My Pi, OpenClaw, OpenCode, and Pi. Setup changes the corresponding tool configuration. pew stores its own credentials, cursors, queues, and run records under `~/.config/pew/`.
 
 Set `COPILOT_OTEL_FILE_EXPORTER_PATH` for a Copilot CLI OTel file. Use `PEW_COPILOT_OTEL_PATHS` for multiple files or directories separated by the operating system's path delimiter. Default source paths are defined in [paths.ts](../packages/cli/src/utils/paths.ts).
+
+Antigravity CLI usage and sessions come from `~/.gemini/antigravity-cli/conversations/*.db`, without upstream login or running `agy`. It has no automatic sync integration; use `pew sync`. Uncached input and cache reads are disjoint. Visible output and reasoning are split without double-counting. Cache hit rate is cache reads / total input, including reported zero-hit calls. See [Antigravity accounting](51-antigravity-support.md).
 
 ## Development
 

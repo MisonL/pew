@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type { AccountingGroup, AccountingRecord, LegacyTokenCounts, QueueRecord } from "@pew/core";
+import type { AccountingGroup, AccountingRecord, LegacyTokenCounts, QueueRecord, Source } from "@pew/core";
 import type { ParsedDelta } from "../parsers/claude.js";
 import { legacyCounts, mergeAccountingGroups, optionalToken, unknownAccounting } from "../utils/accounting.js";
 import { toUtcHalfHourStart } from "../utils/buckets.js";
@@ -54,7 +54,7 @@ function checkedRecord(value: AccountingRecord): AccountingRecord {
     ![value.source_revision, value.parser_revision, value.detail_revision].every((n) => optionalToken(n) !== null && n > 0)) throw new Error("Invalid accounting ledger");
   if (!hasKeys(value, "details_version source model device_id hour_start event_id evidence_snapshot_seq source_revision parser_revision detail_revision basis groups") ||
     !validBasis(value.basis) || typeof value.model !== "string" ||
-    !["claude-code", "codex", "copilot-cli", "gemini-cli", "grok", "hermes", "kosmos", "omp", "opencode", "openclaw", "pi", "pmstudio", "vscode-copilot", "zcode"].includes(value.source) ||
+    !["antigravity", "claude-code", "codex", "copilot-cli", "gemini-cli", "grok", "hermes", "kosmos", "omp", "opencode", "openclaw", "pi", "pmstudio", "vscode-copilot", "zcode"].includes(value.source) ||
     !Number.isFinite(Date.parse(value.hour_start)) || new Date(value.hour_start).toISOString() !== value.hour_start ||
     (value.event_id === null ? value.evidence_snapshot_seq !== null : value.evidence_snapshot_seq === null || value.evidence_snapshot_seq < 1)) invalid();
   const sums = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 };
@@ -102,11 +102,12 @@ export class AccountingQueue extends BaseQueue<AccountingRecord> {
     catch { throw new Error("Invalid accounting ledger"); }
   }
 
-  async merge(incoming: AccountingRecord[], replay = false): Promise<void> {
+  async merge(incoming: AccountingRecord[], replay = false, preserveSources: Source[] = []): Promise<void> {
     const { records } = await this.readFromOffset(0);
     const merged = new Map(records.map((r) => [accountingKey(r), r]));
-    const dirty = new Set(await this.loadDirtyKeys());
-    if (replay) for (const key of merged.keys()) dirty.add(key);
+    const dirtyKeys = await this.loadDirtyKeys();
+    const dirty = new Set(dirtyKeys ?? (await this.readFromOffset(await this.loadOffset())).records.map(accountingKey));
+    if (replay) for (const [key, record] of merged) if (!preserveSources.includes(record.source)) dirty.add(key);
     let changed = false;
     for (const raw of incoming) {
       const r = checkedRecord(raw); const key = accountingKey(r); const prev = merged.get(key);

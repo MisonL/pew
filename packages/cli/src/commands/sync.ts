@@ -21,7 +21,7 @@ const ACCOUNTING_SCHEMA_VERSION = 2;
 import { CursorStore } from "../storage/cursor-store.js";
 import { LocalQueue } from "../storage/local-queue.js";
 import { EvidenceQueue } from "../storage/evidence-queue.js";
-import { AccountingQueue, accountingKey, planAccountingUpdates } from "../storage/accounting-queue.js";
+import { AccountingQueue, accountingJson, accountingKey, planAccountingUpdates } from "../storage/accounting-queue.js";
 import { commitSync, recoverSyncCommit } from "../storage/sync-commit.js";
 import { withStateLock } from "../storage/state-lock.js";
 import { toEvidenceRecord } from "../utils/usage-evidence.js";
@@ -48,6 +48,9 @@ import {
   snapshotJsonlSharedState,
 } from "../utils/jsonl-shared-state.js";
 import { aggregateRecords } from "./upload.js";
+import { readAntigravitySource } from "../parsers/antigravity.js";
+import { antigravityRecords, readAntigravityBaseline, replaceAntigravityPartition, tokenRecordKey } from "../utils/antigravity-snapshot.js";
+import { inclusiveAccounting } from "../utils/accounting.js";
 
 /** Sync execution options */
 export interface SyncOptions {
@@ -55,6 +58,7 @@ export interface SyncOptions {
   stateDir: string;
   /** Stable device identifier (from ConfigManager.ensureDeviceId()) */
   deviceId: string;
+  antigravityDir?: string;
   /** Override: Claude data directory (~/.claude) */
   claudeDir?: string;
   /** Override: Codex CLI sessions directory (~/.codex/sessions) */
@@ -106,6 +110,9 @@ export interface SyncOptions {
 }
 
 interface InternalSyncOptions extends SyncOptions {
+  antigravitySnapshot?: Awaited<ReturnType<typeof readAntigravitySource>>;
+  previousAntigravityRecords?: QueueRecord[];
+  previousAntigravityCursor?: CursorState["antigravity"];
   /**
    * Previous full queue snapshot retained across an accounting-schema rescan.
    * Missing buckets are emitted as zero-value tombstones so overwrite upserts
@@ -131,6 +138,7 @@ export interface SyncResult {
   totalDeltas: number;
   totalRecords: number;
   sources: {
+    antigravity: number;
     claude: number;
     codex: number;
     gemini: number;
@@ -148,6 +156,7 @@ export interface SyncResult {
   };
   /** Total files scanned per source */
   filesScanned: {
+    antigravity: number;
     claude: number;
     codex: number;
     gemini: number;
@@ -165,6 +174,7 @@ export interface SyncResult {
   };
   /** Total SQLite databases scanned per source */
   dbsScanned: {
+    antigravity: number;
     opencode: number;
     hermes: number;
     zcode: number;
@@ -182,6 +192,7 @@ interface Bucket {
 /** Map Source type to short result key */
 function sourceKey(source: Source): keyof SyncResult["sources"] {
   switch (source) {
+    case "antigravity": return "antigravity";
     case "claude-code": return "claude";
     case "gemini-cli": return "gemini";
     case "grok": return "grok";
@@ -235,7 +246,29 @@ function emptyEpochCursor(
 export async function executeSync(opts: SyncOptions): Promise<SyncResult> {
   return withStateLock(opts.stateDir, async () => {
     await recoverSyncCommit(opts.stateDir);
-    return executeSyncInternal(opts);
+    const internal: InternalSyncOptions = { ...opts };
+    internal.previousAntigravityRecords = await readAntigravityBaseline(opts.stateDir);
+    internal.previousAntigravityCursor = (await new CursorStore(opts.stateDir).load()).antigravity;
+    if (opts.antigravityDir) {
+      try {
+        const snapshot = await readAntigravitySource(opts.antigravityDir);
+        const records = antigravityRecords(snapshot.deltas, opts.deviceId);
+        let invalid = false;
+        const verified = new Set<string>();
+        planAccountingUpdates({ previous: [], before: [], after: records, deltas: snapshot.deltas,
+          replay: true, deviceId: opts.deviceId, onWarning: () => { invalid = true; },
+          onVerified: (key) => { verified.add(key); } });
+        if (invalid || verified.size !== records.length) throw new Error("Invalid Antigravity accounting snapshot");
+        internal.antigravitySnapshot = snapshot;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT" || internal.previousAntigravityRecords.length ||
+          internal.previousAntigravityCursor) {
+          opts.onProgress?.({ source: "antigravity", phase: "warn",
+            message: "Antigravity source unavailable or invalid; previous usage is preserved" });
+        }
+      }
+    }
+    return executeSyncInternal(internal);
   });
 }
 
@@ -292,6 +325,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     const { records: previousQueueRecords } = await queue.readFromOffset(0);
     await cursorStore.save({
       version: 1,
+      antigravity: opts.previousAntigravityCursor,
       accountingSchemaVersion: ACCOUNTING_SCHEMA_VERSION,
       files: {},
       knownFilePaths: {},
@@ -315,6 +349,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     });
     await cursorStore.save({
       version: 1,
+      antigravity: opts.previousAntigravityCursor,
       accountingSchemaVersion: ACCOUNTING_SCHEMA_VERSION,
       files: {},
       updatedAt: null,
@@ -351,6 +386,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
       });
       await cursorStore.save({
         version: 1,
+        antigravity: opts.previousAntigravityCursor,
         accountingSchemaVersion: ACCOUNTING_SCHEMA_VERSION,
         files: {},
         updatedAt: null,
@@ -375,9 +411,9 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   let replayDetected = false;
 
   const allDeltas: ParsedDelta[] = [];
-  const sourceCounts = { claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, hermes: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, vscodeCopilot: 0, zcode: 0 };
-  const filesScanned = { claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, hermes: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, vscodeCopilot: 0, zcode: 0 };
-  const dbsScanned = { opencode: 0, hermes: 0, zcode: 0 };
+  const sourceCounts = { antigravity: opts.antigravitySnapshot?.deltas.length ?? 0, claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, hermes: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, vscodeCopilot: 0, zcode: 0 };
+  const filesScanned = { antigravity: opts.antigravitySnapshot?.dbCount ?? 0, claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, hermes: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, vscodeCopilot: 0, zcode: 0 };
+  const dbsScanned = { antigravity: opts.antigravitySnapshot?.dbCount ?? 0, opencode: 0, hermes: 0, zcode: 0 };
 
   // Collect all discovered file paths (across all drivers) for knownFilePaths
   const discoveredFiles = new Set<string>();
@@ -785,6 +821,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     });
     await cursorStore.save({
       version: 1,
+      antigravity: opts.previousAntigravityCursor,
       accountingSchemaVersion: ACCOUNTING_SCHEMA_VERSION,
       files: {},
       updatedAt: null,
@@ -976,6 +1013,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
       });
       await cursorStore.save({
         version: 1,
+        antigravity: opts.previousAntigravityCursor,
         accountingSchemaVersion: ACCOUNTING_SCHEMA_VERSION,
         files: {},
         updatedAt: null,
@@ -1022,6 +1060,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
       });
       await cursorStore.save({
         version: 1,
+        antigravity: opts.previousAntigravityCursor,
         accountingSchemaVersion: ACCOUNTING_SCHEMA_VERSION,
         files: {},
         updatedAt: null,
@@ -1244,7 +1283,23 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
 
   const evidenceRecords = allDeltas.filter((d) => d.evidence).map((d) => toEvidenceRecord(d, opts.deviceId));
   const { records: oldRecords } = await queue.readFromOffset(0);
-  const finalRecords = initialCursorEmpty ? records : records.length > 0 ? aggregateRecords([...oldRecords, ...records]) : undefined;
+  let finalRecords = initialCursorEmpty ? records : records.length > 0 ? aggregateRecords([...oldRecords, ...records]) : undefined;
+  const previousAntigravity = opts.previousAntigravityRecords ?? [];
+  const freshAntigravity = opts.antigravitySnapshot
+    ? antigravityRecords(opts.antigravitySnapshot.deltas, opts.deviceId) : null;
+  const antigravity = replaceAntigravityPartition(previousAntigravity, finalRecords ?? oldRecords,
+    freshAntigravity, opts.deviceId);
+  if (finalRecords || antigravity.changedKeys.length || previousAntigravity.length && initialCursorEmpty) {
+    finalRecords = antigravity.records;
+  }
+  if (previousAntigravity.length && finalRecords && records.length === 0 && antigravity.changedKeys.length === 0 &&
+    accountingJson([...finalRecords].sort((a, b) => tokenRecordKey(a).localeCompare(tokenRecordKey(b)))) ===
+    accountingJson([...oldRecords].sort((a, b) => tokenRecordKey(a).localeCompare(tokenRecordKey(b))))) {
+    finalRecords = undefined;
+  }
+  cursors.antigravity = opts.antigravitySnapshot
+    ? { dbCount: opts.antigravitySnapshot.dbCount, updatedAt: new Date().toISOString() }
+    : opts.previousAntigravityCursor;
   const accountingWarnings = new Set<string>();
   const verifiedAccountingKeys = new Set<string>();
   const onVerified = (key: string) => { verifiedAccountingKeys.add(key); };
@@ -1255,6 +1310,17 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     const current = [...new Map([...priorAccounting, ...accounting].map((r) => [accountingKey(r), r])).values()];
     accounting.push(...planAccountingUpdates({ previous: current, before: [], after: finalRecords ?? oldRecords,
       deltas: ctx.accountingSnapshots, replay: true, deviceId: opts.deviceId, onWarning: onAccountingWarning, onVerified }));
+  }
+  if (opts.antigravitySnapshot) {
+    const tombstoneDeltas: ParsedDelta[] = antigravity.tombstones.map((r) => {
+      const tokens = emptyTokenDelta();
+      return { source: "antigravity", model: r.model, timestamp: r.hour_start, tokens,
+        accounting: inclusiveAccounting(tokens, { input: 0, read: 0, write: 0, output: 0, reasoning: 0 },
+          { origin: "antigravity:step", model: r.model, aggregate: true }) };
+    });
+    accounting.push(...planAccountingUpdates({ previous: priorAccounting, before: [], after: antigravity.records,
+      deltas: [...opts.antigravitySnapshot.deltas, ...tombstoneDeltas], replay: true,
+      deviceId: opts.deviceId, onWarning: onAccountingWarning, onVerified }));
   }
   for (const source of accountingWarnings) onProgress?.({ source, phase: "warn", message: "Some accounting details are unavailable; original usage is preserved" });
 
@@ -1295,6 +1361,17 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     const unionSet = new Set([...existingDirty, ...newKeys]);
     dirtyKeys = [...unionSet];
   }
+  if (finalRecords) {
+    const savedDirty = await queue.loadDirtyKeys();
+    const previousDirty = savedDirty ?? (await queue.readFromOffset(await queue.loadOffset())).records.map(tokenRecordKey);
+    const antigravityKeys = new Set(previousAntigravity.map(tokenRecordKey));
+    const retainedDirty = previousDirty.filter((key) => antigravityKeys.has(key));
+    const finalKeys = new Set(finalRecords.map(tokenRecordKey));
+    const pending = initialCursorEmpty ? retainedDirty : previousDirty.filter((key) => finalKeys.has(key));
+    dirtyKeys = [...new Set([...(dirtyKeys ?? previousDirty), ...pending, ...antigravity.changedKeys])];
+    if (initialCursorEmpty) dirtyKeys = dirtyKeys.filter((key) => !antigravityKeys.has(key) ||
+      retainedDirty.includes(key) || antigravity.changedKeys.includes(key));
+  }
   // else: incremental with no new data — skip queue write entirely
   // to preserve the upload offset and dirtyKeys (Bug B: re-marking uploaded records)
 
@@ -1304,18 +1381,18 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   cursors.accountingSchemaVersion = ACCOUNTING_SCHEMA_VERSION;
   cursors.updatedAt = new Date().toISOString();
   await commitSync(stateDir, { version: 1, records: finalRecords, dirtyKeys, evidence: evidenceRecords, accounting,
-    replay: initialCursorEmpty, cursors });
+    replay: initialCursorEmpty, preserveAccountingSources: ["antigravity"], cursors });
 
   onProgress?.({
     source: "all",
     phase: "done",
-    message: `Synced ${allDeltas.length} events → ${records.length} records`,
+    message: `Synced ${allDeltas.length + (opts.antigravitySnapshot?.deltas.length ?? 0)} events → ${records.length} records`,
   });
 
   return {
     accountingKeys: [...verifiedAccountingKeys].sort(),
-    totalDeltas: allDeltas.length,
-    totalRecords: records.length + evidenceRecords.length,
+    totalDeltas: allDeltas.length + (opts.antigravitySnapshot?.deltas.length ?? 0),
+    totalRecords: records.length + evidenceRecords.length + (freshAntigravity?.length ?? 0),
     sources: sourceCounts,
     filesScanned,
     dbsScanned,

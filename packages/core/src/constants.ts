@@ -14,6 +14,7 @@ import type { SessionKind, Source } from "./types.js";
 
 /** All supported AI coding tools (runtime array for iteration) */
 export const SOURCES: readonly Source[] = Object.freeze([
+  "antigravity",
   "claude-code",
   "codex",
   "copilot-cli",

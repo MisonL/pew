@@ -335,6 +335,29 @@ describe("POST /api/ingest", () => {
     const userBody = await userRes.json();
     expect(userBody.summary.cached_input_tokens).toBe(52992);
   });
+
+  it("round-trips Antigravity disjoint counters and deduplicates uploads", async () => {
+    const record = makeRecord({ source: "antigravity", model: "gemini-3.8-flash-n",
+      hour_start: "2026-10-01T01:00:00.000Z", device_id: "e2e-antigravity-device",
+      input_tokens: 100, cached_input_tokens: 900, output_tokens: 40, reasoning_output_tokens: 60, total_tokens: 1100 });
+    for (let i = 0; i < 2; i++) {
+      const res = await fetch(`${BASE_URL}/api/ingest`, {
+        method: "POST", headers: INGEST_HEADERS, body: JSON.stringify([record]),
+      });
+      expect(res.status).toBe(200);
+    }
+    const query = "source=antigravity&from=2026-10-01&to=2026-10-02";
+    for (const path of ["/api/usage", "/api/sessions", "/api/leaderboard", `/api/users/${TEST_USER_SLUG}`]) {
+      expect((await fetch(`${BASE_URL}${path}?${query}`)).status, path).toBe(200);
+    }
+    const res = await fetch(`${BASE_URL}/api/usage?${query}`);
+    const body = await res.json();
+    expect(body.summary).toMatchObject({ input_tokens: 100, cached_input_tokens: 900,
+      output_tokens: 40, reasoning_output_tokens: 60, total_tokens: 1100 });
+    expect(body.records).toHaveLength(1);
+    const summary = body.summary;
+    expect(summary.cached_input_tokens / (summary.input_tokens + summary.cached_input_tokens)).toBe(0.9);
+  });
 });
 
 describe("CLI upgrade notice persistence", () => {
@@ -708,7 +731,7 @@ describe("GET /api/seasons", () => {
 // ===========================================================================
 
 describe("GET /api/usage/by-device", () => {
-  it("returns all three ingested devices with consistent named counts across every breakdown", async () => {
+  it("returns all ingested devices with consistent named counts across every breakdown", async () => {
     const res = await fetch(`${BASE_URL}/api/usage/by-device?from=2020-01-01`);
     expect(res.status).toBe(200);
     const body: ByDeviceResponse = await res.json();
@@ -719,10 +742,12 @@ describe("GET /api/usage/by-device", () => {
         output_tokens: 1571, reasoning_output_tokens: 111, total_tokens: 90869 },
       { device_id: "e2e-zcode-device", date: "2026-07-10", input_tokens: 11242, cached_input_tokens: 52992,
         output_tokens: 1329, reasoning_output_tokens: 0, total_tokens: 65563 },
+      { device_id: "e2e-antigravity-device", date: "2026-10-01", input_tokens: 100, cached_input_tokens: 900,
+        output_tokens: 40, reasoning_output_tokens: 60, total_tokens: 1100 },
     ];
-    expect(body.devices).toHaveLength(3);
-    expect(body.timeline).toHaveLength(3);
-    expect(body.deviceDetails).toHaveLength(5);
+    expect(body.devices).toHaveLength(4);
+    expect(body.timeline).toHaveLength(4);
+    expect(body.deviceDetails).toHaveLength(6);
     for (const { date, ...device } of expected) {
       expect(body.devices.find((row) => row.device_id === device.device_id)).toMatchObject(device);
       expect(body.timeline.find((row) => row.device_id === device.device_id)).toMatchObject({ ...device, date });

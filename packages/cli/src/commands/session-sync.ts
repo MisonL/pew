@@ -13,6 +13,7 @@
  * separate queue, separate files.
  */
 
+import { readAntigravitySource } from "../parsers/antigravity.js";
 import { stat } from "node:fs/promises";
 import type {
   SessionSnapshot,
@@ -41,6 +42,7 @@ import type { SessionRow, SessionMessageRow } from "../parsers/opencode-sqlite-s
 export interface SessionSyncOptions {
   /** Directory for persisting state (cursors, queue) */
   stateDir: string;
+  antigravityDir?: string;
   /** Override: Claude data directory (~/.claude) */
   claudeDir?: string;
   /** Override: Codex CLI sessions directory (~/.codex/sessions) */
@@ -99,6 +101,7 @@ export interface SessionSyncResult {
   totalSnapshots: number;
   totalRecords: number;
   sources: {
+    antigravity: number;
     claude: number;
     codex: number;
     copilotCli: number;
@@ -114,6 +117,7 @@ export interface SessionSyncResult {
   };
   /** Total files/directories scanned per source */
   filesScanned: {
+    antigravity: number;
     claude: number;
     codex: number;
     copilotCli: number;
@@ -129,6 +133,7 @@ export interface SessionSyncResult {
   };
   /** Total SQLite databases scanned per source */
   dbsScanned: {
+    antigravity: number;
     opencode: number;
     zcode: number;
   };
@@ -169,9 +174,24 @@ async function sessionSyncLocked(
   const cursors = await cursorStore.load();
 
   const allSnapshots: SessionSnapshot[] = [];
-  const sourceCounts = { claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, zcode: 0 };
-  const filesScanned = { claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, zcode: 0 };
-  const dbsScanned = { opencode: 0, zcode: 0 };
+  const sourceCounts = { antigravity: 0, claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, zcode: 0 };
+  const filesScanned = { antigravity: 0, claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, zcode: 0 };
+  const dbsScanned = { antigravity: 0, opencode: 0, zcode: 0 };
+
+  if (opts.antigravityDir) {
+    try {
+      const snapshot = await readAntigravitySource(opts.antigravityDir);
+      allSnapshots.push(...snapshot.snapshots);
+      sourceCounts.antigravity = snapshot.snapshots.length;
+      filesScanned.antigravity = snapshot.dbCount;
+      dbsScanned.antigravity = snapshot.dbCount;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        onProgress?.({ source: "antigravity", phase: "warn",
+          message: "Antigravity source unavailable or invalid; previous sessions are preserved" });
+      }
+    }
+  }
 
   // Paths surfaced by discovery this run; consumed by the alias-prune
   // pass below.

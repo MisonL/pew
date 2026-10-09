@@ -8,7 +8,7 @@ Bun-workspaces monorepo tracking token usage from local AI coding tools. Human o
 - `packages/worker` — Cloudflare Worker for D1 ingest writes (`@pew/worker`, private)
 - `packages/worker-read` — Cloudflare Worker for D1 read queries (`@pew/worker-read`, private)
 
-Supported tools: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, Grok, Hermes, Kosmos, Oh My Pi, OpenCode, OpenClaw, Pi, PM Studio, VS Code Copilot, ZCode.
+Supported tools: Antigravity CLI, Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, Grok, Hermes, Kosmos, Oh My Pi, OpenCode, OpenClaw, Pi, PM Studio, VS Code Copilot, ZCode.
 
 ## Scope and instruction sources
 

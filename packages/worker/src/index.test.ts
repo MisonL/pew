@@ -237,6 +237,16 @@ describe("Worker ingest endpoint", () => {
   // -----------------------------------------------------------------------
 
   describe("batch execution", () => {
+    it("preserves Antigravity token partitions in the D1 upsert", async () => {
+      const record = { ...VALID_RECORD, source: "antigravity", input_tokens: 100, cached_input_tokens: 900,
+        output_tokens: 40, reasoning_output_tokens: 60, total_tokens: 1100 };
+      const res = await worker.fetch(makeRequest({ userId: "u1", records: [record] }), env);
+      expect(res.status).toBe(200);
+      const bind = vi.mocked(env.DB.prepare).mock.results[0]?.value.bind;
+      expect(bind).toHaveBeenCalledWith("u1", "default", "antigravity", record.model, record.hour_start, 100, 900, 40, 60, 1100);
+      expect(env.DB.prepare).toHaveBeenCalledWith(expect.stringContaining("ON CONFLICT"));
+    });
+
     it("should construct prepared statements and call env.DB.batch()", async () => {
       const req = makeRequest({ userId: "u1", records: [VALID_RECORD] });
 

@@ -1,11 +1,23 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { executeEnrich, type EnrichOptions } from "../commands/enrich.js";
 import { AccountingQueue } from "../storage/accounting-queue.js";
+import * as syncCommands from "../commands/sync.js";
 
 describe("directed accounting enrichment", () => {
+  it.each(["antigravity", "all"] as const)("forwards the Antigravity directory into %s accounting replay", async (source) => {
+    const dir = await mkdtemp(join(tmpdir(), "pew-enrich-antigravity-"));
+    const replay = vi.spyOn(syncCommands, "executeSync");
+    try {
+      const antigravityDir = join(dir, "conversations");
+      expect(await executeEnrich({ stateDir: dir, deviceId: "test", source, antigravityDir,
+        from: "2026-09-01", to: "2026-09-02" })).toMatchObject({ source, matched: 0, applied: 0 });
+      expect(replay).toHaveBeenCalledWith(expect.objectContaining({ antigravityDir, deviceId: "test" }));
+    } finally { replay.mockRestore(); await rm(dir, { recursive: true, force: true }); }
+  });
+
   it.each(["claude-code", "all"] as const)("previews %s without state writes, applies details only and leaves missing history unchanged", async (source) => {
     const dir = await mkdtemp(join(tmpdir(), "pew-enrich-"));
     try {

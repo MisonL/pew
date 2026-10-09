@@ -105,6 +105,13 @@ describe("GET /api/sessions", () => {
       expect(toDate).toBe("2026-09-13T10:30:00.000Z");
     });
 
+    it("accepts the Antigravity source filter", async () => {
+      mockDbRead.getSessionRecords.mockResolvedValueOnce([]);
+      const res = await GET(makeGetRequest("/api/sessions", { source: "antigravity" }));
+      expect(res.status).toBe(200);
+      expect(mockDbRead.getSessionRecords.mock.calls[0]?.[3].source).toBe("antigravity");
+    });
+
     it("should reject invalid source filter", async () => {
       const res = await GET(makeGetRequest("/api/sessions", { source: "invalid-tool" }));
 

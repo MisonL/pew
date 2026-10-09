@@ -21,6 +21,28 @@ function row(input = 100000, read = 90000, write: number | null = 10000, output 
 }
 
 describe("billing groups and honest cache metrics", () => {
+  it("keeps Antigravity cache-heavy input and reasoning disjoint across charts", () => {
+    const r = { ...row(18464, 16288, 0, 94, 60), source: "antigravity" };
+    r.accounting[0].groups[0].origin = "antigravity:model_usage";
+    expect(summarizeAccounting([r])).toMatchObject({
+      inputTokens: 18464, outputTokens: 94, totalTokens: 18558,
+      cacheReadTokens: 16288, cacheWriteTokens: 0, readCoverage: 1,
+    });
+    expect(summarizeAccounting([r]).cacheReadRate).toBeCloseTo(16288 / 18464 * 100);
+    expect(toDailyCacheRates([r])[0]).toMatchObject({ inputTokens: 2176, cachedTokens: 16288, coverage: 1 });
+    expect(toDailyCacheRates([r])[0]?.cacheRate).toBeCloseTo(16288 / 18464 * 100);
+    expect(toDailyPoints([r])[0]).toMatchObject({ input: 2176, cached: 16288, output: 34, reasoning: 60, total: 18558 });
+    expect(toSourceAggregates([r])[0]).toMatchObject({ source: "antigravity", value: 18558 });
+    expect(computeReasoningRatio(r, [r]).reasoningPercent).toBeCloseTo(60 / 94 * 100);
+  });
+
+  it("includes reported Antigravity cache misses in the weighted hit-rate denominator", () => {
+    const hit = { ...row(1000, 900, 0, 0, 0), source: "antigravity" };
+    const miss = { ...row(9000, 0, 0, 0, 0), source: "antigravity" };
+    expect(summarizeAccounting([hit, miss])).toMatchObject({ inputTokens: 10000, cacheReadTokens: 900, cacheReadRate: 9, readCoverage: 1 });
+    expect(toDailyCacheRates([hit, miss])[0]?.cacheRate).toBe(9);
+  });
+
   it("preserves details through model totals and daily chart stacks", () => {
     const r = row(); const map = buildPricingMap({ dynamic: [entry] });
     const models = toModelAggregates([r]);

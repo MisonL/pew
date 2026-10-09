@@ -1,5 +1,34 @@
 # Retrospective
 
+## 2026-10-09: Antigravity reference decoders contradicted the installed schema
+
+Recent high-star usage trackers treated `ModelUsageStats` field 1 as additional
+system-prompt tokens; the installed CLI descriptor identifies it as the model
+enum. One decoder also reversed thinking and visible-response fields. Copying
+these mappings would inflate input and mislabel output despite plausible totals.
+Verify descriptor names and cross-check independent persisted representations
+before adopting undocumented wire mappings; popularity is not accounting proof.
+
+The first full verification ran in the daily checkout and correctly failed its
+environment-file guard. A clean clone then rejected external dependency symlinks
+under Turbopack. Leave private environment files untouched and use an owned,
+environment-file-free clone with copy-on-write dependencies for real HTTP tests.
+
+Node's SQLite tests passed with a read-only copied WAL database, but the actual
+Bun reader failed because the private copy lacked a shared-memory index. Only
+the temporary snapshot may open writable to recover its copied WAL; original
+databases and sidecars remain untouched. Add an actual Bun-process WAL regression
+with source-byte equality assertions, not just tests under Vitest's Node runtime.
+Run lifecycle coverage before HTTP/browser acceptance rather than concurrently:
+the existing cleanup test inventories shared temporary roots, and rebuilding
+Next while a development server is active can invalidate its generated output.
+
+The initial parser mistook omitted cache and thinking scalars for unavailable
+accounting. The installed descriptor uses proto3 implicit presence, so omitted
+zero-hit calls must still contribute their input to the weighted cache-rate
+denominator. Verify scalar presence as well as field numbers; regressions now
+combine an omitted-zero cache field with a positive-hit call.
+
 ## 2026-10-04: Installed dependencies diverged from the release lockfile
 
 The manifest and lockfile required Basalt 2.2.0, but the daily workspace still linked 2.1.8. Copying installed dependencies into an isolated acceptance checkout preserved that drift, so early green browser tests did not prove the locked release. The release installation exposed the mismatch; the corporate mirror lacked the exact tarball. Install from a verified allowed mirror, keep mirror URLs out of the lockfile, verify the resolved package version, and rerun build, coverage and browser gates before publication. A matching manifest alone is not installed-version evidence.

@@ -12,7 +12,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { sumCounts } from "@pew/core";
+import { sumCounts, VALID_SOURCES } from "@pew/core";
 import { resolveUser } from "@/lib/auth-helpers";
 import { unauthorizedResponse } from "@/lib/api-responses";
 import { parseBoundedInt } from "@/lib/query-params";
@@ -21,23 +21,6 @@ import { getDbRead } from "@/lib/db";
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
-
-const VALID_SOURCES = new Set([
-  "claude-code",
-  "codex",
-  "copilot-cli",
-  "gemini-cli",
-  "grok",
-  "hermes",
-  "kosmos",
-  "omp",
-  "opencode",
-  "openclaw",
-  "pi",
-  "pmstudio",
-  "vscode-copilot",
-  "zcode",
-]);
 
 const VALID_GRANULARITIES = new Set(["half-hour", "day"]);
 

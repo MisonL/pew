@@ -39,6 +39,12 @@ describe("GET /api/leaderboard", () => {
 
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
+  it("accepts Antigravity on the harness leaderboard", async () => {
+    const res = await GET(makeGetRequest("/api/leaderboard", { source: "antigravity" }));
+    expect(res.status).toBe(200);
+    expect(mockDb.getLeaderboardSnapshot.mock.calls[0]?.[0].source).toBe("antigravity");
+  });
+
   it.each(["week", "month"])("reuses a UTC ten-minute window for %s snapshots", async (period) => {
     for (const now of ["2026-09-19T10:01:02.345Z", "2026-09-19T10:09:59.999Z", "2026-09-19T10:10:00.000Z"]) {
       vi.setSystemTime(new Date(now));

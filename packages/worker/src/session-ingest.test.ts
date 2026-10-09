@@ -89,6 +89,13 @@ describe("Worker session ingest endpoint", () => {
   // -----------------------------------------------------------------------
 
   describe("path routing", () => {
+    it("accepts Antigravity session snapshots", async () => {
+      const record = { ...VALID_SESSION_RECORD, source: "antigravity", session_key: "antigravity:synthetic-session" };
+      const res = await worker.fetch(makeRequest("/ingest/sessions", { userId: "u1", records: [record] }), env);
+      expect(res.status).toBe(200);
+      expect((await json(res)).ingested).toBe(1);
+    });
+
     it("should handle POST /ingest/sessions", async () => {
       const req = makeRequest("/ingest/sessions", {
         userId: "u1",

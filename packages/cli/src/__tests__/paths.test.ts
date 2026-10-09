@@ -67,6 +67,7 @@ describe("resolveDefaultPaths", () => {
     );
     expect(paths.claudeDir).toBe(join("/fakehome", ".claude"));
     expect(paths.geminiDir).toBe(join("/fakehome", ".gemini"));
+    expect(paths.antigravityDir).toBe(join("/fakehome", ".gemini", "antigravity-cli", "conversations"));
     expect(paths.openCodeMessageDir).toBe(
       join("/fakehome", ".local", "share", "opencode", "storage", "message"),
     );
@@ -145,8 +146,9 @@ describe("resolveDefaultPaths", () => {
     expect(paths.hermesProfileDbPaths[0].dbKey).toBe("profiles/tomato");
   });
 
-  it("should return exactly 24 path properties", () => {
+  it("should return exactly 25 path properties", () => {
     const keys = [
+      "antigravityDir",
       "stateDir",
       "binDir",
       "notifyPath",

@@ -12,8 +12,9 @@ import {
 } from "../constants.js";
 
 describe("SOURCES", () => {
-  it("should contain exactly 14 supported AI tools", () => {
-    expect(SOURCES).toHaveLength(14);
+  it("should contain exactly 15 supported AI tools", () => {
+    expect(SOURCES).toHaveLength(15);
+    expect(SOURCES).toContain("antigravity");
     expect(SOURCES).toContain("claude-code");
     expect(SOURCES).toContain("codex");
     expect(SOURCES).toContain("copilot-cli");
@@ -34,6 +35,7 @@ describe("SOURCES", () => {
     // `as const` is a compile-time-only constraint;
     // we verify the array has the correct contents instead.
     expect(SOURCES).toEqual([
+      "antigravity",
       "claude-code",
       "codex",
       "copilot-cli",

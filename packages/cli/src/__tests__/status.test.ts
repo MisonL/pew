@@ -83,6 +83,33 @@ describe("executeStatus", () => {
     expect(result.lastSync).toBe("2026-03-07T10:00:00.000Z");
   });
 
+  it("should count Antigravity databases from the validated snapshot marker without file cursors", async () => {
+    const cursorStore = new CursorStore(stateDir);
+    await cursorStore.save({
+      files: {
+        "/home/.gemini/tmp/proj/chats/session.json": {
+          type: "gemini", messages: {}, inode: 1, size: 100, mtimeMs: 1000,
+        },
+      },
+      antigravity: { dbCount: 2, updatedAt: "2026-10-09T00:00:00.000Z" },
+      updatedAt: "2026-10-09T00:00:00.000Z",
+    });
+
+    const result = await executeStatus({ stateDir, sourceDirs: defaultDirs });
+    expect(result.trackedFiles).toBe(3);
+    expect(result.sources).toEqual({ "gemini-cli": 1, antigravity: 2 });
+  });
+
+  it("should omit Antigravity from tracked sources when its validated snapshot contains no databases", async () => {
+    await new CursorStore(stateDir).save({
+      files: {}, antigravity: { dbCount: 0, updatedAt: "2026-10-09T00:00:00.000Z" },
+      updatedAt: "2026-10-09T00:00:00.000Z",
+    });
+    const result = await executeStatus({ stateDir, sourceDirs: defaultDirs });
+    expect(result.trackedFiles).toBe(0);
+    expect(result.sources).toEqual({});
+  });
+
   it("should categorize files by source from resolved directories", async () => {
     const cursorStore = new CursorStore(stateDir);
     await cursorStore.save({

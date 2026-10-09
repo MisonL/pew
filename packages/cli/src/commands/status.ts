@@ -96,9 +96,11 @@ export async function executeStatus(opts: {
     const source = classifySource(filePath, sourceDirs);
     sources[source] = (sources[source] || 0) + 1;
   }
+  const antigravityDbs = cursors.antigravity?.dbCount ?? 0;
+  if (antigravityDbs > 0) sources.antigravity = antigravityDbs;
 
   return {
-    trackedFiles: Object.keys(cursors.files).length,
+    trackedFiles: Object.keys(cursors.files).length + antigravityDbs,
     lastSync: cursors.updatedAt,
     pendingRecords: records.length,
     sources,

@@ -19,6 +19,7 @@ export interface EnrichOptions extends SyncOptions {
 }
 
 const sourceOptions: Record<Source, Array<keyof SyncOptions>> = {
+  antigravity: ["antigravityDir"],
   "claude-code": ["claudeDir"], codex: ["codexSessionsDir", "multicaCodexDirs"], "gemini-cli": ["geminiDir"],
   "copilot-cli": ["copilotCliLogsDir", "copilotCliOtelPaths"], grok: ["grokLogsPath", "grokSessionsDir"],
   hermes: ["hermesDbPath", "hermesProfileDbPaths", "openHermesDb"], kosmos: ["kosmosDataDir"], omp: ["ompSessionsDir"],

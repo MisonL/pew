@@ -10,6 +10,7 @@ import { executeReset } from "../commands/reset.js";
 import { CursorStore } from "../storage/cursor-store.js";
 import { validateAccountingRecord } from "../../../core/src/accounting.js";
 import { invalidAccountingCases } from "../../../core/src/__test-helpers__/accounting.js";
+import { commitSync, recoverSyncCommit } from "../storage/sync-commit.js";
 
 const dirs: string[] = [];
 async function temp() { const dir = await mkdtemp(join(tmpdir(), "pew-cache-queue-")); dirs.push(dir); return dir; }
@@ -24,6 +25,52 @@ function fixture(): AccountingRecord {
 function base(r = fixture()): QueueRecord { return { source: r.source, model: r.model, device_id: r.device_id, hour_start: r.hour_start, ...r.basis }; }
 
 describe("durable independent accounting revisions", () => {
+  it.each([0, 1, 2, 3, 4].flatMap((uploaded) => [false, true].map((replay) => ({ uploaded, replay }))))(
+    "preserves legacy offset pending intent when materializing dirty keys (uploaded=$uploaded, replay=$replay)",
+    async ({ uploaded, replay }) => {
+      const q = new AccountingQueue(await temp());
+      const records: AccountingRecord[] = [
+        { ...fixture(), source: "antigravity" },
+        { ...fixture(), source: "antigravity", device_id: "other-device" },
+        fixture(),
+        { ...fixture(), source: "grok" },
+      ];
+      await q.overwrite(records);
+      const offset = Buffer.byteLength(records.slice(0, uploaded).map((r) => `${JSON.stringify(r)}\n`).join(""));
+      await q.saveOffset(offset);
+      expect(await q.loadDirtyKeys()).toBeUndefined();
+      const pending = records.slice(uploaded).map(accountingKey);
+      expect((await q.readFromOffset(offset)).records.map(accountingKey)).toEqual(pending);
+      await q.merge(replay ? [] : [{ ...records[2], detail_revision: 2, groups: [group(80)] }], replay, ["antigravity"]);
+      const dirty = new Set(pending);
+      for (const record of replay ? records.filter((r) => r.source !== "antigravity") : [records[2]]) dirty.add(accountingKey(record));
+      expect(await q.loadDirtyKeys()).toEqual([...dirty].sort());
+      expect((await q.readFromOffset(0)).records).toContainEqual(records[1]);
+    },
+  );
+
+  it.each([false, true])("preserves Antigravity pending accounting intent during unrelated replay (pending=%s)", async (pending) => {
+    const q = new AccountingQueue(await temp());
+    const agy: AccountingRecord = { ...fixture(), source: "antigravity" };
+    const codex = fixture();
+    await q.merge([agy, codex]);
+    await q.saveDirtyKeys(pending ? [accountingKey(agy)] : []);
+    await q.merge([], true, ["antigravity"]);
+    expect(await q.loadDirtyKeys()).toEqual([accountingKey(codex), ...(pending ? [accountingKey(agy)] : [])].sort());
+    const changed = { ...agy, detail_revision: 2, groups: [group(80)] };
+    await q.merge([changed], true, ["antigravity"]);
+    expect(await q.loadDirtyKeys()).toEqual([accountingKey(codex), accountingKey(agy)].sort());
+    expect((await q.readFromOffset(0)).records).toContainEqual(changed);
+  });
+
+  it("accepts Antigravity accounting in the published CLI source allowlist", async () => {
+    const q = new AccountingQueue(await temp());
+    const record: AccountingRecord = { ...fixture(), source: "antigravity" };
+    expect(validateAccountingRecord(record, 0).valid).toBe(true);
+    await q.merge([record]);
+    expect((await q.readFromOffset(0)).records).toEqual([record]);
+  });
+
   it("enforces the same adversarial trust-boundary cases in the published CLI", async () => {
     const q = new AccountingQueue(await temp());
     for (const [name, value] of invalidAccountingCases()) {
@@ -97,6 +144,23 @@ describe("durable independent accounting revisions", () => {
 });
 
 describe("sync commits legacy counters, annotations and cursors together", () => {
+  it("recovers the journal's accounting replay source exclusions after a cursor write fails", async () => {
+    const dir = await temp(); const q = new AccountingQueue(dir);
+    const agy: AccountingRecord = { ...fixture(), source: "antigravity" };
+    const codex = fixture();
+    await q.merge([agy, codex]); await q.saveDirtyKeys([]);
+    const cursors = { version: 1 as const, files: {}, updatedAt: "2026-10-09T00:00:00.000Z" };
+    vi.spyOn(CursorStore.prototype, "save").mockRejectedValueOnce(new Error("simulated cursor write failure"));
+    await expect(commitSync(dir, { version: 1, evidence: [], accounting: [], replay: true,
+      preserveAccountingSources: ["antigravity"], cursors })).rejects.toThrow("simulated cursor");
+    expect(JSON.parse(await readFile(join(dir, "sync-commit.json"), "utf8")).preserveAccountingSources).toEqual(["antigravity"]);
+    vi.restoreAllMocks(); await recoverSyncCommit(dir);
+    expect(await q.loadDirtyKeys()).toEqual([accountingKey(codex)]);
+    expect((await q.readFromOffset(0)).records).toHaveLength(2);
+    expect(await new CursorStore(dir).load()).toEqual(cursors);
+    await expect(readFile(join(dir, "sync-commit.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("recovers a cursor-write failure before re-reading the same source bytes", async () => {
     const root = await temp(); const sessions = join(root, "claude");
     const { mkdir } = await import("node:fs/promises"); await mkdir(join(sessions, "projects", "test"), { recursive: true });

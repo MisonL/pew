@@ -18,7 +18,7 @@
  * Anonymous requests with scope params are silently downgraded to global.
  */
 
-import { MAX_STRING_LENGTH } from "@pew/core";
+import { MAX_STRING_LENGTH, VALID_SOURCES } from "@pew/core";
 import { NextResponse } from "next/server";
 import { getDbRead } from "@/lib/db";
 import { resolveUser } from "@/lib/auth-helpers";
@@ -30,22 +30,7 @@ import { getCachedLeaderboard } from "@/lib/leaderboard-cache";
 // ---------------------------------------------------------------------------
 
 const VALID_PERIODS = new Set(["week", "month", "all"]);
-const VALID_SOURCES = new Set([
-  "claude-code",
-  "codex",
-  "copilot-cli",
-  "gemini-cli",
-  "grok",
-  "hermes",
-  "kosmos",
-  "omp",
-  "opencode",
-  "openclaw",
-  "pi",
-  "pmstudio",
-  "vscode-copilot",
-  "zcode",
-]);
+
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
 

@@ -5,6 +5,11 @@ import type { AccountingRecord } from "./accounting-types.js";
 import { accountingFixture, invalidAccountingCases } from "./__test-helpers__/accounting.js";
 
 describe("accounting annotations", () => {
+  it("accepts Antigravity accounting with disjoint cache reads and reasoning", () => {
+    const record = { ...accountingFixture(), source: "antigravity" };
+    expect(validateAccountingRecord(record, 0)).toEqual({ valid: true, record });
+  });
+
   it.each(invalidAccountingCases())("rejects %s at the server boundary without exposing raw content", (_name, value) => {
     expect(validateAccountingRecord(value, 3)).toEqual({ valid: false, error: "record[3]: invalid accounting details" });
   });

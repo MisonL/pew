@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { AccountingRecord, CursorState, EvidenceRecord, QueueRecord } from "@pew/core";
+import type { AccountingRecord, CursorState, EvidenceRecord, QueueRecord, Source } from "@pew/core";
 import { AccountingQueue } from "./accounting-queue.js";
 import { EvidenceQueue } from "./evidence-queue.js";
 import { LocalQueue } from "./local-queue.js";
@@ -14,6 +14,7 @@ interface SyncCommit {
   evidence: EvidenceRecord[];
   accounting: AccountingRecord[];
   replay: boolean;
+  preserveAccountingSources?: Source[];
   cursors: CursorState;
 }
 
@@ -29,7 +30,7 @@ export async function recoverSyncCommit(stateDir: string): Promise<void> {
     if (commit.version !== 1 || !commit.cursors || !Array.isArray(commit.accounting) || !Array.isArray(commit.evidence)) throw new Error();
   } catch { throw new Error("Invalid pending sync commit; preserve Pew state for recovery"); }
   await new EvidenceQueue(stateDir).merge(commit.evidence, commit.replay);
-  await new AccountingQueue(stateDir).merge(commit.accounting, commit.replay);
+  await new AccountingQueue(stateDir).merge(commit.accounting, commit.replay, commit.preserveAccountingSources);
   if (commit.records) {
     const queue = new LocalQueue(stateDir);
     await queue.saveDirtyKeys(commit.dirtyKeys ?? []);

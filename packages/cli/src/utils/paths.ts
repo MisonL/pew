@@ -179,6 +179,7 @@ export function resolveDefaultPaths(home = homedir()) {
     codexSessionsDir: join(codexHome, "sessions"),
     /** Gemini CLI data: ~/.gemini */
     geminiDir: join(home, ".gemini"),
+    antigravityDir: join(home, ".gemini", "antigravity-cli", "conversations"),
     /** OpenCode message storage: ~/.local/share/opencode/storage/message */
     openCodeMessageDir: join(
       home,

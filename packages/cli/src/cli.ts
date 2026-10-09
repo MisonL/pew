@@ -55,6 +55,7 @@ function parseNotBefore(raw: string | undefined): number | undefined {
 
 function isSource(value: string): value is Source {
   return [
+    "antigravity",
     "claude-code",
     "codex",
     "gemini-cli",
@@ -113,12 +114,13 @@ function logSyncProgress(event: {
     return;
   }
 
-  // SQLite-backed sync (OpenCode + ZCode) emits descriptive messages instead
+  // SQLite-backed sync emits descriptive messages instead
   // of file counters. Surface them so the CLI shows DB activity explicitly.
   // Recognise the DB compound tags used by pre-check as well as the raw
   // driver.source values used inside the DB driver loop.
   if (
-    (event.source === "opencode-sqlite" ||
+    (event.source === "antigravity" ||
+      event.source === "opencode-sqlite" ||
       event.source === "opencode" ||
       event.source === "zcode-sqlite" ||
       event.source === "zcode") &&
@@ -148,7 +150,8 @@ function logSessionSyncProgress(event: {
   }
 
   if (
-    (event.source === "opencode-sqlite" ||
+    (event.source === "antigravity" ||
+      event.source === "opencode-sqlite" ||
       event.source === "opencode" ||
       event.source === "zcode-sqlite" ||
       event.source === "zcode") &&
@@ -172,6 +175,7 @@ function logSessionSyncProgress(event: {
 
 /** Display name mapping for source keys */
 const SOURCE_LABELS: Record<string, string> = {
+  antigravity: "Antigravity CLI",
   claude: "Claude",
   codex: "Codex",
   gemini: "Gemini",
@@ -304,6 +308,7 @@ export const syncCommand = defineCommand({
       grokLogsPath: paths.grokLogsPath,
       grokSessionsDir: paths.grokSessionsDir,
       zcodeDbPath: paths.zcodeDbPath,
+      antigravityDir: paths.antigravityDir,
       openZcodeDb,
       onCorruptLine: handleCorruptLine,
       onProgress(event) {
@@ -335,6 +340,7 @@ export const syncCommand = defineCommand({
       if (result.sources.copilotCli > 0) deltaParts.push(`Copilot CLI: ${result.sources.copilotCli}`);
       if (result.sources.hermes > 0) deltaParts.push(`Hermes: ${result.sources.hermes}`);
       if (result.sources.zcode > 0) deltaParts.push(`ZCode: ${result.sources.zcode}`);
+      if (result.sources.antigravity > 0) deltaParts.push(`Antigravity CLI: ${result.sources.antigravity}`);
       if (deltaParts.length > 0) {
         log.text(pc.dim(deltaParts.join("  ")));
       }
@@ -366,6 +372,7 @@ export const syncCommand = defineCommand({
       grokLogsPath: paths.grokLogsPath,
       grokSessionsDir: paths.grokSessionsDir,
       zcodeDbPath: paths.zcodeDbPath,
+      antigravityDir: paths.antigravityDir,
       openZcodeSessionDb,
       onCorruptLine: handleCorruptLine,
       onProgress(event) {
@@ -393,6 +400,7 @@ export const syncCommand = defineCommand({
       if (sessionResult.sources.pi > 0) sessParts.push(`Pi: ${sessionResult.sources.pi}`);
       if (sessionResult.sources.pmstudio > 0) sessParts.push(`PM Studio: ${sessionResult.sources.pmstudio}`);
       if (sessionResult.sources.zcode > 0) sessParts.push(`ZCode: ${sessionResult.sources.zcode}`);
+      if (sessionResult.sources.antigravity > 0) sessParts.push(`Antigravity CLI: ${sessionResult.sources.antigravity}`);
       if (sessParts.length > 0) {
         log.text(pc.dim(sessParts.join("  ")));
       }
@@ -753,6 +761,7 @@ const notifyCommand = defineCommand({
       grokLogsPath: paths.grokLogsPath,
       grokSessionsDir: paths.grokSessionsDir,
       zcodeDbPath: paths.zcodeDbPath,
+      antigravityDir: paths.antigravityDir,
       openZcodeDb: openZcodeDb2,
       openZcodeSessionDb: openZcodeSessionDb2,
       version: CLI_VERSION,

@@ -10,8 +10,9 @@
 // Source: Supported AI coding tools
 // ---------------------------------------------------------------------------
 
-/** The 14 supported AI coding tools */
+/** The 15 supported AI coding tools */
 export type Source =
+  | "antigravity"
   | "claude-code"
   | "codex"
   | "copilot-cli"
@@ -293,6 +294,7 @@ export interface CodexScopeState {
 /** Top-level cursor store persisted to disk */
 export interface CursorState {
   version: 1;
+  antigravity?: { dbCount: number; updatedAt: string };
   /**
    * Token accounting schema version (see ACCOUNTING_SCHEMA_VERSION).
    * Absent on cursors.json written before schema stamping landed.

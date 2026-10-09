@@ -17,7 +17,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { sumCounts } from "@pew/core";
+import { sumCounts, VALID_SOURCES } from "@pew/core";
 import { getDbRead, type DbRead } from "@/lib/db";
 import { resolveUser } from "@/lib/auth-helpers";
 import { isAdmin } from "@/lib/admin";
@@ -25,23 +25,6 @@ import { isAdmin } from "@/lib/admin";
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
-
-const VALID_SOURCES = new Set([
-  "claude-code",
-  "codex",
-  "copilot-cli",
-  "gemini-cli",
-  "grok",
-  "hermes",
-  "kosmos",
-  "omp",
-  "opencode",
-  "openclaw",
-  "pi",
-  "pmstudio",
-  "vscode-copilot",
-  "zcode",
-]);
 
 const MAX_DAYS = 365;
 const DEFAULT_DAYS = 30;

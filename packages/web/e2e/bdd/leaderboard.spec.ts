@@ -15,3 +15,15 @@ test("period and harness navigation refetch populated rankings", async ({ page }
   await health.ready(["/api/leaderboard?source=claude-code"]);
   await expect(page.getByText("900,000", { exact: true })).toHaveCount(2);
 });
+
+test("Antigravity is selectable with its own source filter on desktop and mobile", async ({ page }) => {
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const health = watchPageReadiness(page);
+    await page.goto("/leaderboard/harness?source=antigravity");
+    await health.ready(["/api/leaderboard?source=antigravity"]);
+    await expect(page.getByRole("button", { name: "Antigravity CLI" })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    health.dispose();
+  }
+});

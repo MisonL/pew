@@ -2,6 +2,7 @@
 
 import { Suspense, useState, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { SOURCES } from "@pew/core";
 import { agentColor } from "@/lib/palette";
 import { sourceLabel } from "@/hooks/use-usage-data";
 import {
@@ -24,22 +25,7 @@ import { PAGE_SIZE } from "@/lib/leaderboard-constants";
 // Agent list (matches VALID_SOURCES in API route)
 // ---------------------------------------------------------------------------
 
-const AGENTS = [
-  "claude-code",
-  "codex",
-  "copilot-cli",
-  "gemini-cli",
-  "grok",
-  "hermes",
-  "kosmos",
-  "omp",
-  "opencode",
-  "openclaw",
-  "pi",
-  "pmstudio",
-  "vscode-copilot",
-  "zcode",
-] as const;
+const AGENTS = SOURCES;
 
 const AGENT_SET = new Set<string>(AGENTS);
 const DEFAULT_AGENT = "claude-code";

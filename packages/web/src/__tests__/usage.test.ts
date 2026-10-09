@@ -84,6 +84,13 @@ describe("GET /api/usage", () => {
       expect(options.source).toBe("claude-code");
     });
 
+    it("accepts the Antigravity source filter", async () => {
+      mockDbRead.getUsageRecords.mockResolvedValueOnce([]);
+      const res = await GET(makeGetRequest("/api/usage", { source: "antigravity" }));
+      expect(res.status).toBe(200);
+      expect(mockDbRead.getUsageRecords.mock.calls[0]?.[3].source).toBe("antigravity");
+    });
+
     it("should reject invalid source filter", async () => {
       const res = await GET(makeGetRequest("/api/usage", { source: "invalid-tool" }));
 

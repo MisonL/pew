@@ -250,6 +250,14 @@ describe("GET /api/users/[slug]", () => {
       expect(body.summary.total_tokens).toBe(485);
     });
 
+    it("accepts Antigravity on public profiles", async () => {
+      mockDbRead.getPublicUserBySlugOrId.mockResolvedValueOnce(testUser);
+      mockDbRead.getUsageRecords.mockResolvedValueOnce([]);
+      const [req, ctx] = makeRequest("testuser", { source: "antigravity" });
+      expect((await GET(req, ctx)).status).toBe(200);
+      expect(mockDbRead.getUsageRecords.mock.calls[0]?.[3].source).toBe("antigravity");
+    });
+
     it("should filter by source when provided", async () => {
       mockDbRead.getPublicUserBySlugOrId.mockResolvedValueOnce(testUser);
       mockDbRead.getUsageRecords.mockResolvedValueOnce([]);

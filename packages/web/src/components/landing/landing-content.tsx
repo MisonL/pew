@@ -10,27 +10,13 @@ import {
   PassHeader,
   PassPerforation,
 } from "@/components/brand/badge-card";
+import { SOURCES } from "@pew/core";
 import { agentColor } from "@/lib/palette";
 import { sourceLabel } from "@/lib/usage-transforms";
 import { cn } from "@/lib/utils";
 
 /** Supported agents — keep in sync with @pew/core SOURCES / VALID_SOURCES */
-const AGENTS = [
-  "claude-code",
-  "codex",
-  "copilot-cli",
-  "gemini-cli",
-  "grok",
-  "hermes",
-  "kosmos",
-  "omp",
-  "opencode",
-  "openclaw",
-  "pi",
-  "pmstudio",
-  "vscode-copilot",
-  "zcode",
-] as const;
+const AGENTS = SOURCES;
 
 const INSTALL_CMD = "npm install -g @nocoo/pew";
 

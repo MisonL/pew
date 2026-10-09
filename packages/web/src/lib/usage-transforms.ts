@@ -187,6 +187,7 @@ export function toModelAggregates(records: UsageRow[]): ModelAggregate[] {
 // ---------------------------------------------------------------------------
 
 const SOURCE_LABELS: Record<string, string> = {
+  antigravity: "Antigravity CLI",
   "claude-code": "Claude Code",
   codex: "Codex",
   "copilot-cli": "GitHub Copilot CLI",

@@ -10,6 +10,7 @@ import type {
 
 /** Result key map for executeSessionSync (kept in sync with SessionSyncResult.sources). */
 export type SessionSyncSourceKey =
+  | "antigravity"
   | "claude"
   | "codex"
   | "copilotCli"
@@ -55,6 +56,7 @@ export function toQueueRecord(snap: SessionSnapshot): SessionQueueRecord {
  */
 export function sourceKey(source: Source): SessionSyncSourceKey | null {
   switch (source) {
+    case "antigravity": return "antigravity";
     case "claude-code": return "claude";
     case "codex": return "codex";
     case "copilot-cli": return "copilotCli";
