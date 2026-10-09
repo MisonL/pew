@@ -1,4 +1,4 @@
-import { test, expect, DASHBOARD_USAGE_FIXTURE, DASHBOARD_PRICING_FIXTURE, mockDashboardApis } from "./fixtures";
+import { test, expect, DASHBOARD_USAGE_FIXTURE, DASHBOARD_PRICING_FIXTURE, mockDashboardApis, watchPageReadiness } from "./fixtures";
 
 test.describe("Feature: Compact usage information", () => {
   const pages = [
@@ -22,7 +22,9 @@ test.describe("Feature: Compact usage information", () => {
             first_seen: now.toISOString(), last_seen: now.toISOString(), estimated_cost: 1 }],
         } }));
       }
+      const health = watchPageReadiness(page);
       await page.goto(path);
+      await health.ready([path === "/devices" ? "/api/usage/by-device" : "/api/usage", "/api/pricing"]);
       const trigger = page.getByRole("button", { name: label, exact: true });
       await expect(trigger).toBeVisible();
       await expect(page.getByText("Costs are estimates, not invoices.", { exact: true })).toHaveCount(0);
@@ -54,7 +56,9 @@ test.describe("Feature: Compact usage information", () => {
     await page.setViewportSize({ width: 390, height: 780 });
     await page.clock.setFixedTime(new Date("2026-09-15T12:00:00Z"));
     await mockDashboardApis(page, { usage: DASHBOARD_USAGE_FIXTURE, pricing: DASHBOARD_PRICING_FIXTURE });
+    const health = watchPageReadiness(page);
     await page.goto("/dashboard");
+    await health.ready(["/api/usage", "/api/pricing"]);
     await expect(page.getByRole("region", { name: "Activity", exact: true })).toContainText("1.8M");
     const trigger = page.getByRole("button", { name: "Overview information", exact: true });
     await trigger.click();
@@ -77,7 +81,9 @@ test.describe("Feature: Compact usage information", () => {
       ...DASHBOARD_USAGE_FIXTURE,
       records: DASHBOARD_USAGE_FIXTURE.records.map((row) => ({ ...row, approximate_tokens: 1644 })),
     } }));
+    const health = watchPageReadiness(page);
     await page.goto("/u/info-fixture");
+    await health.ready(["/api/users/info-fixture", "/api/pricing"]);
     const trigger = page.getByRole("button", { name: "Usage information", exact: true });
     await expect(trigger).toBeVisible();
     await expect(page.getByText(/Usage, cache.*cost details|Public price snapshot|tokens have approximate timing/)).toHaveCount(0);
@@ -95,7 +101,10 @@ test.describe("Feature: Compact usage information", () => {
         baselineCount: 0, openRouterCount: 0, modelsDevCount: 0,
         lastErrors: [{ source: "kv", message: "PRIVATE_BACKEND_ERROR", at: "2026-01-01" }] },
     } }));
+    const health = watchPageReadiness(page);
     await page.goto("/model-prices");
+    await health.ready(["/api/pricing/models"]);
+    await expect(page.getByText("Test Model", { exact: true })).toBeVisible();
     await expect(page.getByText(/worker-read|baseline JSON|KV cache|PRIVATE_BACKEND_ERROR|Last synced:/)).toHaveCount(0);
     await page.getByRole("button", { name: "Model price information", exact: true }).hover();
     await expect(page.getByRole("tooltip")).toContainText("Some prices may be out of date");

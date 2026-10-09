@@ -273,3 +273,12 @@ remove exact owned retired hooks on uninstall and retain the dispatcher on
 ownership conflicts. Test old installed artifacts, not only new templates.
 Session reset retains the existing byte-offset protocol rather than saving dirty
 keys that its upload engine does not consume; failure leaves a safe replay offset.
+
+## 2026-10-09 — Wait for hydrated UI before tooltip assertions
+
+Release verification found CI hover tests interacting with server-rendered
+information buttons before their client data and handlers were ready. Reuse the
+existing API readiness watcher before interaction, retain hover/focus assertions,
+and verify the populated pricing table. An intermittent local API 404 did not
+reproduce in a serial isolated run; retain bounded failure-response diagnostics
+rather than weakening its required 403 or claiming an unproven cause.

@@ -45,6 +45,16 @@ function getD1(): D1Client {
 // Helpers
 // ---------------------------------------------------------------------------
 
+async function logUnexpectedStatus(response: Response, expected: number): Promise<void> {
+  if (response.status === expected) return;
+  console.error("Unexpected API response", {
+    url: response.url,
+    status: response.status,
+    contentType: response.headers.get("content-type"),
+    body: (await response.clone().text()).slice(0, 4096),
+  });
+}
+
 async function seedTestUser(d1: D1Client): Promise<void> {
   await d1.execute(
     `INSERT INTO users (id, email, name, slug, is_public, created_at, updated_at)
@@ -1228,6 +1238,7 @@ describe("DELETE /api/admin/organizations/[orgId]/members/[userId]", () => {
     const res = await fetch(`${BASE_URL}/api/admin/organizations/non-existent/members/non-existent`, {
       method: "DELETE",
     });
+    await logUnexpectedStatus(res, 403);
     expect(res.status).toBe(403);
   });
 });
@@ -1252,6 +1263,7 @@ describe("POST /api/admin/seasons/[seasonId]/snapshot", () => {
     const res = await fetch(`${BASE_URL}/api/admin/seasons/non-existent/snapshot`, {
       method: "POST",
     });
+    await logUnexpectedStatus(res, 403);
     expect(res.status).toBe(403);
   });
 });
@@ -1292,6 +1304,7 @@ describe("DELETE /api/teams/[teamId]/members/[userId]", () => {
     const res = await fetch(`${BASE_URL}/api/teams/non-existent/members/non-existent`, {
       method: "DELETE",
     });
+    await logUnexpectedStatus(res, 403);
     expect(res.status).toBe(403);
   });
 })
