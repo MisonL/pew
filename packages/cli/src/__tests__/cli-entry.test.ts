@@ -20,12 +20,12 @@ const executeSyncMock = vi.hoisted(() =>
     sources: {
       claude: 0, codex: 0, gemini: 0, grok: 0, kosmos: 0, opencode: 0,
       openclaw: 0, pi: 0, pmstudio: 0, vscodeCopilot: 0, copilotCli: 0,
-      hermes: 0, zcode: 0,
+      hermes: 0, workbuddy: 0, zcode: 0,
     },
     filesScanned: {
       claude: 0, codex: 0, gemini: 0, grok: 0, kosmos: 0, opencode: 0,
       openclaw: 0, pi: 0, pmstudio: 0, vscodeCopilot: 0, copilotCli: 0,
-      hermes: 0, zcode: 0,
+      hermes: 0, workbuddy: 0, zcode: 0,
     },
     dbsScanned: { opencode: 0, hermes: 0, zcode: 0 },
   })),
@@ -36,11 +36,11 @@ const executeSessionSyncMock = vi.hoisted(() =>
     totalRecords: 0,
     sources: {
       claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, kosmos: 0,
-      opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, zcode: 0,
+      omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, workbuddy: 0, zcode: 0,
     },
     filesScanned: {
       claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, kosmos: 0,
-      opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, zcode: 0,
+      omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, workbuddy: 0, zcode: 0,
     },
     dbsScanned: { opencode: 0, zcode: 0 },
   })),
