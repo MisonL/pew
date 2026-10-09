@@ -225,8 +225,8 @@ describe("createTokenDrivers", () => {
     expect(fileDrivers[0].source).toBe("grok");
   });
 
-  it("includes workbuddy file driver when workbuddyDir is set", () => {
-    const { fileDrivers } = createTokenDrivers({ workbuddyDir: "/tmp/.workbuddy" });
+  it("includes workbuddy file driver when a workbuddy root is set", () => {
+    const { fileDrivers } = createTokenDrivers({ workbuddyDirs: ["/tmp/.workbuddy"] });
     expect(fileDrivers).toHaveLength(1);
     expect(fileDrivers[0].source).toBe("workbuddy");
   });
@@ -244,7 +244,7 @@ describe("createTokenDrivers", () => {
       piSessionsDir: "/tmp/pi/sessions",
       pmstudioDataDir: "/tmp/pmstudio",
       vscodeCopilotDirs: ["/tmp/vsc"],
-      workbuddyDir: "/tmp/.workbuddy",
+      workbuddyDirs: ["/tmp/.workbuddy", "/tmp/.workbuddy-ai"],
     });
     expect(fileDrivers).toHaveLength(12);
   });
@@ -410,8 +410,8 @@ describe("createSessionDrivers", () => {
     expect(fileDrivers[0].source).toBe("grok");
   });
 
-  it("includes workbuddy session driver when workbuddyDir is set", () => {
-    const { fileDrivers } = createSessionDrivers({ workbuddyDir: "/tmp/.workbuddy" });
+  it("includes workbuddy session driver when a workbuddy root is set", () => {
+    const { fileDrivers } = createSessionDrivers({ workbuddyDirs: ["/tmp/.workbuddy"] });
     expect(fileDrivers).toHaveLength(1);
     expect(fileDrivers[0].source).toBe("workbuddy");
   });
@@ -428,7 +428,7 @@ describe("createSessionDrivers", () => {
       openclawDir: "/tmp/openclaw",
       piSessionsDir: "/tmp/pi/sessions",
       pmstudioDataDir: "/tmp/pmstudio",
-      workbuddyDir: "/tmp/.workbuddy",
+      workbuddyDirs: ["/tmp/.workbuddy", "/tmp/.workbuddy-ai"],
     });
     expect(fileDrivers).toHaveLength(11);
   });

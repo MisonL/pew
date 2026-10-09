@@ -20,8 +20,8 @@ export interface SourceDirs {
   multicaCodexDirs: string[];
   /** Grok CLI home (~/.grok) — used to classify log + session cursors */
   grokHome: string;
-  /** WorkBuddy home (~/.workbuddy) — used to classify session cursors */
-  workbuddyDir: string;
+  /** WorkBuddy data roots (domestic + international) — classify session cursors */
+  workbuddyDirs: string[];
 }
 
 /** Status summary for display */
@@ -59,7 +59,9 @@ function classifySource(filePath: string, dirs: SourceDirs): string {
   if (filePath.startsWith(dirs.openclawDir)) return "openclaw";
   if (filePath.startsWith(dirs.piSessionsDir)) return "pi";
   if (filePath.startsWith(dirs.grokHome)) return "grok";
-  if (filePath.startsWith(dirs.workbuddyDir)) return "workbuddy";
+  for (const dir of dirs.workbuddyDirs) {
+    if (filePath.startsWith(dir)) return "workbuddy";
+  }
   for (const dir of dirs.vscodeCopilotDirs) {
     if (filePath.startsWith(dir)) return "vscode-copilot";
   }

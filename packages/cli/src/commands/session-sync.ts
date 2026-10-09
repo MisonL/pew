@@ -79,8 +79,8 @@ export interface SessionSyncOptions {
   zcodeDbPath?: string;
   /** Factory for opening the ZCode SQLite DB for sessions (DI for testability) */
   openZcodeSessionDb?: (dbPath: string) => ZcodeSessionDb | null;
-  /** Override: WorkBuddy home directory (~/.workbuddy) */
-  workbuddyDir?: string;
+  /** Override: WorkBuddy data roots (domestic + international) */
+  workbuddyDirs?: string[];
   /** Progress callback */
   onProgress?: (event: SessionProgressEvent) => void;
   /** Callback invoked when a corrupted JSONL line is found in the queue */
@@ -200,7 +200,7 @@ async function sessionSyncLocked(
     piSessionsDir: opts.piSessionsDir,
     grokLogsPath: opts.grokLogsPath,
     grokSessionsDir: opts.grokSessionsDir,
-    workbuddyDir: opts.workbuddyDir,
+    workbuddyDirs: opts.workbuddyDirs,
   };
 
   // ---------- Phase 1: File-based drivers (generic loop) ----------

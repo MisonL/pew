@@ -202,8 +202,8 @@ export function resolveDefaultPaths(home = homedir()) {
     zcodeHome: join(home, ".zcode"),
     /** ZCode CLI SQLite database: ~/.zcode/cli/db/db.sqlite */
     zcodeDbPath: join(home, ".zcode", "cli", "db", "db.sqlite"),
-    /** WorkBuddy home: ~/.workbuddy (sessions under projects/<slug>/<sessionId>.jsonl) */
-    workbuddyDir: join(home, ".workbuddy"),
+    /** WorkBuddy data roots: domestic `~/.workbuddy` + international `~/.workbuddy-ai` */
+    workbuddyDirs: [join(home, ".workbuddy"), join(home, ".workbuddy-ai")],
     /** Oh My Pi session data: ~/.omp/agent/sessions */
     ompSessionsDir: join(home, ".omp", "agent", "sessions"),
     /** Pi session data: ~/.pi/agent/sessions */

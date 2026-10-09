@@ -83,8 +83,8 @@ export interface TokenDriverRegistryOpts {
   copilotCliOtelPaths?: string[];
   /** Grok CLI unified log path (~/.grok/logs/unified.jsonl) */
   grokLogsPath?: string;
-  /** WorkBuddy home (~/.workbuddy) */
-  workbuddyDir?: string;
+  /** WorkBuddy data roots (domestic + international) */
+  workbuddyDirs?: string[];
   openCodeDbPath?: string;
   openMessageDb?: OpenCodeSqliteTokenDriverOpts["openMessageDb"];
   /** Default Hermes DB path (~/.hermes/state.db) */
@@ -151,7 +151,7 @@ export function createTokenDrivers(opts: TokenDriverRegistryOpts): TokenDriverSe
   if (opts.vscodeCopilotDirs && opts.vscodeCopilotDirs.length > 0) {
     fileDrivers.push(vscodeCopilotTokenDriver);
   }
-  if (opts.workbuddyDir) {
+  if (opts.workbuddyDirs && opts.workbuddyDirs.length > 0) {
     fileDrivers.push(workbuddyTokenDriver);
   }
 
@@ -221,8 +221,8 @@ export interface SessionDriverRegistryOpts {
   piSessionsDir?: string;
   /** Grok CLI sessions root (~/.grok/sessions) */
   grokSessionsDir?: string;
-  /** WorkBuddy home (~/.workbuddy) */
-  workbuddyDir?: string;
+  /** WorkBuddy data roots (domestic + international) */
+  workbuddyDirs?: string[];
   openCodeDbPath?: string;
   openSessionDb?: OpenCodeSqliteSessionDriverOpts["openSessionDb"];
   /** ZCode CLI SQLite database path (~/.zcode/cli/db/db.sqlite) */
@@ -278,7 +278,7 @@ export function createSessionDrivers(opts: SessionDriverRegistryOpts): SessionDr
   if (opts.pmstudioDataDir) {
     fileDrivers.push(pmstudioSessionDriver);
   }
-  if (opts.workbuddyDir) {
+  if (opts.workbuddyDirs && opts.workbuddyDirs.length > 0) {
     fileDrivers.push(workbuddySessionDriver);
   }
   if (opts.openCodeDbPath && opts.openSessionDb) {

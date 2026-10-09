@@ -169,7 +169,7 @@ describe("resolveDefaultPaths", () => {
       "piSessionsDir",
       "pmstudioDataDir",
       "vscodeCopilotDirs",
-      "workbuddyDir",
+      "workbuddyDirs",
       "zcodeHome",
       "zcodeDbPath",
     ];
@@ -185,6 +185,14 @@ describe("resolveDefaultPaths", () => {
   it("should return empty hermesProfileDbPaths when no profiles exist", () => {
     const paths = resolveDefaultPaths("/fakehome");
     expect(paths.hermesProfileDbPaths).toEqual([]);
+  });
+
+  it("should resolve both WorkBuddy data roots (domestic + international)", () => {
+    const paths = resolveDefaultPaths("/fakehome");
+    expect(paths.workbuddyDirs).toEqual([
+      join("/fakehome", ".workbuddy"),
+      join("/fakehome", ".workbuddy-ai"),
+    ]);
   });
 
   it("should discover hermes profile databases", () => {
