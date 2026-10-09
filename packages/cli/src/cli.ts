@@ -53,7 +53,7 @@ function parseNotBefore(raw: string | undefined): number | undefined {
   return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
-function isSource(value: string): value is Source {
+export function isSource(value: string): value is Source {
   return [
     "claude-code",
     "codex",

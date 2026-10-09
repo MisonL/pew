@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+- WorkBuddy (domestic `~/.workbuddy` and international `~/.workbuddy-ai`)
+  token and session sync: byte-offset JSONL driver, continuity anchors,
+  dashboard palette/labels/pricing and `?source=` allowlists
+
+### Fixed
+
+- Count WorkBuddy's `ai-title` and `session-meta` rows as metadata, not messages
+- Skip WorkBuddy rows with unrepresentable timestamps instead of losing the file
+- Fall through empty `rawUsage` and admit `rawUsage`-only rows
+
 ## v3.2.0
 
 ### Added
