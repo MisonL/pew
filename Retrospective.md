@@ -282,3 +282,12 @@ existing API readiness watcher before interaction, retain hover/focus assertions
 and verify the populated pricing table. An intermittent local API 404 did not
 reproduce in a serial isolated run; retain bounded failure-response diagnostics
 rather than weakening its required 403 or claiming an unproven cause.
+
+## 2026-10-09 — Make owned E2E output cleanup idempotent
+
+The v3.3.0 CI browser suite passed all 93 cases, then failed because the owned
+Next output disappeared between an existence check and recursive removal.
+Remove that check and use native force removal for this known local output only.
+Regression tests run the actual runner cleanup with missing output and preserve
+permission errors. Published tags remain immutable; this harness-only correction
+does not replace the already tested CLI artifact.

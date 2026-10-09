@@ -4,9 +4,65 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import { ensurePortFree, startLocalBindings } from "../e2e-utils";
+import { ensurePortFree, runLocalE2e, startLocalBindings } from "../e2e-utils";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return { ...fs, rmSync: vi.fn(fs.rmSync), readdirSync: vi.fn(fs.readdirSync) };
+});
 
 describe("E2E process isolation", () => {
+  it.each(["api", "ui"] as const)("tolerates missing %s output without hiding other cleanup errors", async (tier) => {
+    const root = mkdtempSync(join(tmpdir(), "pew-output-cleanup-"));
+    const fs = await import("node:fs");
+    const removePath = (await vi.importActual<typeof import("node:fs")>("node:fs")).rmSync;
+    const missing = join(root, "already-removed");
+    const denied = Object.assign(new Error("synthetic cleanup permission denied"), { code: "EACCES" });
+    const listeners = new Map(["SIGINT", "SIGTERM"].map((event) => [event, new Set(process.listeners(event))]));
+    let failRemoval = false;
+    const remove = vi.mocked(fs.rmSync).mockImplementation((_path, options) => {
+      if (failRemoval) throw denied;
+      removePath(missing, options);
+    });
+    const list = vi.mocked(fs.readdirSync).mockReturnValue([]);
+    const env = {
+      NODE_ENV: "development", RESOURCE_ENV: "test", E2E_SKIP_AUTH: "true",
+      CF_ACCOUNT_ID: "pew-local-test", CF_D1_DATABASE_ID: "pew-local-test", CF_D1_API_TOKEN: "synthetic",
+      PEW_LOCAL_D1_URL: "http://127.0.0.1:12345", WORKER_INGEST_URL: "http://127.0.0.1:12345/ingest",
+      WORKER_READ_URL: "http://127.0.0.1:12345", PEW_TEST_RUN_ID: "owned-run",
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      success: true, result: [{ results: [{ key: "env", value: "test" }, { key: "run", value: "owned-run" }] }],
+    })));
+    vi.stubGlobal("Bun", {
+      spawn: vi.fn((command: string[], options: { ipc?: (message: unknown) => void }) => {
+        const exit = Promise.withResolvers<number>();
+        const child = {
+          pid: 123456, exitCode: null as number | null, exited: exit.promise,
+          kill() { this.exitCode = 0; exit.resolve(0); },
+          send() { this.kill(); },
+        };
+        if (options.ipc) queueMicrotask(() => options.ipc?.({ env, state: root }));
+        else if (!command.includes("dev")) child.kill();
+        return child;
+      }),
+      sleep: vi.fn(async () => {}),
+    });
+    try {
+      await expect(runLocalE2e(tier)).resolves.toBe(0);
+      expect(remove).toHaveBeenCalledExactlyOnceWith(join("packages/web", tier === "api" ? ".next-e2e" : ".next-e2e-ui"), { recursive: true, force: true });
+      expect(existsSync(root)).toBe(true);
+      failRemoval = true;
+      await expect(runLocalE2e(tier)).rejects.toBe(denied);
+    } finally {
+      for (const [event, original] of listeners) {
+        for (const listener of process.listeners(event)) if (!original.has(listener)) process.removeListener(event, listener);
+      }
+      remove.mockRestore(); list.mockRestore(); vi.unstubAllGlobals();
+      removePath(root, { recursive: true });
+    }
+  });
+
   it.each([false, true])("bounds no-IPC startup and disposal (abort=%s)", async (interrupt) => {
     let exit: (code: number) => void;
     const exited = new Promise<number>((done) => { exit = done; });

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -128,7 +128,7 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
       }
     }
     try { await local?.dispose(); } finally {
-      if (local && existsSync(join("packages/web", dist))) rmSync(join("packages/web", dist), { recursive: true });
+      if (local) rmSync(join("packages/web", dist), { recursive: true, force: true });
       process.removeListener("SIGINT", stop);
       process.removeListener("SIGTERM", stop);
       abort.signal.removeEventListener("abort", killChildren);
