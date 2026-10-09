@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## v3.3.0
+
+### Added
+- Collect antigravity cli usage
+
+### Changed
+- Wait for hydrated usage information
+- Retire six usage collectors
+- Ignore newly reported upstream cves
+
+### Fixed
+- Repair retired hook lifecycle safely
+- Preserve usage across reset and custom paths
+
+### Removed
+- Remove legacy test db configs and dead code
+
 ## v3.2.0
 
 ### Added
