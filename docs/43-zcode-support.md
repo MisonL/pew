@@ -1,5 +1,7 @@
 # 43 — ZCode CLI Token Support
 
+> Archived: collection and new uploads are retired. Existing usage remains readable and participates in rankings.
+
 > **Status: implemented** (2026-07-12)
 >
 > 为 pew 增加第 13 个 source：Z.ai ZCode CLI (`zcode`)。

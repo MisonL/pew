@@ -7,10 +7,10 @@
  */
 
 // ---------------------------------------------------------------------------
-// Source: Supported AI coding tools
+// Source: Active and historical AI coding tools
 // ---------------------------------------------------------------------------
 
-/** The 15 supported AI coding tools */
+/** Active and historical AI coding tool identities. */
 export type Source =
   | "antigravity"
   | "claude-code"
@@ -186,22 +186,6 @@ export interface CodexCursor extends FileCursorBase {
   scopeId?: string | null;
 }
 
-/** Cursor for Gemini (array-index-based JSON files) */
-export interface GeminiCursor extends FileCursorBase {
-  /** Index of last processed message in the messages array */
-  lastIndex: number;
-  /** Last seen cumulative token totals (for diff computation) */
-  lastTotals: TokenDelta | null;
-  /** Last seen model identifier */
-  lastModel: string | null;
-}
-
-/** Cursor for Kosmos (message-ID-based dedup for JSON session files) */
-export interface KosmosCursor extends FileCursorBase {
-  /** IDs of assistant messages already processed (JSON-serializable, not Set) */
-  processedMessageIds: string[];
-}
-
 /** Cursor for OpenCode (individual message files with change detection) */
 export interface OpenCodeCursor extends FileCursorBase {
   /** Last seen cumulative token totals (for diff computation) */
@@ -212,18 +196,6 @@ export interface OpenCodeCursor extends FileCursorBase {
   messageKey: string | null;
 }
 
-/** Cursor for VSCode Copilot CRDT JSONL files (byte-offset + request metadata) */
-export interface VscodeCopilotCursor extends FileCursorBase {
-  /** Byte offset where we last stopped reading */
-  offset: number;
-  /** Request indices already emitted as records (JSON-serializable, not Set) */
-  processedRequestIndices: number[];
-  /** Index → metadata mapping for correlating kind=1 results with request info */
-  requestMeta: Record<number, { modelId: string; timestamp: number }>;
-  /** Request IDs already processed for v3 JSON files (string-based dedup) */
-  processedRequestIds?: string[];
-}
-
 /** Cursor for OpenCode SQLite database (incremental by time_created) */
 export interface OpenCodeSqliteCursor {
   /** Max time_created seen from message table (epoch ms) */
@@ -232,18 +204,6 @@ export interface OpenCodeSqliteCursor {
   lastProcessedIds?: string[];
   /** Max time_updated seen from session table (epoch ms) */
   lastSessionUpdated: number;
-  /** DB file inode (detect replacement/recreation) */
-  inode: number;
-  /** ISO 8601 timestamp of last update */
-  updatedAt: string;
-}
-
-/** Cursor for ZCode CLI SQLite database (model_usage token pipeline) */
-export interface ZcodeSqliteCursor {
-  /** Max completed_at seen from model_usage table (epoch ms) */
-  lastCompletedAt: number;
-  /** IDs of model_usage rows at exactly lastCompletedAt (for >= dedup on next query) */
-  lastProcessedIds?: string[];
   /** DB file inode (detect replacement/recreation) */
   inode: number;
   /** ISO 8601 timestamp of last update */
@@ -271,10 +231,7 @@ export type FileCursor =
   | ByteOffsetCursor
   | ClaudeCursor
   | CodexCursor
-  | GeminiCursor
-  | KosmosCursor
-  | OpenCodeCursor
-  | VscodeCopilotCursor;
+  | OpenCodeCursor;
 
 /**
  * Cross-rollout dedup state for one Codex cumulative-counter scope.
@@ -306,8 +263,6 @@ export interface CursorState {
   dirMtimes?: Record<string, number>;
   /** OpenCode SQLite database cursor (separate from per-file cursors) */
   openCodeSqlite?: OpenCodeSqliteCursor;
-  /** ZCode SQLite database cursor (separate from per-file cursors) */
-  zcodeSqlite?: ZcodeSqliteCursor;
   /**
    * Codex cumulative-counter scopes, keyed by resolved scope id. Outlives the
    * individual rollout files so pruning one never resurrects its usage edges.
@@ -393,7 +348,7 @@ export interface SessionSnapshot {
   sessionKey: string;
   /** Which AI tool */
   source: Source;
-  /** "human" for Claude/Gemini/OpenCode, "automated" for OpenClaw */
+  /** "human" for interactive sessions, "automated" for OpenClaw */
   kind: SessionKind;
   /** ISO 8601 timestamp of first message */
   startedAt: string;
@@ -458,18 +413,6 @@ export interface OpenCodeSqliteSessionCursor {
   updatedAt: string;
 }
 
-/** Cursor for ZCode CLI SQLite database (session pipeline) */
-export interface ZcodeSqliteSessionCursor {
-  /** Max time_updated seen from session table (epoch ms) */
-  lastTimeUpdated: number;
-  /** IDs of sessions at exactly lastTimeUpdated (for >= dedup on next query) */
-  lastProcessedIds?: string[];
-  /** DB file inode (detect replacement/recreation) */
-  inode: number;
-  /** ISO 8601 timestamp of last update */
-  updatedAt: string;
-}
-
 /** Top-level session cursor state */
 export interface SessionCursorState {
   version: 1;
@@ -477,8 +420,6 @@ export interface SessionCursorState {
   files: Record<string, SessionFileCursor>;
   /** OpenCode SQLite session cursor (separate from per-file cursors) */
   openCodeSqlite?: OpenCodeSqliteSessionCursor;
-  /** ZCode SQLite session cursor (separate from per-file cursors) */
-  zcodeSqlite?: ZcodeSqliteSessionCursor;
   /** ISO 8601 timestamp of last update */
   updatedAt: string | null;
 }

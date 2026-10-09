@@ -116,43 +116,6 @@ function discoverHermesProfileDbs(hermesHome: string): Array<{ dbPath: string; d
 }
 
 /**
- * Resolve the platform-specific VSCode Copilot base directories.
- *
- * Returns an array of base dirs for both stable and Insiders builds:
- *   macOS:   ~/Library/Application Support/Code/User
- *            ~/Library/Application Support/Code - Insiders/User
- *   Linux:   ~/.config/Code/User
- *            ~/.config/Code - Insiders/User
- *   Windows: %APPDATA%/Code/User
- *            %APPDATA%/Code - Insiders/User
- */
-function resolveVscodeCopilotDirs(home: string): string[] {
-  const platform = process.platform;
-
-  if (platform === "darwin") {
-    const base = join(home, "Library", "Application Support");
-    return [
-      join(base, "Code", "User"),
-      join(base, "Code - Insiders", "User"),
-    ];
-  }
-
-  if (platform === "win32") {
-    const appdata = process.env.APPDATA || join(home, "AppData", "Roaming");
-    return [
-      join(appdata, "Code", "User"),
-      join(appdata, "Code - Insiders", "User"),
-    ];
-  }
-
-  // Linux and other Unix
-  return [
-    join(home, ".config", "Code", "User"),
-    join(home, ".config", "Code - Insiders", "User"),
-  ];
-}
-
-/**
  * Resolve default paths for pew state and AI tool data.
  * All paths can be overridden for testing.
  */
@@ -177,8 +140,7 @@ export function resolveDefaultPaths(home = homedir()) {
     claudeDir: join(home, ".claude"),
     /** Codex CLI sessions: ~/.codex/sessions (or $CODEX_HOME/sessions) */
     codexSessionsDir: join(codexHome, "sessions"),
-    /** Gemini CLI data: ~/.gemini */
-    geminiDir: join(home, ".gemini"),
+    /** Antigravity CLI conversation databases */
     antigravityDir: join(home, ".gemini", "antigravity-cli", "conversations"),
     /** OpenCode message storage: ~/.local/share/opencode/storage/message */
     openCodeMessageDir: join(
@@ -199,16 +161,10 @@ export function resolveDefaultPaths(home = homedir()) {
     grokLogsPath: join(home, ".grok", "logs", "unified.jsonl"),
     /** Grok CLI sessions root: ~/.grok/sessions */
     grokSessionsDir: join(home, ".grok", "sessions"),
-    /** ZCode CLI home: ~/.zcode */
-    zcodeHome: join(home, ".zcode"),
-    /** ZCode CLI SQLite database: ~/.zcode/cli/db/db.sqlite */
-    zcodeDbPath: join(home, ".zcode", "cli", "db", "db.sqlite"),
-    /** Oh My Pi session data: ~/.omp/agent/sessions */
-    ompSessionsDir: join(home, ".omp", "agent", "sessions"),
+
     /** Pi session data: ~/.pi/agent/sessions */
     piSessionsDir: join(home, ".pi", "agent", "sessions"),
-    /** VSCode Copilot base dirs (stable + insiders, platform-aware) */
-    vscodeCopilotDirs: resolveVscodeCopilotDirs(home),
+
     /** GitHub Copilot CLI logs: ~/.copilot/logs */
     copilotCliLogsDir: join(home, ".copilot", "logs"),
     /** Copilot OTel files/roots from standard and pew-specific env vars */
@@ -217,20 +173,7 @@ export function resolveDefaultPaths(home = homedir()) {
     hermesDbPath: join(hermesHome, "state.db"),
     /** Hermes Agent profile databases: ~/.hermes/profiles/<name>/state.db */
     hermesProfileDbPaths: discoverHermesProfileDbs(hermesHome),
-    /** Kosmos data directory (kosmos-app, platform-aware) */
-    kosmosDataDir: (() => {
-      const platform = process.platform;
-      if (platform === "darwin") return join(home, "Library", "Application Support", "kosmos-app");
-      if (platform === "win32") return join(process.env.APPDATA || join(home, "AppData", "Roaming"), "kosmos-app");
-      return join(home, ".config", "kosmos-app");
-    })(),
-    /** PM Studio data directory (pm-studio-app, platform-aware) */
-    pmstudioDataDir: (() => {
-      const platform = process.platform;
-      if (platform === "darwin") return join(home, "Library", "Application Support", "pm-studio-app");
-      if (platform === "win32") return join(process.env.APPDATA || join(home, "AppData", "Roaming"), "pm-studio-app");
-      return join(home, ".config", "pm-studio-app");
-    })(),
+
     /** Multica Codex session directories: ~/multica_workspaces/<ws>/<task>/codex-home/sessions/ */
     multicaCodexDirs: discoverMulticaCodexDirs(home),
   };

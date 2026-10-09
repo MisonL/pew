@@ -1,4 +1,4 @@
-import { accountingAcknowledgment, validateAccountingRecord, MAX_ACCOUNTING_BODY_BYTES, MAX_ACCOUNTING_BATCH_SIZE } from "@pew/core";
+import { accountingAcknowledgment, retiredAccountingAcknowledgment, validateAccountingRecord, MAX_ACCOUNTING_BODY_BYTES, MAX_ACCOUNTING_BATCH_SIZE } from "@pew/core";
 import { createIngestHandler } from "@/lib/ingest-handler";
 
 export const POST = createIngestHandler({
@@ -8,4 +8,5 @@ export const POST = createIngestHandler({
   maxBodyBytes: MAX_ACCOUNTING_BODY_BYTES,
   maxBatchSize: MAX_ACCOUNTING_BATCH_SIZE,
   acknowledgment: accountingAcknowledgment,
+  retiredAcknowledgment: retiredAccountingAcknowledgment,
 });

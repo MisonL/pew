@@ -23,7 +23,24 @@ test("Antigravity is selectable with its own source filter on desktop and mobile
     await page.goto("/leaderboard/harness?source=antigravity");
     await health.ready(["/api/leaderboard?source=antigravity"]);
     await expect(page.getByRole("button", { name: "Antigravity CLI" })).toBeVisible();
+    await page.getByRole("button", { name: "Antigravity CLI" }).click();
+    await expect(page.getByRole("menuitem")).toHaveCount(15);
+    for (const name of ["Gemini CLI", "Kosmos", "Oh My Pi", "ZCode", "PM Studio", "VS Code Copilot"]) {
+      await expect(page.getByRole("menuitem", { name, exact: true })).toBeVisible();
+    }
+    await page.keyboard.press("Escape");
+    await page.goto("/leaderboard/harness?source=zcode");
+    await health.ready(["/api/leaderboard?source=zcode"]);
+    await expect(page.getByRole("button", { name: "ZCode", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     health.dispose();
+  }
+});
+
+test("landing page advertises only the nine active collectors", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByText("Antigravity CLI", { exact: true })).toBeVisible();
+  for (const name of ["Gemini CLI", "Kosmos", "Oh My Pi", "ZCode", "PM Studio", "VS Code Copilot"]) {
+    await expect(page.getByText(name, { exact: true })).toHaveCount(0);
   }
 });

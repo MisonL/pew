@@ -10,7 +10,7 @@ import { normalizeGrokUsage, parseGrokLogFile } from "../parsers/grok.js";
 import { parseOpenClawFile } from "../parsers/openclaw.js";
 import { parseOpenCodeFile } from "../parsers/opencode.js";
 import { processOpenCodeMessages } from "../parsers/opencode-sqlite.js";
-import { parseZcodeSqlite } from "../parsers/zcode-sqlite.js";
+
 import { inclusiveAccounting, reportedCost } from "../utils/accounting.js";
 import { hermesAccountingSnapshots } from "../parsers/hermes-sqlite.js";
 import { validateAccountingRecord } from "../../../core/src/accounting.js";
@@ -63,16 +63,6 @@ describe("cache extraction leaves the original accounting untouched", () => {
     expect(result.deltas[0].accounting?.counts).toMatchObject({ cache_write_input_tokens: 10, output_total_tokens: 30, reasoning_output_tokens: 5 });
   });
 
-  it("retains ZCode creation tokens and the provider-total reasoning crosscheck", () => {
-    const row = { id: "m", sessionId: "s", turnId: null, modelId: "model", providerId: "custom", status: "completed" as const,
-      startedAt: 1, completedAt: Date.parse(ts), inputTokens: 100, outputTokens: 30, reasoningTokens: 5,
-      cacheReadInputTokens: 80, cacheCreationInputTokens: 10, providerTotalTokens: 130, computedTotalTokens: 130 };
-    const db = { queryUsageRows: () => [row], close: () => {} };
-    const legacy = parseZcodeSqlite({ db, lastCompletedAt: null });
-    const result = parseZcodeSqlite({ db, lastCompletedAt: null, includeAccounting: true });
-    expect(result.deltas[0].tokens).toEqual(legacy.deltas[0].tokens);
-    expect(result.deltas[0].accounting).toMatchObject({ provider: "custom", counts: { cache_write_input_tokens: 10, output_total_tokens: 30, reasoning_output_tokens: 5 } });
-  });
   it("retains Codex write, provider and tier with the existing edge dedup", async () => {
     const usage = { input_tokens: 100000, cached_input_tokens: 90000, cache_write_input_tokens: 10000,
       output_tokens: 1000, reasoning_output_tokens: 400, total_tokens: 101000 };

@@ -25,17 +25,14 @@ export function isOffsetCursor(
   return !!cursor && typeof (cursor as { offset?: unknown }).offset === "number";
 }
 
-export function usesJsonlOffsetResume(source: Source, filePath: string): boolean {
-  if (source === "vscode-copilot" && filePath.endsWith(".json")) return false;
+export function usesJsonlOffsetResume(source: Source, _filePath: string): boolean {
   return (
     source === "claude-code" ||
     source === "codex" ||
     source === "copilot-cli" ||
     source === "grok" ||
-    source === "omp" ||
     source === "openclaw" ||
-    source === "pi" ||
-    source === "vscode-copilot"
+    source === "pi"
   );
 }
 

@@ -29,7 +29,7 @@ import { pruneAliasCursors } from "../storage/prune-alias-cursors.js";
 import type { OnCorruptLine } from "../storage/base-queue.js";
 import type { QueryMessagesFn } from "../parsers/opencode-sqlite.js";
 import type { HermesQueryHandle } from "../parsers/hermes-sqlite.js";
-import type { ZcodeUsageDb } from "../parsers/zcode-types.js";
+
 import type { ParsedDelta } from "../parsers/claude.js";
 import { toUtcHalfHourStart, bucketKey, addTokens, emptyTokenDelta } from "../utils/buckets.js";
 import { createTokenDrivers } from "../drivers/registry.js";
@@ -51,6 +51,7 @@ import { aggregateRecords } from "./upload.js";
 import { readAntigravitySource } from "../parsers/antigravity.js";
 import { antigravityRecords, readAntigravityBaseline, replaceAntigravityPartition, tokenRecordKey } from "../utils/antigravity-snapshot.js";
 import { inclusiveAccounting } from "../utils/accounting.js";
+import { isRetiredCursorPath, RETIRED_SOURCES, isRetiredSource, readRetainedQueueState } from "../utils/retired-sources.js";
 
 /** Sync execution options */
 export interface SyncOptions {
@@ -65,9 +66,7 @@ export interface SyncOptions {
   codexSessionsDir?: string;
   /** Override: Multica Codex extra session directories */
   multicaCodexDirs?: string[];
-  /** Override: Gemini data directory (~/.gemini) */
-  geminiDir?: string;
-  /** Override: OpenCode message directory (~/.local/share/opencode/storage/message) */
+    /** Override: OpenCode message directory (~/.local/share/opencode/storage/message) */
   openCodeMessageDir?: string;
   /** Override: OpenCode SQLite database path (~/.local/share/opencode/opencode.db) */
   openCodeDbPath?: string;
@@ -75,13 +74,9 @@ export interface SyncOptions {
   openMessageDb?: (dbPath: string) => { queryMessages: QueryMessagesFn; close: () => void } | null;
   /** Override: OpenClaw data directory (~/.openclaw) */
   openclawDir?: string;
-  /** Override: Oh My Pi session directory (~/.omp/agent/sessions) */
-  ompSessionsDir?: string;
-  /** Override: Pi session directory (~/.pi/agent/sessions) */
+    /** Override: Pi session directory (~/.pi/agent/sessions) */
   piSessionsDir?: string;
-  /** Override: VSCode Copilot base directories (stable + insiders) */
-  vscodeCopilotDirs?: string[];
-  /** Override: GitHub Copilot CLI logs directory (~/.copilot/logs) */
+    /** Override: GitHub Copilot CLI logs directory (~/.copilot/logs) */
   copilotCliLogsDir?: string;
   /** Copilot OTel exporter files or recursively scanned directories */
   copilotCliOtelPaths?: string[];
@@ -91,25 +86,18 @@ export interface SyncOptions {
   hermesProfileDbPaths?: Array<{ dbPath: string; dbKey: string }>;
   /** Factory for opening the Hermes SQLite DB (DI for testability) */
   openHermesDb?: (dbPath: string) => HermesQueryHandle | null;
-  /** Override: Kosmos data directory (kosmos-app) */
-  kosmosDataDir?: string;
-  /** Override: PM Studio data directory (pm-studio-app) */
-  pmstudioDataDir?: string;
-  /** Override: Grok CLI unified log path (~/.grok/logs/unified.jsonl) */
+      /** Override: Grok CLI unified log path (~/.grok/logs/unified.jsonl) */
   grokLogsPath?: string;
   /** Override: Grok CLI sessions directory (~/.grok/sessions) */
   grokSessionsDir?: string;
-  /** Override: ZCode CLI SQLite database path (~/.zcode/cli/db/db.sqlite) */
-  zcodeDbPath?: string;
-  /** Factory for opening the ZCode SQLite DB for tokens (DI for testability) */
-  openZcodeDb?: (dbPath: string) => ZcodeUsageDb | null;
-  /** Progress callback */
+      /** Progress callback */
   onProgress?: (event: ProgressEvent) => void;
   /** Callback invoked when a corrupted JSONL line is found in the queue */
   onCorruptLine?: OnCorruptLine;
 }
 
 interface InternalSyncOptions extends SyncOptions {
+  previousRetiredRecords?: QueueRecord[];
   antigravitySnapshot?: Awaited<ReturnType<typeof readAntigravitySource>>;
   previousAntigravityRecords?: QueueRecord[];
   previousAntigravityCursor?: CursorState["antigravity"];
@@ -141,43 +129,39 @@ export interface SyncResult {
     antigravity: number;
     claude: number;
     codex: number;
-    gemini: number;
+
     grok: number;
-    kosmos: number;
-    omp: number;
+
     opencode: number;
     openclaw: number;
     pi: number;
-    pmstudio: number;
-    vscodeCopilot: number;
+
     copilotCli: number;
     hermes: number;
-    zcode: number;
+
   };
   /** Total files scanned per source */
   filesScanned: {
     antigravity: number;
     claude: number;
     codex: number;
-    gemini: number;
+
     grok: number;
-    kosmos: number;
-    omp: number;
+
     opencode: number;
     openclaw: number;
     pi: number;
-    pmstudio: number;
-    vscodeCopilot: number;
+
     copilotCli: number;
     hermes: number;
-    zcode: number;
+
   };
   /** Total SQLite databases scanned per source */
   dbsScanned: {
     antigravity: number;
     opencode: number;
     hermes: number;
-    zcode: number;
+
   };
 }
 
@@ -194,23 +178,16 @@ function sourceKey(source: Source): keyof SyncResult["sources"] {
   switch (source) {
     case "antigravity": return "antigravity";
     case "claude-code": return "claude";
-    case "gemini-cli": return "gemini";
     case "grok": return "grok";
-    case "kosmos": return "kosmos";
-    case "omp": return "omp";
     case "opencode": return "opencode";
     case "openclaw": return "openclaw";
     case "pi": return "pi";
-    case "pmstudio": return "pmstudio";
     case "codex": return "codex";
-    case "vscode-copilot": return "vscodeCopilot";
     case "copilot-cli": return "copilotCli";
     case "hermes": return "hermes";
-    case "zcode": return "zcode";
     default: {
       // Exhaustiveness check — if Source adds a new value, this will fail to compile
-      const _exhaustive: never = source;
-      throw new Error(`Unknown source: ${_exhaustive}`);
+      throw new Error(`Inactive source: ${source}`);
     }
   }
 }
@@ -231,9 +208,6 @@ function emptyEpochCursor(
     lastTotals: null,
     lastModel: null,
     scopeId: null,
-    processedRequestIndices: [],
-    requestMeta: {},
-    processedRequestIds: [],
   } as FileCursor;
 }
 
@@ -247,7 +221,10 @@ export async function executeSync(opts: SyncOptions): Promise<SyncResult> {
   return withStateLock(opts.stateDir, async () => {
     await recoverSyncCommit(opts.stateDir);
     const internal: InternalSyncOptions = { ...opts };
-    internal.previousAntigravityRecords = await readAntigravityBaseline(opts.stateDir);
+    const retained = await readAntigravityBaseline(opts.stateDir, true);
+    internal.previousAntigravityRecords = retained.filter((r) => r.source === "antigravity");
+    internal.previousRetiredRecords = retained.filter((r) => isRetiredSource(r.source));
+    if (internal.previousRetiredRecords.length) await readRetainedQueueState(opts.stateDir, "queue.state.json");
     internal.previousAntigravityCursor = (await new CursorStore(opts.stateDir).load()).antigravity;
     if (opts.antigravityDir) {
       try {
@@ -280,7 +257,10 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   const evidenceQueue = new EvidenceQueue(stateDir);
   const priorEvidence = (await evidenceQueue.readFromOffset(0)).records;
   const priorAccounting = (await new AccountingQueue(stateDir).readFromOffset(0)).records;
-  const cursors = await cursorStore.load();
+  const cursors = Object.fromEntries(Object.entries(await cursorStore.load()).filter(([key]) => key !== "zcodeSqlite")) as CursorState;
+  cursors.files = Object.fromEntries(Object.entries(cursors.files).filter(([path]) => !isRetiredCursorPath(path)));
+  if (cursors.knownFilePaths) cursors.knownFilePaths = Object.fromEntries(Object.entries(cursors.knownFilePaths).filter(([path]) => !isRetiredCursorPath(path)));
+  if (cursors.knownDbSources) cursors.knownDbSources = Object.fromEntries(Object.entries(cursors.knownDbSources).filter(([key]) => key !== "zcodeSqlite"));
 
   // Migrate hermesSqlite from flat object (pre-multi-profile) to Record format.
   // Old cursors.json: { hermesSqlite: { sessionTotals: {...}, inode: N, updatedAt: "..." } }
@@ -367,7 +347,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   // If cursors are empty (first run / post-reset), {} is safe because
   // there's nothing to double-count.
   if (!cursors.knownDbSources) {
-    const dbCursorsExist = cursors.openCodeSqlite || !isHermesCursorsEmpty() || cursors.zcodeSqlite;
+    const dbCursorsExist = cursors.openCodeSqlite || !isHermesCursorsEmpty();
     if (dbCursorsExist) {
       cursors.knownDbSources = {};
       if (cursors.openCodeSqlite) cursors.knownDbSources.openCodeSqlite = true;
@@ -377,7 +357,6 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
           cursors.knownDbSources[`hermesSqlite:${dbKey}`] = true;
         }
       }
-      if (cursors.zcodeSqlite) cursors.knownDbSources.zcodeSqlite = true;
     } else if (!initialCursorEmpty) {
       onProgress?.({
         source: "all",
@@ -411,9 +390,9 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   let replayDetected = false;
 
   const allDeltas: ParsedDelta[] = [];
-  const sourceCounts = { antigravity: opts.antigravitySnapshot?.deltas.length ?? 0, claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, hermes: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, vscodeCopilot: 0, zcode: 0 };
-  const filesScanned = { antigravity: opts.antigravitySnapshot?.dbCount ?? 0, claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, hermes: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, vscodeCopilot: 0, zcode: 0 };
-  const dbsScanned = { antigravity: opts.antigravitySnapshot?.dbCount ?? 0, opencode: 0, hermes: 0, zcode: 0 };
+  const sourceCounts = { antigravity: opts.antigravitySnapshot?.deltas.length ?? 0, claude: 0, codex: 0, copilotCli: 0,  grok: 0, hermes: 0,   opencode: 0, openclaw: 0, pi: 0,  };
+  const filesScanned = { antigravity: opts.antigravitySnapshot?.dbCount ?? 0, claude: 0, codex: 0, copilotCli: 0,  grok: 0, hermes: 0,   opencode: 0, openclaw: 0, pi: 0,  };
+  const dbsScanned = { antigravity: opts.antigravitySnapshot?.dbCount ?? 0, opencode: 0, hermes: 0 };
 
   // Collect all discovered file paths (across all drivers) for knownFilePaths
   const discoveredFiles = new Set<string>();
@@ -469,15 +448,12 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     claudeDir: opts.claudeDir,
     codexSessionsDir: opts.codexSessionsDir,
     multicaCodexDirs: opts.multicaCodexDirs,
-    geminiDir: opts.geminiDir,
-    kosmosDataDir: opts.kosmosDataDir,
-    pmstudioDataDir: opts.pmstudioDataDir,
-    ompSessionsDir: opts.ompSessionsDir,
+
     openCodeMessageDir: opts.openCodeMessageDir,
     openCodeDbPath: opts.openCodeDbPath,
     openclawDir: opts.openclawDir,
     piSessionsDir: opts.piSessionsDir,
-    vscodeCopilotDirs: opts.vscodeCopilotDirs,
+
     copilotCliLogsDir: opts.copilotCliLogsDir,
     copilotCliOtelPaths: opts.copilotCliOtelPaths,
     grokLogsPath: opts.grokLogsPath,
@@ -918,34 +894,6 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     }
   }
 
-  // ZCode pre-check: only filter zcode driver on failure; leave OpenCode /
-  // Hermes drivers intact. See docs/43-zcode-support.md §二挑战 7.
-  if (opts.zcodeDbPath) {
-    const dbStat = await stat(opts.zcodeDbPath).catch(() => null);
-    if (dbStat) {
-      if (!opts.openZcodeDb) {
-        onProgress?.({
-          source: "zcode-sqlite",
-          phase: "warn",
-          message: `ZCode SQLite database found at ${opts.zcodeDbPath} but SQLite is not available — ZCode token data will NOT be synced`,
-        });
-        activeDbDrivers = activeDbDrivers.filter((d) => d.source !== "zcode");
-      } else {
-        const handle = opts.openZcodeDb(opts.zcodeDbPath);
-        if (!handle) {
-          onProgress?.({
-            source: "zcode-sqlite",
-            phase: "warn",
-            message: `Failed to open ZCode SQLite database at ${opts.zcodeDbPath} — ZCode token data will NOT be synced`,
-          });
-          activeDbDrivers = activeDbDrivers.filter((d) => d.source !== "zcode");
-        } else {
-          handle.close();
-        }
-      }
-    }
-  }
-
   // Filter out Hermes drivers that failed pre-check
   activeDbDrivers = activeDbDrivers.filter((d) => {
     if (d.source !== "hermes") return true;
@@ -958,7 +906,6 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     const key = sourceKey(driver.source);
     const isOpenCode = driver.source === "opencode";
     const isHermes = driver.source === "hermes";
-    const isZcode = driver.source === "zcode";
 
     // For Hermes, extract dbKey from the driver instance
     const hermesDbKey = isHermes
@@ -972,8 +919,6 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
         ? `Hermes SQLite (${hermesDbKey})`
         : isHermes
           ? "Hermes SQLite"
-          : isZcode
-            ? "ZCode SQLite"
             : `${driver.source} SQLite`;
 
     onProgress?.({
@@ -989,8 +934,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     } else if (isHermes && hermesDbKey) {
       // Hermes uses Record<dbKey, HermesSqliteCursor>
       prevCursor = cursors.hermesSqlite?.[hermesDbKey];
-    } else if (isZcode) {
-      prevCursor = cursors.zcodeSqlite;
+
     }
 
     // Detect DB cursor loss (parallel to file-based knownFilePaths logic):
@@ -1001,8 +945,6 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
       ? "openCodeSqlite"
       : isHermes
         ? `hermesSqlite:${hermesDbKey}`
-        : isZcode
-          ? "zcodeSqlite"
           : `${driver.source}Sqlite`;
 
     if (!initialCursorEmpty && !prevCursor && cursors.knownDbSources?.[dbSourceKey]) {
@@ -1033,8 +975,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
       continue; // Skip this DB source, continue with others
     }
 
-    // Forward non-fatal warnings from the driver (e.g. zcode provider_total
-    // mismatch). Adapter never emits without a run() call, so this runs
+    // Forward non-fatal warnings from the driver. Adapter never emits without a run() call, so this runs
     // after the try/catch above.
     for (const w of result.warnings ?? []) {
       onProgress?.({
@@ -1077,8 +1018,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
         cursors.hermesSqlite = {};
       }
       cursors.hermesSqlite[hermesDbKey] = result.cursor as HermesSqliteCursor;
-    } else if (isZcode) {
-      cursors.zcodeSqlite = result.cursor as CursorState["zcodeSqlite"];
+
     }
 
     // Track this DB source as "previously synced" for cursor-loss detection
@@ -1088,7 +1028,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
 
     allDeltas.push(...result.deltas);
     sourceCounts[key] += result.deltas.length;
-    if (key === "opencode" || key === "hermes" || key === "zcode") {
+    if (key === "opencode" || key === "hermes") {
       dbsScanned[key] += 1;
     }
 
@@ -1283,7 +1223,8 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
 
   const evidenceRecords = allDeltas.filter((d) => d.evidence).map((d) => toEvidenceRecord(d, opts.deviceId));
   const { records: oldRecords } = await queue.readFromOffset(0);
-  let finalRecords = initialCursorEmpty ? records : records.length > 0 ? aggregateRecords([...oldRecords, ...records]) : undefined;
+  const retiredRecords = opts.previousRetiredRecords ?? [];
+  let finalRecords = initialCursorEmpty ? [...records, ...retiredRecords] : records.length > 0 ? aggregateRecords([...oldRecords, ...records]) : undefined;
   const previousAntigravity = opts.previousAntigravityRecords ?? [];
   const freshAntigravity = opts.antigravitySnapshot
     ? antigravityRecords(opts.antigravitySnapshot.deltas, opts.deviceId) : null;
@@ -1364,7 +1305,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   if (finalRecords) {
     const savedDirty = await queue.loadDirtyKeys();
     const previousDirty = savedDirty ?? (await queue.readFromOffset(await queue.loadOffset())).records.map(tokenRecordKey);
-    const antigravityKeys = new Set(previousAntigravity.map(tokenRecordKey));
+    const antigravityKeys = new Set([...previousAntigravity, ...retiredRecords].map(tokenRecordKey));
     const retainedDirty = previousDirty.filter((key) => antigravityKeys.has(key));
     const finalKeys = new Set(finalRecords.map(tokenRecordKey));
     const pending = initialCursorEmpty ? retainedDirty : previousDirty.filter((key) => finalKeys.has(key));
@@ -1381,7 +1322,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   cursors.accountingSchemaVersion = ACCOUNTING_SCHEMA_VERSION;
   cursors.updatedAt = new Date().toISOString();
   await commitSync(stateDir, { version: 1, records: finalRecords, dirtyKeys, evidence: evidenceRecords, accounting,
-    replay: initialCursorEmpty, preserveAccountingSources: ["antigravity"], cursors });
+    replay: initialCursorEmpty, preserveAccountingSources: ["antigravity", ...RETIRED_SOURCES], cursors });
 
   onProgress?.({
     source: "all",

@@ -25,7 +25,7 @@ describe("executeReset", () => {
       "session-queue.state.json",
     ];
     for (const f of files) {
-      await writeFile(join(tempDir, f), "{}");
+      await writeFile(join(tempDir, f), f.endsWith("jsonl") ? "" : "{}");
     }
 
     const result = await executeReset({ stateDir: tempDir });
@@ -42,7 +42,7 @@ describe("executeReset", () => {
   it("should skip missing files without error", async () => {
     // Only create 2 of 6 files
     await writeFile(join(tempDir, "cursors.json"), "{}");
-    await writeFile(join(tempDir, "queue.jsonl"), "line1\nline2");
+    await writeFile(join(tempDir, "queue.jsonl"), "");
 
     const result = await executeReset({ stateDir: tempDir });
 

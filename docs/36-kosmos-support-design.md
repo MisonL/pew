@@ -1,5 +1,7 @@
 # Kosmos / PM Studio 支持
 
+> Archived: collection and new uploads are retired. Existing usage remains readable and participates in rankings.
+
 > **编号**: 36  
 > **状态**: 已实现  
 > **创建时间**: 2026-04-08  

@@ -84,12 +84,9 @@ describe("sourceKey", () => {
     ["claude-code", "claude"],
     ["codex", "codex"],
     ["copilot-cli", "copilotCli"],
-    ["gemini-cli", "gemini"],
-    ["kosmos", "kosmos"],
     ["opencode", "opencode"],
     ["openclaw", "openclaw"],
     ["pi", "pi"],
-    ["pmstudio", "pmstudio"],
     ["grok", "grok"],
   ];
 

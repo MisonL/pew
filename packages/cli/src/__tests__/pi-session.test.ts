@@ -114,10 +114,10 @@ describe("collectPiSessions", () => {
     ];
     await writeFile(filePath, `${lines.join("\n")}\n`);
 
-    const snapshots = await collectPiSessions(filePath, "omp");
+    const snapshots = await collectPiSessions(filePath);
     expect(snapshots).toHaveLength(1);
-    expect(snapshots[0].sessionKey).toBe("omp:019fc4c0-9097-7000-868a-7b93e2205b9b");
-    expect(snapshots[0].source).toBe("omp");
+    expect(snapshots[0].sessionKey).toBe("pi:019fc4c0-9097-7000-868a-7b93e2205b9b");
+    expect(snapshots[0].source).toBe("pi");
   });
 
   it("reports a nested agent transcript as automated, attributed to the parent project", async () => {
@@ -157,7 +157,7 @@ describe("collectPiSessions", () => {
     ];
     await writeFile(filePath, `${lines.join("\n")}\n`);
 
-    const [snap] = await collectPiSessions(filePath, "omp");
+    const [snap] = await collectPiSessions(filePath);
     expect(snap.kind).toBe("automated");
     // Agent-attributed prompts are not human turns
     expect(snap.userMessages).toBe(0);
@@ -168,7 +168,7 @@ describe("collectPiSessions", () => {
     // matching the root session in the same project.
     const rootPath = join(sessionDir, `${stem}.jsonl`);
     await writeFile(rootPath, `${lines[0]}\n`);
-    const [rootSnap] = await collectPiSessions(rootPath, "omp");
+    const [rootSnap] = await collectPiSessions(rootPath);
     expect(snap.projectRef).toBe(rootSnap.projectRef);
     expect(rootSnap.kind).toBe("human");
   });
@@ -206,8 +206,8 @@ describe("collectPiSessions", () => {
     const rootPath = join(sessionDir, `${stem}.jsonl`);
     await writeFile(rootPath, `${lines[0]}\n`);
 
-    const [advisor] = await collectPiSessions(filePath, "omp");
-    const [root] = await collectPiSessions(rootPath, "omp");
+    const [advisor] = await collectPiSessions(filePath);
+    const [root] = await collectPiSessions(rootPath);
 
     expect(advisor.kind).toBe("automated");
     expect(advisor.projectRef).toBe(root.projectRef);

@@ -1,10 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { accountingAcknowledgment, validateAccountingRecord } from "./accounting.js";
+import { accountingAcknowledgment, retiredAccountingAcknowledgment, validateAccountingRecord } from "./accounting.js";
 import type { AccountingRecord } from "./accounting-types.js";
 
 import { accountingFixture, invalidAccountingCases } from "./__test-helpers__/accounting.js";
 
 describe("accounting annotations", () => {
+  it("acknowledges retired details with safe identity only and no claimed database write", () => {
+    const record = { ...accountingFixture(), source: "zcode", groups: "PRIVATE_BODY", basis: null };
+    expect(retiredAccountingAcknowledgment(record)).toEqual({
+      key: JSON.stringify([record.device_id, record.source, record.model, record.hour_start, record.event_id]),
+      source_revision: record.source_revision, parser_revision: record.parser_revision,
+      detail_revision: record.detail_revision, status: "superseded",
+    });
+    expect(retiredAccountingAcknowledgment({ ...record, event_id: "a".repeat(64) })).not.toBeNull();
+    for (const value of [null, {}, { ...record, source: "pi" }, { ...record, device_id: "../PRIVATE" },
+      { ...record, model: "sk-PRIVATE" }, { ...record, hour_start: "bad" }, { ...record, event_id: "bad" },
+      { ...record, source_revision: 0 }, { ...record, parser_revision: "private" }, { ...record, detail_revision: -1 }]) {
+      expect(retiredAccountingAcknowledgment(value)).toBeNull();
+    }
+  });
   it("accepts Antigravity accounting with disjoint cache reads and reasoning", () => {
     const record = { ...accountingFixture(), source: "antigravity" };
     expect(validateAccountingRecord(record, 0)).toEqual({ valid: true, record });

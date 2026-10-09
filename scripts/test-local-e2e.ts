@@ -87,6 +87,24 @@ try {
     const tokens = body.result.reduce((n, row) => n + (row.total_tokens ?? row.input_tokens + row.cached_input_tokens + row.output_tokens + row.reasoning_output_tokens), 0);
     assert.equal(tokens, HISTORY_ROWS * 940 + 11, method);
   }
+  const retired = ["gemini-cli", "kosmos", "omp", "pmstudio", "vscode-copilot", "zcode"];
+  for (const source of retired) {
+    await query("INSERT INTO usage_records(user_id,device_id,source,model,hour_start,input_tokens,total_tokens) VALUES (?,?,?,?,?,123,123)",
+      ["fixture-user", "historical-device", source, "historical-model", "2024-01-01T00:00:00.000Z"]);
+    const ignored = await fetch(`${local.env.WORKER_INGEST_URL}/tokens`, {
+      method: "POST", headers: { Authorization: `Bearer ${local.env.WORKER_SECRET}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "fixture-user", records: [{ source, input_tokens: -1, private_body: "IGNORE" }] }),
+    });
+    assert.equal(ignored.status, 200);
+    assert.deepEqual(await ignored.json(), { ingested: 0, ignored: 1 });
+  }
+  const historicalRanking = await fetch(`${local.env.WORKER_READ_URL}/api/rpc`, {
+    method: "POST", headers: { Authorization: `Bearer ${local.env.WORKER_READ_SECRET}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ method: "leaderboard.getSnapshot", model: "historical-model" }),
+  });
+  const historicalBody = await historicalRanking.json() as { result: LeaderboardSnapshot };
+  assert.equal(historicalRanking.status, 200);
+  assert.equal(historicalBody.result.rows[0]?.total_tokens, 123 * retired.length);
   await query("UPDATE _test_marker SET value='production' WHERE key='env'");
   await assert.rejects(verifyLocalMarker(local.env), /_test_marker/);
   await query("UPDATE _test_marker SET value='test' WHERE key='env'");

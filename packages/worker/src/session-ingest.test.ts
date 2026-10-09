@@ -360,6 +360,13 @@ describe("Worker session ingest endpoint", () => {
       );
     });
 
+    it("makes the existing session source immutable during a snapshot update", async () => {
+      await worker.fetch(makeRequest("/ingest/sessions", { userId: "u1", records: [VALID_SESSION_RECORD] }), env);
+      expect(env.DB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining("excluded.source = session_records.source"),
+      );
+    });
+
     it("should return 500 when D1 batch fails", async () => {
       (env.DB.batch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error("D1_ERROR: table not found"),

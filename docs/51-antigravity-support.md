@@ -5,8 +5,8 @@
 Source identity: `antigravity` (Antigravity CLI, `agy`). The collector reads
 `~/.gemini/antigravity-cli/conversations/<conversation-id>.db`. IDE/app roots,
 quota APIs, credentials, generated transcripts and conversation bodies are not
-collection sources. Gemini CLI discovery is confined to `.gemini/tmp`, so the
-two sources do not overlap.
+collection sources. The former Gemini CLI collector has been retired; its
+historical records remain separate from Antigravity CLI data.
 
 Token and session data use the existing aggregation, queue,
 upload and typed dashboard pipelines. Automatic session-end synchronization is

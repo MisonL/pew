@@ -2,19 +2,17 @@ import type { NotifierStatus, Source } from "@pew/core";
 import { CursorStore } from "../storage/cursor-store.js";
 import { LocalQueue } from "../storage/local-queue.js";
 import type { OnCorruptLine } from "../storage/base-queue.js";
+import { isRetiredCursorPath } from "../utils/retired-sources.js";
 
 /** Resolved source directory paths used for file classification */
 export interface SourceDirs {
   claudeDir: string;
   codexSessionsDir: string;
-  geminiDir: string;
-  kosmosDataDir: string;
-  pmstudioDataDir: string;
-  ompSessionsDir: string;
+
   openCodeMessageDir: string;
   openclawDir: string;
   piSessionsDir: string;
-  vscodeCopilotDirs: string[];
+
   copilotCliLogsDir: string;
   copilotCliOtelPaths: string[];
   multicaCodexDirs: string[];
@@ -49,17 +47,12 @@ function classifySource(filePath: string, dirs: SourceDirs): string {
   for (const dir of dirs.multicaCodexDirs) {
     if (filePath.startsWith(dir)) return "codex";
   }
-  if (filePath.startsWith(dirs.geminiDir)) return "gemini-cli";
-  if (filePath.startsWith(dirs.kosmosDataDir)) return "kosmos";
-  if (filePath.startsWith(dirs.pmstudioDataDir)) return "pmstudio";
-  if (filePath.startsWith(dirs.ompSessionsDir)) return "omp";
+
   if (filePath.startsWith(dirs.openCodeMessageDir)) return "opencode";
   if (filePath.startsWith(dirs.openclawDir)) return "openclaw";
   if (filePath.startsWith(dirs.piSessionsDir)) return "pi";
   if (filePath.startsWith(dirs.grokHome)) return "grok";
-  for (const dir of dirs.vscodeCopilotDirs) {
-    if (filePath.startsWith(dir)) return "vscode-copilot";
-  }
+
   if (filePath.startsWith(dirs.copilotCliLogsDir)) return "copilot-cli";
   for (const path of dirs.copilotCliOtelPaths) {
     if (
@@ -93,6 +86,7 @@ export async function executeStatus(opts: {
   // Count files by source using resolved directory paths
   const sources: Record<string, number> = {};
   for (const filePath of Object.keys(cursors.files)) {
+    if (isRetiredCursorPath(filePath)) continue;
     const source = classifySource(filePath, sourceDirs);
     sources[source] = (sources[source] || 0) + 1;
   }
@@ -100,7 +94,7 @@ export async function executeStatus(opts: {
   if (antigravityDbs > 0) sources.antigravity = antigravityDbs;
 
   return {
-    trackedFiles: Object.keys(cursors.files).length + antigravityDbs,
+    trackedFiles: Object.values(sources).reduce((sum, count) => sum + count, 0),
     lastSync: cursors.updatedAt,
     pendingRecords: records.length,
     sources,

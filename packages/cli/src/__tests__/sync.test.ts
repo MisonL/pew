@@ -23,20 +23,9 @@ function claudeLine(ts: string, input: number, output: number): string {
   });
 }
 
-/** Helper: create Gemini session JSON */
-function geminiSession(ts: string, input: number, output: number): string {
-  return JSON.stringify({
-    sessionId: "ses-001",
-    messages: [
-      {
-        id: "msg-1",
-        type: "gemini",
-        timestamp: ts,
-        model: "gemini-3-flash",
-        tokens: { input, output, cached: 0, thoughts: 0, tool: 0, total: input + output },
-      },
-    ],
-  });
+/** Helper: create Pi usage JSONL */
+function piSession(ts: string, input: number, output: number): string {
+ return `${JSON.stringify({type:"message", timestamp:ts, message:{role:"assistant", model:"pi-model", usage:{input,output,cacheRead:0,cacheWrite:0}}})}\n`;
 }
 
 /** Helper: create OpenCode message JSON */
@@ -151,22 +140,22 @@ describe("executeSync", () => {
     expect(records[0].hour_start).toBe("2026-03-07T10:00:00.000Z");
   });
 
-  it("should sync Gemini data files to queue", async () => {
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-b", "chats");
-    await mkdir(geminiDir, { recursive: true });
+  it("should sync Pi data files to queue", async () => {
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-b");
+    await mkdir(piDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-2026-03-07.json"),
-      geminiSession("2026-03-07T10:15:00.000Z", 3000, 200),
+      join(piDir, "session-2026-03-07.jsonl"),
+      piSession("2026-03-07T10:15:00.000Z", 3000, 200),
     );
 
     const result = await executeSync({
       stateDir,
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
     });
 
     expect(result.totalDeltas).toBe(1);
-    expect(result.sources.gemini).toBe(1);
-    expect(result.filesScanned.gemini).toBe(1);
+    expect(result.sources.pi).toBe(1);
+    expect(result.filesScanned.pi).toBe(1);
   });
 
   it("should sync OpenCode data files to queue", async () => {
@@ -267,23 +256,23 @@ describe("executeSync", () => {
       join(claudeDir, "session.jsonl"),
       `${claudeLine("2026-03-07T10:15:00.000Z", 1000, 100)}\n`,
     );
-    // Gemini
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-b", "chats");
-    await mkdir(geminiDir, { recursive: true });
+    // Pi
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-b");
+    await mkdir(piDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-2026-03-07.json"),
-      geminiSession("2026-03-07T10:15:00.000Z", 2000, 200),
+      join(piDir, "session-2026-03-07.jsonl"),
+      piSession("2026-03-07T10:15:00.000Z", 2000, 200),
     );
 
     const result = await executeSync({
       stateDir,
       claudeDir: join(dataDir, ".claude"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
     });
 
     expect(result.totalDeltas).toBe(2);
     expect(result.sources.claude).toBe(1);
-    expect(result.sources.gemini).toBe(1);
+    expect(result.sources.pi).toBe(1);
   });
 
   // ===== Codex CLI sync =====
@@ -567,12 +556,12 @@ describe("executeSync", () => {
       join(claudeDir, "session.jsonl"),
       `${claudeLine("2026-03-07T10:15:00.000Z", 1000, 100)}\n`,
     );
-    // Gemini
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-b", "chats");
-    await mkdir(geminiDir, { recursive: true });
+    // Pi
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-b");
+    await mkdir(piDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-2026-03-07.json"),
-      geminiSession("2026-03-07T10:15:00.000Z", 2000, 200),
+      join(piDir, "session-2026-03-07.jsonl"),
+      piSession("2026-03-07T10:15:00.000Z", 2000, 200),
     );
     // OpenCode
     const ocDir = join(dataDir, "opencode", "message", "ses_001");
@@ -601,7 +590,7 @@ describe("executeSync", () => {
     await executeSync({
       stateDir,
       claudeDir: join(dataDir, ".claude"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
       openCodeMessageDir: join(dataDir, "opencode", "message"),
       openclawDir: join(dataDir, ".openclaw"),
       codexSessionsDir: join(dataDir, ".codex", "sessions"),
@@ -611,8 +600,8 @@ describe("executeSync", () => {
     // Verify all five sources emit discover + parse events
     expect(events.some((e) => e.source === "claude-code" && e.phase === "discover")).toBe(true);
     expect(events.some((e) => e.source === "claude-code" && e.phase === "parse")).toBe(true);
-    expect(events.some((e) => e.source === "gemini-cli" && e.phase === "discover")).toBe(true);
-    expect(events.some((e) => e.source === "gemini-cli" && e.phase === "parse")).toBe(true);
+    expect(events.some((e) => e.source === "pi" && e.phase === "discover")).toBe(true);
+    expect(events.some((e) => e.source === "pi" && e.phase === "parse")).toBe(true);
     expect(events.some((e) => e.source === "opencode" && e.phase === "discover")).toBe(true);
     expect(events.some((e) => e.source === "opencode" && e.phase === "parse")).toBe(true);
     expect(events.some((e) => e.source === "openclaw" && e.phase === "discover")).toBe(true);
@@ -798,12 +787,12 @@ describe("executeSync", () => {
       join(claudeDir, "session.jsonl"),
       `${claudeLine("2026-03-07T10:15:00.000Z", 1000, 100)}\n`,
     );
-    // Gemini
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-b", "chats");
-    await mkdir(geminiDir, { recursive: true });
+    // Pi
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-b");
+    await mkdir(piDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-2026-03-07.json"),
-      geminiSession("2026-03-07T10:15:00.000Z", 2000, 200),
+      join(piDir, "session-2026-03-07.jsonl"),
+      piSession("2026-03-07T10:15:00.000Z", 2000, 200),
     );
     // OpenCode
     const ocDir = join(dataDir, "opencode", "message", "ses_001");
@@ -830,7 +819,7 @@ describe("executeSync", () => {
     const result = await executeSync({
       stateDir,
       claudeDir: join(dataDir, ".claude"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
       openCodeMessageDir: join(dataDir, "opencode", "message"),
       openclawDir: join(dataDir, ".openclaw"),
       codexSessionsDir: join(dataDir, ".codex", "sessions"),
@@ -838,12 +827,12 @@ describe("executeSync", () => {
 
     expect(result.totalDeltas).toBe(5);
     expect(result.sources.claude).toBe(1);
-    expect(result.sources.gemini).toBe(1);
+    expect(result.sources.pi).toBe(1);
     expect(result.sources.opencode).toBe(1);
     expect(result.sources.openclaw).toBe(1);
     expect(result.sources.codex).toBe(1);
     expect(result.filesScanned.claude).toBe(1);
-    expect(result.filesScanned.gemini).toBe(1);
+    expect(result.filesScanned.pi).toBe(1);
     expect(result.filesScanned.opencode).toBe(1);
     expect(result.filesScanned.openclaw).toBe(1);
     expect(result.filesScanned.codex).toBe(1);
@@ -1238,29 +1227,29 @@ describe("executeSync", () => {
 
   // ===== Gemini parse error branch with onProgress (lines 198-203) =====
 
-  it("should emit warning and continue when Gemini parser throws", async () => {
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-gem-err", "chats");
-    await mkdir(geminiDir, { recursive: true });
+  it("should emit warning and continue when Pi parser throws", async () => {
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-gem-err");
+    await mkdir(piDir, { recursive: true });
 
     // Good file
     await writeFile(
-      join(geminiDir, "session-good.json"),
-      geminiSession("2026-03-07T11:00:00.000Z", 2000, 200),
+      join(piDir, "session-good.jsonl"),
+      piSession("2026-03-07T11:00:00.000Z", 2000, 200),
     );
 
     // Bad file — will be forced to throw via spy
     await writeFile(
-      join(geminiDir, "session-bad.json"),
-      geminiSession("2026-03-07T12:00:00.000Z", 3000, 300),
+      join(piDir, "session-bad.jsonl"),
+      piSession("2026-03-07T12:00:00.000Z", 3000, 300),
     );
 
-    const geminiParser = await import("../parsers/gemini.js");
-    const origParse = geminiParser.parseGeminiFile;
+    const piParser = await import("../parsers/pi.js");
+    const origParse = piParser.parsePiFile;
     const spy = vi
-      .spyOn(geminiParser, "parseGeminiFile")
+      .spyOn(piParser, "parsePiFile")
       .mockImplementation(async (opts) => {
         if (opts.filePath.includes("session-bad")) {
-          throw new Error("Simulated gemini parser crash");
+          throw new Error("Simulated pi parser crash");
         }
         return origParse(opts);
       });
@@ -1270,20 +1259,20 @@ describe("executeSync", () => {
     try {
       const result = await executeSync({
         stateDir,
-        geminiDir: join(dataDir, ".gemini"),
+        piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
         onProgress: (e) =>
           events.push({ source: e.source, phase: e.phase, message: e.message }),
       });
 
       // Good file data should still be synced
-      expect(result.sources.gemini).toBe(1);
+      expect(result.sources.pi).toBe(1);
 
       // Verify a warning was emitted for the bad file
       const warnEvents = events.filter(
-        (e) => e.source === "gemini-cli" && e.phase === "warn",
+        (e) => e.source === "pi" && e.phase === "warn",
       );
       expect(warnEvents).toHaveLength(1);
-      expect(warnEvents[0].message).toContain("Simulated gemini parser crash");
+      expect(warnEvents[0].message).toContain("Simulated pi parser crash");
     } finally {
       spy.mockRestore();
     }
@@ -1661,7 +1650,7 @@ describe("executeSync", () => {
   });
 
   it.skipIf(!!process.env.CI)("should not inflate when inode changes with multiple sources active", async () => {
-    // Scenario: Claude + Gemini both synced. Claude file inode changes.
+    // Scenario: Claude + Pi both synced. Claude file inode changes.
     // Queue should reflect correct values for BOTH sources.
     const claudeDir = join(dataDir, ".claude", "projects", "proj-multi");
     await mkdir(claudeDir, { recursive: true });
@@ -1669,11 +1658,11 @@ describe("executeSync", () => {
     const claudeContent = `${claudeLine("2026-03-07T10:15:00.000Z", 3000, 300)}\n`;
     await writeFile(claudePath, claudeContent);
 
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-multi", "chats");
-    await mkdir(geminiDir, { recursive: true });
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-multi");
+    await mkdir(piDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-2026-03-07.json"),
-      geminiSession("2026-03-07T10:15:00.000Z", 2000, 200),
+      join(piDir, "session-2026-03-07.jsonl"),
+      piSession("2026-03-07T10:15:00.000Z", 2000, 200),
     );
 
     // First sync — both sources
@@ -1681,7 +1670,7 @@ describe("executeSync", () => {
       stateDir,
       deviceId: "dev-1",
       claudeDir: join(dataDir, ".claude"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
     });
 
     // Simulate Claude file inode change
@@ -1695,23 +1684,23 @@ describe("executeSync", () => {
       stateDir,
       deviceId: "dev-1",
       claudeDir: join(dataDir, ".claude"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
     });
 
     const queueRaw = await readFile(join(stateDir, "queue.jsonl"), "utf-8");
     const records = queueRaw.trim().split("\n").map((l) => JSON.parse(l) as QueueRecord);
     const claude = records.find((r) => r.source === "claude-code");
-    const gemini = records.find((r) => r.source === "gemini-cli");
+    const pi = records.find((r) => r.source === "pi");
     expect(claude).toBeDefined();
-    expect(gemini).toBeDefined();
+    expect(pi).toBeDefined();
     expect(claude!.input_tokens).toBe(3000);  // NOT 6000
-    expect(gemini!.input_tokens).toBe(2000);  // Preserved, not lost
+    expect(pi!.input_tokens).toBe(2000);  // Preserved, not lost
   });
 
   // ===== Bug A2: Partial replay inflation (single cursor entry missing/corrupted) =====
 
   it("should not inflate when a single file's cursor entry is missing", async () => {
-    // Scenario: sync Claude + Gemini → manually delete Claude cursor entry →
+    // Scenario: sync Claude + Pi → manually delete Claude cursor entry →
     // sync again → Claude driver replays from offset 0 (full file content)
     // In the old code, this runs through the incremental SUM branch → 2× inflation.
     // With the fix, sync should detect the missing cursor → full rescan → overwrite.
@@ -1723,11 +1712,11 @@ describe("executeSync", () => {
       `${claudeLine("2026-03-07T10:15:00.000Z", 1000, 100)}\n`,
     );
 
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-cursor-miss", "chats");
-    await mkdir(geminiDir, { recursive: true });
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-cursor-miss");
+    await mkdir(piDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-2026-03-07.json"),
-      geminiSession("2026-03-07T10:15:00.000Z", 2000, 200),
+      join(piDir, "session-2026-03-07.jsonl"),
+      piSession("2026-03-07T10:15:00.000Z", 2000, 200),
     );
 
     // First sync — both sources
@@ -1735,16 +1724,16 @@ describe("executeSync", () => {
       stateDir,
       deviceId: "dev-1",
       claudeDir: join(dataDir, ".claude"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
     });
 
     // Verify initial queue state
     const queueRaw1 = await readFile(join(stateDir, "queue.jsonl"), "utf-8");
     const records1 = queueRaw1.trim().split("\n").map((l) => JSON.parse(l) as QueueRecord);
     const claude1 = records1.find((r) => r.source === "claude-code");
-    const gemini1 = records1.find((r) => r.source === "gemini-cli");
+    const pi1 = records1.find((r) => r.source === "pi");
     expect(claude1!.input_tokens).toBe(1000);
-    expect(gemini1!.input_tokens).toBe(2000);
+    expect(pi1!.input_tokens).toBe(2000);
 
     // Tamper with cursors.json: delete only the Claude file cursor entry
     const cursorsPath = join(stateDir, "cursors.json");
@@ -1754,26 +1743,26 @@ describe("executeSync", () => {
     ));
     await writeFile(cursorsPath, JSON.stringify(cursorsData));
 
-    // Second sync — Claude cursor is missing, Gemini cursor exists
+    // Second sync — Claude cursor is missing, Pi cursor exists
     // Without fix: Claude replays from 0 → incremental SUM → 2000/200 (2×)
     // With fix: detects missing cursor → full rescan → overwrite → 1000/100
     await executeSync({
       stateDir,
       deviceId: "dev-1",
       claudeDir: join(dataDir, ".claude"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
     });
 
     const queueRaw2 = await readFile(join(stateDir, "queue.jsonl"), "utf-8");
     const records2 = queueRaw2.trim().split("\n").map((l) => JSON.parse(l) as QueueRecord);
     const claude2 = records2.find((r) => r.source === "claude-code");
-    const gemini2 = records2.find((r) => r.source === "gemini-cli");
+    const pi2 = records2.find((r) => r.source === "pi");
     expect(claude2).toBeDefined();
-    expect(gemini2).toBeDefined();
+    expect(pi2).toBeDefined();
     expect(claude2!.input_tokens).toBe(1000);   // NOT 2000
     expect(claude2!.output_tokens).toBe(100);    // NOT 200
-    expect(gemini2!.input_tokens).toBe(2000);    // Preserved
-    expect(gemini2!.output_tokens).toBe(200);    // Preserved
+    expect(pi2!.input_tokens).toBe(2000);    // Preserved
+    expect(pi2!.output_tokens).toBe(200);    // Preserved
   });
 
   it("should trigger one-time full rescan when upgrading from old cursors.json without knownFilePaths", async () => {
@@ -2062,8 +2051,8 @@ describe("executeSync", () => {
   });
 
   it("should allow genuinely new files without triggering rescan", async () => {
-    // Scenario: sync Claude → add a new Gemini file → sync again.
-    // The new Gemini file should be picked up in incremental mode (SUM),
+    // Scenario: sync Claude → add a new Pi file → sync again.
+    // The new Pi file should be picked up in incremental mode (SUM),
     // NOT trigger a full rescan, because it's not in knownFilePaths.
     const claudeDir = join(dataDir, ".claude", "projects", "proj-newfile");
     await mkdir(claudeDir, { recursive: true });
@@ -2085,34 +2074,34 @@ describe("executeSync", () => {
     expect(records1[0].source).toBe("claude-code");
     expect(records1[0].input_tokens).toBe(1000);
 
-    // Add a genuinely new Gemini file
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-newfile", "chats");
-    await mkdir(geminiDir, { recursive: true });
+    // Add a genuinely new Pi file
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-newfile");
+    await mkdir(piDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-2026-03-07.json"),
-      geminiSession("2026-03-07T10:15:00.000Z", 2000, 200),
+      join(piDir, "session-2026-03-07.jsonl"),
+      piSession("2026-03-07T10:15:00.000Z", 2000, 200),
     );
 
-    // Second sync — Claude + Gemini, incremental
+    // Second sync — Claude + Pi, incremental
     const r2 = await executeSync({
       stateDir,
       deviceId: "dev-1",
       claudeDir: join(dataDir, ".claude"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
     });
 
-    // Should pick up only the new Gemini delta (Claude skipped, unchanged)
+    // Should pick up only the new Pi delta (Claude skipped, unchanged)
     expect(r2.totalDeltas).toBe(1);
-    expect(r2.sources.gemini).toBe(1);
+    expect(r2.sources.pi).toBe(1);
     expect(r2.sources.claude).toBe(0);
 
     // Queue should have both sources with correct values
     const queueRaw2 = await readFile(join(stateDir, "queue.jsonl"), "utf-8");
     const records2 = queueRaw2.trim().split("\n").map((l) => JSON.parse(l) as QueueRecord);
     const claude = records2.find((r) => r.source === "claude-code");
-    const gemini = records2.find((r) => r.source === "gemini-cli");
+    const pi = records2.find((r) => r.source === "pi");
     expect(claude!.input_tokens).toBe(1000);  // Preserved from first sync
-    expect(gemini!.input_tokens).toBe(2000);  // New file, correctly SUM'd
+    expect(pi!.input_tokens).toBe(2000);  // New file, correctly SUM'd
   });
 
   // ===== Bug A2b: SQLite cursor entry lost (DB-based driver cursor-loss detection) =====
@@ -2811,18 +2800,18 @@ describe("executeSync", () => {
       `${claudeLine("2026-03-07T10:15:00.000Z", 1000, 100)}\n`,
     );
 
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-fl", "chats");
-    await mkdir(geminiDir, { recursive: true });
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-fl");
+    await mkdir(piDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-fl.json"),
-      geminiSession("2026-03-07T10:15:00.000Z", 2000, 200),
+      join(piDir, "session-fl.jsonl"),
+      piSession("2026-03-07T10:15:00.000Z", 2000, 200),
     );
 
     // First sync
     const r1 = await executeSync({
       stateDir,
       claudeDir: join(dataDir, ".claude"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
     });
     expect(r1.totalDeltas).toBe(2);
 
@@ -2839,7 +2828,7 @@ describe("executeSync", () => {
     const r2 = await executeSync({
       stateDir,
       claudeDir: join(dataDir, ".claude"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
       onProgress: (e) => events.push(e),
     });
 
@@ -3610,307 +3599,4 @@ describe("executeSync", () => {
 
   // ===== ZCode SQLite token driver integration =====
 
-  describe("ZCode SQLite integration", () => {
-    function makeZcodeDb(rows: Array<{
-      id: string;
-      sessionId: string;
-      modelId: string;
-      completedAt: number;
-      inputTokens: number;
-      outputTokens: number;
-      reasoningTokens: number;
-      cacheReadInputTokens: number;
-      cacheCreationInputTokens: number;
-      providerTotalTokens: number | null;
-      computedTotalTokens: number;
-    }>) {
-      return (_p: string) => ({
-        queryUsageRows(lastCompletedAt: number | null, skipIds: readonly string[]) {
-          const wm = lastCompletedAt ?? 0;
-          const skip = new Set(skipIds);
-          return rows
-            .filter((r) => r.completedAt >= wm && !skip.has(r.id))
-            .map((r) => ({
-              ...r,
-              turnId: null,
-              providerId: "builtin:bigmodel-coding-plan",
-              status: "completed" as const,
-              startedAt: r.completedAt - 1000,
-            }));
-        },
-        close() {},
-      });
-    }
-
-    it("syncs ZCode SQLite tokens end-to-end and updates dbsScanned", async () => {
-      const dbDir = join(dataDir, ".zcode-tmp");
-      await mkdir(dbDir, { recursive: true });
-      const dbPath = join(dbDir, "db.sqlite");
-      await writeFile(dbPath, "dummy");
-
-      const result = await executeSync({
-        stateDir,
-        deviceId: "dev-t",
-        zcodeDbPath: dbPath,
-        openZcodeDb: makeZcodeDb([
-          {
-            id: "z1",
-            sessionId: "s1",
-            modelId: "GLM-5.2",
-            completedAt: 1783646250000,
-            inputTokens: 11933,
-            outputTokens: 170,
-            reasoningTokens: 0,
-            cacheReadInputTokens: 7360,
-            cacheCreationInputTokens: 0,
-            providerTotalTokens: 12103,
-            computedTotalTokens: 12103,
-          },
-        ]),
-      });
-
-      expect(result.sources.zcode).toBe(1);
-      expect(result.dbsScanned.zcode).toBe(1);
-      expect(result.totalDeltas).toBe(1);
-    });
-
-    it("skips ZCode token driver + emits warn when opener is absent", async () => {
-      const dbDir = join(dataDir, ".zcode-tmp");
-      await mkdir(dbDir, { recursive: true });
-      const dbPath = join(dbDir, "db.sqlite");
-      await writeFile(dbPath, "dummy");
-
-      const warns: string[] = [];
-      const result = await executeSync({
-        stateDir,
-        deviceId: "dev-t",
-        zcodeDbPath: dbPath,
-        // openZcodeDb missing
-        onProgress(event) {
-          if (event.phase === "warn" && event.message) warns.push(event.message);
-        },
-      });
-      expect(result.sources.zcode).toBe(0);
-      expect(warns.some((w) => /ZCode SQLite database found/.test(w))).toBe(true);
-    });
-
-    it("skips ZCode token driver + emits warn when opener returns null", async () => {
-      const dbDir = join(dataDir, ".zcode-tmp");
-      await mkdir(dbDir, { recursive: true });
-      const dbPath = join(dbDir, "db.sqlite");
-      await writeFile(dbPath, "dummy");
-
-      const warns: string[] = [];
-      const result = await executeSync({
-        stateDir,
-        deviceId: "dev-t",
-        zcodeDbPath: dbPath,
-        openZcodeDb: () => null,
-        onProgress(event) {
-          if (event.phase === "warn" && event.message) warns.push(event.message);
-        },
-      });
-      expect(result.sources.zcode).toBe(0);
-      expect(warns.some((w) => /Failed to open ZCode SQLite/.test(w))).toBe(true);
-    });
-
-    it("forwards zcode parser warnings through the DbTokenResult.warnings channel", async () => {
-      const dbDir = join(dataDir, ".zcode-tmp");
-      await mkdir(dbDir, { recursive: true });
-      const dbPath = join(dbDir, "db.sqlite");
-      await writeFile(dbPath, "dummy");
-
-      const warns: string[] = [];
-      await executeSync({
-        stateDir,
-        deviceId: "dev-t",
-        zcodeDbPath: dbPath,
-        openZcodeDb: makeZcodeDb([
-          {
-            id: "bad",
-            sessionId: "s1",
-            modelId: "GLM-5.2",
-            completedAt: 1783646250000,
-            inputTokens: 1000,
-            outputTokens: 200,
-            reasoningTokens: 50,
-            cacheReadInputTokens: 0,
-            cacheCreationInputTokens: 0,
-            providerTotalTokens: 9999, // matches neither inclusive nor disjoint
-            computedTotalTokens: 9999,
-          },
-        ]),
-        onProgress(event) {
-          if (event.phase === "warn" && event.message) warns.push(event.message);
-        },
-      });
-      expect(warns.some((w) => /provider_total mismatch/.test(w))).toBe(true);
-    });
-
-    it("triggers full rescan when zcode cursor is lost but knownDbSources.zcodeSqlite is set", async () => {
-      const dbDir = join(dataDir, ".zcode-tmp");
-      await mkdir(dbDir, { recursive: true });
-      const dbPath = join(dbDir, "db.sqlite");
-      await writeFile(dbPath, "dummy");
-
-      // Seed a cursors.json that claims zcode was previously synced (has
-      // knownDbSources.zcodeSqlite) but no zcodeSqlite cursor entry.
-      // Also add a claude file cursor so `initialCursorEmpty` is false —
-      // that's the guard that lets the cursor-loss branch fire.
-      await mkdir(stateDir, { recursive: true });
-      await writeFile(
-        join(stateDir, "cursors.json"),
-        JSON.stringify({
-          version: 1,
-          accountingSchemaVersion: 2,
-          files: {
-            "/nonexistent/claude.jsonl": {
-              inode: 999999,
-              mtimeMs: 0,
-              size: 0,
-              offset: 0,
-              seenIds: [],
-            },
-          },
-          knownFilePaths: { "/nonexistent/claude.jsonl": true },
-          knownDbSources: { zcodeSqlite: true },
-          updatedAt: null,
-        }),
-      );
-
-      const warns: string[] = [];
-      await executeSync({
-        stateDir,
-        deviceId: "dev-t",
-        zcodeDbPath: dbPath,
-        openZcodeDb: makeZcodeDb([]),
-        onProgress(event) {
-          if (event.phase === "warn" && event.message) warns.push(event.message);
-        },
-      });
-      // The cursor-loss detector fires per DB driver with a "restarting as
-      // full scan" warn; sync.ts then recurses with an empty cursors state.
-      expect(
-        warns.some((w) => /ZCode SQLite.*restarting as full scan/.test(w)),
-      ).toBe(true);
-    });
-
-    it("backfills knownDbSources.zcodeSqlite from an existing cursor on upgrade path", async () => {
-      const dbDir = join(dataDir, ".zcode-tmp");
-      await mkdir(dbDir, { recursive: true });
-      const dbPath = join(dbDir, "db.sqlite");
-      await writeFile(dbPath, "dummy");
-
-      // Simulate an older cursors.json that has a zcodeSqlite cursor but
-      // no knownDbSources map at all — the backfill branch must seed it
-      // with { zcodeSqlite: true } instead of triggering a full rescan.
-      await mkdir(stateDir, { recursive: true });
-      await writeFile(
-        join(stateDir, "cursors.json"),
-        JSON.stringify({
-          version: 1,
-          accountingSchemaVersion: 2,
-          files: {},
-          zcodeSqlite: {
-            lastCompletedAt: 1000,
-            lastProcessedIds: ["z0"],
-            inode: 1234,
-            updatedAt: new Date().toISOString(),
-          },
-          updatedAt: null,
-        }),
-      );
-
-      await executeSync({
-        stateDir,
-        deviceId: "dev-t",
-        zcodeDbPath: dbPath,
-        openZcodeDb: makeZcodeDb([
-          {
-            id: "z1",
-            sessionId: "s1",
-            modelId: "GLM-5.2",
-            completedAt: 2000,
-            inputTokens: 500,
-            outputTokens: 100,
-            reasoningTokens: 0,
-            cacheReadInputTokens: 0,
-            cacheCreationInputTokens: 0,
-            providerTotalTokens: 600,
-            computedTotalTokens: 600,
-          },
-        ]),
-      });
-
-      const after = JSON.parse(
-        await readFile(join(stateDir, "cursors.json"), "utf-8"),
-      ) as { knownDbSources?: Record<string, true> };
-      expect(after.knownDbSources?.zcodeSqlite).toBe(true);
-    });
-
-    it("triggers zcode inode-replay full rescan when the DB file's inode has changed", async () => {
-      const dbDir = join(dataDir, ".zcode-tmp");
-      await mkdir(dbDir, { recursive: true });
-      const dbPath = join(dbDir, "db.sqlite");
-      await writeFile(dbPath, "dummy");
-
-      // Prime cursors with a zcodeSqlite record whose inode is DEFINITELY
-      // different from the real dbPath's inode. sync.ts sees the mismatch
-      // and forces a full rescan (line 749-ish, "inode changed" branch).
-      await mkdir(stateDir, { recursive: true });
-      await writeFile(
-        join(stateDir, "cursors.json"),
-        JSON.stringify({
-          version: 1,
-          accountingSchemaVersion: 2,
-          files: {
-            "/nonexistent/claude.jsonl": {
-              inode: 999999,
-              mtimeMs: 0,
-              size: 0,
-              offset: 0,
-              seenIds: [],
-            },
-          },
-          knownFilePaths: { "/nonexistent/claude.jsonl": true },
-          knownDbSources: { zcodeSqlite: true },
-          zcodeSqlite: {
-            lastCompletedAt: 100,
-            lastProcessedIds: [],
-            inode: 424242, // bogus inode
-            updatedAt: new Date().toISOString(),
-          },
-          updatedAt: null,
-        }),
-      );
-
-      const warns: string[] = [];
-      await executeSync({
-        stateDir,
-        deviceId: "dev-t",
-        zcodeDbPath: dbPath,
-        openZcodeDb: makeZcodeDb([
-          {
-            id: "z_new",
-            sessionId: "s1",
-            modelId: "GLM-5.2",
-            completedAt: 5000,
-            inputTokens: 100,
-            outputTokens: 20,
-            reasoningTokens: 0,
-            cacheReadInputTokens: 0,
-            cacheCreationInputTokens: 0,
-            providerTotalTokens: 120,
-            computedTotalTokens: 120,
-          },
-        ]),
-        onProgress(event) {
-          if (event.phase === "warn" && event.message) warns.push(event.message);
-        },
-      });
-      expect(warns.some((w) => /ZCode SQLite.*inode changed/.test(w))).toBe(
-        true,
-      );
-    });
-  });
 });

@@ -52,19 +52,6 @@ export async function discoverClaudeFiles(
 }
 
 /**
- * Discover Gemini CLI session files.
- * Path pattern: ~/.gemini/tmp/\*\/chats/session-*.json
- */
-export async function discoverGeminiFiles(
-  geminiDir: string,
-): Promise<string[]> {
-  const tmpDir = join(geminiDir, "tmp");
-  return collectFiles(tmpDir, (name) =>
-    name.startsWith("session-") && name.endsWith(".json"),
-  );
-}
-
-/**
  * Result of OpenCode discovery with directory-level mtime tracking.
  */
 export interface OpenCodeDiscoveryResult {
@@ -160,16 +147,6 @@ export async function discoverOpenClawFiles(
 ): Promise<string[]> {
   const agentsDir = join(openclawDir, "agents");
   return collectFiles(agentsDir, (name) => name.endsWith(".jsonl"));
-}
-
-/**
- * Discover Oh My Pi session JSONL files.
- * Path pattern: ~/.omp/agent/sessions/<encoded-cwd>/*.jsonl
- */
-export async function discoverOmpFiles(
-  ompSessionsDir: string,
-): Promise<string[]> {
-  return collectFiles(ompSessionsDir, (name) => name.endsWith(".jsonl"));
 }
 
 /**
@@ -313,87 +290,4 @@ export async function discoverGrokSessionDirs(
 /** Accounting reads turn updates, including sessions without a summary file. */
 export async function discoverGrokUsageFiles(sessionsDir: string): Promise<string[]> {
   return collectFiles(sessionsDir, (name) => name === "updates.jsonl");
-}
-
-/**
- * Discover Kosmos chat session JSON files.
- *
- * Scans multiple data directories (kosmos-app + pm-studio-app) for
- * files matching the pattern `chatSession_*.json`.
- *
- * @param dataDirs Array of Kosmos data directories (platform-specific)
- */
-export async function discoverKosmosFiles(
-  dataDirs: string[],
-): Promise<string[]> {
-  const results: string[] = [];
-
-  for (const dataDir of dataDirs) {
-    const found = await collectFiles(dataDir, (name) =>
-      name.startsWith("chatSession_") && name.endsWith(".json"),
-    );
-    results.push(...found);
-  }
-
-  return results.sort();
-}
-
-/**
- * Discover VSCode Copilot Chat session JSONL files.
- *
- * Scans multiple base directories (stable + insiders), each containing:
- *   - workspaceStorage/\<hash\>/chatSessions/\<uuid\>.jsonl (per-workspace)
- *   - globalStorage/emptyWindowChatSessions/\<uuid\>.jsonl  (window-less)
- *
- * @param baseDirs Array of VSCode User directories
- *                 (e.g. ["~/Library/Application Support/Code/User/",
- *                        "~/Library/Application Support/Code - Insiders/User/"])
- */
-export async function discoverVscodeCopilotFiles(
-  baseDirs: string[],
-): Promise<string[]> {
-  const results: string[] = [];
-
-  for (const baseDir of baseDirs) {
-    // 1. globalStorage/emptyWindowChatSessions/*.jsonl + *.json
-    const globalChatDir = join(baseDir, "globalStorage", "emptyWindowChatSessions");
-    let globalEntries: import("node:fs").Dirent[];
-    try {
-      globalEntries = await readdir(globalChatDir, { withFileTypes: true });
-    } catch {
-      globalEntries = [];
-    }
-    for (const entry of globalEntries) {
-      if (entry.isFile() && (entry.name.endsWith(".jsonl") || entry.name.endsWith(".json"))) {
-        results.push(join(globalChatDir, entry.name));
-      }
-    }
-
-    // 2. workspaceStorage/*/chatSessions/*.jsonl
-    const workspaceStorageDir = join(baseDir, "workspaceStorage");
-    let workspaceDirs: import("node:fs").Dirent[];
-    try {
-      workspaceDirs = await readdir(workspaceStorageDir, { withFileTypes: true });
-    } catch {
-      workspaceDirs = [];
-    }
-    for (const wsEntry of workspaceDirs) {
-      if (!wsEntry.isDirectory()) continue;
-
-      const chatSessionsDir = join(workspaceStorageDir, wsEntry.name, "chatSessions");
-      let chatEntries: import("node:fs").Dirent[];
-      try {
-        chatEntries = await readdir(chatSessionsDir, { withFileTypes: true });
-      } catch {
-        continue;
-      }
-      for (const chatEntry of chatEntries) {
-        if (chatEntry.isFile() && (chatEntry.name.endsWith(".jsonl") || chatEntry.name.endsWith(".json"))) {
-          results.push(join(chatSessionsDir, chatEntry.name));
-        }
-      }
-    }
-  }
-
-  return results.sort();
 }

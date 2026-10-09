@@ -45,6 +45,15 @@ describe("GET /api/leaderboard", () => {
     expect(mockDb.getLeaderboardSnapshot.mock.calls[0]?.[0].source).toBe("antigravity");
   });
 
+  it("does not filter retired historical usage out of overall rankings", async () => {
+    mockDb.getLeaderboardSnapshot.mockResolvedValue(snapshot([row({ total_tokens: 9876 })]));
+    const res = await GET(makeGetRequest("/api/leaderboard", { period: "all" }));
+    expect(res.status).toBe(200);
+    expect(mockDb.getLeaderboardSnapshot.mock.calls[0]?.[0].source).toBeUndefined();
+    const body = await res.json();
+    expect(body.entries[0].total_tokens).toBe(9876);
+  });
+
   it.each(["week", "month"])("reuses a UTC ten-minute window for %s snapshots", async (period) => {
     for (const now of ["2026-09-19T10:01:02.345Z", "2026-09-19T10:09:59.999Z", "2026-09-19T10:10:00.000Z"]) {
       vi.setSystemTime(new Date(now));

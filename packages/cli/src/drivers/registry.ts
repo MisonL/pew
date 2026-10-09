@@ -19,15 +19,14 @@ import type {
 
 // -- Token driver singletons --
 import { claudeTokenDriver } from "./token/claude-token-driver.js";
-import { geminiTokenDriver } from "./token/gemini-token-driver.js";
+
 import { openCodeJsonTokenDriver } from "./token/opencode-json-token-driver.js";
 import { openClawTokenDriver } from "./token/openclaw-token-driver.js";
 import { codexTokenDriver } from "./token/codex-token-driver.js";
-import { vscodeCopilotTokenDriver } from "./token/vscode-copilot-token-driver.js";
+
 import { copilotCliTokenDriver } from "./token/copilot-cli-token-driver.js";
 import { piTokenDriver } from "./token/pi-token-driver.js";
-import { ompTokenDriver } from "./token/omp-token-driver.js";
-import { kosmosTokenDriver, pmstudioTokenDriver } from "./token/kosmos-token-driver.js";
+
 import { grokTokenDriver } from "./token/grok-token-driver.js";
 import {
   createOpenCodeSqliteTokenDriver,
@@ -37,24 +36,21 @@ import {
   createHermesSqliteTokenDriver,
   type HermesSqliteTokenDriverOpts,
 } from "./token/hermes-token-driver.js";
-import { createZcodeSqliteTokenDriver } from "./token/zcode-sqlite-token-driver.js";
 
 // -- Session driver singletons --
 import { claudeSessionDriver } from "./session/claude-session-driver.js";
 import { codexSessionDriver } from "./session/codex-session-driver.js";
 import { copilotCliSessionDriver } from "./session/copilot-cli-session-driver.js";
-import { geminiSessionDriver } from "./session/gemini-session-driver.js";
+
 import { openCodeJsonSessionDriver } from "./session/opencode-json-session-driver.js";
 import { openClawSessionDriver } from "./session/openclaw-session-driver.js";
 import { piSessionDriver } from "./session/pi-session-driver.js";
-import { ompSessionDriver } from "./session/omp-session-driver.js";
-import { kosmosSessionDriver, pmstudioSessionDriver } from "./session/kosmos-session-driver.js";
+
 import { grokSessionDriver } from "./session/grok-session-driver.js";
 import {
   createOpenCodeSqliteSessionDriver,
   type OpenCodeSqliteSessionDriverOpts,
 } from "./session/opencode-sqlite-session-driver.js";
-import { createZcodeSqliteSessionDriver } from "./session/zcode-sqlite-session-driver.js";
 
 // ---------------------------------------------------------------------------
 // Token driver registry options
@@ -68,15 +64,12 @@ import { createZcodeSqliteSessionDriver } from "./session/zcode-sqlite-session-d
  */
 export interface TokenDriverRegistryOpts {
   claudeDir?: string;
-  geminiDir?: string;
-  kosmosDataDir?: string;
-  pmstudioDataDir?: string;
-  ompSessionsDir?: string;
+
   openCodeMessageDir?: string;
   openclawDir?: string;
   codexSessionsDir?: string;
   piSessionsDir?: string;
-  vscodeCopilotDirs?: string[];
+
   copilotCliLogsDir?: string;
   copilotCliOtelPaths?: string[];
   /** Grok CLI unified log path (~/.grok/logs/unified.jsonl) */
@@ -88,11 +81,7 @@ export interface TokenDriverRegistryOpts {
   /** Additional Hermes profile DBs (e.g. ~/.hermes/profiles/<name>/state.db) */
   hermesProfileDbPaths?: Array<{ dbPath: string; dbKey: string }>;
   openHermesDb?: HermesSqliteTokenDriverOpts["openHermesDb"];
-  /** ZCode CLI SQLite database path (~/.zcode/cli/db/db.sqlite) */
-  zcodeDbPath?: string;
-  /** Factory for opening the ZCode SQLite DB for tokens (DI for testability) */
-  openZcodeDb?: (dbPath: string) => import("../parsers/zcode-types.js").ZcodeUsageDb | null;
-}
+    }
 
 export interface TokenDriverSet {
   fileDrivers: FileTokenDriver<FileCursorBase>[];
@@ -120,18 +109,11 @@ export function createTokenDrivers(opts: TokenDriverRegistryOpts): TokenDriverSe
   if (opts.copilotCliLogsDir || (opts.copilotCliOtelPaths?.length ?? 0) > 0) {
     fileDrivers.push(copilotCliTokenDriver);
   }
-  if (opts.geminiDir) {
-    fileDrivers.push(geminiTokenDriver);
-  }
+
   if (opts.grokLogsPath) {
     fileDrivers.push(grokTokenDriver);
   }
-  if (opts.kosmosDataDir) {
-    fileDrivers.push(kosmosTokenDriver);
-  }
-  if (opts.ompSessionsDir) {
-    fileDrivers.push(ompTokenDriver);
-  }
+
   if (opts.openCodeMessageDir) {
     fileDrivers.push(openCodeJsonTokenDriver);
   }
@@ -140,12 +122,6 @@ export function createTokenDrivers(opts: TokenDriverRegistryOpts): TokenDriverSe
   }
   if (opts.piSessionsDir) {
     fileDrivers.push(piTokenDriver);
-  }
-  if (opts.pmstudioDataDir) {
-    fileDrivers.push(pmstudioTokenDriver);
-  }
-  if (opts.vscodeCopilotDirs && opts.vscodeCopilotDirs.length > 0) {
-    fileDrivers.push(vscodeCopilotTokenDriver);
   }
 
   // DB drivers (alphabetical by source)
@@ -182,14 +158,6 @@ export function createTokenDrivers(opts: TokenDriverRegistryOpts): TokenDriverSe
       }),
     );
   }
-  if (opts.zcodeDbPath && opts.openZcodeDb) {
-    dbDrivers.push(
-      createZcodeSqliteTokenDriver({
-        dbPath: opts.zcodeDbPath,
-        openZcodeDb: opts.openZcodeDb,
-      }),
-    );
-  }
 
   return { fileDrivers, dbDrivers };
 }
@@ -203,10 +171,7 @@ export function createTokenDrivers(opts: TokenDriverRegistryOpts): TokenDriverSe
  */
 export interface SessionDriverRegistryOpts {
   claudeDir?: string;
-  geminiDir?: string;
-  kosmosDataDir?: string;
-  pmstudioDataDir?: string;
-  ompSessionsDir?: string;
+
   openCodeMessageDir?: string;
   openclawDir?: string;
   codexSessionsDir?: string;
@@ -216,11 +181,7 @@ export interface SessionDriverRegistryOpts {
   grokSessionsDir?: string;
   openCodeDbPath?: string;
   openSessionDb?: OpenCodeSqliteSessionDriverOpts["openSessionDb"];
-  /** ZCode CLI SQLite database path (~/.zcode/cli/db/db.sqlite) */
-  zcodeDbPath?: string;
-  /** Factory for opening the ZCode SQLite DB for sessions (DI for testability) */
-  openZcodeSessionDb?: (dbPath: string) => import("../parsers/zcode-types.js").ZcodeSessionDb | null;
-}
+    }
 
 export interface SessionDriverSet {
   fileDrivers: FileSessionDriver<SessionFileCursor | unknown>[];
@@ -245,18 +206,11 @@ export function createSessionDrivers(opts: SessionDriverRegistryOpts): SessionDr
   if (opts.copilotCliLogsDir) {
     fileDrivers.push(copilotCliSessionDriver);
   }
-  if (opts.geminiDir) {
-    fileDrivers.push(geminiSessionDriver);
-  }
+
   if (opts.grokSessionsDir) {
     fileDrivers.push(grokSessionDriver);
   }
-  if (opts.kosmosDataDir) {
-    fileDrivers.push(kosmosSessionDriver);
-  }
-  if (opts.ompSessionsDir) {
-    fileDrivers.push(ompSessionDriver);
-  }
+
   if (opts.openCodeMessageDir) {
     fileDrivers.push(openCodeJsonSessionDriver);
   }
@@ -266,22 +220,12 @@ export function createSessionDrivers(opts: SessionDriverRegistryOpts): SessionDr
   if (opts.piSessionsDir) {
     fileDrivers.push(piSessionDriver);
   }
-  if (opts.pmstudioDataDir) {
-    fileDrivers.push(pmstudioSessionDriver);
-  }
+
   if (opts.openCodeDbPath && opts.openSessionDb) {
     dbDrivers.push(
       createOpenCodeSqliteSessionDriver({
         dbPath: opts.openCodeDbPath,
         openSessionDb: opts.openSessionDb,
-      }),
-    );
-  }
-  if (opts.zcodeDbPath && opts.openZcodeSessionDb) {
-    dbDrivers.push(
-      createZcodeSqliteSessionDriver({
-        dbPath: opts.zcodeDbPath,
-        openZcodeSessionDb: opts.openZcodeSessionDb,
       }),
     );
   }

@@ -26,11 +26,11 @@ pew 由本地 CLI 和 Web 仪表盘组成。CLI 读取 AI 编程工具的日志�
 - 从动态模型价格与回退价格表估算用量成本，查看价格来源和更新时间。
 - 为部分工具配置会话后的自动同步，其余来源可通过 `pew sync` 手动汇总。
 
-当前 token 来源包括 Antigravity CLI、Claude Code、Codex、Gemini CLI、GitHub Copilot CLI、Grok、Hermes、Kosmos、Oh My Pi、OpenClaw、OpenCode、Pi、PM Studio、VS Code Copilot 和 ZCode。会话统计的来源范围较小，目前不含 Hermes 和 VS Code Copilot。
+当前支持 9 种 token 来源：Antigravity CLI、Claude Code、Codex、GitHub Copilot CLI、Grok、Hermes、OpenClaw、OpenCode 和 Pi。会话统计目前不含 Hermes。
 
 ## 使用
 
-推荐使用 Node.js 24 或更新版本。npm 包声明支持 Node.js 18，但 Antigravity CLI、OpenCode、Hermes、ZCode 的 SQLite 数据源依赖运行时内置 SQLite，旧版 Node.js 无法读取这些来源。
+推荐使用 Node.js 24 或更新版本。npm 包声明支持 Node.js 18，但 Antigravity CLI、OpenCode、Hermes 的 SQLite 数据源依赖运行时内置 SQLite，旧版 Node.js 无法读取这些来源。
 
 ```bash
 npm install -g @nocoo/pew
@@ -51,7 +51,7 @@ pew status
 | `pew logout` | 清除当前登录凭据 |
 | `pew update` | 更新已安装的 CLI |
 
-自动同步支持 Claude Code、Codex、Gemini CLI、Oh My Pi、OpenClaw、OpenCode 和 Pi；配置过程会修改相应工具的设置。CLI 自己的凭据、游标、队列和运行记录保存在 `~/.config/pew/`。
+自动同步支持 Claude Code、Codex、OpenClaw、OpenCode 和 Pi；配置过程会修改相应工具的设置。CLI 自己的凭据、游标、队列和运行记录保存在 `~/.config/pew/`。
 
 Copilot CLI 的 OTel 文件可通过 `COPILOT_OTEL_FILE_EXPORTER_PATH` 指定；多个文件或目录可放入 `PEW_COPILOT_OTEL_PATHS`，使用操作系统的路径分隔符。默认来源路径见 [paths.ts](packages/cli/src/utils/paths.ts)。
 

@@ -29,6 +29,8 @@ import {
   validateSessionIngestRecord,
   validateEvidenceRecord,
   validateAccountingRecord,
+  isRetiredSourceRecord,
+  retiredAccountingAcknowledgment,
 } from "@pew/core";
 import type {
   IngestRecord,
@@ -37,6 +39,7 @@ import type {
   SessionIngestRequest,
   ValidationResult,
   EvidenceRecord,
+  AccountingAck,
 } from "@pew/core";
 import { EVIDENCE_UPSERT_SQL } from "./evidence-sql";
 import { ingestAccounting } from "./accounting-sql";
@@ -99,14 +102,15 @@ ON CONFLICT (user_id, session_key) DO UPDATE SET
   model = excluded.model,
   snapshot_at = excluded.snapshot_at,
   updated_at = datetime('now')
-WHERE excluded.snapshot_at >= session_records.snapshot_at`;
+WHERE excluded.snapshot_at >= session_records.snapshot_at
+  AND excluded.source = session_records.source`;
 
 // ---------------------------------------------------------------------------
 // Request envelope validation (userId + records array)
 // ---------------------------------------------------------------------------
 
 type EnvelopeResult<T> =
-  | { ok: true; userId: string; records: T[] }
+  | { ok: true; userId: string; records: T[]; ignored: number; acknowledgmentOrder: Array<number | AccountingAck | null> }
   | { ok: false; error: string };
 
 /**
@@ -116,6 +120,8 @@ type EnvelopeResult<T> =
 function validateRequest<T>(
   body: unknown,
   validateRecord: (r: unknown, index: number) => ValidationResult<T>,
+  maxBatchSize = MAX_INGEST_BATCH_SIZE,
+  acknowledgeRetired?: (record: unknown) => AccountingAck | null,
 ): EnvelopeResult<T> {
   if (typeof body !== "object" || body === null) {
     return { ok: false, error: "Invalid request body" };
@@ -131,20 +137,28 @@ function validateRequest<T>(
     return { ok: false, error: "Missing or empty records array" };
   }
 
-  if (obj.records.length > MAX_INGEST_BATCH_SIZE) {
-    return { ok: false, error: `Batch too large: max ${MAX_INGEST_BATCH_SIZE} records` };
+  if (obj.records.length > maxBatchSize) {
+    return { ok: false, error: `Batch too large: max ${maxBatchSize} records` };
   }
 
   const validated: T[] = [];
+  const acknowledgmentOrder: Array<number | AccountingAck | null> = [];
+  let ignored = 0;
   for (let i = 0; i < obj.records.length; i++) {
+    if (isRetiredSourceRecord(obj.records[i])) {
+      ignored++;
+      acknowledgmentOrder.push(acknowledgeRetired?.(obj.records[i]) ?? null);
+      continue;
+    }
     const result = validateRecord(obj.records[i], i);
     if (!result.valid) {
       return { ok: false, error: result.error };
     }
+    acknowledgmentOrder.push(validated.length);
     validated.push(result.record);
   }
 
-  return { ok: true, userId: obj.userId as string, records: validated };
+  return { ok: true, userId: obj.userId as string, records: validated, ignored, acknowledgmentOrder };
 }
 
 // ---------------------------------------------------------------------------
@@ -212,7 +226,9 @@ async function handleTokenIngest(body: unknown, env: Env): Promise<Response> {
     return Response.json({ error: validation.error }, { status: 400 });
   }
 
-  const { userId, records } = validation;
+  const { userId, records, ignored } = validation;
+  const counts = { ingested: records.length, ...(ignored ? { ignored } : {}) };
+  if (records.length === 0) return Response.json(counts);
 
   try {
     const stmts = records.map((r) =>
@@ -232,7 +248,7 @@ async function handleTokenIngest(body: unknown, env: Env): Promise<Response> {
 
     await env.DB.batch(stmts);
 
-    return Response.json({ ingested: records.length });
+    return Response.json(counts);
   } catch (err) {
     console.error(err);
     return Response.json({ error: "Internal server error" }, { status: 500 });
@@ -245,7 +261,9 @@ async function handleSessionIngest(body: unknown, env: Env): Promise<Response> {
     return Response.json({ error: validation.error }, { status: 400 });
   }
 
-  const { userId, records } = validation;
+  const { userId, records, ignored } = validation;
+  const counts = { ingested: records.length, ...(ignored ? { ignored } : {}) };
+  if (records.length === 0) return Response.json(counts);
 
   try {
     const stmts = records.map((r) =>
@@ -268,7 +286,7 @@ async function handleSessionIngest(body: unknown, env: Env): Promise<Response> {
 
     await env.DB.batch(stmts);
 
-    return Response.json({ ingested: records.length });
+    return Response.json(counts);
   } catch (err) {
     console.error(err);
     return Response.json({ error: "Internal server error" }, { status: 500 });
@@ -278,7 +296,9 @@ async function handleSessionIngest(body: unknown, env: Env): Promise<Response> {
 async function handleEvidenceIngest(body: unknown, env: Env): Promise<Response> {
   const validation = validateRequest<EvidenceRecord>(body, validateEvidenceRecord);
   if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 });
-  const { userId, records } = validation;
+  const { userId, records, ignored } = validation;
+  const counts = { ingested: records.length, ...(ignored ? { ignored } : {}) };
+  if (records.length === 0) return Response.json(counts);
   try {
     await env.DB.batch(records.map((r) => {
       const e = r.evidence;
@@ -289,7 +309,7 @@ async function handleEvidenceIngest(body: unknown, env: Env): Promise<Response> 
         r.reasoning_output_tokens, r.total_tokens,
       );
     }));
-    return Response.json({ ingested: records.length });
+    return Response.json(counts);
   } catch {
     // Do not log bound values, source identifiers or request bodies.
     console.error("Usage evidence ingest failed");
@@ -345,12 +365,15 @@ export default {
     if (path === "/ingest/evidence") return handleEvidenceIngest(body, env);
 
     if (path === "/ingest/details") {
-      const validation = validateRequest(body, validateAccountingRecord);
+      const validation = validateRequest(body, validateAccountingRecord, MAX_ACCOUNTING_BATCH_SIZE, retiredAccountingAcknowledgment);
       if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 });
-      if (validation.records.length > MAX_ACCOUNTING_BATCH_SIZE) return Response.json({ error: "Accounting batch too large: max 25 records" }, { status: 400 });
       try {
-        const acknowledgments = await ingestAccounting(env.DB, validation.userId, validation.records);
-        return Response.json({ details_version: 1, acknowledgments });
+        const activeAcknowledgments = validation.records.length > 0
+          ? await ingestAccounting(env.DB, validation.userId, validation.records) : [];
+        const acknowledgments = validation.acknowledgmentOrder.flatMap((slot) => slot === null ? [] : typeof slot === "number" ? [activeAcknowledgments[slot]] : [slot]);
+        return Response.json({ details_version: 1, acknowledgments,
+          ...(validation.ignored ? { ingested: validation.records.length, ignored: validation.ignored } : {}),
+        });
       } catch {
         console.error("Accounting detail ingest failed");
         return Response.json({ error: "Internal server error" }, { status: 500 });

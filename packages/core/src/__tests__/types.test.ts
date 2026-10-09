@@ -2,7 +2,7 @@
  * Type-level tests for @pew/core.
  *
  * These tests validate that the type definitions compile correctly
- * and that the Source enum contains exactly the 15 supported tools.
+ * and that Source retains active and historical tool identities.
  */
 import { describe, expect, it } from "vitest";
 import type {
@@ -10,7 +10,6 @@ import type {
   CodexCursor,
   CoordinatorRunResult,
   CursorState,
-  GeminiCursor,
   HourBucket,
   NotifierOperationResult,
   NotifierStatus,
@@ -30,7 +29,7 @@ import type {
 } from "../types.js";
 
 describe("Source type", () => {
-  it("should accept all 15 supported AI tools", () => {
+  it("should retain all 15 active and historical identities", () => {
     const sources: Source[] = [
       "antigravity",
       "claude-code",
@@ -152,25 +151,6 @@ describe("SyncCursor types", () => {
     expect(cursor.offset).toBe(4096);
     expect(cursor.inode).toBe(123456);
     expect(cursor.continuityAnchors).toHaveLength(1);
-  });
-
-  it("should hold Gemini cursor with array index", () => {
-    const cursor: GeminiCursor = {
-      inode: 789,
-      mtimeMs: 1709827200000,
-      size: 8192,
-      lastIndex: 42,
-      lastTotals: {
-        inputTokens: 1000,
-        cachedInputTokens: 0,
-        outputTokens: 500,
-        reasoningOutputTokens: 0,
-      },
-      lastModel: "gemini-3-flash",
-      updatedAt: "2026-03-07T10:00:00Z",
-    };
-    expect(cursor.lastIndex).toBe(42);
-    expect(cursor.lastTotals?.inputTokens).toBe(1000);
   });
 
   it("should hold OpenCode cursor with size/mtime detection", () => {

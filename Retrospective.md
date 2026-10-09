@@ -244,3 +244,15 @@ Next 16.3.6 Turbopack rejected the generated Google-font URL query before compil
 ## 2026-10-03 — Distinguish visible skeletons from ready chart geometry
 
 The first pushed isolation repair passed local gates but CI's 2560px annual-calendar test read a null bounding box. Activity and Goal Tracker reuse the same region names while annual usage is loading; that response replaces the skeleton nodes independently of the main usage and salary content. A visible region was not proof of stable calendar DOM. The test now waits for the real 365 cells and non-busy regions, then retries the original strict alignment/order assertions without changing tolerances. Its wide-screen case deliberately holds the annual response until the loading state is observed, using the browser's local-year boundary rather than an assumed UTC date. The scrubbed child environment also now explicitly forwards only the CI flag so Playwright retains its configured CI policy; negative tests prove arbitrary parent values still do not cross the boundary.
+
+## 2026-10-09 — Preserve history when retiring collectors
+
+Independent review caught two historical-data risks before commit. Reset first
+rewrote queues while active cursors still existed; a failed state write could
+then prevent replay of deleted active buckets. Read and validate retained data
+first, invalidate both cursor files, and only then rewrite queues. A synthetic
+write-failure regression verifies recovery. Session UPSERT also allowed an active
+source to overwrite a retired session sharing its key. Require the stored source
+to match the submitted source and prove the original row remains unchanged in
+SQLite. Retiring ingestion must not make historical data mutable through another
+source or dependent on a successful multi-file reset.

@@ -41,8 +41,6 @@ function makePaths(): NotifierPaths {
     signalPath: "/tmp/pew/notify.signal",
     claudeDir: "/tmp/.claude",
     claudeSettingsPath: "/tmp/.claude/settings.json",
-    geminiDir: "/tmp/.gemini",
-    geminiSettingsPath: "/tmp/.gemini/settings.json",
     opencodeConfigDir: "/tmp/.config/opencode",
     opencodePluginDir: "/tmp/.config/opencode/plugin",
     openclawHome: "/tmp/.openclaw",

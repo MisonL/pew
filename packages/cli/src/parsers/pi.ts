@@ -1,6 +1,6 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import type { Source, TokenDelta } from "@pew/core";
+import type { TokenDelta } from "@pew/core";
 import type { ParsedDelta } from "./claude.js";
 import { isAllZero, toNonNegInt } from "../utils/token-delta.js";
 import { clampedJsonlEndOffset, jsonlStreamBound } from "../utils/jsonl-offset.js";
@@ -16,7 +16,7 @@ export interface PiFileResult {
 /**
  * Normalize a pi-format usage object to our TokenDelta format.
  *
- * Pi/omp session JSONL assistant messages carry per-turn absolute usage:
+ * Pi session JSONL assistant messages carry per-turn absolute usage:
  *   input + cacheWrite + orchestration.input  → inputTokens
  *   cacheRead + orchestration.cacheRead       → cachedInputTokens
  *   output - reasoning + orchestration.output → outputTokens
@@ -34,10 +34,7 @@ export interface PiFileResult {
  * reasoningOutputTokens`. Dropping it would undercount both tokens and the
  * cost pew recomputes from them.
  *
- * Reasoning tokens are a documented **subset of `output`** (omp's
- * `Usage.reasoningTokens`: "Always a subset of `output` — non-reasoning
- * output is `output - reasoningTokens`"; pi spells the same field
- * `reasoning`). They are split out of the *conversation* output rather than
+ * Reasoning tokens are a **subset of `output`**. They are split out of the *conversation* output rather than
  * added on top, keeping the row total unchanged. Providers that don't report
  * the field omit it — absent means unknown, which we treat as no split.
  */
@@ -48,7 +45,7 @@ export function normalizePiUsage(u: Record<string, unknown>): TokenDelta {
       : undefined;
 
   const conversationOutput = toNonNegInt(u?.output);
-  // omp ≥17 uses `reasoningTokens`; pi uses `reasoning`. Clamp to the
+  // Clamp reasoning to the
   // conversation output (orchestration output is a separate bucket) so a
   // malformed row can never push outputTokens negative.
   const reasoning = Math.min(
@@ -73,8 +70,6 @@ export function normalizePiUsage(u: Record<string, unknown>): TokenDelta {
  * Parse a pi-format JSONL session file incrementally from a byte offset.
  *
  * Pi stores one JSONL file per session under ~/.pi/agent/sessions/<encoded-cwd>/.
- * Oh My Pi (omp) is a fork that writes the identical schema under
- * ~/.omp/agent/sessions/<encoded-cwd>/ — `source` selects which one is tagged.
  *
  * Each line is a JSON object with a `type` field. Assistant messages have
  * `type: "message"` with `message.role === "assistant"` and a `message.usage`
@@ -90,11 +85,10 @@ export async function parsePiFile(opts: {
   filePath: string;
   startOffset: number;
   endBound?: number;
-  /** Source tag for emitted deltas — "pi" (default) or "omp" */
-  source?: Source;
   includeAccounting?: boolean;
 }): Promise<PiFileResult> {
-  const { filePath, startOffset, source = "pi" } = opts;
+  const { filePath, startOffset } = opts;
+  const source = "pi";
   const deltas: ParsedDelta[] = [];
 
   const st = await stat(filePath).catch(() => null);
@@ -107,7 +101,7 @@ export async function parsePiFile(opts: {
   // ponytail: changed Pi files replay their metadata prefix to recover the
   // model/session after legacy cursor upgrades. Persist metadata if this
   // becomes a measured bottleneck; usage before startOffset is never emitted.
-  const readStart = source === "pi" ? 0 : startOffset;
+  const readStart = 0;
   const stream = createReadStream(filePath, { start: readStart, end: bound - 1 });
   let sessionId: string | null = null;
   let currentModel = "unknown";
@@ -168,7 +162,7 @@ export async function parsePiFile(opts: {
         }
 
         const beforeCursor = readStart + completeBytes <= startOffset;
-        if (obj.type === "compaction" && source === "pi") {
+        if (obj.type === "compaction") {
           if (!sessionId || typeof obj.id !== "string" || !obj.id ||
             typeof obj.timestamp !== "string" || !Number.isFinite(Date.parse(obj.timestamp)) ||
             !obj.usage || typeof obj.usage !== "object") continue;

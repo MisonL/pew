@@ -131,15 +131,12 @@ export interface DiscoverOpts {
   claudeDir?: string;
   codexSessionsDir?: string;
   multicaCodexDirs?: string[];
-  geminiDir?: string;
-  kosmosDataDir?: string;
-  pmstudioDataDir?: string;
-  ompSessionsDir?: string;
+
   openCodeMessageDir?: string;
   openCodeDbPath?: string;
   openclawDir?: string;
   piSessionsDir?: string;
-  vscodeCopilotDirs?: string[];
+
   copilotCliLogsDir?: string;
   /** Explicit Copilot OTel exporter files or recursively scanned directories. */
   copilotCliOtelPaths?: string[];
@@ -191,15 +188,6 @@ export interface ClaudeResumeState {
 }
 
 /**
- * Resume state for array-index JSON parsers (Gemini).
- */
-export interface ArrayIndexResumeState {
-  readonly kind: "array-index";
-  startIndex: number;
-  lastTotals: TokenDelta | null;
-}
-
-/**
  * Resume state for OpenCode JSON per-file parser.
  */
 export interface OpenCodeJsonResumeState {
@@ -221,41 +209,14 @@ export interface CodexResumeState {
 }
 
 /**
- * Resume state for VSCode Copilot CRDT JSONL files.
- * Carries byte offset + persisted request metadata for cross-line correlation.
- */
-export interface VscodeCopilotResumeState {
-  readonly kind: "vscode-copilot";
-  startOffset: number;
-  endBound?: number;
-  /** Persisted index→metadata mapping from prior parse */
-  requestMeta: Record<number, { modelId: string; timestamp: number }>;
-  /** Indices already emitted as records (skip on re-encounter) */
-  processedRequestIndices: number[];
-  /** Request IDs already processed for v3 JSON files (string-based dedup) */
-  processedRequestIds: Set<string>;
-}
-
-/**
- * Resume state for Kosmos (message-ID-based dedup).
- */
-export interface KosmosResumeState {
-  readonly kind: "kosmos";
-  knownMessageIds: Set<string> | null;
-}
-
-/**
  * Union of all resume state variants.
  * Discriminated by `kind` so drivers can narrow safely.
  */
 export type ResumeState =
   | ByteOffsetResumeState
   | ClaudeResumeState
-  | ArrayIndexResumeState
   | OpenCodeJsonResumeState
-  | CodexResumeState
-  | VscodeCopilotResumeState
-  | KosmosResumeState;
+  | CodexResumeState;
 
 // ---------------------------------------------------------------------------
 // Progress callback (passed through from orchestrator)

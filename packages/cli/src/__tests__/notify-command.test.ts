@@ -86,7 +86,7 @@ describe("executeNotify", () => {
 
   it("returns coordinator errors", async () => {
     const result = await executeNotify({
-      source: "gemini-cli",
+      source: "pi",
       stateDir: "/tmp/pew",
       executeSyncFn: vi.fn(async () => ({})),
       coordinatedSyncFn: async (trigger) =>
@@ -169,7 +169,7 @@ describe("executeNotify", () => {
     }));
 
     const result = await executeNotify({
-      source: "gemini-cli",
+      source: "pi",
       stateDir: "/tmp/pew",
       executeSyncFn,
       coordinatedSyncFn: async (trigger, opts) => {
@@ -271,7 +271,7 @@ describe("executeNotify", () => {
 
     let capturedCycle: SyncCycleResult | undefined;
     await executeNotify({
-      source: "gemini-cli",
+      source: "pi",
       stateDir: "/tmp/pew",
       coordinatedSyncFn: async (trigger, opts) => {
         capturedCycle = await opts.executeSyncFn([trigger]);
@@ -321,7 +321,7 @@ describe("executeNotify", () => {
       source: "claude-code",
       stateDir: "/tmp/pew-state",
       claudeDir: "/home/.claude",
-      geminiDir: "/home/.gemini",
+      piSessionsDir: "/home/.gemini",
       antigravityDir: "/home/.gemini/antigravity-cli/conversations",
       openCodeMessageDir: "/home/.local/share/opencode/storage/message",
       openCodeDbPath: "/home/.local/share/opencode/opencode.db",
@@ -337,7 +337,7 @@ describe("executeNotify", () => {
       expect.objectContaining({
         stateDir: "/tmp/pew-state",
         claudeDir: "/home/.claude",
-        geminiDir: "/home/.gemini",
+        piSessionsDir: "/home/.gemini",
         antigravityDir: "/home/.gemini/antigravity-cli/conversations",
         openCodeMessageDir: "/home/.local/share/opencode/storage/message",
         openCodeDbPath: "/home/.local/share/opencode/opencode.db",
@@ -350,7 +350,7 @@ describe("executeNotify", () => {
       expect.objectContaining({
         stateDir: "/tmp/pew-state",
         claudeDir: "/home/.claude",
-        geminiDir: "/home/.gemini",
+        piSessionsDir: "/home/.gemini",
         antigravityDir: "/home/.gemini/antigravity-cli/conversations",
         openCodeMessageDir: "/home/.local/share/opencode/storage/message",
         openCodeDbPath: "/home/.local/share/opencode/opencode.db",

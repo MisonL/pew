@@ -38,28 +38,11 @@ function claudeAssistantLine(
 }
 
 // ---------------------------------------------------------------------------
-// Helpers: Gemini session JSON
+// Helpers: Pi session JSONL
 // ---------------------------------------------------------------------------
 
-function geminiSession(opts: {
-  sessionId?: string;
-  startTime?: string;
-  lastUpdated?: string;
-  projectHash?: string;
-  messages: Array<{ type: string; timestamp: string; model?: string }>;
-}): string {
-  return JSON.stringify({
-    sessionId: opts.sessionId ?? "gem-ses-001",
-    startTime: opts.startTime,
-    lastUpdated: opts.lastUpdated,
-    projectHash: opts.projectHash ?? "gem-proj-hash",
-    messages: opts.messages.map((m, i) => ({
-      id: `msg-${i}`,
-      type: m.type,
-      timestamp: m.timestamp,
-      ...(m.model ? { model: m.model } : {}),
-    })),
-  });
+function piSession(opts: {sessionId?: string; startTime?: string; lastUpdated?: string; projectHash?: string; messages: Array<{type:string; timestamp:string; model?:string}>}): string {
+ return `${[{type:"session",id:opts.sessionId??"pi-session"},...opts.messages.map(m=>({type:"message",timestamp:m.timestamp,message:{role:m.type==="user"?"user":"assistant",model:m.model??"pi-model"}}))].map(x=>JSON.stringify(x)).join("\n")}\n`;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,18 +259,18 @@ describe("executeSessionSync", () => {
     expect(records[0].assistant_messages).toBe(2);
   });
 
-  it("should sync Gemini session data to queue", async () => {
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-gem", "chats");
-    await mkdir(geminiDir, { recursive: true });
+  it("should sync Pi session data to queue", async () => {
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-gem");
+    await mkdir(piDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-2026-03-07.json"),
-      geminiSession({
+      join(piDir, "session-2026-03-07.jsonl"),
+      piSession({
         messages: [
           { type: "user", timestamp: "2026-03-07T10:00:00.000Z" },
           {
-            type: "gemini",
+            type: "pi",
             timestamp: "2026-03-07T10:05:00.000Z",
-            model: "gemini-2.5-pro",
+            model: "pi-2.5-pro",
           },
         ],
       }),
@@ -295,16 +278,16 @@ describe("executeSessionSync", () => {
 
     const result = await executeSessionSync({
       stateDir,
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
     });
 
     expect(result.totalSnapshots).toBe(1);
-    expect(result.sources.gemini).toBe(1);
-    expect(result.filesScanned.gemini).toBe(1);
+    expect(result.sources.pi).toBe(1);
+    expect(result.filesScanned.pi).toBe(1);
 
     const records = await readSessionQueue(stateDir);
     expect(records).toHaveLength(1);
-    expect(records[0].source).toBe("gemini-cli");
+    expect(records[0].source).toBe("pi");
     expect(records[0].kind).toBe("human");
   });
 
@@ -435,7 +418,7 @@ describe("executeSessionSync", () => {
     expect(result.totalRecords).toBe(0);
     expect(result.filesScanned).toEqual({
       antigravity: 0,
-      claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, zcode: 0,
+      claude: 0, codex: 0, copilotCli: 0, pi: 0, grok: 0, opencode: 0, openclaw: 0,
     });
   });
 
@@ -513,15 +496,15 @@ describe("executeSessionSync", () => {
       ].join("\n")}\n`,
     );
 
-    // Gemini
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-gem", "chats");
-    await mkdir(geminiDir, { recursive: true });
+    // Pi
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-gem");
+    await mkdir(piDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-2026-03-07.json"),
-      geminiSession({
+      join(piDir, "session-2026-03-07.jsonl"),
+      piSession({
         messages: [
           { type: "user", timestamp: "2026-03-07T10:00:00.000Z" },
-          { type: "gemini", timestamp: "2026-03-07T10:05:00.000Z" },
+          { type: "pi", timestamp: "2026-03-07T10:05:00.000Z" },
         ],
       }),
     );
@@ -529,14 +512,14 @@ describe("executeSessionSync", () => {
     const result = await executeSessionSync({
       stateDir,
       claudeDir: join(dataDir, ".claude"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
     });
 
     expect(result.sources.claude).toBeGreaterThanOrEqual(1);
-    expect(result.sources.gemini).toBeGreaterThanOrEqual(1);
+    expect(result.sources.pi).toBeGreaterThanOrEqual(1);
     expect(result.totalSnapshots).toBeGreaterThanOrEqual(2);
     expect(result.filesScanned.claude).toBe(1);
-    expect(result.filesScanned.gemini).toBe(1);
+    expect(result.filesScanned.pi).toBe(1);
   });
 
   // ----- Dedup: latest snapshot per session_key -----
@@ -1087,16 +1070,16 @@ describe("executeSessionSync", () => {
       ].join("\n")}\n`,
     );
 
-    // --- Gemini ---
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-gem-prog", "chats");
-    await mkdir(geminiDir, { recursive: true });
+    // --- Pi ---
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-gem-prog");
+    await mkdir(piDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-prog.json"),
-      geminiSession({
+      join(piDir, "session-prog.jsonl"),
+      piSession({
         sessionId: "gem-prog-001",
         messages: [
           { type: "user", timestamp: "2026-03-07T11:00:00.000Z" },
-          { type: "gemini", timestamp: "2026-03-07T11:05:00.000Z", model: "gemini-2.5-pro" },
+          { type: "pi", timestamp: "2026-03-07T11:05:00.000Z", model: "pi-2.5-pro" },
         ],
       }),
     );
@@ -1157,7 +1140,7 @@ describe("executeSessionSync", () => {
       claudeDir: join(dataDir, ".claude"),
       codexSessionsDir: join(dataDir, ".codex-prog", "sessions"),
       copilotCliLogsDir: join(dataDir, ".copilot-prog", "logs"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
       openCodeMessageDir: join(dataDir, "opencode-prog", "message"),
       openclawDir: join(dataDir, ".openclaw-prog"),
       onProgress: (e) => events.push({
@@ -1173,12 +1156,12 @@ describe("executeSessionSync", () => {
     expect(result.sources.claude).toBeGreaterThanOrEqual(1);
     expect(result.sources.codex).toBe(1);
     expect(result.sources.copilotCli).toBe(1);
-    expect(result.sources.gemini).toBe(1);
+    expect(result.sources.pi).toBe(1);
     expect(result.sources.opencode).toBe(1);
     expect(result.sources.openclaw).toBe(1);
 
     // Verify progress events were emitted for each source
-    for (const source of ["claude-code", "codex", "copilot-cli", "gemini-cli", "opencode", "openclaw"]) {
+    for (const source of ["claude-code", "codex", "copilot-cli", "pi", "opencode", "openclaw"]) {
       const sourceEvents = events.filter((e) => e.source === source);
       expect(sourceEvents.some((e) => e.phase === "discover"), `${source} should have discover`).toBe(true);
       expect(sourceEvents.some((e) => e.phase === "parse"), `${source} should have parse`).toBe(true);
@@ -1209,16 +1192,16 @@ describe("executeSessionSync", () => {
       ].join("\n")}\n`,
     );
 
-    // --- Gemini ---
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-gem-skip", "chats");
-    await mkdir(geminiDir, { recursive: true });
+    // --- Pi ---
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-gem-skip");
+    await mkdir(piDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-skip.json"),
-      geminiSession({
+      join(piDir, "session-skip.jsonl"),
+      piSession({
         sessionId: "gem-skip-001",
         messages: [
           { type: "user", timestamp: "2026-03-07T11:00:00.000Z" },
-          { type: "gemini", timestamp: "2026-03-07T11:05:00.000Z" },
+          { type: "pi", timestamp: "2026-03-07T11:05:00.000Z" },
         ],
       }),
     );
@@ -1272,7 +1255,7 @@ describe("executeSessionSync", () => {
       claudeDir: join(dataDir, ".claude"),
       codexSessionsDir: join(dataDir, ".codex-skip", "sessions"),
       copilotCliLogsDir: join(dataDir, ".copilot-skip", "logs"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
       openCodeMessageDir: join(dataDir, "opencode-skip", "message"),
       openclawDir: join(dataDir, ".openclaw-skip"),
     });
@@ -1284,7 +1267,7 @@ describe("executeSessionSync", () => {
       claudeDir: join(dataDir, ".claude"),
       codexSessionsDir: join(dataDir, ".codex-skip", "sessions"),
       copilotCliLogsDir: join(dataDir, ".copilot-skip", "logs"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
       openCodeMessageDir: join(dataDir, "opencode-skip", "message"),
       openclawDir: join(dataDir, ".openclaw-skip"),
       onProgress: (e) => events.push({
@@ -1299,7 +1282,7 @@ describe("executeSessionSync", () => {
     expect(r2.totalSnapshots).toBe(0);
 
     // Verify skip-path parse progress was emitted for each file-based source
-    for (const source of ["claude-code", "codex", "copilot-cli", "gemini-cli", "openclaw"]) {
+    for (const source of ["claude-code", "codex", "copilot-cli", "pi", "openclaw"]) {
       const skipParseEvents = events.filter(
         (e) => e.source === source && e.phase === "parse" && e.current !== undefined,
       );
@@ -1318,41 +1301,41 @@ describe("executeSessionSync", () => {
 
   // ===== Parse error tests for Gemini, OpenCode, OpenClaw =====
 
-  it("should emit warning and continue when Gemini session parser throws", async () => {
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-gem-err", "chats");
-    await mkdir(geminiDir, { recursive: true });
+  it("should emit warning and continue when Pi session parser throws", async () => {
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-gem-err");
+    await mkdir(piDir, { recursive: true });
 
     // Good file
     await writeFile(
-      join(geminiDir, "session-good.json"),
-      geminiSession({
+      join(piDir, "session-good.jsonl"),
+      piSession({
         sessionId: "gem-good",
         messages: [
           { type: "user", timestamp: "2026-03-07T11:00:00.000Z" },
-          { type: "gemini", timestamp: "2026-03-07T11:05:00.000Z" },
+          { type: "pi", timestamp: "2026-03-07T11:05:00.000Z" },
         ],
       }),
     );
 
     // Bad file — will be forced to throw via spy
     await writeFile(
-      join(geminiDir, "session-bad.json"),
-      geminiSession({
+      join(piDir, "session-bad.jsonl"),
+      piSession({
         sessionId: "gem-bad",
         messages: [
           { type: "user", timestamp: "2026-03-07T12:00:00.000Z" },
-          { type: "gemini", timestamp: "2026-03-07T12:05:00.000Z" },
+          { type: "pi", timestamp: "2026-03-07T12:05:00.000Z" },
         ],
       }),
     );
 
-    const geminiParser = await import("../parsers/gemini-session.js");
-    const origCollect = geminiParser.collectGeminiSessions;
+    const piParser = await import("../parsers/pi-session.js");
+    const origCollect = piParser.collectPiSessions;
     const spy = vi
-      .spyOn(geminiParser, "collectGeminiSessions")
+      .spyOn(piParser, "collectPiSessions")
       .mockImplementation(async (filePath) => {
         if (filePath.includes("session-bad")) {
-          throw new Error("Simulated gemini parser crash");
+          throw new Error("Simulated pi parser crash");
         }
         return origCollect(filePath);
       });
@@ -1362,20 +1345,20 @@ describe("executeSessionSync", () => {
     try {
       const result = await executeSessionSync({
         stateDir,
-        geminiDir: join(dataDir, ".gemini"),
+        piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
         onProgress: (e) =>
           events.push({ source: e.source, phase: e.phase, message: e.message }),
       });
 
       // Good file's data should still be synced
-      expect(result.sources.gemini).toBeGreaterThanOrEqual(1);
+      expect(result.sources.pi).toBeGreaterThanOrEqual(1);
 
       // Verify a warning was emitted for the bad file
       const warnEvents = events.filter(
-        (e) => e.source === "gemini-cli" && e.phase === "warn",
+        (e) => e.source === "pi" && e.phase === "warn",
       );
       expect(warnEvents).toHaveLength(1);
-      expect(warnEvents[0].message).toContain("Simulated gemini parser crash");
+      expect(warnEvents[0].message).toContain("Simulated pi parser crash");
     } finally {
       spy.mockRestore();
     }
@@ -1708,202 +1691,6 @@ describe("executeSessionSync", () => {
     expect(after.files[aliasPath]).toBeUndefined();
   });
 
-  // ===== ZCode SQLite session integration =====
 
-  /** Mock openZcodeSessionDb factory backed by an in-memory row array. */
-  function mockOpenZcodeSessionDb(
-    sessions: Array<{
-      id: string;
-      directory: string;
-      title: string;
-      timeCreated: number;
-      timeUpdated: number;
-      taskType: string;
-    }>,
-    counts: Record<string, { user: number; assistant: number; total: number }> = {},
-    primaryModels: Record<string, string | null> = {},
-  ) {
-    return (_dbPath: string) => ({
-      querySessions: (lastTimeUpdated: number | null, skipIds: readonly string[]) => {
-        const wm = lastTimeUpdated ?? 0;
-        const skip = new Set(skipIds);
-        return sessions.filter(
-          (s) => s.timeUpdated >= wm && !skip.has(s.id),
-        );
-      },
-      queryMessages: (sessionId: string) =>
-        counts[sessionId] ?? { user: 0, assistant: 0, total: 0 },
-      queryPrimaryModel: (sessionId: string) => primaryModels[sessionId] ?? null,
-      close: () => {},
-    });
-  }
 
-  it("should sync ZCode SQLite sessions to queue when both zcodeDbPath and opener are given", async () => {
-    const dbDir = join(dataDir, ".zcode-tmp");
-    await mkdir(dbDir, { recursive: true });
-    const dbPath = join(dbDir, "db.sqlite");
-    await writeFile(dbPath, "dummy");
-
-    const sessions = [
-      {
-        id: "sess_zcode_1",
-        directory: "/Users/x/proj",
-        title: "hello",
-        timeCreated: 1783646250829,
-        timeUpdated: 1783646286880,
-        taskType: "interactive",
-      },
-    ];
-    const counts = {
-      sess_zcode_1: { user: 1, assistant: 4, total: 5 },
-    };
-    const primaries = { sess_zcode_1: "GLM-5.2" };
-
-    const result = await executeSessionSync({
-      stateDir,
-      zcodeDbPath: dbPath,
-      openZcodeSessionDb: mockOpenZcodeSessionDb(sessions, counts, primaries),
-    });
-
-    expect(result.sources.zcode).toBe(1);
-    expect(result.dbsScanned.zcode).toBe(1);
-
-    const records = await readSessionQueue(stateDir);
-    expect(records).toHaveLength(1);
-    expect(records[0].source).toBe("zcode");
-    expect(records[0].session_key).toBe("zcode:sess_zcode_1");
-    expect(records[0].user_messages).toBe(1);
-    expect(records[0].assistant_messages).toBe(4);
-    expect(records[0].model).toBe("GLM-5.2");
-  });
-
-  it("skips ZCode session driver + emits warn when opener is absent (adapter-missing branch)", async () => {
-    const dbDir = join(dataDir, ".zcode-tmp");
-    await mkdir(dbDir, { recursive: true });
-    const dbPath = join(dbDir, "db.sqlite");
-    await writeFile(dbPath, "dummy");
-
-    const warns: string[] = [];
-    const result = await executeSessionSync({
-      stateDir,
-      zcodeDbPath: dbPath,
-      // openZcodeSessionDb intentionally omitted
-      onProgress(event) {
-        if (event.phase === "warn" && event.message) warns.push(event.message);
-      },
-    });
-    expect(result.sources.zcode).toBe(0);
-    expect(result.dbsScanned.zcode).toBe(0);
-    expect(warns.some((w) => /ZCode SQLite/.test(w))).toBe(true);
-  });
-
-  it("skips ZCode session driver + emits warn when opener returns null (bad-db branch)", async () => {
-    const dbDir = join(dataDir, ".zcode-tmp");
-    await mkdir(dbDir, { recursive: true });
-    const dbPath = join(dbDir, "db.sqlite");
-    await writeFile(dbPath, "dummy");
-
-    const warns: string[] = [];
-    const result = await executeSessionSync({
-      stateDir,
-      zcodeDbPath: dbPath,
-      openZcodeSessionDb: () => null,
-      onProgress(event) {
-        if (event.phase === "warn" && event.message) warns.push(event.message);
-      },
-    });
-    expect(result.sources.zcode).toBe(0);
-    expect(warns.some((w) => /Failed to open ZCode SQLite/.test(w))).toBe(true);
-  });
-
-  it("passes zcode driver warnings up through onProgress", async () => {
-    const dbDir = join(dataDir, ".zcode-tmp");
-    await mkdir(dbDir, { recursive: true });
-    const dbPath = join(dbDir, "db.sqlite");
-    await writeFile(dbPath, "dummy");
-
-    // driver run returns warnings via DbSessionResult.warnings
-    const opener = (_p: string) => ({
-      querySessions: () => [] as [],
-      queryMessages: () => ({ user: 0, assistant: 0, total: 0 }),
-      queryPrimaryModel: () => null,
-      close: () => {},
-    });
-    // Wrap so parseZcodeSessions runs on empty input (0 warnings). Then
-    // exercise the warn branch by driving driver.run directly. We instead
-    // trigger the parse-loop path with a session having same-ms boundary
-    // and no message counts — path itself already validated in unit tests.
-    // Assertion here: exceptions in the DB driver loop don't bubble up.
-    const badOpener = (_p: string) => ({
-      querySessions: () => {
-        throw new Error("kaboom");
-      },
-      queryMessages: () => ({ user: 0, assistant: 0, total: 0 }),
-      queryPrimaryModel: () => null,
-      close: () => {},
-    });
-    const warns: string[] = [];
-    const result = await executeSessionSync({
-      stateDir,
-      zcodeDbPath: dbPath,
-      openZcodeSessionDb: badOpener,
-      onProgress(event) {
-        if (event.phase === "warn" && event.message) warns.push(event.message);
-      },
-    });
-    // Sanity: run isolated (no snapshots pushed even though driver threw)
-    expect(result.sources.zcode).toBe(0);
-    // Warn surface: driver throw is caught + reported
-    expect(warns.some((w) => /Skipping ZCode SQLite/.test(w))).toBe(true);
-    // Return exists just so 'opener' isn't unused
-    void opener;
-  });
-
-  it("routes DbSessionResult.warnings through onProgress (coverage: session-sync warn forward loop)", async () => {
-    // Fake a session with unpaired timestamps to exercise no-op paths;
-    // we monkey-patch the driver factory by returning a handle whose
-    // querySessions returns a benign row but the driver-level warnings
-    // field is populated via a wrapper. Simpler: use ZCode session
-    // driver's warnings passthrough — since parseZcodeSessions currently
-    // never emits warnings, we instead inject a driver-like object that
-    // yields warnings directly. executeSessionSync will iterate them.
-    const dbDir = join(dataDir, ".zcode-tmp");
-    await mkdir(dbDir, { recursive: true });
-    const dbPath = join(dbDir, "db.sqlite");
-    await writeFile(dbPath, "dummy");
-
-    const warns: string[] = [];
-    // Craft an opener that returns a handle whose queryPrimaryModel
-    // throws deep inside toSnapshot — parser doesn't catch it, driver
-    // wrapper does not, orchestrator's try/catch does.
-    // This exercises the same warn code path as the previous test but
-    // through a different failure mode (mid-parse throw).
-    const opener = (_p: string) => ({
-      querySessions: (_wm: number | null, _skip: readonly string[]) => [
-        {
-          id: "sess_bad",
-          directory: "/tmp/x",
-          title: "t",
-          timeCreated: 1_000,
-          timeUpdated: 2_000,
-          taskType: "interactive",
-        },
-      ],
-      queryMessages: () => ({ user: 0, assistant: 0, total: 0 }),
-      queryPrimaryModel: () => {
-        throw new Error("primary-model-boom");
-      },
-      close: () => {},
-    });
-    const result = await executeSessionSync({
-      stateDir,
-      zcodeDbPath: dbPath,
-      openZcodeSessionDb: opener,
-      onProgress(event) {
-        if (event.phase === "warn" && event.message) warns.push(event.message);
-      },
-    });
-    expect(result.sources.zcode).toBe(0);
-    expect(warns.some((w) => /Skipping ZCode SQLite/.test(w))).toBe(true);
-  });
 });

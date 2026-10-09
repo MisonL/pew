@@ -13,8 +13,8 @@
 
 import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
-import { MAX_INGEST_BATCH_SIZE, MAX_INGEST_BODY_BYTES, MIN_CLIENT_VERSION, BodyTooLargeError, readBoundedJson } from "@pew/core";
-import type { ValidationResult } from "@pew/core";
+import { MAX_INGEST_BATCH_SIZE, MAX_INGEST_BODY_BYTES, MIN_CLIENT_VERSION, BodyTooLargeError, readBoundedJson, isRetiredSourceRecord } from "@pew/core";
+import type { AccountingAck, ValidationResult } from "@pew/core";
 import {
   INGEST_RATE_LIMIT,
   getClientIp,
@@ -44,7 +44,8 @@ export interface IngestHandlerConfig<T> {
   maxBodyBytes?: number;
   maxBatchSize?: number;
   /** A versioned route can project an explicit receipt instead of legacy {ingested}. */
-  acknowledgment?: (body: unknown, records: T[]) => object | null;
+  acknowledgment?: (body: unknown, records: T[]) => { details_version: 1; acknowledgments: AccountingAck[] } | null;
+  retiredAcknowledgment?: (record: unknown) => AccountingAck | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,12 +136,31 @@ export function createIngestHandler<T>(
 
     // 6. Validate individual records
     const validated: T[] = [];
+    const acknowledgmentOrder: Array<number | AccountingAck | null> = [];
+    let ignored = 0;
     for (let i = 0; i < records.length; i++) {
+      if (isRetiredSourceRecord(records[i])) {
+        ignored++;
+        acknowledgmentOrder.push(config.retiredAcknowledgment?.(records[i]) ?? null);
+        continue;
+      }
       const result = validateRecord(records[i], i);
       if (!result.valid) {
         return NextResponse.json({ error: result.error }, { status: 400 });
       }
+      acknowledgmentOrder.push(validated.length);
       validated.push(result.record);
+    }
+
+    const counts = { ingested: validated.length, ...(ignored ? { ignored } : {}) };
+    const withRetiredReceipts = (receipt: { details_version: 1; acknowledgments: AccountingAck[] }) => ({
+      ...receipt,
+      acknowledgments: acknowledgmentOrder.flatMap((slot) => slot === null ? [] : typeof slot === "number" ? [receipt.acknowledgments[slot]] : [slot]),
+      ...(ignored ? counts : {}),
+    });
+    if (validated.length === 0) {
+      return NextResponse.json(config.acknowledgment
+        ? withRetiredReceipts({ details_version: 1, acknowledgments: [] }) : counts);
     }
 
     // 7. Forward to Worker for atomic batch upsert
@@ -169,7 +189,7 @@ export function createIngestHandler<T>(
       if (config.acknowledgment) {
         const receipt = config.acknowledgment(await res.json().catch(() => null), validated);
         if (!receipt) return NextResponse.json({ error: "Worker did not acknowledge this accounting protocol" }, { status: 502 });
-        return NextResponse.json(receipt);
+        return NextResponse.json(withRetiredReceipts(receipt));
       }
     } catch {
       console.error(`Failed to ingest ${entityName}`);
@@ -179,7 +199,7 @@ export function createIngestHandler<T>(
       );
     }
 
-    return NextResponse.json({ ingested: records.length });
+    return NextResponse.json(counts);
   };
 }
 

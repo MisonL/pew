@@ -107,6 +107,8 @@ for (let i = 0; i < rawArgs.length; i++) {
   payloadArgs.push(arg);
 }
 
+if (["gemini-cli", "kosmos", "omp", "zcode", "pmstudio", "vscode-copilot"].includes(source)) process.exit(0);
+
 // -----------------------------------------------------------------------
 // §4.1 chain guard — inspect PEW_NOTIFY_CHAIN before any spawn.
 // -----------------------------------------------------------------------

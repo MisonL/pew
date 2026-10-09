@@ -7,28 +7,23 @@ import {
   MAX_STRING_LENGTH,
   SESSION_KINDS,
   SOURCES,
+  RETIRED_SOURCES,
   VALID_SESSION_KINDS,
   VALID_SOURCES,
 } from "../constants.js";
 
 describe("SOURCES", () => {
-  it("should contain exactly 15 supported AI tools", () => {
-    expect(SOURCES).toHaveLength(15);
+  it("should contain exactly 9 supported AI tools", () => {
+    expect(SOURCES).toHaveLength(9);
     expect(SOURCES).toContain("antigravity");
     expect(SOURCES).toContain("claude-code");
     expect(SOURCES).toContain("codex");
     expect(SOURCES).toContain("copilot-cli");
-    expect(SOURCES).toContain("gemini-cli");
     expect(SOURCES).toContain("grok");
     expect(SOURCES).toContain("hermes");
-    expect(SOURCES).toContain("kosmos");
-    expect(SOURCES).toContain("omp");
     expect(SOURCES).toContain("opencode");
     expect(SOURCES).toContain("openclaw");
     expect(SOURCES).toContain("pi");
-    expect(SOURCES).toContain("pmstudio");
-    expect(SOURCES).toContain("vscode-copilot");
-    expect(SOURCES).toContain("zcode");
   });
 
   it("should be readonly and sorted alphabetically", () => {
@@ -39,25 +34,21 @@ describe("SOURCES", () => {
       "claude-code",
       "codex",
       "copilot-cli",
-      "gemini-cli",
       "grok",
       "hermes",
-      "kosmos",
-      "omp",
       "opencode",
       "openclaw",
       "pi",
-      "pmstudio",
-      "vscode-copilot",
-      "zcode",
     ]);
   });
 });
 
 describe("VALID_SOURCES", () => {
-  it("should match SOURCES array", () => {
-    expect(VALID_SOURCES.size).toBe(SOURCES.length);
-    for (const s of SOURCES) {
+  it("retains all historical identities independently of active support", () => {
+    expect(VALID_SOURCES.size).toBe(15);
+    expect(RETIRED_SOURCES).toEqual(["gemini-cli", "kosmos", "omp", "pmstudio", "vscode-copilot", "zcode"]);
+    expect(SOURCES.some((source) => RETIRED_SOURCES.includes(source))).toBe(false);
+    for (const s of [...SOURCES, ...RETIRED_SOURCES]) {
       expect(VALID_SOURCES.has(s)).toBe(true);
     }
   });

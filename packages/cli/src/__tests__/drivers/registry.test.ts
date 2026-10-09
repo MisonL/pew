@@ -23,12 +23,6 @@ describe("createTokenDrivers", () => {
     expect(dbDrivers).toHaveLength(0);
   });
 
-  it("includes gemini file driver when geminiDir is set", () => {
-    const { fileDrivers } = createTokenDrivers({ geminiDir: "/tmp/gemini" });
-    expect(fileDrivers).toHaveLength(1);
-    expect(fileDrivers[0].source).toBe("gemini-cli");
-  });
-
   it("includes opencode json file driver when openCodeMessageDir is set", () => {
     const { fileDrivers } = createTokenDrivers({ openCodeMessageDir: "/tmp/oc" });
     expect(fileDrivers).toHaveLength(1);
@@ -47,27 +41,10 @@ describe("createTokenDrivers", () => {
     expect(fileDrivers[0].source).toBe("codex");
   });
 
-  it("includes vscode-copilot file driver when vscodeCopilotDirs is set", () => {
-    const { fileDrivers } = createTokenDrivers({ vscodeCopilotDirs: ["/tmp/vsc"] });
-    expect(fileDrivers).toHaveLength(1);
-    expect(fileDrivers[0].source).toBe("vscode-copilot");
-  });
-
-  it("excludes vscode-copilot file driver when vscodeCopilotDirs is empty", () => {
-    const { fileDrivers } = createTokenDrivers({ vscodeCopilotDirs: [] });
-    expect(fileDrivers).toHaveLength(0);
-  });
-
   it("includes pi file driver when piSessionsDir is set", () => {
     const { fileDrivers } = createTokenDrivers({ piSessionsDir: "/tmp/pi/sessions" });
     expect(fileDrivers).toHaveLength(1);
     expect(fileDrivers[0].source).toBe("pi");
-  });
-
-  it("includes omp file driver when ompSessionsDir is set", () => {
-    const { fileDrivers } = createTokenDrivers({ ompSessionsDir: "/tmp/omp/sessions" });
-    expect(fileDrivers).toHaveLength(1);
-    expect(fileDrivers[0].source).toBe("omp");
   });
 
   it("includes copilot-cli file driver when copilotCliLogsDir is set", () => {
@@ -83,21 +60,18 @@ describe("createTokenDrivers", () => {
     expect(fileDrivers.map((d) => d.source)).toContain("copilot-cli");
   });
 
-  it("returns all 9 file drivers when all dirs are set", () => {
+  it("returns all 6 file drivers when all dirs are set", () => {
     const { fileDrivers, dbDrivers } = createTokenDrivers({
       claudeDir: "/tmp/claude",
-      geminiDir: "/tmp/gemini",
       openCodeMessageDir: "/tmp/oc",
       openclawDir: "/tmp/openclaw",
-      ompSessionsDir: "/tmp/omp/sessions",
       piSessionsDir: "/tmp/pi/sessions",
       codexSessionsDir: "/tmp/codex",
-      vscodeCopilotDirs: ["/tmp/vsc"],
       copilotCliLogsDir: "/tmp/copilot/logs",
     });
-    expect(fileDrivers).toHaveLength(9);
+    expect(fileDrivers).toHaveLength(6);
     const sources = fileDrivers.map((d) => d.source);
-    expect(sources).toEqual(["claude-code", "codex", "copilot-cli", "gemini-cli", "omp", "opencode", "openclaw", "pi", "vscode-copilot"]);
+    expect(sources).toEqual(["claude-code", "codex", "copilot-cli", "opencode", "openclaw", "pi", ]);
     expect(dbDrivers).toHaveLength(0);
   });
 
@@ -124,29 +98,6 @@ describe("createTokenDrivers", () => {
     expect(dbDrivers).toHaveLength(0);
   });
 
-  it("includes zcode sqlite token driver when both zcodeDbPath and openZcodeDb are set", () => {
-    const mockOpener = vi.fn().mockReturnValue(null);
-    const { fileDrivers, dbDrivers } = createTokenDrivers({
-      zcodeDbPath: "/tmp/zcode.db",
-      openZcodeDb: mockOpener,
-    });
-    expect(fileDrivers).toHaveLength(0);
-    expect(dbDrivers).toHaveLength(1);
-    expect(dbDrivers[0].source).toBe("zcode");
-    expect(dbDrivers[0].kind).toBe("db");
-  });
-
-  it("excludes zcode sqlite token driver when only zcodeDbPath is set", () => {
-    const { dbDrivers } = createTokenDrivers({ zcodeDbPath: "/tmp/zcode.db" });
-    expect(dbDrivers).toHaveLength(0);
-  });
-
-  it("excludes zcode sqlite token driver when only openZcodeDb is set", () => {
-    const mockOpener = vi.fn().mockReturnValue(null);
-    const { dbDrivers } = createTokenDrivers({ openZcodeDb: mockOpener });
-    expect(dbDrivers).toHaveLength(0);
-  });
-
   it("returns file + db drivers together when both source types are available", () => {
     const mockOpener = vi.fn().mockReturnValue(null);
     const { fileDrivers, dbDrivers } = createTokenDrivers({
@@ -157,18 +108,6 @@ describe("createTokenDrivers", () => {
     });
     expect(fileDrivers).toHaveLength(2);
     expect(dbDrivers).toHaveLength(1);
-  });
-
-  it("includes kosmos file driver when kosmosDataDir is set", () => {
-    const { fileDrivers } = createTokenDrivers({ kosmosDataDir: "/tmp/kosmos" });
-    expect(fileDrivers).toHaveLength(1);
-    expect(fileDrivers[0].source).toBe("kosmos");
-  });
-
-  it("includes pmstudio file driver when pmstudioDataDir is set", () => {
-    const { fileDrivers } = createTokenDrivers({ pmstudioDataDir: "/tmp/pmstudio" });
-    expect(fileDrivers).toHaveLength(1);
-    expect(fileDrivers[0].source).toBe("pmstudio");
   });
 
   it("includes hermes default DB driver when hermesDbPath and openHermesDb are set", () => {
@@ -225,21 +164,17 @@ describe("createTokenDrivers", () => {
     expect(fileDrivers[0].source).toBe("grok");
   });
 
-  it("returns all 11 file drivers when all dirs including kosmos, pmstudio and grok are set", () => {
+  it("returns all 7 file drivers when all dirs including kosmos, pmstudio and grok are set", () => {
     const { fileDrivers } = createTokenDrivers({
       claudeDir: "/tmp/claude",
       codexSessionsDir: "/tmp/codex",
       copilotCliLogsDir: "/tmp/copilot/logs",
-      geminiDir: "/tmp/gemini",
       grokLogsPath: "/tmp/.grok/logs/unified.jsonl",
-      kosmosDataDir: "/tmp/kosmos",
       openCodeMessageDir: "/tmp/oc",
       openclawDir: "/tmp/openclaw",
       piSessionsDir: "/tmp/pi/sessions",
-      pmstudioDataDir: "/tmp/pmstudio",
-      vscodeCopilotDirs: ["/tmp/vsc"],
     });
-    expect(fileDrivers).toHaveLength(11);
+    expect(fileDrivers).toHaveLength(7);
   });
 });
 
@@ -259,12 +194,6 @@ describe("createSessionDrivers", () => {
     expect(fileDrivers).toHaveLength(1);
     expect(fileDrivers[0].source).toBe("claude-code");
     expect(fileDrivers[0].kind).toBe("file");
-  });
-
-  it("includes gemini session driver when geminiDir is set", () => {
-    const { fileDrivers } = createSessionDrivers({ geminiDir: "/tmp/gemini" });
-    expect(fileDrivers).toHaveLength(1);
-    expect(fileDrivers[0].source).toBe("gemini-cli");
   });
 
   it("includes opencode json session driver when openCodeMessageDir is set", () => {
@@ -291,32 +220,24 @@ describe("createSessionDrivers", () => {
     expect(fileDrivers[0].source).toBe("pi");
   });
 
-  it("includes omp session driver when ompSessionsDir is set", () => {
-    const { fileDrivers } = createSessionDrivers({ ompSessionsDir: "/tmp/omp/sessions" });
-    expect(fileDrivers).toHaveLength(1);
-    expect(fileDrivers[0].source).toBe("omp");
-  });
-
   it("includes copilot-cli session driver when copilotCliLogsDir is set", () => {
     const { fileDrivers } = createSessionDrivers({ copilotCliLogsDir: "/tmp/copilot/logs" });
     expect(fileDrivers).toHaveLength(1);
     expect(fileDrivers[0].source).toBe("copilot-cli");
   });
 
-  it("returns all 8 file drivers when all dirs are set", () => {
+  it("returns all 6 file drivers when all dirs are set", () => {
     const { fileDrivers, dbDrivers } = createSessionDrivers({
       claudeDir: "/tmp/claude",
       codexSessionsDir: "/tmp/codex",
       copilotCliLogsDir: "/tmp/copilot/logs",
-      geminiDir: "/tmp/gemini",
-      ompSessionsDir: "/tmp/omp/sessions",
       openCodeMessageDir: "/tmp/oc",
       openclawDir: "/tmp/openclaw",
       piSessionsDir: "/tmp/pi/sessions",
     });
-    expect(fileDrivers).toHaveLength(8);
+    expect(fileDrivers).toHaveLength(6);
     const sources = fileDrivers.map((d) => d.source);
-    expect(sources).toEqual(["claude-code", "codex", "copilot-cli", "gemini-cli", "omp", "opencode", "openclaw", "pi"]);
+    expect(sources).toEqual(["claude-code", "codex", "copilot-cli", "opencode", "openclaw", "pi"]);
     expect(dbDrivers).toHaveLength(0);
   });
 
@@ -337,62 +258,15 @@ describe("createSessionDrivers", () => {
     expect(dbDrivers).toHaveLength(0);
   });
 
-  it("includes zcode sqlite session driver when both zcodeDbPath and openZcodeSessionDb are set", () => {
-    const mockOpener = vi.fn().mockReturnValue(null);
-    const { fileDrivers, dbDrivers } = createSessionDrivers({
-      zcodeDbPath: "/tmp/zcode.db",
-      openZcodeSessionDb: mockOpener,
-    });
-    expect(fileDrivers).toHaveLength(0);
-    expect(dbDrivers).toHaveLength(1);
-    expect(dbDrivers[0].source).toBe("zcode");
-    expect(dbDrivers[0].kind).toBe("db");
-  });
-
-  it("excludes zcode sqlite session driver when only zcodeDbPath is set", () => {
-    const { dbDrivers } = createSessionDrivers({ zcodeDbPath: "/tmp/zcode.db" });
-    expect(dbDrivers).toHaveLength(0);
-  });
-
-  it("excludes zcode sqlite session driver when only openZcodeSessionDb is set", () => {
-    const mockOpener = vi.fn().mockReturnValue(null);
-    const { dbDrivers } = createSessionDrivers({ openZcodeSessionDb: mockOpener });
-    expect(dbDrivers).toHaveLength(0);
-  });
-
-  it("does NOT activate zcode session driver when only the token opener is provided", () => {
-    // Regression: session registry must judge openZcodeSessionDb, not openZcodeDb.
-    const tokenOpener = vi.fn().mockReturnValue(null);
-    const { dbDrivers } = createSessionDrivers({
-      zcodeDbPath: "/tmp/zcode.db",
-      // @ts-expect-error — probe: session registry must not honour the token opener key.
-      openZcodeDb: tokenOpener,
-    });
-    expect(dbDrivers).toHaveLength(0);
-  });
-
   it("returns file + db drivers together when both source types are available", () => {
     const mockOpener = vi.fn().mockReturnValue(null);
     const { fileDrivers, dbDrivers } = createSessionDrivers({
       claudeDir: "/tmp/claude",
-      geminiDir: "/tmp/gemini",
       openCodeDbPath: "/tmp/opencode.db",
       openSessionDb: mockOpener,
     });
-    expect(fileDrivers).toHaveLength(2);
+    expect(fileDrivers).toHaveLength(1);
     expect(dbDrivers).toHaveLength(1);
-  });
-
-  it("includes kosmos session driver when kosmosDataDir is set", () => {
-    const { fileDrivers } = createSessionDrivers({ kosmosDataDir: "/tmp/kosmos" });
-    expect(fileDrivers).toHaveLength(1);
-    expect(fileDrivers[0].source).toBe("kosmos");
-  });
-
-  it("includes pmstudio session driver when pmstudioDataDir is set", () => {
-    const { fileDrivers } = createSessionDrivers({ pmstudioDataDir: "/tmp/pmstudio" });
-    expect(fileDrivers).toHaveLength(1);
-    expect(fileDrivers[0].source).toBe("pmstudio");
   });
 
   it("includes grok session driver when grokSessionsDir is set", () => {
@@ -403,19 +277,16 @@ describe("createSessionDrivers", () => {
     expect(fileDrivers[0].source).toBe("grok");
   });
 
-  it("returns all 10 file drivers when all dirs including kosmos, pmstudio and grok are set", () => {
+  it("returns all 7 file drivers when all dirs including kosmos, pmstudio and grok are set", () => {
     const { fileDrivers } = createSessionDrivers({
       claudeDir: "/tmp/claude",
       codexSessionsDir: "/tmp/codex",
       copilotCliLogsDir: "/tmp/copilot/logs",
-      geminiDir: "/tmp/gemini",
       grokSessionsDir: "/tmp/.grok/sessions",
-      kosmosDataDir: "/tmp/kosmos",
       openCodeMessageDir: "/tmp/oc",
       openclawDir: "/tmp/openclaw",
       piSessionsDir: "/tmp/pi/sessions",
-      pmstudioDataDir: "/tmp/pmstudio",
     });
-    expect(fileDrivers).toHaveLength(10);
+    expect(fileDrivers).toHaveLength(7);
   });
 });

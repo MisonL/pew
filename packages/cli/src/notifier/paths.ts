@@ -8,8 +8,7 @@ export interface NotifierPaths {
   signalPath: string;
   claudeDir: string;
   claudeSettingsPath: string;
-  geminiDir: string;
-  geminiSettingsPath: string;
+
   opencodeConfigDir: string;
   opencodePluginDir: string;
   openclawHome: string;
@@ -20,7 +19,7 @@ export interface NotifierPaths {
   codexNotifyOriginalPath: string;
   hermesHome: string;
   hermesPluginDir: string;
-  ompExtensionPath: string;
+
   piExtensionPath: string;
 }
 
@@ -36,7 +35,6 @@ export function resolveNotifierPaths(
   const stateDir = join(home, ".config", "pew");
   const binDir = join(stateDir, "bin");
   const claudeDir = join(home, ".claude");
-  const geminiDir = normalizeEnvPath(env.GEMINI_HOME) ?? join(home, ".gemini");
 
   const opencodeConfigDir =
     normalizeEnvPath(env.OPENCODE_CONFIG_DIR) ??
@@ -57,8 +55,7 @@ export function resolveNotifierPaths(
     signalPath: join(stateDir, "notify.signal"),
     claudeDir,
     claudeSettingsPath: join(claudeDir, "settings.json"),
-    geminiDir,
-    geminiSettingsPath: join(geminiDir, "settings.json"),
+
     opencodeConfigDir,
     opencodePluginDir: join(opencodeConfigDir, "plugin"),
     openclawHome,
@@ -71,7 +68,7 @@ export function resolveNotifierPaths(
     codexNotifyOriginalPath: join(stateDir, "codex_notify_original.json"),
     hermesHome,
     hermesPluginDir: join(hermesHome, "plugins"),
-    ompExtensionPath: join(home, ".omp", "agent", "extensions", "pew-sync.ts"),
+
     piExtensionPath: join(home, ".pi", "agent", "extensions", "pew-sync.ts"),
   };
 }

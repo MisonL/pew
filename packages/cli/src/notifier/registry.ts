@@ -1,7 +1,7 @@
 import type { NotifierOperationResult, NotifierStatus, Source } from "@pew/core";
 import type { NotifierPaths } from "./paths.js";
 import { installClaudeHook, uninstallClaudeHook, getClaudeHookStatus } from "./claude-hook.js";
-import { installGeminiHook, uninstallGeminiHook, getGeminiHookStatus } from "./gemini-hook.js";
+
 import {
   installOpenCodePlugin,
   uninstallOpenCodePlugin,
@@ -22,11 +22,6 @@ import {
   uninstallPiHook,
   getPiHookStatus,
 } from "./pi-hook.js";
-import {
-  installOmpHook,
-  uninstallOmpHook,
-  getOmpHookStatus,
-} from "./omp-hook.js";
 
 interface RegistryDeps {
   spawn?: (cmd: string, args: string[], opts?: object) => { status: number | null };
@@ -82,44 +77,7 @@ const DRIVERS: NotifierDriver[] = [
         originalBackupPath: paths.codexNotifyOriginalPath,
       }),
   },
-  {
-    source: "gemini-cli",
-    displayName: "Gemini CLI",
-    install: (paths) =>
-      installGeminiHook({
-        settingsPath: paths.geminiSettingsPath,
-        notifyPath: paths.notifyPath,
-      }),
-    uninstall: (paths) =>
-      uninstallGeminiHook({
-        settingsPath: paths.geminiSettingsPath,
-        notifyPath: paths.notifyPath,
-      }),
-    status: (paths) =>
-      getGeminiHookStatus({
-        settingsPath: paths.geminiSettingsPath,
-        notifyPath: paths.notifyPath,
-      }),
-  },
-  {
-    source: "omp",
-    displayName: "Oh My Pi",
-    install: (paths) =>
-      installOmpHook({
-        extensionPath: paths.ompExtensionPath,
-        notifyPath: paths.notifyPath,
-      }),
-    uninstall: (paths) =>
-      uninstallOmpHook({
-        extensionPath: paths.ompExtensionPath,
-        notifyPath: paths.notifyPath,
-      }),
-    status: (paths) =>
-      getOmpHookStatus({
-        extensionPath: paths.ompExtensionPath,
-        notifyPath: paths.notifyPath,
-      }),
-  },
+
   {
     source: "opencode",
     displayName: "OpenCode",

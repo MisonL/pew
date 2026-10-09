@@ -1,6 +1,6 @@
 import { MAX_RECORD_TOKENS, MAX_RECORD_MESSAGES } from "./constants.js";
 import type { AccountingAck, AccountingCounts, AccountingGroup, AccountingRecord, LegacyTokenCounts } from "./accounting-types.js";
-import { isValidSource, type ValidationResult } from "./validation.js";
+import { isRetiredSourceRecord, isValidSource, type ValidationResult } from "./validation.js";
 
 const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 const count = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
@@ -80,6 +80,18 @@ export function validateAccountingRecord(value: unknown, index: number): Validat
     source_revision: Number(value.source_revision), parser_revision: Number(value.parser_revision), detail_revision: Number(value.detail_revision),
     basis: value.basis, groups,
   } };
+}
+
+export function retiredAccountingAcknowledgment(value: unknown): AccountingAck | null {
+  if (!object(value) || !isRetiredSourceRecord(value) || !label(value.model) ||
+    typeof value.device_id !== "string" || !/^[\w.-]{1,128}$/.test(value.device_id) ||
+    typeof value.hour_start !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:(00|30):00\.000Z$/.test(value.hour_start) ||
+    !Number.isFinite(Date.parse(value.hour_start)) || new Date(value.hour_start).toISOString() !== value.hour_start ||
+    value.event_id !== null && (typeof value.event_id !== "string" || !/^[a-f0-9]{64}$/.test(value.event_id)) ||
+    ![value.source_revision, value.parser_revision, value.detail_revision].every((v) => count(v) && v > 0)) return null;
+  return { key: JSON.stringify([value.device_id, value.source, value.model, value.hour_start, value.event_id]),
+    source_revision: Number(value.source_revision), parser_revision: Number(value.parser_revision),
+    detail_revision: Number(value.detail_revision), status: "superseded" };
 }
 
 /** Only these acknowledgments may cross the web proxy; never relay arbitrary upstream bodies. */

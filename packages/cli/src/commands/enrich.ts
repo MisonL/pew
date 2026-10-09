@@ -18,13 +18,13 @@ export interface EnrichOptions extends SyncOptions {
   apply?: boolean;
 }
 
-const sourceOptions: Record<Source, Array<keyof SyncOptions>> = {
+const sourceOptions: Partial<Record<Source, Array<keyof SyncOptions>>> = {
   antigravity: ["antigravityDir"],
-  "claude-code": ["claudeDir"], codex: ["codexSessionsDir", "multicaCodexDirs"], "gemini-cli": ["geminiDir"],
+  "claude-code": ["claudeDir"], codex: ["codexSessionsDir", "multicaCodexDirs"],
   "copilot-cli": ["copilotCliLogsDir", "copilotCliOtelPaths"], grok: ["grokLogsPath", "grokSessionsDir"],
-  hermes: ["hermesDbPath", "hermesProfileDbPaths", "openHermesDb"], kosmos: ["kosmosDataDir"], omp: ["ompSessionsDir"],
+  hermes: ["hermesDbPath", "hermesProfileDbPaths", "openHermesDb"],
   opencode: ["openCodeMessageDir", "openCodeDbPath", "openMessageDb"], openclaw: ["openclawDir"], pi: ["piSessionsDir"],
-  pmstudio: ["pmstudioDataDir"], "vscode-copilot": ["vscodeCopilotDirs"], zcode: ["zcodeDbPath", "openZcodeDb"],
+
 };
 
 async function requireSettledState(stateDir: string): Promise<void> {
@@ -48,7 +48,7 @@ export async function executeEnrich(opts: EnrichOptions) {
   await requireSettledState(opts.stateDir);
   const scratch = await mkdtemp(join(tmpdir(), "pew-enrich-preview-"));
   try {
-    const keys = new Set(opts.source === "all" ? Object.values(sourceOptions).flat() : sourceOptions[opts.source]);
+    const keys = new Set(opts.source === "all" ? Object.values(sourceOptions).flat() : (sourceOptions[opts.source] ?? []));
     const selected = Object.fromEntries(Object.entries(opts).filter(([key]) => keys.has(key as keyof SyncOptions)));
     // Preserve prior evidence allocations in scratch; resetting real evidence
     // would move historical calls between time buckets.

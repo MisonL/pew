@@ -8,7 +8,9 @@ Bun-workspaces monorepo tracking token usage from local AI coding tools. Human o
 - `packages/worker` — Cloudflare Worker for D1 ingest writes (`@pew/worker`, private)
 - `packages/worker-read` — Cloudflare Worker for D1 read queries (`@pew/worker-read`, private)
 
-Supported tools: Antigravity CLI, Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, Grok, Hermes, Kosmos, Oh My Pi, OpenCode, OpenClaw, Pi, PM Studio, VS Code Copilot, ZCode.
+Supported tools (9): Antigravity CLI, Claude Code, Codex, GitHub Copilot CLI, Grok, Hermes, OpenCode, OpenClaw, Pi.
+
+Retired sources stay readable and count toward historical rankings, but never accept new token, session, evidence or accounting writes. Core `SOURCES` lists active tools; `VALID_SOURCES` includes historical identities. Ingest acknowledges and ignores exact retired identities so old mixed-source batches do not block active uploads.
 
 ## Scope and instruction sources
 
@@ -80,7 +82,7 @@ bun run --filter '@pew/web' dev
 NODE_TLS_REJECT_UNAUTHORIZED=0 bun packages/cli/dist/bin.js sync --dev
 ```
 
-A full reset removes `~/.config/pew/cursors.json`, `queue.jsonl` and `queue.state.json` before re-syncing. State files: `config.json` (prod API key `pk_...`), `config.dev.json` (dev API key), `cursors.json` (per-file byte offsets + directory mtimes, shared across dev/prod), `queue.jsonl` (pending upload records), `queue.state.json` (queue metadata).
+A full reset invalidates token/session cursors before rebuilding active-source queues. Retired token/session records and their pending upload intent remain in Pew's own queues because their collectors no longer replay them. State files: `config.json` (prod API key `pk_...`), `config.dev.json` (dev API key), `cursors.json` (per-file byte offsets + directory mtimes, shared across dev/prod), `queue.jsonl` (pending upload records), `queue.state.json` (queue metadata).
 
 ## Testing and quality contract
 

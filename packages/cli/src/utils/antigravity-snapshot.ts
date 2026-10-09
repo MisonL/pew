@@ -3,18 +3,19 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ParsedDelta } from "../parsers/claude.js";
 import { toUtcHalfHourStart } from "./buckets.js";
+import { isRetiredSource } from "./retired-sources.js";
 
 export const tokenRecordKey = (r: QueueRecord): string =>
   `${r.source}|${r.model}|${r.hour_start}|${r.device_id}`;
 
-export async function readAntigravityBaseline(stateDir: string): Promise<QueueRecord[]> {
+export async function readAntigravityBaseline(stateDir: string, includeRetired = false): Promise<QueueRecord[]> {
   let raw: string;
   try { raw = await readFile(join(stateDir, "queue.jsonl"), "utf8"); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw new Error("Cannot verify previous usage queue"); }
   try {
     const rows = raw.split("\n").filter(Boolean).map((line) => JSON.parse(line) as QueueRecord);
     if (rows.some((r) => !r || typeof r !== "object" || typeof r.source !== "string")) throw new Error();
-    const retained = rows.filter((r) => r.source === "antigravity");
+    const retained = rows.filter((r) => r.source === "antigravity" || includeRetired && isRetiredSource(r.source));
     for (const r of retained) {
       if (typeof r.device_id !== "string" || typeof r.model !== "string" || typeof r.hour_start !== "string" ||
         !Number.isFinite(Date.parse(r.hour_start)) ||

@@ -16,7 +16,7 @@ describe("resolveNotifierPaths", () => {
       join("/home/tester", ".config", "pew", "notify.signal"),
     );
     expect(paths.claudeSettingsPath).toBe(join("/home/tester", ".claude", "settings.json"));
-    expect(paths.geminiSettingsPath).toBe(join("/home/tester", ".gemini", "settings.json"));
+
     expect(paths.opencodeConfigDir).toBe(join("/home/tester", ".config", "opencode"));
     expect(paths.opencodePluginDir).toBe(
       join("/home/tester", ".config", "opencode", "plugin"),
@@ -45,26 +45,9 @@ describe("resolveNotifierPaths", () => {
     });
 
     // All should fall back to defaults since env values are whitespace-only
-    expect(paths.geminiDir).toBe(join("/home/tester", ".gemini"));
+
     expect(paths.opencodeConfigDir).toBe(join("/home/tester", ".config", "opencode"));
     expect(paths.codexHome).toBe(join("/home/tester", ".codex"));
-  });
-
-  it("should trim whitespace from env values", () => {
-    const paths = resolveNotifierPaths("/home/tester", {
-      GEMINI_HOME: "  /tmp/gemini  ",
-    });
-
-    expect(paths.geminiDir).toBe("/tmp/gemini");
-  });
-
-  it("should follow GEMINI_HOME when set", () => {
-    const paths = resolveNotifierPaths("/home/tester", {
-      GEMINI_HOME: "/tmp/gemini-home",
-    });
-
-    expect(paths.geminiDir).toBe("/tmp/gemini-home");
-    expect(paths.geminiSettingsPath).toBe("/tmp/gemini-home/settings.json");
   });
 
   it("should follow OPENCODE_CONFIG_DIR when set", () => {

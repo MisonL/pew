@@ -25,8 +25,6 @@ describe("notifier registry", () => {
       signalPath: join(tempDir, "state", "notify.signal"),
       claudeDir: join(tempDir, ".claude"),
       claudeSettingsPath: join(tempDir, ".claude", "settings.json"),
-      geminiDir: join(tempDir, ".gemini"),
-      geminiSettingsPath: join(tempDir, ".gemini", "settings.json"),
       opencodeConfigDir: join(tempDir, ".config", "opencode"),
       opencodePluginDir: join(tempDir, ".config", "opencode", "plugin"),
       openclawHome: join(tempDir, ".openclaw"),
@@ -37,7 +35,6 @@ describe("notifier registry", () => {
       codexNotifyOriginalPath: join(tempDir, "state", "codex_notify_original.json"),
       hermesHome: join(tempDir, ".hermes"),
       hermesPluginDir: join(tempDir, ".hermes", "plugins"),
-      ompExtensionPath: join(tempDir, ".omp", "agent", "extensions", "pew-sync.ts"),
       piExtensionPath: join(tempDir, ".pi", "agent", "extensions", "pew-sync.ts"),
     };
 
@@ -51,14 +48,12 @@ describe("notifier registry", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  it("registers all 7 drivers", () => {
+  it("registers all 5 drivers", () => {
     const drivers = getAllDrivers();
-    expect(drivers).toHaveLength(7);
+    expect(drivers).toHaveLength(5);
     expect(drivers.map((driver) => driver.source)).toEqual([
       "claude-code",
       "codex",
-      "gemini-cli",
-      "omp",
       "opencode",
       "openclaw",
       "pi",
@@ -80,17 +75,16 @@ describe("notifier registry", () => {
     const installed = await installAll(paths, { spawn });
     const uninstalled = await uninstallAll(paths, { spawn });
 
-    expect(installed).toHaveLength(7);
+    expect(installed).toHaveLength(5);
     expect(installed.find((item) => item.source === "openclaw")?.action).toBe("skip");
     expect(installed.find((item) => item.source === "codex")?.changed).toBe(true);
-    expect(installed.find((item) => item.source === "omp")?.changed).toBe(true);
-    expect(uninstalled).toHaveLength(7);
+    expect(uninstalled).toHaveLength(5);
   });
 
   it("reports status for all sources", async () => {
     const statuses = await statusAll(paths);
 
-    expect(Object.keys(statuses)).toHaveLength(7);
+    expect(Object.keys(statuses)).toHaveLength(5);
     expect(statuses.codex).toBe("not-installed");
     expect(statuses["claude-code"]).toBe("not-installed");
   });
@@ -113,7 +107,7 @@ describe("notifier registry", () => {
       expect(claudeResult!.warnings).toContain("Driver install failed");
 
       // Other drivers should still have completed
-      expect(results).toHaveLength(7);
+      expect(results).toHaveLength(5);
     } finally {
       spy.mockRestore();
     }
@@ -128,15 +122,15 @@ describe("notifier registry", () => {
     });
     await installAll(paths, { spawn });
 
-    // Mock gemini-hook uninstall to throw
-    const geminiHook = await import("../notifier/gemini-hook.js");
+    // Mock Claude hook uninstall to throw
+    const claudeHook = await import("../notifier/claude-hook.js");
     const spy = vi
-      .spyOn(geminiHook, "uninstallGeminiHook")
+      .spyOn(claudeHook, "uninstallClaudeHook")
       .mockRejectedValue(new Error("Gemini uninstall crash"));
 
     try {
       const results = await uninstallAll(paths, { spawn });
-      const geminiResult = results.find((r) => r.source === "gemini-cli");
+      const geminiResult = results.find((r) => r.source === "claude-code");
 
       expect(geminiResult).toBeDefined();
       expect(geminiResult!.action).toBe("skip");
@@ -145,7 +139,7 @@ describe("notifier registry", () => {
       expect(geminiResult!.warnings).toContain("Driver uninstall failed");
 
       // Other drivers should still have completed
-      expect(results).toHaveLength(7);
+      expect(results).toHaveLength(5);
     } finally {
       spy.mockRestore();
     }
@@ -192,14 +186,14 @@ describe("notifier registry", () => {
     });
     await installAll(paths, { spawn });
 
-    const geminiHook = await import("../notifier/gemini-hook.js");
+    const claudeHook = await import("../notifier/claude-hook.js");
     const spy = vi
-      .spyOn(geminiHook, "uninstallGeminiHook")
+      .spyOn(claudeHook, "uninstallClaudeHook")
       .mockRejectedValue(42);
 
     try {
       const results = await uninstallAll(paths, { spawn });
-      const geminiResult = results.find((r) => r.source === "gemini-cli");
+      const geminiResult = results.find((r) => r.source === "claude-code");
       expect(geminiResult!.detail).toBe("42");
     } finally {
       spy.mockRestore();

@@ -41,7 +41,7 @@
 | 33 | [33-achievement-system-overhaul.md](33-achievement-system-overhaul.md) | Achievement system overhaul | retired |
 | 34 | [34-showcase-system.md](34-showcase-system.md) | ProductHunt-style showcase system | retired |
 | 35 | [35-hermes-support.md](35-hermes-support.md) | Hermes Agent token tracking (SQLite session-level diff) | done |
-| 36 | [36-kosmos-support-design.md](36-kosmos-support-design.md) | Kosmos / PM Studio token + session tracking | done |
+| 36 | [36-kosmos-support-design.md](36-kosmos-support-design.md) | Historical Kosmos / PM Studio collector design | archived; collector retired |
 | 36b | [36-organization-system.md](36-organization-system.md) | Organization entity for interest-based grouping | done |
 | 36c | [36-github-actions-ci.md](36-github-actions-ci.md) | GitHub Actions CI — Phase 1 (no secrets) | in-progress |
 | 37 | [37-worker-read-security-hardening.md](37-worker-read-security-hardening.md) | Worker-read security hardening | reference |
@@ -51,10 +51,10 @@
 | 40b | [40-l3-bdd-refactor.md](40-l3-bdd-refactor.md) | L3 → BDD test refactor plan | reference |
 | 41 | [41-code-hygiene-metrics.md](41-code-hygiene-metrics.md) | Code hygiene metrics (G1–G10) baseline + cleanup roadmap | in-progress |
 | 42 | [42-grok-support.md](42-grok-support.md) | Grok CLI token support — `~/.grok/logs/unified.jsonl` parser | design |
-| 43 | [43-zcode-support.md](43-zcode-support.md) | ZCode CLI token support — `~/.zcode/cli/db/db.sqlite` model_usage parser | done |
+| 43 | [43-zcode-support.md](43-zcode-support.md) | Historical ZCode CLI collector design | archived; collector retired |
 | 44 | [44-biome-migration-ts7.md](44-biome-migration-ts7.md) | Biome migration + TypeScript 7 stable upgrade | done |
 | 45 | [45-codex-notifier-cycle-containment.md](45-codex-notifier-cycle-containment.md) | Codex notifier forwarding-cycle containment | proposed |
-| 46 | [46-omp-support.md](46-omp-support.md) | Oh My Pi (omp) token + session support — pi-format JSONL under `~/.omp/agent/sessions` | done |
+| 46 | [46-omp-support.md](46-omp-support.md) | Historical Oh My Pi collector design | archived; collector retired |
 | 51 | [51-antigravity-support.md](51-antigravity-support.md) | Antigravity CLI SQLite/Protobuf accounting and source safety | implemented |
 
 > **Note:** Number 14 is intentionally vacant (original doc 14 was renumbered to 12 to fill a gap). Numbers 19, 36, and 40 have multiple entries (`Nb`, `Nc`) as history-preserving disambiguators.

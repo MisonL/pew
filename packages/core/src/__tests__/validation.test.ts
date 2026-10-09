@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { MAX_STRING_LENGTH } from "../constants.js";
 import {
+  isRetiredSourceRecord,
   isNonEmptyString,
   isNonNegativeInteger,
   isNullableString,
@@ -46,6 +47,18 @@ describe("isValidSource", () => {
     expect(isValidSource(null)).toBe(false);
     expect(isValidSource(undefined)).toBe(false);
     expect(isValidSource(42)).toBe(false);
+  });
+});
+
+describe("isRetiredSourceRecord", () => {
+  it("ignores only exact retired identities, independent of obsolete payload shape", () => {
+    for (const source of ["gemini-cli", "kosmos", "omp", "zcode", "pmstudio", "vscode-copilot"]) {
+      expect(isRetiredSourceRecord({ source, input_tokens: "bad", body: "must-not-upload" })).toBe(true);
+    }
+    for (const value of [null, undefined, [], "gemini-cli", {}, { source: null }, { source: "pi" },
+      { source: "Gemini CLI" }, { source: "cursor" }, { source: "gemini-cli " }]) {
+      expect(isRetiredSourceRecord(value)).toBe(false);
+    }
   });
 });
 

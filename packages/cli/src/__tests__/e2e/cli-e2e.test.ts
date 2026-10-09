@@ -36,20 +36,9 @@ function claudeLine(ts: string, input: number, output: number): string {
   });
 }
 
-/** Create a Gemini session JSON */
-function geminiSession(ts: string, input: number, output: number): string {
-  return JSON.stringify({
-    sessionId: "ses-e2e",
-    messages: [
-      {
-        id: "msg-1",
-        type: "gemini",
-        timestamp: ts,
-        model: "gemini-3-flash",
-        tokens: { input, output, cached: 0, thoughts: 0, tool: 0, total: input + output },
-      },
-    ],
-  });
+/** Create a Pi usage JSONL */
+function piSession(ts: string, input: number, output: number): string {
+ return `${JSON.stringify({ type: "message", timestamp:ts, message: {role:"assistant",model:"pi-model",usage:{input,output,cacheRead:0,cacheWrite:0}}})}\n`;
 }
 
 /** Create an OpenCode message JSON */
@@ -153,11 +142,11 @@ describe("CLI E2E: sync pipeline", () => {
     );
 
     // Gemini
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-b", "chats");
-    await mkdir(geminiDir, { recursive: true });
+    const piSessionsDir = join(dataDir, ".pi", "agent", "sessions", "proj-b");
+    await mkdir(piSessionsDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-e2e.json"),
-      geminiSession("2026-03-07T14:30:00.000Z", 3000, 200),
+      join(piSessionsDir, "session-e2e.jsonl"),
+      piSession("2026-03-07T14:30:00.000Z", 3000, 200),
     );
 
     // OpenCode
@@ -179,14 +168,14 @@ describe("CLI E2E: sync pipeline", () => {
     const result = await executeSync({
       stateDir,
       claudeDir: join(dataDir, ".claude"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
       openCodeMessageDir: join(dataDir, "opencode", "message"),
       openclawDir: join(dataDir, ".openclaw"),
     });
 
     expect(result.totalDeltas).toBe(4);
     expect(result.sources.claude).toBe(1);
-    expect(result.sources.gemini).toBe(1);
+    expect(result.sources.pi).toBe(1);
     expect(result.sources.opencode).toBe(1);
     expect(result.sources.openclaw).toBe(1);
 
@@ -195,7 +184,7 @@ describe("CLI E2E: sync pipeline", () => {
     const records = queueRaw.trim().split("\n").map((l) => JSON.parse(l));
     const sources = new Set(records.map((r: any) => r.source));
     expect(sources.has("claude-code")).toBe(true);
-    expect(sources.has("gemini-cli")).toBe(true);
+    expect(sources.has("pi")).toBe(true);
     expect(sources.has("opencode")).toBe(true);
     expect(sources.has("openclaw")).toBe(true);
   });
@@ -263,7 +252,7 @@ describe("CLI E2E: sync pipeline", () => {
     expect(result.totalDeltas).toBe(0);
     expect(result.totalRecords).toBe(0);
     expect(result.sources.claude).toBe(0);
-    expect(result.sources.gemini).toBe(0);
+    expect(result.sources.pi).toBe(0);
     expect(result.sources.opencode).toBe(0);
     expect(result.sources.openclaw).toBe(0);
   });
@@ -318,7 +307,7 @@ describe("CLI E2E: status after sync", () => {
       sourceDirs: {
         claudeDir: join(dataDir, ".claude"),
         codexSessionsDir: join(dataDir, ".codex", "sessions"),
-        geminiDir: join(dataDir, ".gemini"),
+        piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
         openCodeMessageDir: join(dataDir, ".local", "share", "opencode", "storage", "message"),
         openclawDir: join(dataDir, ".openclaw"),
         multicaCodexDirs: [],
@@ -342,17 +331,17 @@ describe("CLI E2E: status after sync", () => {
     }
 
     // Gemini (1 file)
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-c", "chats");
-    await mkdir(geminiDir, { recursive: true });
+    const piSessionsDir = join(dataDir, ".pi", "agent", "sessions", "proj-c");
+    await mkdir(piSessionsDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-e2e.json"),
-      geminiSession("2026-03-07T14:30:00.000Z", 2000, 150),
+      join(piSessionsDir, "session-e2e.jsonl"),
+      piSession("2026-03-07T14:30:00.000Z", 2000, 150),
     );
 
     await executeSync({
       stateDir,
       claudeDir: join(dataDir, ".claude"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
     });
 
     const result = await executeStatus({
@@ -360,7 +349,7 @@ describe("CLI E2E: status after sync", () => {
       sourceDirs: {
         claudeDir: join(dataDir, ".claude"),
         codexSessionsDir: join(dataDir, ".codex", "sessions"),
-        geminiDir: join(dataDir, ".gemini"),
+        piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
         openCodeMessageDir: join(dataDir, ".local", "share", "opencode", "storage", "message"),
         openclawDir: join(dataDir, ".openclaw"),
         multicaCodexDirs: [],
@@ -370,7 +359,7 @@ describe("CLI E2E: status after sync", () => {
     expect(result.lastSync).toBeTruthy();
     expect(result.pendingRecords).toBeGreaterThan(0);
     expect(result.sources["claude-code"]).toBe(2);
-    expect(result.sources["gemini-cli"]).toBe(1);
+    expect(result.sources.pi).toBe(1);
   });
 });
 
@@ -402,11 +391,11 @@ describe("CLI E2E: queue record schema validation", () => {
       `${claudeLine("2026-03-07T10:15:00.000Z", 5000, 800)}\n`,
     );
 
-    const geminiDir = join(dataDir, ".gemini", "tmp", "proj-b", "chats");
-    await mkdir(geminiDir, { recursive: true });
+    const piSessionsDir = join(dataDir, ".pi", "agent", "sessions", "proj-b");
+    await mkdir(piSessionsDir, { recursive: true });
     await writeFile(
-      join(geminiDir, "session-e2e.json"),
-      geminiSession("2026-03-07T14:30:00.000Z", 2000, 150),
+      join(piSessionsDir, "session-e2e.jsonl"),
+      piSession("2026-03-07T14:30:00.000Z", 2000, 150),
     );
 
     const ocwDir = join(dataDir, ".openclaw", "agents", "a1", "sessions");
@@ -419,7 +408,7 @@ describe("CLI E2E: queue record schema validation", () => {
     await executeSync({
       stateDir,
       claudeDir: join(dataDir, ".claude"),
-      geminiDir: join(dataDir, ".gemini"),
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
       openclawDir: join(dataDir, ".openclaw"),
     });
 
@@ -449,7 +438,7 @@ describe("CLI E2E: queue record schema validation", () => {
       expect(typeof record.total_tokens).toBe("number");
 
       // Valid source value
-      expect(["claude-code", "gemini-cli", "opencode", "openclaw"]).toContain(
+      expect(["claude-code", "pi", "opencode", "openclaw"]).toContain(
         record.source,
       );
 

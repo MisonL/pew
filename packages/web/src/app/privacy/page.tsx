@@ -66,7 +66,7 @@ export default function PrivacyPage() {
               Token usage (aggregated)
             </h4>
             <ul className="list-disc list-inside text-muted-foreground space-y-1 ml-2 mb-3">
-              <li>Which AI tool (e.g. Claude Code, Gemini CLI)</li>
+              <li>Which AI tool (e.g. Claude Code, Codex)</li>
               <li>Model name (e.g. claude-sonnet-4-20250514)</li>
               <li>
                 Token counts (input, cached input, output, reasoning output)

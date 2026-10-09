@@ -1,5 +1,7 @@
 # 46 — Oh My Pi (omp) Support
 
+> Archived: collection and new uploads are retired. Existing usage remains readable and participates in rankings.
+
 **Status:** done
 **Source slug:** `omp` · **Display name:** Oh My Pi
 

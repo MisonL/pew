@@ -153,8 +153,6 @@ describe("CLI E2E: real Antigravity SQLite/WAL accounting", () => {
     const missing = join(dir, "missing");
     const status = await executeStatus({ stateDir, sourceDirs: {
       claudeDir: missing, codexSessionsDir: missing, geminiDir: missing, kosmosDataDir: missing, pmstudioDataDir: missing,
-      ompSessionsDir: missing, openCodeMessageDir: missing, openclawDir: missing, piSessionsDir: missing, grokHome: missing,
-      vscodeCopilotDirs: [], copilotCliLogsDir: missing, copilotCliOtelPaths: [], multicaCodexDirs: [],
     } });
     expect(status).toMatchObject({ trackedFiles: 1, pendingRecords: 1, sources: { antigravity: 1 } });
     const remote = server();

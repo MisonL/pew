@@ -221,7 +221,7 @@ describe("POST /api/ingest", () => {
   it("should ingest multiple records in a batch", async () => {
     const records = [
       makeRecord({
-        source: "gemini-cli",
+        source: "pi",
         model: "gemini-2.5-pro",
         hour_start: "2026-03-01T11:00:00.000Z",
         input_tokens: 500,
@@ -294,8 +294,10 @@ describe("POST /api/ingest", () => {
     expect(userBody.summary.reasoning_output_tokens).toBe(111);
   });
 
-  it("accepts and reads back zcode source records — every whitelist entry point", async () => {
-    // 1. POST /api/ingest — bare-array body with zcode source
+  it("ignores new zcode reports while keeping historical tokens readable", async () => {
+    await d1.execute(`INSERT INTO usage_records
+      (user_id,device_id,source,model,hour_start,input_tokens,cached_input_tokens,output_tokens,reasoning_output_tokens,total_tokens)
+      VALUES (?, 'e2e-zcode-device','zcode','GLM-5.2','2026-07-10T01:00:00.000Z',11242,52992,1329,0,65563)`, [TEST_USER_ID]);
     const ingest = await fetch(`${BASE_URL}/api/ingest`, {
       method: "POST",
       headers: INGEST_HEADERS,
@@ -315,6 +317,7 @@ describe("POST /api/ingest", () => {
       ]),
     });
     expect(ingest.status).toBe(200);
+    expect(await ingest.json()).toMatchObject({ ingested: 0, ignored: 1 });
 
     // 2. Every ?source= query allowlist route
     for (const path of [
@@ -334,6 +337,52 @@ describe("POST /api/ingest", () => {
     expect(userRes.status).toBe(200);
     const userBody = await userRes.json();
     expect(userBody.summary.cached_input_tokens).toBe(52992);
+  });
+
+  it("retired token/session reports cannot replace history or block active mixed batches", async () => {
+    const sources = ["gemini-cli", "kosmos", "omp", "pmstudio", "vscode-copilot", "zcode"];
+    const historicalTime = "2024-10-01T01:00:00.000Z";
+    try {
+      for (const source of sources) {
+        await d1.execute(`INSERT INTO usage_records
+          (user_id,device_id,source,model,hour_start,input_tokens,total_tokens)
+          VALUES (?, 'retirement-fixture', ?, 'historical-model', ?, 123, 123)`, [TEST_USER_ID, source, historicalTime]);
+        await d1.execute(`INSERT INTO session_records
+          (user_id,session_key,source,started_at,last_message_at,duration_seconds,user_messages,assistant_messages,total_messages,model,snapshot_at)
+          VALUES (?, ?, ?, ?, ?, 0, 1, 1, 2, 'historical-model', ?)`,
+          [TEST_USER_ID, `retired:${source}`, source, historicalTime, historicalTime, historicalTime]);
+        const token = await fetch(`${BASE_URL}/api/ingest`, { method: "POST", headers: INGEST_HEADERS,
+          body: JSON.stringify([makeRecord({ source, device_id: "retirement-fixture", model: "historical-model",
+            hour_start: historicalTime, total_tokens: "unsafe", prompt: "PRIVATE_SYNTHETIC_BODY" })]) });
+        expect(token.status).toBe(200);
+        expect(await token.json()).toMatchObject({ ingested: 0, ignored: 1 });
+        const session = await fetch(`${BASE_URL}/api/ingest/sessions`, { method: "POST", headers: INGEST_HEADERS,
+          body: JSON.stringify([{ source, session_key: `retired:${source}`, total_messages: -1 }]) });
+        expect(session.status).toBe(200);
+        expect(await session.json()).toMatchObject({ ingested: 0, ignored: 1 });
+        const query = `source=${source}&from=2024-10-01&to=2024-10-02`;
+        for (const path of ["/api/usage", `/api/users/${TEST_USER_SLUG}`]) {
+          const response = await fetch(`${BASE_URL}${path}?${query}`);
+          expect(response.status).toBe(200);
+          expect((await response.json()).summary.total_tokens).toBe(123);
+        }
+        const stored = await d1.firstOrNull<{ total_messages: number }>(
+          "SELECT total_messages FROM session_records WHERE user_id=? AND session_key=?", [TEST_USER_ID, `retired:${source}`]);
+        expect(stored?.total_messages).toBe(2);
+        const ranked = await fetch(`${BASE_URL}/api/leaderboard?period=all&source=${source}`);
+        expect(ranked.status).toBe(200);
+        expect((await ranked.json()).entries.some((entry: { user: { id: string }; total_tokens: number }) =>
+          entry.user.id === TEST_USER_ID && entry.total_tokens >= 123)).toBe(true);
+      }
+      const active = makeRecord({ source: "pi", device_id: "retirement-fixture", model: "active-model", hour_start: historicalTime });
+      const mixed = await fetch(`${BASE_URL}/api/ingest`, { method: "POST", headers: INGEST_HEADERS,
+        body: JSON.stringify([...sources.map((source) => ({ source, private_body: "IGNORE" })), active]) });
+      expect(mixed.status).toBe(200);
+      expect(await mixed.json()).toMatchObject({ ingested: 1, ignored: 6 });
+    } finally {
+      await d1.execute("DELETE FROM usage_records WHERE user_id=? AND device_id='retirement-fixture'", [TEST_USER_ID]);
+      await d1.execute("DELETE FROM session_records WHERE user_id=? AND session_key LIKE 'retired:%'", [TEST_USER_ID]);
+    }
   });
 
   it("round-trips Antigravity disjoint counters and deduplicates uploads", async () => {
@@ -387,22 +436,22 @@ describe("GET /api/usage", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
 
-    // We have 3 distinct records: claude-code, gemini-cli, opencode
+    // We have 3 distinct records: claude-code, pi, opencode
     expect(body.records.length).toBe(3);
     expect(body.summary).toBeDefined();
-    // Total = 1700 (claude overwritten) + 850 (gemini) + 1300 (opencode) = 3850
+    // Total = 1700 (claude overwritten) + 850 (pi) + 1300 (opencode) = 3850
     expect(body.summary.total_tokens).toBe(3850);
   });
 
   it("should filter by source", async () => {
     const res = await fetch(
-      `${BASE_URL}/api/usage?from=2026-03-01&to=2026-03-02&source=gemini-cli`,
+      `${BASE_URL}/api/usage?from=2026-03-01&to=2026-03-02&source=pi`,
     );
     expect(res.status).toBe(200);
     const body = await res.json();
 
     expect(body.records.length).toBe(1);
-    expect(body.records[0].source).toBe("gemini-cli");
+    expect(body.records[0].source).toBe("pi");
     expect(body.summary.total_tokens).toBe(850);
   });
 
@@ -802,7 +851,7 @@ describe("organization lists", () => {
 // ===========================================================================
 
 describe("POST /api/ingest/sessions", () => {
-  it.each(["grok", "zcode"])("ingests and reads %s sessions after project tables are retired", async (source) => {
+  it.each(["grok", "antigravity"])("ingests and reads %s sessions after project tables are retired", async (source) => {
     const record = {
       session_key: `${source}:e2e-${RUN_SUFFIX}`,
       source,

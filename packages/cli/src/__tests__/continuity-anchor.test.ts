@@ -24,9 +24,8 @@ describe("usesJsonlOffsetResume", () => {
     expect(usesJsonlOffsetResume("codex", "/x/rollout.jsonl")).toBe(true);
     expect(usesJsonlOffsetResume("openclaw", "/x/s.jsonl")).toBe(true);
     expect(usesJsonlOffsetResume("pi", "/x/s.jsonl")).toBe(true);
-    expect(usesJsonlOffsetResume("omp", "/x/s.jsonl")).toBe(true);
     expect(usesJsonlOffsetResume("copilot-cli", "/x/process.log")).toBe(true);
-    expect(usesJsonlOffsetResume("vscode-copilot", "/x/edit.jsonl")).toBe(true);
+    expect(usesJsonlOffsetResume("vscode-copilot", "/x/edit.jsonl")).toBe(false);
     expect(usesJsonlOffsetResume("vscode-copilot", "/x/edit.json")).toBe(false);
     expect(usesJsonlOffsetResume("gemini-cli", "/x/session.json")).toBe(false);
     expect(usesJsonlOffsetResume("hermes", "/x/state.db")).toBe(false);

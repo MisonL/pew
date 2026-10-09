@@ -13,15 +13,22 @@ import {
   MAX_SESSION_DURATION_SECONDS,
   VALID_SESSION_KINDS,
   VALID_SOURCES,
+  RETIRED_SOURCES,
 } from "./constants.js";
 
 // ---------------------------------------------------------------------------
 // Primitive validators
 // ---------------------------------------------------------------------------
 
-/** Check if value is one of the supported Source values */
+/** Check active or historical identities for stored records. */
 export function isValidSource(s: unknown): s is Source {
   return typeof s === "string" && VALID_SOURCES.has(s);
+}
+
+export function isRetiredSourceRecord(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const source = (value as Record<string, unknown>).source;
+  return typeof source === "string" && RETIRED_SOURCES.some((retired) => retired === source);
 }
 
 /** Check if value is a valid SessionKind */

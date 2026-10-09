@@ -15,7 +15,7 @@ import { agentColor } from "@/lib/palette";
 import { sourceLabel } from "@/lib/usage-transforms";
 import { cn } from "@/lib/utils";
 
-/** Supported agents — keep in sync with @pew/core SOURCES / VALID_SOURCES */
+/** Supported agents come from the active source list. */
 const AGENTS = SOURCES;
 
 const INSTALL_CMD = "npm install -g @nocoo/pew";

@@ -229,7 +229,7 @@ describe("parsePiFile", () => {
     expect(result.endOffset).toBe(st.size);
   });
 
-  it("tags deltas with the requested source (omp shares the pi schema)", async () => {
+  it("tags deltas with the Pi source", async () => {
     const filePath = join(testDir, "session.jsonl");
     const lines = [
       JSON.stringify({
@@ -261,10 +261,10 @@ describe("parsePiFile", () => {
     ];
     await writeFile(filePath, `${lines.join("\n")}\n`);
 
-    const result = await parsePiFile({ filePath, startOffset: 0, source: "omp" });
+    const result = await parsePiFile({ filePath, startOffset: 0 });
     expect(result.deltas).toHaveLength(1);
     expect(result.deltas[0]).toEqual({
-      source: "omp",
+      source: "pi",
       model: "claude-opus-5",
       timestamp: "2026-08-02T23:13:31.892Z",
       tokens: {

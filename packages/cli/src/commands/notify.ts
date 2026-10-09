@@ -1,5 +1,6 @@
 import { readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isRetiredSource } from "../utils/retired-sources.js";
 import type { CoordinatorRunResult, Source, SyncCycleResult, SyncTrigger } from "@pew/core";
 import { executeSync, type SyncOptions } from "./sync.js";
 import {
@@ -22,9 +23,7 @@ export interface NotifyOptions extends SyncOptions {
   multicaCodexDirs?: string[];
   /** Factory for opening the OpenCode SQLite DB for sessions (DI for testability) */
   openSessionDb?: SessionSyncOptions["openSessionDb"];
-  /** Factory for opening the ZCode SQLite DB for sessions (DI for testability) */
-  openZcodeSessionDb?: SessionSyncOptions["openZcodeSessionDb"];
-  /** CLI version string for run log */
+    /** CLI version string for run log */
   version?: string;
   /**
    * Handler-supplied bucket-end timestamp (epoch ms). Worker sleeps until
@@ -46,6 +45,10 @@ export interface NotifyOptions extends SyncOptions {
 export async function executeNotify(
   opts: NotifyOptions,
 ): Promise<CoordinatorRunResult> {
+  if (isRetiredSource(opts.source)) return {
+    runId: "retired-source", triggers: [], cycles: [], hadFollowUp: false, followUpCount: 0,
+    waitedForLock: false, skippedSync: true, skippedReason: "retired-source", degradedToUnlocked: false,
+  };
   const coordinatedSyncFn = opts.coordinatedSyncFn ?? coordinatedSync;
   const executeSyncFn =
     opts.executeSyncFn ??
@@ -60,11 +63,9 @@ export async function executeNotify(
           claudeDir: opts.claudeDir,
           codexSessionsDir: opts.codexSessionsDir,
           multicaCodexDirs: opts.multicaCodexDirs,
-          geminiDir: opts.geminiDir,
+
           antigravityDir: opts.antigravityDir,
-          kosmosDataDir: opts.kosmosDataDir,
-          pmstudioDataDir: opts.pmstudioDataDir,
-          ompSessionsDir: opts.ompSessionsDir,
+
           openCodeMessageDir: opts.openCodeMessageDir,
           openCodeDbPath: opts.openCodeDbPath,
           openMessageDb: opts.openMessageDb,
@@ -73,13 +74,12 @@ export async function executeNotify(
           openHermesDb: opts.openHermesDb,
           openclawDir: opts.openclawDir,
           piSessionsDir: opts.piSessionsDir,
-          vscodeCopilotDirs: opts.vscodeCopilotDirs,
+
           copilotCliLogsDir: opts.copilotCliLogsDir,
           copilotCliOtelPaths: opts.copilotCliOtelPaths,
           grokLogsPath: opts.grokLogsPath,
           grokSessionsDir: opts.grokSessionsDir,
-          zcodeDbPath: opts.zcodeDbPath,
-          openZcodeDb: opts.openZcodeDb,
+
         });
         cycle.tokenSync = {
           totalDeltas: tokenResult.totalDeltas,
@@ -99,11 +99,9 @@ export async function executeNotify(
           claudeDir: opts.claudeDir,
           codexSessionsDir: opts.codexSessionsDir,
           multicaCodexDirs: opts.multicaCodexDirs,
-          geminiDir: opts.geminiDir,
+
           antigravityDir: opts.antigravityDir,
-          kosmosDataDir: opts.kosmosDataDir,
-          pmstudioDataDir: opts.pmstudioDataDir,
-          ompSessionsDir: opts.ompSessionsDir,
+
           openCodeMessageDir: opts.openCodeMessageDir,
           openCodeDbPath: opts.openCodeDbPath,
           openSessionDb: opts.openSessionDb,
@@ -111,8 +109,7 @@ export async function executeNotify(
           piSessionsDir: opts.piSessionsDir,
           grokLogsPath: opts.grokLogsPath,
           grokSessionsDir: opts.grokSessionsDir,
-          zcodeDbPath: opts.zcodeDbPath,
-          openZcodeSessionDb: opts.openZcodeSessionDb,
+
         });
         cycle.sessionSync = {
           totalSnapshots: sessionResult.totalSnapshots,

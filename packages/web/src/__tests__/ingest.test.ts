@@ -231,7 +231,7 @@ describe("POST /api/ingest", () => {
 
       const records = [
         VALID_RECORD,
-        { ...VALID_RECORD, source: "gemini-cli", model: "gemini-2.5-pro" },
+        { ...VALID_RECORD, source: "codex", model: "gpt-6-astra" },
         { ...VALID_RECORD, source: "opencode", model: "o3" },
       ];
       const res = await POST(makeRequest(records, undefined, VALID_VERSION));

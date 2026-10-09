@@ -14,15 +14,10 @@ export type SessionSyncSourceKey =
   | "claude"
   | "codex"
   | "copilotCli"
-  | "gemini"
   | "grok"
-  | "kosmos"
-  | "omp"
   | "opencode"
   | "openclaw"
-  | "pi"
-  | "pmstudio"
-  | "zcode";
+  | "pi";
 
 /**
  * Convert a SessionSnapshot to a SessionQueueRecord for upload.
@@ -60,17 +55,17 @@ export function sourceKey(source: Source): SessionSyncSourceKey | null {
     case "claude-code": return "claude";
     case "codex": return "codex";
     case "copilot-cli": return "copilotCli";
-    case "gemini-cli": return "gemini";
     case "grok": return "grok";
-    case "kosmos": return "kosmos";
-    case "omp": return "omp";
     case "opencode": return "opencode";
     case "openclaw": return "openclaw";
     case "pi": return "pi";
-    case "pmstudio": return "pmstudio";
-    case "vscode-copilot": return null;
+    case "gemini-cli":
+    case "kosmos":
+    case "omp":
+    case "pmstudio":
+    case "vscode-copilot":
+    case "zcode": return null;
     case "hermes": return null;
-    case "zcode": return "zcode";
     default: {
       // Exhaustiveness check — if Source adds a new value, this will fail to compile
       const _exhaustive: never = source;

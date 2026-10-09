@@ -66,7 +66,7 @@ describe("resolveDefaultPaths", () => {
       join("/fakehome", ".config", "pew", "bin", "notify.cjs"),
     );
     expect(paths.claudeDir).toBe(join("/fakehome", ".claude"));
-    expect(paths.geminiDir).toBe(join("/fakehome", ".gemini"));
+
     expect(paths.antigravityDir).toBe(join("/fakehome", ".gemini", "antigravity-cli", "conversations"));
     expect(paths.openCodeMessageDir).toBe(
       join("/fakehome", ".local", "share", "opencode", "storage", "message"),
@@ -78,8 +78,7 @@ describe("resolveDefaultPaths", () => {
     expect(paths.grokHome).toBe(join("/fakehome", ".grok"));
     expect(paths.grokLogsPath).toBe(join("/fakehome", ".grok", "logs", "unified.jsonl"));
     expect(paths.grokSessionsDir).toBe(join("/fakehome", ".grok", "sessions"));
-    expect(paths.zcodeHome).toBe(join("/fakehome", ".zcode"));
-    expect(paths.zcodeDbPath).toBe(join("/fakehome", ".zcode", "cli", "db", "db.sqlite"));
+
   });
 
   it("should use actual homedir when no argument passed", () => {
@@ -92,15 +91,6 @@ describe("resolveDefaultPaths", () => {
   it("should resolve codexSessionsDir with default CODEX_HOME", () => {
     const paths = resolveDefaultPaths("/fakehome");
     expect(paths.codexSessionsDir).toBe(join("/fakehome", ".codex", "sessions"));
-  });
-
-  it("should resolve vscodeCopilotDirs for stable and insiders", () => {
-    const paths = resolveDefaultPaths("/fakehome");
-    expect(paths.vscodeCopilotDirs).toBeInstanceOf(Array);
-    expect(paths.vscodeCopilotDirs).toHaveLength(2);
-    // Both dirs should contain "Code" (stable) or "Code - Insiders"
-    expect(paths.vscodeCopilotDirs[0]).toContain("Code");
-    expect(paths.vscodeCopilotDirs[1]).toContain("Code - Insiders");
   });
 
   it("should resolve copilotCliLogsDir to ~/.copilot/logs", () => {
@@ -146,7 +136,7 @@ describe("resolveDefaultPaths", () => {
     expect(paths.hermesProfileDbPaths[0].dbKey).toBe("profiles/tomato");
   });
 
-  it("should return exactly 25 path properties", () => {
+  it("should return exactly 18 path properties", () => {
     const keys = [
       "antigravityDir",
       "stateDir",
@@ -156,23 +146,16 @@ describe("resolveDefaultPaths", () => {
       "codexSessionsDir",
       "copilotCliLogsDir",
       "copilotCliOtelPaths",
-      "geminiDir",
       "grokHome",
       "grokLogsPath",
       "grokSessionsDir",
       "hermesDbPath",
       "hermesProfileDbPaths",
-      "kosmosDataDir",
       "multicaCodexDirs",
-      "ompSessionsDir",
       "openCodeDbPath",
       "openCodeMessageDir",
       "openclawDir",
       "piSessionsDir",
-      "pmstudioDataDir",
-      "vscodeCopilotDirs",
-      "zcodeHome",
-      "zcodeDbPath",
     ];
     const paths = resolveDefaultPaths("/fakehome");
     expect(Object.keys(paths)).toHaveLength(keys.length);

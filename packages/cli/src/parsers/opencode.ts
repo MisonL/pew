@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { Source, TokenDelta } from "@pew/core";
 import type { ParsedDelta } from "./claude.js";
-import { diffTotals } from "./gemini.js";
+import { diffTotals } from "../utils/token-delta.js";
 import { isAllZero, toNonNegInt } from "../utils/token-delta.js";
 import { coerceEpochMs } from "../utils/time.js";
 import { decimalCost, inclusiveAccounting, optionalToken } from "../utils/accounting.js";

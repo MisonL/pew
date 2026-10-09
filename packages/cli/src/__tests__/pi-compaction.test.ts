@@ -86,11 +86,6 @@ describe("Pi compaction accounting", () => {
     expect((await parsePiFile({ filePath, startOffset: 0 })).deltas).toEqual([]);
   });
 
-  it("does not enable compaction accounting for the separate Oh My Pi source", async () => {
-    await fixture([header, model, compact]);
-    expect((await parsePiFile({ filePath, startOffset: 0, source: "omp" })).deltas).toEqual([]);
-  });
-
   it("recognizes inherited compactions after Pi forks history under a new session header", async () => {
     await fixture([header, model, compact]);
     const original = await parsePiFile({ filePath, startOffset: 0 });

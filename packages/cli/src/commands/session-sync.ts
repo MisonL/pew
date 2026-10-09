@@ -18,8 +18,8 @@ import { stat } from "node:fs/promises";
 import type {
   SessionSnapshot,
   SessionFileCursor,
+  SessionCursorState,
   OpenCodeSqliteSessionCursor,
-  ZcodeSqliteSessionCursor,
 } from "@pew/core";
 import { SessionCursorStore } from "../storage/session-cursor-store.js";
 import { SessionQueue } from "../storage/session-queue.js";
@@ -29,10 +29,11 @@ import type { OnCorruptLine } from "../storage/base-queue.js";
 import { deduplicateSessionRecords } from "./session-upload.js";
 import { createSessionDrivers } from "../drivers/registry.js";
 import { toQueueRecord, sourceKey } from "./session-sync-helpers.js";
-import type { ZcodeSessionDb } from "../parsers/zcode-types.js";
+
 export { toQueueRecord, sourceKey } from "./session-sync-helpers.js";
 import type { FileFingerprint } from "../drivers/types.js";
 import type { SessionRow, SessionMessageRow } from "../parsers/opencode-sqlite-session.js";
+import { isRetiredCursorPath } from "../utils/retired-sources.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -51,9 +52,7 @@ export interface SessionSyncOptions {
   multicaCodexDirs?: string[];
   /** Override: Copilot CLI logs directory (~/.copilot/logs) */
   copilotCliLogsDir?: string;
-  /** Override: Gemini data directory (~/.gemini) */
-  geminiDir?: string;
-  /** Override: OpenCode message directory (~/.local/share/opencode/storage/message) */
+    /** Override: OpenCode message directory (~/.local/share/opencode/storage/message) */
   openCodeMessageDir?: string;
   /** Override: OpenCode SQLite database path (~/.local/share/opencode/opencode.db) */
   openCodeDbPath?: string;
@@ -65,23 +64,13 @@ export interface SessionSyncOptions {
   } | null;
   /** Override: OpenClaw data directory (~/.openclaw) */
   openclawDir?: string;
-  /** Override: Oh My Pi session directory (~/.omp/agent/sessions) */
-  ompSessionsDir?: string;
-  /** Override: Pi session directory (~/.pi/agent/sessions) */
+    /** Override: Pi session directory (~/.pi/agent/sessions) */
   piSessionsDir?: string;
-  /** Override: Kosmos data directory (kosmos-app) */
-  kosmosDataDir?: string;
-  /** Override: PM Studio data directory (pm-studio-app) */
-  pmstudioDataDir?: string;
-  /** Override: Grok CLI unified log path (~/.grok/logs/unified.jsonl) */
+      /** Override: Grok CLI unified log path (~/.grok/logs/unified.jsonl) */
   grokLogsPath?: string;
   /** Override: Grok CLI sessions directory (~/.grok/sessions) */
   grokSessionsDir?: string;
-  /** Override: ZCode CLI SQLite database path (~/.zcode/cli/db/db.sqlite) */
-  zcodeDbPath?: string;
-  /** Factory for opening the ZCode SQLite DB for sessions (DI for testability) */
-  openZcodeSessionDb?: (dbPath: string) => ZcodeSessionDb | null;
-  /** Progress callback */
+      /** Progress callback */
   onProgress?: (event: SessionProgressEvent) => void;
   /** Callback invoked when a corrupted JSONL line is found in the queue */
   onCorruptLine?: OnCorruptLine;
@@ -105,15 +94,13 @@ export interface SessionSyncResult {
     claude: number;
     codex: number;
     copilotCli: number;
-    gemini: number;
+
     grok: number;
-    kosmos: number;
-    omp: number;
+
     opencode: number;
     openclaw: number;
     pi: number;
-    pmstudio: number;
-    zcode: number;
+
   };
   /** Total files/directories scanned per source */
   filesScanned: {
@@ -121,21 +108,19 @@ export interface SessionSyncResult {
     claude: number;
     codex: number;
     copilotCli: number;
-    gemini: number;
+
     grok: number;
-    kosmos: number;
-    omp: number;
+
     opencode: number;
     openclaw: number;
     pi: number;
-    pmstudio: number;
-    zcode: number;
+
   };
   /** Total SQLite databases scanned per source */
   dbsScanned: {
     antigravity: number;
     opencode: number;
-    zcode: number;
+
   };
 }
 
@@ -171,12 +156,13 @@ async function sessionSyncLocked(
 
   const cursorStore = new SessionCursorStore(stateDir);
   const queue = new SessionQueue(stateDir, opts.onCorruptLine);
-  const cursors = await cursorStore.load();
+  const cursors = Object.fromEntries(Object.entries(await cursorStore.load()).filter(([key]) => key !== "zcodeSqlite")) as SessionCursorState;
+  cursors.files = Object.fromEntries(Object.entries(cursors.files).filter(([path]) => !isRetiredCursorPath(path)));
 
   const allSnapshots: SessionSnapshot[] = [];
-  const sourceCounts = { antigravity: 0, claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, zcode: 0 };
-  const filesScanned = { antigravity: 0, claude: 0, codex: 0, copilotCli: 0, gemini: 0, grok: 0, kosmos: 0, omp: 0, opencode: 0, openclaw: 0, pi: 0, pmstudio: 0, zcode: 0 };
-  const dbsScanned = { antigravity: 0, opencode: 0, zcode: 0 };
+  const sourceCounts = { antigravity: 0, claude: 0, codex: 0, copilotCli: 0,  grok: 0,   opencode: 0, openclaw: 0, pi: 0, };
+  const filesScanned = { antigravity: 0, claude: 0, codex: 0, copilotCli: 0,  grok: 0,   opencode: 0, openclaw: 0, pi: 0, };
+  const dbsScanned = { antigravity: 0, opencode: 0 };
 
   if (opts.antigravityDir) {
     try {
@@ -206,10 +192,7 @@ async function sessionSyncLocked(
     codexSessionsDir: opts.codexSessionsDir,
     multicaCodexDirs: opts.multicaCodexDirs,
     copilotCliLogsDir: opts.copilotCliLogsDir,
-    geminiDir: opts.geminiDir,
-    kosmosDataDir: opts.kosmosDataDir,
-    pmstudioDataDir: opts.pmstudioDataDir,
-    ompSessionsDir: opts.ompSessionsDir,
+
     openCodeMessageDir: opts.openCodeMessageDir,
     openCodeDbPath: opts.openCodeDbPath,
     openclawDir: opts.openclawDir,
@@ -221,7 +204,7 @@ async function sessionSyncLocked(
   // ---------- Phase 1: File-based drivers (generic loop) ----------
   for (const driver of fileDrivers) {
     const key = sourceKey(driver.source);
-    if (!key) continue; // source has no session driver (e.g. vscode-copilot, copilot-cli)
+    if (!key) continue; // source has no session driver
 
     onProgress?.({
       source: driver.source,
@@ -335,46 +318,15 @@ async function sessionSyncLocked(
     }
   }
 
-  // ZCode session pre-check: only filter zcode session driver on failure.
-  // See docs/43-zcode-support.md §二挑战 7.
-  if (opts.zcodeDbPath) {
-    const dbStat = await stat(opts.zcodeDbPath).catch(() => null);
-    if (dbStat) {
-      if (!opts.openZcodeSessionDb) {
-        onProgress?.({
-          source: "zcode-sqlite",
-          phase: "warn",
-          message: `ZCode SQLite database found at ${opts.zcodeDbPath} but SQLite is not available — ZCode session data will NOT be synced`,
-        });
-        activeDbDrivers = activeDbDrivers.filter((d) => d.source !== "zcode");
-      } else {
-        const handle = opts.openZcodeSessionDb(opts.zcodeDbPath);
-        if (!handle) {
-          onProgress?.({
-            source: "zcode-sqlite",
-            phase: "warn",
-            message: `Failed to open ZCode SQLite database at ${opts.zcodeDbPath} — ZCode session data will NOT be synced`,
-          });
-          activeDbDrivers = activeDbDrivers.filter((d) => d.source !== "zcode");
-        } else {
-          handle.close();
-        }
-      }
-    }
-  }
-
   for (const driver of activeDbDrivers) {
     const key = sourceKey(driver.source);
     if (!key) continue;
 
     const isOpenCode = driver.source === "opencode";
-    const isZcode = driver.source === "zcode";
     const displayName = isOpenCode
       ? "OpenCode SQLite"
-      : isZcode
-        ? "ZCode SQLite"
         : `${driver.source} SQLite`;
-    const displayTag = isZcode ? "zcode-sqlite" : "opencode-sqlite";
+    const displayTag = "opencode-sqlite";
 
     onProgress?.({
       source: displayTag,
@@ -384,13 +336,11 @@ async function sessionSyncLocked(
 
     // Count DB as 1 database scanned for the source
     if (isOpenCode) dbsScanned.opencode += 1;
-    else if (isZcode) dbsScanned.zcode += 1;
 
     let prevCursor: unknown;
     if (isOpenCode) {
       prevCursor = cursors.openCodeSqlite;
-    } else if (isZcode) {
-      prevCursor = cursors.zcodeSqlite;
+
     }
 
     let result: Awaited<ReturnType<typeof driver.run>>;
@@ -416,8 +366,7 @@ async function sessionSyncLocked(
 
     if (isOpenCode) {
       cursors.openCodeSqlite = result.cursor as OpenCodeSqliteSessionCursor;
-    } else if (isZcode) {
-      cursors.zcodeSqlite = result.cursor as ZcodeSqliteSessionCursor;
+
     }
 
     allSnapshots.push(...result.snapshots);

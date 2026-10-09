@@ -3,7 +3,6 @@
  *
  * Full-scans a pi-format JSONL session file and extracts session-level
  * metadata. Pi stores one session per file with a tree structure (id/parentId).
- * Oh My Pi (omp) writes the identical schema — `source` selects the tag.
  *
  * Session header (first line): { type: "session", id, timestamp, cwd }
  * Messages: { type: "message", message: { role, model, usage, ... } }
@@ -13,14 +12,14 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import { createInterface } from "node:readline";
-import type { SessionSnapshot, Source } from "@pew/core";
+import type { SessionSnapshot } from "@pew/core";
 import { hashProjectRef } from "../utils/hash-project-ref.js";
 
 /**
  * A root session file stem: `<ISO-with-dashes>Z_<uuid>`, e.g.
  * `2026-08-02T23-13-02-103Z_019fc4c0-9097-7000-868a-7b93e2205b9b`.
  *
- * Both pi and omp name root session files this way. omp additionally creates
+ * Pi names root session files this way. Nested agents create
  * a sibling *directory* with the same stem holding per-agent transcripts, so
  * a parent directory matching this pattern means "the file is a nested agent
  * transcript, not a root session".
@@ -62,10 +61,8 @@ function locateSession(filePath: string): { dirName: string; nested: boolean } {
  * Extract project reference from a pi-format session file path.
  *
  * Pi stores sessions under ~/.pi/agent/sessions/<encoded-cwd>/<file>.jsonl,
- * omp under ~/.omp/agent/sessions/<encoded-cwd>/<file>.jsonl. The
- * <encoded-cwd> directory name is a path encoding — pi wraps the absolute
- * path in double dashes ("--Users-me-projects-pew--"), omp strips the home
- * prefix ("-projects-pew"), so the same repo hashes differently per source.
+ * The <encoded-cwd> directory name wraps the absolute path in double dashes
+ * ("--Users-me-projects-pew--").
  *
  * We hash the directory name through hashProjectRef() for privacy.
  */
@@ -83,14 +80,14 @@ function extractProjectRef(dirName: string): string | null {
  * - Timestamps for wall-clock duration
  * - Last seen model
  *
- * omp writes task-subagent and advisor transcripts as nested files carrying
+ * Task-subagent and advisor transcripts are nested files carrying
  * their own `type: "session"` header. Those are agent-driven, so they are
  * reported as `kind: "automated"` and attributed to the parent project dir.
  */
 export async function collectPiSessions(
   filePath: string,
-  source: Source = "pi",
 ): Promise<SessionSnapshot[]> {
+  const source = "pi";
   const st = await stat(filePath).catch(() => null);
   if (!st?.isFile() || st.size === 0) return [];
 

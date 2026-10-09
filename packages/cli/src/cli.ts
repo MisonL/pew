@@ -1,3 +1,4 @@
+import { isRetiredSource } from "./utils/retired-sources.js";
 import { defineCommand, showUsage, pc, readVersion, openBrowser } from "@nocoo/base-cli";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -121,9 +122,7 @@ function logSyncProgress(event: {
   if (
     (event.source === "antigravity" ||
       event.source === "opencode-sqlite" ||
-      event.source === "opencode" ||
-      event.source === "zcode-sqlite" ||
-      event.source === "zcode") &&
+      event.source === "opencode") &&
     event.message &&
     (event.phase === "discover" || event.phase === "parse")
   ) {
@@ -152,9 +151,7 @@ function logSessionSyncProgress(event: {
   if (
     (event.source === "antigravity" ||
       event.source === "opencode-sqlite" ||
-      event.source === "opencode" ||
-      event.source === "zcode-sqlite" ||
-      event.source === "zcode") &&
+      event.source === "opencode") &&
     event.message &&
     (event.phase === "discover" || event.phase === "parse")
   ) {
@@ -178,18 +175,16 @@ const SOURCE_LABELS: Record<string, string> = {
   antigravity: "Antigravity CLI",
   claude: "Claude",
   codex: "Codex",
-  gemini: "Gemini",
+
   grok: "Grok",
-  kosmos: "Kosmos",
-  omp: "Oh My Pi",
+
   opencode: "OpenCode",
   openclaw: "OpenClaw",
   pi: "Pi",
-  pmstudio: "PM Studio",
-  vscodeCopilot: "VSCode Copilot",
+
   copilotCli: "Copilot CLI",
   hermes: "Hermes",
-  zcode: "ZCode",
+
 };
 
 /**
@@ -252,8 +247,7 @@ export const syncCommand = defineCommand({
     let openMessageDb: typeof import("./parsers/opencode-sqlite-db.js").openMessageDb | undefined;
     let openSessionDb: typeof import("./parsers/opencode-sqlite-db.js").openSessionDb | undefined;
     let openHermesDb: typeof import("./parsers/hermes-sqlite-db.js").openHermesDb | undefined;
-    let openZcodeDb: typeof import("./parsers/zcode-sqlite-db.js").openZcodeUsageDb | undefined;
-    let openZcodeSessionDb: typeof import("./parsers/zcode-sqlite-session-db.js").openZcodeSessionDb | undefined;
+
     try {
       const mod = await import("./parsers/opencode-sqlite-db.js");
       openMessageDb = mod.openMessageDb;
@@ -264,18 +258,6 @@ export const syncCommand = defineCommand({
     try {
       const hermesModule = await import("./parsers/hermes-sqlite-db.js");
       openHermesDb = hermesModule.openHermesDb;
-    } catch {
-      // SQLite adapter not available on this runtime
-    }
-    try {
-      const zcodeModule = await import("./parsers/zcode-sqlite-db.js");
-      openZcodeDb = zcodeModule.openZcodeUsageDb;
-    } catch {
-      // SQLite adapter not available on this runtime
-    }
-    try {
-      const zcodeSessionModule = await import("./parsers/zcode-sqlite-session-db.js");
-      openZcodeSessionDb = zcodeSessionModule.openZcodeSessionDb;
     } catch {
       // SQLite adapter not available on this runtime
     }
@@ -290,9 +272,7 @@ export const syncCommand = defineCommand({
       claudeDir: paths.claudeDir,
       codexSessionsDir: paths.codexSessionsDir,
       multicaCodexDirs: paths.multicaCodexDirs,
-      geminiDir: paths.geminiDir,
-      kosmosDataDir: paths.kosmosDataDir,
-      pmstudioDataDir: paths.pmstudioDataDir,
+
       openCodeMessageDir: paths.openCodeMessageDir,
       openCodeDbPath: paths.openCodeDbPath,
       openMessageDb,
@@ -300,16 +280,16 @@ export const syncCommand = defineCommand({
       hermesProfileDbPaths: paths.hermesProfileDbPaths,
       openHermesDb,
       openclawDir: paths.openclawDir,
-      ompSessionsDir: paths.ompSessionsDir,
+
       piSessionsDir: paths.piSessionsDir,
-      vscodeCopilotDirs: paths.vscodeCopilotDirs,
+
       copilotCliLogsDir: paths.copilotCliLogsDir,
       copilotCliOtelPaths: paths.copilotCliOtelPaths,
       grokLogsPath: paths.grokLogsPath,
       grokSessionsDir: paths.grokSessionsDir,
-      zcodeDbPath: paths.zcodeDbPath,
+
       antigravityDir: paths.antigravityDir,
-      openZcodeDb,
+
       onCorruptLine: handleCorruptLine,
       onProgress(event) {
         logSyncProgress(event);
@@ -328,18 +308,16 @@ export const syncCommand = defineCommand({
       const deltaParts: string[] = [];
       if (result.sources.claude > 0) deltaParts.push(`Claude: ${result.sources.claude}`);
       if (result.sources.codex > 0) deltaParts.push(`Codex: ${result.sources.codex}`);
-      if (result.sources.gemini > 0) deltaParts.push(`Gemini: ${result.sources.gemini}`);
+
       if (result.sources.grok > 0) deltaParts.push(`Grok: ${result.sources.grok}`);
-      if (result.sources.kosmos > 0) deltaParts.push(`Kosmos: ${result.sources.kosmos}`);
-      if (result.sources.omp > 0) deltaParts.push(`Oh My Pi: ${result.sources.omp}`);
+
       if (result.sources.opencode > 0) deltaParts.push(`OpenCode: ${result.sources.opencode}`);
       if (result.sources.openclaw > 0) deltaParts.push(`OpenClaw: ${result.sources.openclaw}`);
       if (result.sources.pi > 0) deltaParts.push(`Pi: ${result.sources.pi}`);
-      if (result.sources.pmstudio > 0) deltaParts.push(`PM Studio: ${result.sources.pmstudio}`);
-      if (result.sources.vscodeCopilot > 0) deltaParts.push(`VSCode Copilot: ${result.sources.vscodeCopilot}`);
+
       if (result.sources.copilotCli > 0) deltaParts.push(`Copilot CLI: ${result.sources.copilotCli}`);
       if (result.sources.hermes > 0) deltaParts.push(`Hermes: ${result.sources.hermes}`);
-      if (result.sources.zcode > 0) deltaParts.push(`ZCode: ${result.sources.zcode}`);
+
       if (result.sources.antigravity > 0) deltaParts.push(`Antigravity CLI: ${result.sources.antigravity}`);
       if (deltaParts.length > 0) {
         log.text(pc.dim(deltaParts.join("  ")));
@@ -360,20 +338,18 @@ export const syncCommand = defineCommand({
       codexSessionsDir: paths.codexSessionsDir,
       multicaCodexDirs: paths.multicaCodexDirs,
       copilotCliLogsDir: paths.copilotCliLogsDir,
-      geminiDir: paths.geminiDir,
-      kosmosDataDir: paths.kosmosDataDir,
-      pmstudioDataDir: paths.pmstudioDataDir,
+
       openCodeMessageDir: paths.openCodeMessageDir,
       openCodeDbPath: paths.openCodeDbPath,
       openSessionDb,
       openclawDir: paths.openclawDir,
-      ompSessionsDir: paths.ompSessionsDir,
+
       piSessionsDir: paths.piSessionsDir,
       grokLogsPath: paths.grokLogsPath,
       grokSessionsDir: paths.grokSessionsDir,
-      zcodeDbPath: paths.zcodeDbPath,
+
       antigravityDir: paths.antigravityDir,
-      openZcodeSessionDb,
+
       onCorruptLine: handleCorruptLine,
       onProgress(event) {
         logSessionSyncProgress(event);
@@ -392,14 +368,11 @@ export const syncCommand = defineCommand({
       if (sessionResult.sources.claude > 0) sessParts.push(`Claude: ${sessionResult.sources.claude}`);
       if (sessionResult.sources.codex > 0) sessParts.push(`Codex: ${sessionResult.sources.codex}`);
       if (sessionResult.sources.copilotCli > 0) sessParts.push(`Copilot CLI: ${sessionResult.sources.copilotCli}`);
-      if (sessionResult.sources.gemini > 0) sessParts.push(`Gemini: ${sessionResult.sources.gemini}`);
-      if (sessionResult.sources.kosmos > 0) sessParts.push(`Kosmos: ${sessionResult.sources.kosmos}`);
-      if (sessionResult.sources.omp > 0) sessParts.push(`Oh My Pi: ${sessionResult.sources.omp}`);
+
       if (sessionResult.sources.opencode > 0) sessParts.push(`OpenCode: ${sessionResult.sources.opencode}`);
       if (sessionResult.sources.openclaw > 0) sessParts.push(`OpenClaw: ${sessionResult.sources.openclaw}`);
       if (sessionResult.sources.pi > 0) sessParts.push(`Pi: ${sessionResult.sources.pi}`);
-      if (sessionResult.sources.pmstudio > 0) sessParts.push(`PM Studio: ${sessionResult.sources.pmstudio}`);
-      if (sessionResult.sources.zcode > 0) sessParts.push(`ZCode: ${sessionResult.sources.zcode}`);
+
       if (sessionResult.sources.antigravity > 0) sessParts.push(`Antigravity CLI: ${sessionResult.sources.antigravity}`);
       if (sessParts.length > 0) {
         log.text(pc.dim(sessParts.join("  ")));
@@ -433,14 +406,11 @@ const statusCommand = defineCommand({
       sourceDirs: {
         claudeDir: paths.claudeDir,
         codexSessionsDir: paths.codexSessionsDir,
-        geminiDir: paths.geminiDir,
-        kosmosDataDir: paths.kosmosDataDir,
-        pmstudioDataDir: paths.pmstudioDataDir,
-        ompSessionsDir: paths.ompSessionsDir,
+
         openCodeMessageDir: paths.openCodeMessageDir,
         openclawDir: paths.openclawDir,
         piSessionsDir: paths.piSessionsDir,
-        vscodeCopilotDirs: paths.vscodeCopilotDirs,
+
         copilotCliLogsDir: paths.copilotCliLogsDir,
         copilotCliOtelPaths: paths.copilotCliOtelPaths,
         multicaCodexDirs: paths.multicaCodexDirs,
@@ -693,6 +663,7 @@ const notifyCommand = defineCommand({
       process.exitCode = 1;
       return;
     }
+    if (isRetiredSource(args.source)) return;
 
     const paths = resolveDefaultPaths();
 
@@ -701,8 +672,7 @@ const notifyCommand = defineCommand({
     let openMessageDb2: typeof import("./parsers/opencode-sqlite-db.js").openMessageDb | undefined;
     let openSessionDb2: typeof import("./parsers/opencode-sqlite-db.js").openSessionDb | undefined;
     let openHermesDb2: typeof import("./parsers/hermes-sqlite-db.js").openHermesDb | undefined;
-    let openZcodeDb2: typeof import("./parsers/zcode-sqlite-db.js").openZcodeUsageDb | undefined;
-    let openZcodeSessionDb2: typeof import("./parsers/zcode-sqlite-session-db.js").openZcodeSessionDb | undefined;
+
     try {
       const mod = await import("./parsers/opencode-sqlite-db.js");
       openMessageDb2 = mod.openMessageDb;
@@ -713,18 +683,6 @@ const notifyCommand = defineCommand({
     try {
       const hermesModule = await import("./parsers/hermes-sqlite-db.js");
       openHermesDb2 = hermesModule.openHermesDb;
-    } catch {
-      // SQLite adapter not available on this runtime
-    }
-    try {
-      const zcodeModule = await import("./parsers/zcode-sqlite-db.js");
-      openZcodeDb2 = zcodeModule.openZcodeUsageDb;
-    } catch {
-      // SQLite adapter not available on this runtime
-    }
-    try {
-      const zcodeSessionModule = await import("./parsers/zcode-sqlite-session-db.js");
-      openZcodeSessionDb2 = zcodeSessionModule.openZcodeSessionDb;
     } catch {
       // SQLite adapter not available on this runtime
     }
@@ -742,10 +700,7 @@ const notifyCommand = defineCommand({
       claudeDir: paths.claudeDir,
       codexSessionsDir: paths.codexSessionsDir,
       multicaCodexDirs: paths.multicaCodexDirs,
-      geminiDir: paths.geminiDir,
-      kosmosDataDir: paths.kosmosDataDir,
-      pmstudioDataDir: paths.pmstudioDataDir,
-      ompSessionsDir: paths.ompSessionsDir,
+
       openCodeMessageDir: paths.openCodeMessageDir,
       openCodeDbPath: paths.openCodeDbPath,
       openMessageDb: openMessageDb2,
@@ -755,15 +710,14 @@ const notifyCommand = defineCommand({
       openSessionDb: openSessionDb2,
       openclawDir: paths.openclawDir,
       piSessionsDir: paths.piSessionsDir,
-      vscodeCopilotDirs: paths.vscodeCopilotDirs,
+
       copilotCliLogsDir: paths.copilotCliLogsDir,
       copilotCliOtelPaths: paths.copilotCliOtelPaths,
       grokLogsPath: paths.grokLogsPath,
       grokSessionsDir: paths.grokSessionsDir,
-      zcodeDbPath: paths.zcodeDbPath,
+
       antigravityDir: paths.antigravityDir,
-      openZcodeDb: openZcodeDb2,
-      openZcodeSessionDb: openZcodeSessionDb2,
+
       version: CLI_VERSION,
     });
 
@@ -981,15 +935,15 @@ export const enrichCommand = defineCommand({
     apply: { type: "boolean", description: "Apply verified details to the local outbox", default: false },
   },
   async run({ args }) {
-    if (args.source !== "all" && !isSource(args.source)) throw new Error("Invalid accounting source");
+    if (args.source !== "all" && (!isSource(args.source) || isRetiredSource(args.source))) throw new Error("Invalid accounting source");
     const paths = resolveDefaultPaths();
     const deviceId = new ConfigManager(paths.stateDir).getDeviceId();
     if (!deviceId) throw new Error("An existing Pew device ID is required; enrichment does not create or migrate device identity");
-    const [opencode, hermes, zcode] = await Promise.all([
-      import("./parsers/opencode-sqlite-db.js"), import("./parsers/hermes-sqlite-db.js"), import("./parsers/zcode-sqlite-db.js"),
+    const [opencode, hermes] = await Promise.all([
+      import("./parsers/opencode-sqlite-db.js"), import("./parsers/hermes-sqlite-db.js"),
     ]);
     const result = await executeEnrich({ ...paths, deviceId, source: args.source, from: args.from, to: args.to, apply: args.apply,
-      openMessageDb: opencode.openMessageDb, openHermesDb: hermes.openHermesDb, openZcodeDb: zcode.openZcodeUsageDb });
+      openMessageDb: opencode.openMessageDb, openHermesDb: hermes.openHermesDb });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   },
 });

@@ -14,14 +14,9 @@ import type { QueueRecord } from "@pew/core";
 const defaultDirs: SourceDirs = {
   claudeDir: "/home/.claude",
   codexSessionsDir: "/home/.codex/sessions",
-  geminiDir: "/home/.gemini",
-  kosmosDataDir: "/home/.config/kosmos-app",
-  pmstudioDataDir: "/home/.config/pm-studio-app",
-  ompSessionsDir: "/home/.omp/agent/sessions",
   openCodeMessageDir: "/home/.local/share/opencode/storage/message",
   openclawDir: "/home/.openclaw",
   piSessionsDir: "/home/.pi/agent/sessions",
-  vscodeCopilotDirs: ["/home/.config/Code/User"],
   copilotCliLogsDir: "/home/.copilot/logs",
   copilotCliOtelPaths: ["/home/runs"],
   multicaCodexDirs: [],
@@ -79,7 +74,7 @@ describe("executeStatus", () => {
       stateDir,
       sourceDirs: defaultDirs,
     });
-    expect(result.trackedFiles).toBe(2);
+    expect(result.trackedFiles).toBe(1);
     expect(result.lastSync).toBe("2026-03-07T10:00:00.000Z");
   });
 
@@ -96,8 +91,8 @@ describe("executeStatus", () => {
     });
 
     const result = await executeStatus({ stateDir, sourceDirs: defaultDirs });
-    expect(result.trackedFiles).toBe(3);
-    expect(result.sources).toEqual({ "gemini-cli": 1, antigravity: 2 });
+    expect(result.trackedFiles).toBe(2);
+    expect(result.sources).toEqual({ antigravity: 2 });
   });
 
   it("should omit Antigravity from tracked sources when its validated snapshot contains no databases", async () => {
@@ -186,13 +181,13 @@ describe("executeStatus", () => {
       stateDir,
       sourceDirs: defaultDirs,
     });
-    expect(result.trackedFiles).toBe(8);
+    expect(result.trackedFiles).toBe(6);
     expect(result.sources["claude-code"]).toBe(2);
-    expect(result.sources["gemini-cli"]).toBe(1);
+    expect(result.sources["gemini-cli"]).toBeUndefined();
     expect(result.sources.opencode).toBe(1);
     expect(result.sources.openclaw).toBe(1);
     expect(result.sources.codex).toBe(1);
-    expect(result.sources["vscode-copilot"]).toBe(1);
+    expect(result.sources["vscode-copilot"]).toBeUndefined();
     expect(result.sources["copilot-cli"]).toBe(1);
   });
 
@@ -296,8 +291,8 @@ describe("executeStatus", () => {
       stateDir,
       sourceDirs: defaultDirs,
     });
-    expect(result.trackedFiles).toBe(1);
-    expect(result.sources["vscode-copilot"]).toBe(1);
+    expect(result.trackedFiles).toBe(0);
+    expect(result.sources["vscode-copilot"]).toBeUndefined();
     expect(result.sources.unknown).toBeUndefined();
   });
 
@@ -462,10 +457,10 @@ describe("executeStatus", () => {
       stateDir,
       sourceDirs: defaultDirs,
     });
-    expect(result.trackedFiles).toBe(5);
-    expect(result.sources.kosmos).toBe(1);
-    expect(result.sources.pmstudio).toBe(1);
-    expect(result.sources.omp).toBe(1);
+    expect(result.trackedFiles).toBe(2);
+    expect(result.sources.kosmos).toBeUndefined();
+    expect(result.sources.pmstudio).toBeUndefined();
+    expect(result.sources.omp).toBeUndefined();
     expect(result.sources.pi).toBe(1);
     expect(result.sources.unknown).toBe(1);
   });

@@ -42,6 +42,22 @@ function ingest(path: string, records: unknown[]) {
 }
 
 describe("numeric validation through SQLite integer affinity", () => {
+  it("keeps historical retired sessions unchanged when active records reuse their key", async () => {
+    sqlite.exec(`INSERT INTO session_records
+      (user_id, session_key, source, kind, started_at, last_message_at, snapshot_at, duration_seconds,
+       user_messages, assistant_messages, total_messages)
+      VALUES ('u', 'shared-key', 'zcode', 'human', '2026-09-01T00:00:00.000Z', '2026-09-01T00:01:00.000Z',
+        '2026-09-01T00:01:00.000Z', 60, 1, 1, 2)`);
+    const original = sqlite.prepare("SELECT * FROM session_records WHERE session_key = 'shared-key'").get();
+    const active = { session_key: "shared-key", source: "codex", kind: "human", started_at: record.hour_start,
+      last_message_at: "2026-09-01T00:02:00.000Z", snapshot_at: "2026-09-01T00:02:00.000Z", duration_seconds: 120,
+      user_messages: 9, assistant_messages: 9, total_messages: 18, project_ref: null, model: "test" };
+    expect((await ingest("sessions", [active])).status).toBe(200);
+    expect(sqlite.prepare("SELECT * FROM session_records WHERE session_key = 'shared-key'").get()).toEqual(original);
+    expect((await ingest("sessions", [{ ...active, source: "zcode" }])).status).toBe(200);
+    expect(sqlite.prepare("SELECT * FROM session_records WHERE session_key = 'shared-key'").get()).toEqual(original);
+  });
+
   it("rejects the original 2^62 input before binding; the old input overflows SUM", async () => {
     expect((await ingest("tokens", [{ ...record, total_tokens: 2 ** 62 }])).status).toBe(400);
     expect(sqlite.prepare("SELECT COUNT(*) AS n FROM usage_records").get()?.n).toBe(0);
