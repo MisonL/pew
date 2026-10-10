@@ -78,7 +78,7 @@ libSQL 因维护主体缺失与数据正确性缺陷被否决。
 
 **Worker 业务逻辑零改动。** `packages/worker` 与 `packages/worker-read` 的 `fetch` 处理器是标准 `Request → Response` 形状，套一层 `node:http` 适配即可在 Node 运行，不触碰其内部实现。
 
-**Web 逻辑零改动，但需 8 处上游文件的最小改动。** Web 的业务逻辑不变，但存储与认证的接缝必须动（完整清单见 §4.7）：
+**Web 逻辑零改动，但需 11 处上游文件的最小改动。** Web 的业务逻辑不变，但存储与认证的接缝必须动（完整清单见 §4.7）：
 
 | 上游文件 | 改动 | 原因 |
 |---|---|---|
@@ -86,12 +86,18 @@ libSQL 因维护主体缺失与数据正确性缺陷被否决。
 | `packages/web/src/auth.ts` | 新增 Credentials provider；cookie 开关增加显式关闭分支；`session.maxAge` | 邮箱密码登录 |
 | `packages/web/src/app/login/page.tsx` | 按 provider 可用性条件渲染 + 密码表单 | 现有页面硬编码 `signIn("google", …)`，不加表单则无登录入口 |
 | `packages/web/src/lib/auth-adapter.ts` | `INSERT INTO users` 补显式 `created_at` | 多节点时间列确定性，见 §4.1 专项五 |
-| `packages/web/src/app/api/admin/invites/route.ts` 等 | 省略时间列的 INSERT 补 `datetime('now')` | 同上 |
+| `packages/web/src/lib/admin.ts` | 管理员判定并入库内 `is_admin` | 首个用户即管理员 |
+| `packages/web/src/app/api/admin/check/route.ts` 等 2 处 | 同步 `isAdmin` 改异步判定 | 同上 |
+| `packages/web/src/proxy.ts` | `/setup` 加入公开路由 | 注册向导需未登录可达 |
+| `packages/web/src/app/api/admin/invites/route.ts` 等 | 省略时间列的 INSERT 补 `datetime('now')` | 多节点时间列确定性 |
 | `packages/cli/src/commands/login.ts` | `resolveHost` 增加 `--host` / `PEW_HOST` 优先级 | CLI 指向自建服务 |
 | `packages/cli/src/config/manager.ts` | 自建 host 用独立配置文件 | 否则覆盖用户在 pew.md 的登录态（§4.5） |
-| `scripts/migrations/` | **仅新增**迁移文件（`password_hash` + 确定性触发器后置迁移），不改既有文件 | 凭据存储、多节点确定性 |
+| `packages/web/src/lib/admin.ts` | `resolveAdmin`/`isAdminUser` 判定扩展为 `ADMIN_EMAILS` OR 库内 `is_admin`；保留同步 `isAdmin(email)` 纯 env 判定 | 首个用户即管理员（§4.4） |
+| `packages/web/src/app/api/admin/check/route.ts`、`packages/web/src/app/api/users/[slug]/route.ts` | 直接调用同步 `isAdmin(email)` 的两处改为异步判定 | 否则库内管理员在这两处被误判 |
+| `packages/web/src/proxy.ts` | `isPublicRoute()` 增加 `/setup` | 未登录用户必须能进注册向导（§4.4） |
+| `scripts/migrations/` | **仅新增**迁移文件（`password_hash` + `is_admin` 列 + 确定性触发器后置迁移），不改既有文件 | 凭据存储、管理员、多节点确定性 |
 
-**不改动的上游文件**（刻意规避）：`Dockerfile`、`bun.lock`、根 `package.json`、`.dockerignore`、`biome.json`、`cli.ts`、`proxy.ts`、`packages/worker/**`、`packages/worker-read/**`。规避方式见 §4.7。
+**不改动的上游文件**（刻意规避）：`Dockerfile`、`bun.lock`、根 `package.json`、`.dockerignore`、`biome.json`、`cli.ts`、`packages/worker/**`、`packages/worker-read/**`。规避方式见 §4.7。
 
 **差异全部收敛在适配层。** 新增代码只存在于新目录 `deploy/selfhost/`，且**不注册为 workspace package**（避免改 `bun.lock` 与 `Dockerfile`）。
 
@@ -313,15 +319,48 @@ CREATE TABLE kv_cache (
 - **必须显式传 `maxmem`**。实测 `scryptSync(pw, salt, 64, { N: 32768, r: 8, p: 1 })` 在默认 `maxmem = 32 MiB` 下抛 `Invalid scrypt params`：OpenSSL 需求 `128*N*r + 128*r*p = 33,555,456` 字节 > `33,554,432`。修法：`maxmem: 64*1024*1024`，或降到 `N = 16384`。
 - 存储格式 `scrypt$N$r$p$<salt_b64>$<hash_b64>` 单列，便于日后调参。
 - **用户不存在时也做一次等价 dummy 校验**，避免通过响应时间枚举邮箱。
-- 迁移：`ALTER TABLE users ADD COLUMN password_hash TEXT`（现有 `users` 无任何 password 字段，已核验）。
+- 迁移：新增迁移文件包含 `ALTER TABLE users ADD COLUMN password_hash TEXT` 与 `ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`（现有 `users` 无任何 password/role 字段，已核验）。
 
 **password_hash 的读取路径（避免改 worker-read）**
 
 `DbRead` 接口（`lib/db.ts:62-446`）没有任何返回 `password_hash` 的方法，worker-read 的 RPC 方法集也固定；给读路径加方法要同时改 `db.ts`、`db-worker.ts`、worker-read 三处。**改为走 D1 REST 原始查询**：`getD1Client().query("SELECT id,email,password_hash,name,is_public FROM users WHERE email = ?", [email])`（`lib/d1.ts:90-102`；自建下 `D1_BASE_URL` 指向 d1-http）。这样 `worker-read` 与 `db.ts` 均不改。
 
-**注册与引导的死锁（chicken-egg）**
+**首个用户即管理员 + 专用注册向导（替代原 `bootstrap-admin` 脚本方案）**
 
-`invite_codes.created_by TEXT NOT NULL REFERENCES users(id)`（`001-init.sql:109`）→ 无用户则建不了邀请码；`require_invite_code` 默认 true 则无邀请码建不了用户。**死锁**。处置：新增 `deploy/selfhost/bootstrap-admin`，部署时直接插入首个用户（含 `password_hash`）与首个邀请码，绕过闸门；首个管理员由 `ADMIN_EMAILS` 邮箱匹配识别（`lib/admin.ts`）。
+原「预置管理员」方案（部署时用脚本直接插库）已废弃——改为**首个注册者成为管理员**，并提供专用向导。这同时解开了原有的死锁：`invite_codes.created_by TEXT NOT NULL REFERENCES users(id)`（`001-init.sql:109`）导致「无用户则建不了邀请码、无邀请码则建不了用户」，而首个用户**不走邀请码闸门**，死锁自然消解，无需任何插库脚本。
+
+**管理员判定需要扩展（现状只认环境变量）**：`lib/admin.ts:54` 的 `isAdmin(email)` 仅比对 `ADMIN_EMAILS`（`admin.ts:39-41`），库内无管理员概念。新增：
+
+- 迁移加列 `ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`（与 `password_hash` 同一迁移文件）。
+- `lib/admin.ts` 的 `resolveAdmin`/`isAdminUser` 判定改为 **`ADMIN_EMAILS` 命中 OR 库内 `is_admin = 1`**。`ADMIN_EMAILS` 保留为**破窗/运维覆盖**（应急提升、脚本化场景），不再是唯一来源。
+- 现有 `isAdmin(email)` 是**同步**函数、签名只收 email（`admin.ts:54`），直接改成查库会波及 38 处调用点。处置：保留其同步语义（纯 env 判定）供无需查库的路径使用；新增异步判定并入 `resolveAdmin`/`isAdminUser`（两者已是异步，是 38 处里的绝大多数入口）。**两处直接调用 `isAdmin(email)` 的路由需改为异步判定**（`api/admin/check/route.ts:44`、`api/users/[slug]/route.ts:53`），否则库内管理员在这两处会被误判为非管理员。
+
+**首次引导的并发安全**：两个请求同时打向空库时不能都成为管理员。新增单行表作为一次性认领：
+
+```sql
+CREATE TABLE instance_setup (
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  admin_user_id TEXT NOT NULL,
+  completed_at  TEXT NOT NULL
+);
+```
+
+引导注册在**一个事务内**完成：`SELECT COUNT(*) FROM users` 必须为 0 → 插入用户（`is_admin = 1`）→ 插入 `instance_setup` 单行。第二次并发请求会因 `instance_setup` 主键冲突而失败。rqlite 写路径由单 leader 串行 + `?transaction=true` 原子（§4.1 专项一），因此该判定可靠。
+
+**注册向导流程（`/setup`）**：
+
+| 步骤 | 内容 |
+|---|---|
+| 1 | 实例检查——服务端确认 `users` 为空；非空则 302 到 `/login`（**向导仅首次可达**） |
+| 2 | 管理员账号——邮箱、显示名、密码 + 确认；密码强度校验（长度/复杂度） |
+| 3 | 实例选项（可选）——是否要求邀请码（写 `app_settings.require_invite_code`）、站点显示名等 |
+| 4 | 完成——自动登录并进入仪表盘；此后 `/setup` 恒 302 到 `/login` |
+
+**向导路由必须对未登录用户开放**：`proxy.ts:48-58` 的 `isPublicRoute()` 不含 `/setup`，未登录访问会被 302 到 `/login` 而**永远进不了向导**。需把 `/setup` 加入公开路由（改动 `proxy.ts`，计入 §4.7 改动面）。登录页在「库内无用户」时也应显示「首次部署？前往初始化」入口。
+
+**后续用户**：首个管理员建立后，`require_invite_code` 默认仍为 true，管理员在 `/admin/invites` 生成邀请码（此时 `created_by` 有真实用户可引用），后续注册走邀请码——链路完整闭环。
+
+**注册端点的闸门差异**：`/api/auth/register` 在**引导模式**（库为空）下跳过邀请码校验；**常规模式**下必须校验并原子消费邀请码（沿用 `invite.ts:140-150` 的 `UPDATE ... WHERE used_by IS NULL` 原子消费模式，`changes === 0` 即视为无效码）。
 
 **暴力破解防护**
 
@@ -412,10 +451,10 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 **新增文件（全部在既定目录，不触碰上游代码）**
 
-- `packages/web/src/lib/credentials.ts`、`packages/web/src/app/api/auth/register/route.ts`
-- `deploy/selfhost/`：`d1-adapter`、`kv-adapter`、`node-runtime`、`d1-http`、`docker-compose.yml`、`bootstrap-admin`、迁移执行器
+- `packages/web/src/lib/credentials.ts`、`packages/web/src/app/api/auth/register/route.ts`、`packages/web/src/app/setup/`（注册向导）
+- `deploy/selfhost/`：`d1-adapter`、`kv-adapter`、`node-runtime`、`d1-http`、`docker-compose.yml`、迁移执行器
 
-**刻意不改的上游文件**：`packages/worker/**`、`packages/worker-read/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/invite.ts`、`lib/auth-adapter.ts`、`proxy.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。
+**刻意不改的上游文件**：`packages/worker/**`、`packages/worker-read/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。（注意：`proxy.ts` 与 `lib/auth-adapter.ts` **不在**此列——两者已在改动清单内。）
 
 **适配层的运行方式**：`deploy/selfhost/*` 用 **bun 直接运行 TS 源码**（基础镜像已含 bun，`Dockerfile:7`），不引入新的构建工具或依赖——因而无需改 `bun.lock` 与 `package.json`。适配层通过相对路径导入 `packages/worker` / `packages/worker-read` 的入口。
 
@@ -425,7 +464,9 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 **读取（仪表盘）**：`web` → `read 容器` → `d1-http` → rqlite
 
-**注册（首次）**：浏览器 → `web:/api/auth/register` → 校验并原子消费邀请码 → `INSERT users`（含 `password_hash`）→ 完成
+**注册（首次引导）**：浏览器 → `web:/setup` 向导 → `web:/api/auth/register` → 事务内认领（`users` 为空 + 写 `instance_setup`）→ `INSERT users`（`is_admin=1` + `password_hash`）→ 自动登录
+
+**注册（常规）**：浏览器 → `web:/login` → 邀请码 → `web:/api/auth/register` → 原子消费邀请码 → `INSERT users` → 登录
 
 **登录**：浏览器 → `web:/api/auth/callback/credentials` → Credentials `authorize()` → D1 REST 查 `password_hash` → scrypt 校验（+ 限速 + dummy 校验）→ JWT 会话
 
@@ -470,13 +511,13 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 ### 待决项
 
-1. **首个管理员引导**：预置邀请码，还是部署时关闭 `require_invite_code` 后由首个注册者自动成为管理员（`ADMIN_EMAILS`）。（注：无论哪种，都需先解决 `invite_codes.created_by` 死锁，见 §4.4。）
-2. **上游合并策略**：本分支改动集中在 `deploy/selfhost/` + 6 个上游文件小改动——需定期 rebase 验证；§4.7 的「不改文件」清单随上游更新需复核。
-3. **构建期变量是否被内联进构建产物**（§4.4）：Dockerfile 注释称 page data collection 需要 `CF_*`/`AUTH_SECRET`——哪些被 Next 内联需实测；确认前一律用占位值构建。
-4. **单→3 在线扩容**（§4.6）：向已运行的单节点 `-join` 是否为 rqlite 支持的路径需实现阶段验证；若不支持，切换路径为「备份 → cluster profile 恢复」。
-5. **手工 SQL 规约**（§4.1 专项五）：解冻后若有人手工 INSERT 省略时间列（多节点下有分叉风险），需写进开发规约——属实现阶段产物。
+1. **上游合并策略**：本分支改动集中在 `deploy/selfhost/` + 11 处上游文件小改动——需定期 rebase 验证；§4.7 的「不改文件」清单随上游更新需复核。
+2. **构建期变量是否被内联进构建产物**（§4.4）：Dockerfile 注释称 page data collection 需要 `CF_*`/`AUTH_SECRET`——哪些被 Next 内联需实测；确认前一律用占位值构建。
+3. **单→3 在线扩容**（§4.6）：向已运行的单节点 `-join` 是否为 rqlite 支持的路径需实现阶段验证；若不支持，切换路径为「备份 → cluster profile 恢复」。
+4. **手工 SQL 规约**（§4.1 专项五）：解冻后若有人手工 INSERT 省略时间列（多节点下有分叉风险），需写进开发规约——属实现阶段产物。
+5. **向导的实例选项范围**（§4.4）：步骤 3 具体开放哪些设置（`require_invite_code` 必开；站点名、注册开放度等）在实现阶段定稿。
 
-（原待决项「rqlite 节点数」已按用户决策关闭：**架构同时支持单节点与扩展规模**，默认 profile 为单节点，扩容走 cluster profile + §4.1 专项二的确定性方案，两种模式共用同一套代码路径。原待决项「多节点 DDL 非确定性」已由实测关闭：配置③三副本收敛。）
+（已按决策关闭的待决项：**rqlite 节点数**——架构同时支持单节点与扩展规模，默认 profile 单节点、扩容走 cluster profile，两种模式共用同一套代码路径；**多节点 DDL 非确定性**——配置③三副本收敛，实测关闭；**首个管理员引导**——首个注册用户即管理员 + 专用 `/setup` 向导，不再需要插库脚本。）
 
 ## 8. 备份与恢复
 
@@ -504,9 +545,9 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 1. 构建：`docker build`（AUTH_SECRET 用占位值，其余 `CF_*` 同样占位）→ 得 `pew` 镜像
 2. 准备 `.env`（§11 清单，真实密钥只写这里）
 3. `docker compose up -d rqlite` → 健康后执行迁移（一次性 init 容器，`?norwtime&norwrandom`，幂等账本）→ 应用**后置迁移**（确定性触发器，§4.1 专项二）
-4. 执行 `bootstrap-admin`（建首个管理员 + 首个邀请码，绕过 `created_by` 死锁）
+4. 首个访问者打开 `/setup` → 注册向导 → 首个账号自动成为管理员（绕过邀请码，见 §4.4）
 5. `docker compose up -d`（d1-http / read / scheduler / ingest / web）
-6. 验证：`/api/live` → 注册页 → CLI `--host` 登录 → 上传 → 仪表盘可见
+6. 验证：`/api/live` → `/setup` 注册向导建首个管理员 → 登录 → CLI `--host` 登录 → 上传 → 仪表盘可见
 
 ## 10b. 升级与回滚
 
