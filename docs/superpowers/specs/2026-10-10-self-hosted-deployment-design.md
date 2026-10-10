@@ -78,7 +78,7 @@ libSQL 因维护主体缺失与数据正确性缺陷被否决。
 
 **Worker 业务逻辑零改动。** `packages/worker` 与 `packages/worker-read` 的 `fetch` 处理器是标准 `Request → Response` 形状，套一层 `node:http` 适配即可在 Node 运行，不触碰其内部实现。
 
-**Web 逻辑零改动，但需 11 处上游文件的最小改动。** Web 的业务逻辑不变，但存储、认证与管理员判定的接缝必须动。按性质分五类（**逐文件清单见 §4.7**）：
+**Web 逻辑零改动，但需 12 处上游文件的最小改动。** Web 的业务逻辑不变，但存储、认证与管理员判定的接缝必须动。按性质分五类（**逐文件清单见 §4.7**）：
 
 | 类别 | 文件 | 改动 |
 |---|---|---|
@@ -445,7 +445,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 ### 4.7 改动面（上游文件清单）
 
-**修改的上游文件（11 处，改动尽量小）**
+**修改的上游文件（12 处，改动尽量小）**
 
 | # | 文件 | 改动 |
 |---|---|---|
@@ -459,7 +459,8 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | 8 | `packages/web/src/app/api/admin/invites/route.ts` 等 | 省略时间列的 INSERT 补 `datetime('now')`（全量 grep 定位，实测已知 2 处起） |
 | 9 | `packages/cli/src/commands/login.ts` | `resolveHost` 支持 `--host` / `PEW_HOST` |
 | 10 | `packages/cli/src/config/manager.ts` | 自建 host 使用独立配置文件（见 §4.5） |
-| 11 | `scripts/migrations/` | **新增**：① `password_hash` + `is_admin` 列；② 确定性触发器后置迁移（专项二）——均为**新增文件**，不改既有迁移 |
+| 11 | `scripts/migrations/` | **新增**：① `password_hash` + `is_admin` 列；② 确定性触发器后置迁移（专项二）；③ `kv_cache` 基础设施表（实测：无任何上游迁移创建它，缺表只在运行时暴露）——均为**新增文件**，不改既有迁移 |
+| 12 | `vitest.config.ts` | `test.include` 增加 `deploy/**/*.test.ts`——否则 `deploy/selfhost/` 下的适配层测试**一条都不会执行** |
 
 **新增文件（全部在既定目录，不触碰上游代码）**
 
@@ -491,7 +492,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | 层级 | 内容 |
 |---|---|
 | 适配层单元测试 | D1 形状映射（`rows_affected` 缺失兜底、错误在 HTTP 200 内、`duration` 换算、空批返回 `[]`）；KV `get(key,"text")`、`put` 带 TTL、`list` 分页 |
-| 迁移兼容测试 | 全部 30 个迁移（33 个文件中跳过 3 个被 squash 的）apply 到 rqlite，断言 schema 对象数（23 表 / 62 索引 / 12 触发器 / 2 视图）；再 apply 本方案后置迁移，断言 12 触发器已替换为确定性版本 + 新增 `_migrations`/`kv_cache` 等基础设施表 |
+| 迁移兼容测试 | 全部 32 个迁移（35 个文件中跳过 3 个被 squash 的，含本方案新增的 030/031）apply 到 rqlite。**实测基线（rqlite 10.5.3，2026-10-11）**：上游表 22 张 + 本方案 3 张（`_migrations`、`kv_cache`、`leaderboard_revision_seq`）；索引 65 个（含 SQLite 自动创建的 39 个 `sqlite_autoindex_*`；显式索引仅 26 个，因 023/024/025 三个迁移 DROP 了 projects/showcases/badges/budgets 等表并带走其索引）；触发器 12 个；视图 2 个。断言 12 触发器已替换为确定性版本，且 `kv_cache` 存在（缺表只在运行时暴露，单元测试用内存假库测不出）。原写「23 表 / 62 索引」为估计值，实测不成立，已更正 |
 | 多节点确定性测试 | **三节点集群 + `docker pause` follower 制造重放**，用 `level=none` 直读各副本本地状态断言收敛：触发器 revision 三副本一致、应用层写入的 `created_at` 一致（这是配置①②与配置③的判别实验，见 §4.1 专项二） |
 | 迁移确定性测试 | 断言 DDL 执行后 `sqlite_master` 中 `datetime('now')` / `randomblob()` **未被冻结**（用 `?norwtime&norwrandom`） |
 | 原子性测试 | batch 中夹坏语句，断言零残留 |
@@ -523,7 +524,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 ### 待决项
 
-1. **上游合并策略**：本分支改动集中在 `deploy/selfhost/` + 11 处上游文件小改动——需定期 rebase 验证；§4.7 的「不改文件」清单随上游更新需复核。
+1. **上游合并策略**：本分支改动集中在 `deploy/selfhost/` + 12 处上游文件小改动——需定期 rebase 验证；§4.7 的「不改文件」清单随上游更新需复核。
 2. **构建期变量是否被内联进构建产物**（§4.4）：Dockerfile 注释称 page data collection 需要 `CF_*`/`AUTH_SECRET`——哪些被 Next 内联需实测；确认前一律用占位值构建。
 3. **单→3 在线扩容**（§4.6）：向已运行的单节点 `-join` 是否为 rqlite 支持的路径需实现阶段验证；若不支持，切换路径为「备份 → cluster profile 恢复」。
 4. **手工 SQL 规约**（§4.1 专项五）：解冻后若有人手工 INSERT 省略时间列（多节点下有分叉风险），需写进开发规约——属实现阶段产物。
