@@ -78,24 +78,15 @@ libSQL 因维护主体缺失与数据正确性缺陷被否决。
 
 **Worker 业务逻辑零改动。** `packages/worker` 与 `packages/worker-read` 的 `fetch` 处理器是标准 `Request → Response` 形状，套一层 `node:http` 适配即可在 Node 运行，不触碰其内部实现。
 
-**Web 逻辑零改动，但需 11 处上游文件的最小改动。** Web 的业务逻辑不变，但存储与认证的接缝必须动（完整清单见 §4.7）：
+**Web 逻辑零改动，但需 11 处上游文件的最小改动。** Web 的业务逻辑不变，但存储、认证与管理员判定的接缝必须动。按性质分五类（**逐文件清单见 §4.7**）：
 
-| 上游文件 | 改动 | 原因 |
+| 类别 | 文件 | 改动 |
 |---|---|---|
-| `packages/web/src/lib/d1.ts` | 新增可配置 base URL（约 3 行） | 现有唯一本地开关 `PEW_LOCAL_D1_URL` 被生产守卫锁死，见 §4.1 |
-| `packages/web/src/auth.ts` | 新增 Credentials provider；cookie 开关增加显式关闭分支；`session.maxAge` | 邮箱密码登录 |
-| `packages/web/src/app/login/page.tsx` | 按 provider 可用性条件渲染 + 密码表单 | 现有页面硬编码 `signIn("google", …)`，不加表单则无登录入口 |
-| `packages/web/src/lib/auth-adapter.ts` | `INSERT INTO users` 补显式 `created_at` | 多节点时间列确定性，见 §4.1 专项五 |
-| `packages/web/src/lib/admin.ts` | 管理员判定并入库内 `is_admin` | 首个用户即管理员 |
-| `packages/web/src/app/api/admin/check/route.ts` 等 2 处 | 同步 `isAdmin` 改异步判定 | 同上 |
-| `packages/web/src/proxy.ts` | `/setup` 加入公开路由 | 注册向导需未登录可达 |
-| `packages/web/src/app/api/admin/invites/route.ts` 等 | 省略时间列的 INSERT 补 `datetime('now')` | 多节点时间列确定性 |
-| `packages/cli/src/commands/login.ts` | `resolveHost` 增加 `--host` / `PEW_HOST` 优先级 | CLI 指向自建服务 |
-| `packages/cli/src/config/manager.ts` | 自建 host 用独立配置文件 | 否则覆盖用户在 pew.md 的登录态（§4.5） |
-| `packages/web/src/lib/admin.ts` | `resolveAdmin`/`isAdminUser` 判定扩展为 `ADMIN_EMAILS` OR 库内 `is_admin`；保留同步 `isAdmin(email)` 纯 env 判定 | 首个用户即管理员（§4.4） |
-| `packages/web/src/app/api/admin/check/route.ts`、`packages/web/src/app/api/users/[slug]/route.ts` | 直接调用同步 `isAdmin(email)` 的两处改为异步判定 | 否则库内管理员在这两处被误判 |
-| `packages/web/src/proxy.ts` | `isPublicRoute()` 增加 `/setup` | 未登录用户必须能进注册向导（§4.4） |
-| `scripts/migrations/` | **仅新增**迁移文件（`password_hash` + `is_admin` 列 + 确定性触发器后置迁移），不改既有文件 | 凭据存储、管理员、多节点确定性 |
+| **存储接缝** | `lib/d1.ts` | 新增可配置 base URL（现有 `PEW_LOCAL_D1_URL` 被生产守卫锁死，见 §4.1） |
+| **认证接缝** | `auth.ts`、`app/login/page.tsx`、`app/api/auth/register`（新增）、`app/setup/`（新增） | Credentials provider、密码表单、注册向导 |
+| **管理员判定** | `lib/admin.ts`、`app/api/admin/check/route.ts`、`app/api/users/[slug]/route.ts` | 判定并入库内 `is_admin`（首个用户即管理员，§4.4） |
+| **多节点确定性** | `lib/auth-adapter.ts`、`app/api/admin/invites/route.ts` 等 | 省略时间列的 INSERT 补 `datetime('now')`（§4.1 专项五） |
+| **路由与 CLI** | `proxy.ts`、`cli/src/commands/login.ts`、`cli/src/config/manager.ts` | `/setup` 公开可达、`--host` 支持、凭据按 host 隔离 |
 
 **不改动的上游文件**（刻意规避）：`Dockerfile`、`bun.lock`、根 `package.json`、`.dockerignore`、`biome.json`、`cli.ts`、`packages/worker/**`、`packages/worker-read/**`。规避方式见 §4.7。
 
@@ -369,6 +360,24 @@ Credentials 无内建限速。在 `authorize()` 内复用现有 `lib/rate-limit.
 - `inMemoryRateLimiter` 是**进程内**状态（`rate-limit.ts:35-36` 注释明示「仅适用单实例」）——多 web 容器时限速不跨实例，需外部化或接受弱化。
 - `getClientIp` 信任 `X-Forwarded-For`（`rate-limit.ts:180-194`）——反向代理必须**清洗/覆写**该头，否则可伪造绕过。
 
+**账号生命周期（复核新发现的两个缺口）**
+
+**缺口一：密码重置无路径。** 已核验项目**完全没有任何邮件发送能力**（`package.json` 与 `packages/*/package.json` 无 nodemailer/sendgrid/resend/ses/smtp 依赖，源码无发送调用）。而邮箱+密码认证的必然配套就是「忘记密码」——没有它，用户一旦忘记密码即彻底失去访问。处置（**不引入邮件依赖**，符合自包含前提）：
+
+- **管理员发起重置**：`/admin/users` 生成一次性重置令牌（存库，带过期），管理员把链接/令牌**线下**交给用户（企业内网常见做法）；用户凭令牌设置新密码。
+- **破窗路径**：提供 `deploy/selfhost/reset-password` 运维脚本（直连 rqlite 更新 `password_hash`），用于管理员自身也失联的极端情况。
+- 邮件式自助重置列为**可选扩展**（需 SMTP 配置），不在本期范围。
+
+**缺口二：JWT 会话无法在服务端失效。** `auth.ts` 用 JWT strategy 且**无 session 表**（`auth.ts:4,83-85` 注释明示）。因此**改密码/管理员重置密码后，已签发的旧 token 仍然有效直到过期**——对「管理员紧急吊销某账号」这类企业诉求是真实缺口。处置：
+
+- 收紧 `session.maxAge`（见上）缩小窗口；
+- 在 JWT 中携带 `pwd_v`（`password_hash` 的短哈希前缀），`sessionCallback` 比对库内当前值，不一致即视为失效——代价是每次会话校验多一次读（可接受，读走 §4.1 的 `weak` 级别）。
+- 本期至少实现 `maxAge` 收紧；`pwd_v` 校验列入实现阶段（属增强，非阻塞）。
+
+**`email_verified` 语义**：Credentials 下无邮箱验证环节，该列保持 NULL。这不影响鉴权——`/setup` 首个管理员与邀请码注册的用户，其**授权来源是邀请码/首次认领**，而非邮箱验证。已核验代码中 `email_verified` 仅做映射（`auth-adapter.ts:23,43,102-104`），**无任何鉴权门禁依赖它**，故无需额外处理。
+
+**`slug` 与注册无关**：`users.slug` 为可空列（`001-init.sql:15`，无 NOT NULL），注册时不必生成，用户后续在设置页设置——注册流程无需处理。
+
 **AUTH_SECRET 与构建期密钥**
 
 Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfile:40,46`）；最终 **runner 阶段**（`59-72`）不含这些 ENV，故**最终镜像不带密钥**。但**构建期传入的真实密钥会留在构建层缓存/历史**。故：自建构建**不得**用真实密钥做 build arg，密钥一律运行期经 compose `env_file` 注入。另：Dockerfile 注释（`33-34`）称构建期需要这些变量做 page data collection——**哪些变量被内联进构建产物需实测确认**（列入验证项）。
@@ -436,23 +445,26 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 ### 4.7 改动面（上游文件清单）
 
-**修改的上游文件（6 个，改动尽量小）**
+**修改的上游文件（11 处，改动尽量小）**
 
-| 文件 | 改动 |
-|---|---|
-| `packages/web/src/lib/d1.ts` | 新增生产可用的 D1 base URL 覆盖（约 3 行，见 §4.1 专项四） |
-| `packages/web/src/auth.ts` | providers 条件组装、`signIn` 对 credentials 放行、cookie 显式关闭分支、`session.maxAge` |
-| `packages/web/src/app/login/page.tsx` | 按 provider 条件渲染 + 邮箱/密码注册登录表单 |
-| `packages/web/src/lib/auth-adapter.ts` | `INSERT INTO users` 补显式 `created_at`（§4.1 专项五）；约 1 行 |
-| `packages/web/src/app/api/admin/invites/route.ts` 等 | 省略时间列的 INSERT 补 `datetime('now')`（全量 grep 定位，实测已知 2 处起） |
-| `packages/cli/src/commands/login.ts` | `resolveHost` 支持 `--host` / `PEW_HOST` |
-| `packages/cli/src/config/manager.ts` | 自建 host 使用独立配置文件（见 §4.5） |
-| `scripts/migrations/` | **新增**：① `password_hash` 列；② 确定性触发器后置迁移（专项二）——均为**新增文件**，不改既有迁移 |
+| # | 文件 | 改动 |
+|---|---|---|
+| 1 | `packages/web/src/lib/d1.ts` | 新增生产可用的 D1 base URL 覆盖（约 3 行，见 §4.1 专项四） |
+| 2 | `packages/web/src/auth.ts` | providers 条件组装、`signIn` 对 credentials 放行、cookie 显式关闭分支、`session.maxAge` |
+| 3 | `packages/web/src/app/login/page.tsx` | 按 provider 条件渲染 + 邮箱/密码登录表单 + 「首次部署」入口 |
+| 4 | `packages/web/src/lib/auth-adapter.ts` | `INSERT INTO users` 补显式 `created_at`（§4.1 专项五）；约 1 行 |
+| 5 | `packages/web/src/lib/admin.ts` | `resolveAdmin`/`isAdminUser` 判定扩展为 `ADMIN_EMAILS` OR 库内 `is_admin`；保留同步 `isAdmin(email)` 的纯 env 语义 |
+| 6 | `packages/web/src/app/api/admin/check/route.ts`、`packages/web/src/app/api/users/[slug]/route.ts` | 直接调用同步 `isAdmin(email)` 的两处改为异步判定（否则库内管理员被误判） |
+| 7 | `packages/web/src/proxy.ts` | `isPublicRoute()` 增加 `/setup`（未登录必须能进向导） |
+| 8 | `packages/web/src/app/api/admin/invites/route.ts` 等 | 省略时间列的 INSERT 补 `datetime('now')`（全量 grep 定位，实测已知 2 处起） |
+| 9 | `packages/cli/src/commands/login.ts` | `resolveHost` 支持 `--host` / `PEW_HOST` |
+| 10 | `packages/cli/src/config/manager.ts` | 自建 host 使用独立配置文件（见 §4.5） |
+| 11 | `scripts/migrations/` | **新增**：① `password_hash` + `is_admin` 列；② 确定性触发器后置迁移（专项二）——均为**新增文件**，不改既有迁移 |
 
 **新增文件（全部在既定目录，不触碰上游代码）**
 
-- `packages/web/src/lib/credentials.ts`、`packages/web/src/app/api/auth/register/route.ts`、`packages/web/src/app/setup/`（注册向导）
-- `deploy/selfhost/`：`d1-adapter`、`kv-adapter`、`node-runtime`、`d1-http`、`docker-compose.yml`、迁移执行器
+- `packages/web/src/lib/credentials.ts`、`packages/web/src/app/api/auth/register/route.ts`、`packages/web/src/app/setup/`（注册向导）、`packages/web/src/app/api/admin/users/[...]/reset-password`（管理员发起重置，§4.4）
+- `deploy/selfhost/`：`d1-adapter`、`kv-adapter`、`node-runtime`、`d1-http`、`docker-compose.yml`、迁移执行器、`reset-password`（破窗脚本）
 
 **刻意不改的上游文件**：`packages/worker/**`、`packages/worker-read/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。（注意：`proxy.ts` 与 `lib/auth-adapter.ts` **不在**此列——两者已在改动清单内。）
 
@@ -516,6 +528,8 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 3. **单→3 在线扩容**（§4.6）：向已运行的单节点 `-join` 是否为 rqlite 支持的路径需实现阶段验证；若不支持，切换路径为「备份 → cluster profile 恢复」。
 4. **手工 SQL 规约**（§4.1 专项五）：解冻后若有人手工 INSERT 省略时间列（多节点下有分叉风险），需写进开发规约——属实现阶段产物。
 5. **向导的实例选项范围**（§4.4）：步骤 3 具体开放哪些设置（`require_invite_code` 必开；站点名、注册开放度等）在实现阶段定稿。
+6. **密码重置的令牌形态**（§4.4）：一次性令牌存库表结构（`password_reset_tokens`）、有效期、单次使用语义在实现阶段定稿；邮件自助重置是否本期做需决策。
+7. **JWT 会话失效增强**（§4.4）：`pwd_v` 比对（改密后旧 token 立即失效）属增强项，本期是否随 `session.maxAge` 收紧一起做需决策。
 
 （已按决策关闭的待决项：**rqlite 节点数**——架构同时支持单节点与扩展规模，默认 profile 单节点、扩容走 cluster profile，两种模式共用同一套代码路径；**多节点 DDL 非确定性**——配置③三副本收敛，实测关闭；**首个管理员引导**——首个注册用户即管理员 + 专用 `/setup` 向导，不再需要插库脚本。）
 
