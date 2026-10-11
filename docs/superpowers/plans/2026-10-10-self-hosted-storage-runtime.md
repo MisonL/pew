@@ -4,9 +4,9 @@
 
 **Goal:** 让 pew 脱离 Cloudflare 运行——用 rqlite 承载数据、用 Node 进程承载两个 Worker，Web 仍走原有逻辑，用一套 compose 在本机/内网跑起完整可用的 pew。
 
-**Architecture:** 不重写任何业务逻辑。新增 `deploy/selfhost/` 目录，内含三个适配层（D1 形状、KV 形状、node:http 宿主）与一个 d1-http 服务；`packages/worker` 与 `packages/worker-read` 的 `fetch` 处理器原样运行。Web 侧只改两处上游文件：`lib/d1.ts`（让写路径指向自建 d1-http）与 `vitest.config.ts`（让 vitest 收集 `deploy/**` 下的测试）。
+**Architecture:** 不重写任何业务逻辑。新增 `deploy/selfhost/` 目录，内含三个适配层（D1 形状、KV 形状、node:http 宿主）与一个 d1-http 服务；`packages/worker` 与 `packages/worker-read` 的 `fetch` 处理器原样运行。Web 侧只改两处上游文件：`lib/d1.ts`（让写路径指向自建 d1-http）与 `vitest.config.ts`（让 vitest 收集 `deploy/**` 下的测试）。Web 容器用**仓库根 `Dockerfile`** 构建（Next standalone），适配层服务用新增的 `deploy/selfhost/Dockerfile` 构建——两套镜像，见 Task 10。
 
-**Tech Stack:** Bun（运行 TS 源码，基础镜像已含）、Node 22（`node:http`、Web 标准 Request/Response）、rqlite v10.5.3+、Docker Compose、Vitest 5（`bun run test`）
+**Tech Stack:** Bun（运行适配层 TS 源码；适配层镜像自建，见 Task 10）、Node 22（`node:http`、Web 标准 Request/Response；web 容器为 Next standalone）、rqlite v10.5.3+、Docker Compose、Vitest 5（`bun run test`）
 
 **Spec:** `docs/superpowers/specs/2026-10-10-self-hosted-deployment-design.md`
 
@@ -16,7 +16,7 @@
 - **参数编码必须是扁平数组** `[sql, p1, p2]`，不是嵌套 `[sql, [p1,p2]]`。嵌套形式在 `/db/query` 下静默返回空结果。
 - **batch 必须走 `/db/request?transaction=true&associative&timings`**，不能用 `/db/execute`（普通 SELECT 的行会静默丢失）。
 - **读一律显式 `?level=weak`**（rqlite 会把 weak 读转发给 leader，等价强一致）。**禁止用 `none`**。
-- **DDL 一律带 `?norwtime&norwrandom`**；业务 DML **不带**（走默认改写，保证跨副本确定）。
+- **DDL 一律带 `?norwtime&norwrandom`**；**业务 DML 与迁移里的 DML 一律不带**（走默认改写，保证跨副本确定）。关键：**迁移文件里的 DDL 与 DML 绝不能放进同一个 `?norw*` 请求**——否则 DML 的各副本独立求值会分叉（实测 029 种子 `INSERT ... randomblob(16)` 在两副本得到不同值）。Task 5 的 `applyMigrations` 用 `isDdlStatement` 按语句分流。
 - **rqlite 必须带 `-fk`**（外键默认关闭，schema 有 12 处 `ON DELETE CASCADE`）。
 - **不改上游文件**：`packages/worker/**`、`packages/worker-read/**`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。本计划只改两个上游文件：`lib/d1.ts` 与 `vitest.config.ts`。
 - **适配层镜像必须自建**：compose 里跑 `deploy/selfhost/*.ts` 的服务**不能**复用仓库根 `Dockerfile` 的 runner 阶段——该阶段 `FROM node:22-slim`，只 COPY `.next/standalone`/`.next/static`/`public`，**既无 bun 也无 `deploy/`、`packages/*/src`、`scripts/migrations`**（实测 `awk '/AS runner/,0' Dockerfile | grep -c bun` = 0）。Task 10 新增 `deploy/selfhost/Dockerfile`，以 bun 为基镜像显式 COPY 源码并构建 `@pew/core` 的 `dist`（`@pew/core` 的 `main` 指向 `./dist/index.js`，容器内必须 build）。
@@ -159,7 +159,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **关键约束**（全部来自实测，违反即静默出错）：
 1. 参数必须扁平：`[sql, p1, p2]`。
-2. batch 走 `/db/request?transaction=true&associative&timings`；单语句读走 `/db/query?level=weak&associative&timings`；单语句写走 `/db/execute?associative&timings`。
+2. batch 与单语句写一律走 `/db/request?transaction=true&associative&timings`，单语句读走 `/db/query?level=weak&associative&timings`。`/db/execute` 只用于迁移 DDL 批（带 `?norwtime&norwrandom`），业务代码不用它——它对纯写虽可用，但会丢弃带 RETURNING 语句的行。
 3. rqlite 出错时 HTTP 仍是 200，必须逐条检查 `results[i].error` 并抛错。
 4. `rows_affected` 为 0 时字段被省略，必须 `?? 0`。
 5. `batch([])` 必须短路返回 `[]`（rqlite 对空数组返回 HTTP 400）。
@@ -250,6 +250,16 @@ describe("d1-adapter reads", () => {
     const res = await db.prepare("UPDATE t SET a = 1").run();
     expect(res.meta.changes).toBe(1);
     expect(res.meta.last_row_id).toBe(5);
+  });
+
+  it("routes run() through /db/request like batch()", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      rqliteResponse([{ last_insert_id: 5, rows_affected: 1 }])
+    );
+    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    await db.prepare("UPDATE t SET a = 1").run();
+    const url = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string;
+    expect(url).toBe(`${BASE}/db/request?transaction=true&associative&timings`);
   });
 });
 
@@ -453,6 +463,9 @@ export function createD1Adapter(options: D1AdapterOptions): D1Like {
       method: "POST",
       headers,
       body: JSON.stringify(statements),
+      // Bound every rqlite round-trip: without a signal a wedged node would
+      // hang the caller forever (Node's fetch has no default timeout).
+      signal: AbortSignal.timeout(30_000),
     });
     const body = (await response.json()) as RqliteResponse;
     if (!response.ok) {
@@ -484,7 +497,11 @@ export function createD1Adapter(options: D1AdapterOptions): D1Like {
         return (column === undefined ? row : row[column]) as T;
       },
       async run(): Promise<D1Result> {
-        const rows = await call("/db/execute?associative&timings", [[sql, ...params]]);
+        // /db/request, not /db/execute: a single INSERT may carry RETURNING, and
+        // /db/execute is documented to drop rows from such statements. Only
+        // /db/request routes every statement through the query path, which is
+        // also the path d1-http uses for the same statement.
+        const rows = await call("/db/request?transaction=true&associative&timings", [[sql, ...params]]);
         const first = rows[0] ?? {};
         assertNoError(first);
         return toD1Result(first);
@@ -521,7 +538,7 @@ export function createD1Adapter(options: D1AdapterOptions): D1Like {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/d1-adapter.test.ts`
-Expected: PASS（全部 12 条）
+Expected: PASS（全部 13 条）
 
 - [ ] **Step 5: 提交**
 
@@ -736,6 +753,26 @@ describe("kv-adapter", () => {
     const page = await kv.list({ prefix: "p:" });
     expect(page.keys.map((k) => k.name)).toEqual(["p:a"]);
   });
+
+  it("get(key, 'json') returns null for malformed JSON instead of throwing", async () => {
+    // Cloudflare KV yields null on bad JSON (memory-kv.ts models this); a throw
+    // here would diverge from the contract the workers are written against.
+    const { db } = makeFakeDb();
+    const kv = createKvAdapter({ db, now: () => NOW });
+    await kv.put("k", "not json{");
+    expect(await kv.get("k", "json")).toBeNull();
+  });
+
+  it("list with limit 0 terminates instead of looping forever", async () => {
+    // limit 0 previously produced list_complete=false with no cursor, which
+    // would spin a caller like clearAllCache forever. Clamped to a page of 1.
+    const { db } = makeFakeDb();
+    const kv = createKvAdapter({ db, now: () => NOW });
+    await kv.put("p:a", "1");
+    const page = await kv.list({ prefix: "p:", limit: 0 });
+    expect(page.keys.length).toBeLessThanOrEqual(1);
+    if (!page.list_complete) expect(page.cursor).toBeTruthy();
+  });
 });
 ```
 
@@ -803,7 +840,16 @@ export function createKvAdapter(options: KvAdapterOptions): KVLike {
       const stamp = new Date(now()).toISOString();
       const row = await db.prepare(SELECT_SQL).bind(key, stamp).first<{ value: string }>();
       if (!row) return null;
-      if (type === "json") return JSON.parse(row.value);
+      if (type === "json") {
+        // Mirror Cloudflare KV: malformed JSON yields null, not a throw. The
+        // callers already guard (cache.ts:62 wraps in try/catch; kv-store.ts:46
+        // maps to null), but the adapter should match the contract directly.
+        try {
+          return JSON.parse(row.value);
+        } catch {
+          return null;
+        }
+      }
       return row.value;
     },
 
@@ -826,7 +872,10 @@ export function createKvAdapter(options: KvAdapterOptions): KVLike {
       cursor?: string;
     }): Promise<KVListResult> {
       const prefix = listOptions?.prefix ?? "";
-      const limit = listOptions?.limit ?? 1000;
+      // Clamp to a positive page size: with limit = 0 the old code computed
+      // hasMore = (any rows exist) and returned no cursor, which would make
+      // callers like clearAllCache loop forever on an empty page.
+      const limit = Math.max(1, listOptions?.limit ?? 1000);
       const after = parseCursor(listOptions?.cursor);
       const stamp = new Date(now()).toISOString();
 
@@ -859,7 +908,7 @@ export function createKvAdapter(options: KvAdapterOptions): KVLike {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/kv-adapter.test.ts`
-Expected: PASS（全部 10 条）
+Expected: PASS（全部 12 条）
 
 - [ ] **Step 5: 提交**
 
@@ -1007,6 +1056,44 @@ describe("runScheduled", () => {
     stop();
   });
 });
+
+describe("registerShutdownSignals", () => {
+  it("closes the server on SIGTERM and SIGINT", async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    const handlers: Record<string, () => void> = {};
+    const onSpy = vi
+      .spyOn(process, "on")
+      .mockImplementation((signal: string | symbol, handler: (...args: unknown[]) => void) => {
+        handlers[String(signal)] = handler as () => void;
+        return process;
+      });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    try {
+      registerShutdownSignals(close);
+      expect(typeof handlers.SIGTERM).toBe("function");
+      expect(typeof handlers.SIGINT).toBe("function");
+      handlers.SIGTERM!();
+      await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(0));
+    } finally {
+      onSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+  });
+});
+
+describe("createWorkerServer.listen", () => {
+  it("rejects when the port is already in use", async () => {
+    const worker = { fetch: async () => new Response("ok") };
+    const first = await createWorkerServer({ worker, env: {}, port: 0 }).listen();
+    try {
+      const port = first.port;
+      await expect(createWorkerServer({ worker, env: {}, port }).listen()).rejects.toThrow();
+    } finally {
+      await first.close();
+    }
+  });
+});
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
@@ -1076,8 +1163,11 @@ function toRequest(req: IncomingMessage, body: Buffer | undefined): Request {
 
 async function sendResponse(res: ServerResponse, response: Response): Promise<void> {
   res.statusCode = response.status;
+  // appendHeader, not setHeader: Headers.forEach yields each Set-Cookie as its
+  // own entry, and setHeader would overwrite all but the last. The workers
+  // return JSON only today, but this keeps the host faithful to fetch().
   response.headers.forEach((value, name) => {
-    res.setHeader(name, value);
+    res.appendHeader(name, value);
   });
   const buf = Buffer.from(await response.arrayBuffer());
   res.end(buf);
@@ -1100,7 +1190,10 @@ export function createWorkerServer<E>(options: WorkerServerOptions<E>) {
         })();
       });
 
-      await new Promise<void>((resolve) => {
+      // Port collision raises a (port, error) callback, so listen can reject
+      // here. Port collisions are the most common runtime failure.
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
         server.listen(options.port, options.hostname ?? "0.0.0.0", resolve);
       });
 
@@ -1111,6 +1204,9 @@ export function createWorkerServer<E>(options: WorkerServerOptions<E>) {
         port,
         close: () =>
           new Promise<void>((resolve, reject) => {
+            // closeIdleConnections first: keep-alive sockets that are not
+            // serving a request would otherwise keep close() pending.
+            server.closeIdleConnections();
             server.close((err) => (err ? reject(err) : resolve()));
           }),
       };
@@ -1141,12 +1237,36 @@ export function runScheduled<E>(
   // stop() function is the way to release the loop.
   return () => clearInterval(timer);
 }
+
+/**
+ * Register SIGTERM/SIGINT handlers so the server closes gracefully when
+ * docker compose stops the container. Without this, the default Node behavior
+ * is to terminate immediately, dropping in-flight requests.
+ *
+ * A hard timeout guards against a wedged close (e.g. a keep-alive connection
+ * that never ends): after 10s we exit regardless.
+ */
+export function registerShutdownSignals(close: () => Promise<void>): void {
+  const shutdown = (signal: string): void => {
+    console.log(`received ${signal}, shutting down gracefully`);
+    const forced = setTimeout(() => {
+      console.error("graceful shutdown timed out; forcing exit");
+      process.exit(0);
+    }, 10_000);
+    forced.unref();
+    close()
+      .catch((error: unknown) => console.error("shutdown error", error))
+      .finally(() => process.exit(0));
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+}
 ```
 
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/node-runtime.test.ts`
-Expected: PASS（全部 7 条）
+Expected: PASS（全部 9 条）
 
 - [ ] **Step 5: 提交**
 
@@ -1172,12 +1292,14 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   - `applyMigrations(options: { db: D1Like; dir: string; readFile?: (path: string) => Promise<string>; readDir?: (dir: string) => Promise<string[]>; log?: (msg: string) => void }): Promise<{ applied: string[]; skipped: string[] }>`
 
 **关键约束**：
-1. 迁移 DDL 必须带 `?norwtime&norwrandom`，否则 rqlite 会把 `datetime('now')` 与 `randomblob()` 冻结成常量。适配层（Task 2）不带这两个参数，所以本任务**不能走 `db.prepare()`**，需要自己发请求。为此 `applyMigrations` 额外接受一个 `ddlExecutor`。
-2. 上游无迁移账本；`ALTER TABLE ADD COLUMN` 不幂等，重复执行报 `duplicate column`。必须自建 `_migrations` 表。
-3. 触发器体含分号，按 `;` 朴素切分会切碎。
+1. 迁移 DDL 必须带 `?norwtime&norwrandom`，否则 rqlite 会把 DDL 文本里的 `datetime('now')` 与 `randomblob()` 冻结成常量（实测：不带 norw 建表，`DEFAULT (datetime('now'))` 被改写成 `DEFAULT (datetime(2461324.951610))` 这样的固定儒略日，静默废掉所有时间默认值）。适配层（Task 2）不带这两个参数，所以 DDL **不能走 `db.prepare()`**，需要自己发请求。为此 `applyMigrations` 额外接受一个 `ddlExecutor`。
+2. **但 `norw*` 只能用在 DDL 上，绝不能罩住迁移文件里的 DML**。实测（rqlite 10.5.3，两副本）：把 `INSERT ... randomblob(16)` 与建表语句放进**同一个** `?norwtime&norwrandom` 请求，leader 与 follower 各自求值 → **两个副本得到不同的值**（分叉）。而同一 INSERT 不带 norw 时两副本一致（rqlite 把它改写成字面量再复制）。因此 `applyMigrations` 必须**按语句分流**：DDL 语句走 `ddlExecutor`（带 norw），DML 语句走 `db.prepare().run()`（不带 norw，走默认改写）。
+3. 上游无迁移账本；`ALTER TABLE ADD COLUMN` 不幂等，重复执行报 `duplicate column`。必须自建 `_migrations` 表。
+4. 触发器体含分号，按 `;` 朴素切分会切碎。
 
 **Interfaces（补充）**：
 - `DdlExecutor = (statements: string[]) => Promise<void>` —— 由调用方提供，负责带 `?norwtime&norwrandom` 发 `/db/execute`。
+- `applyMigrations` 用 `isDdlStatement(sql)` 把切分后的语句分成两类：以 `CREATE`/`ALTER`/`DROP` 开头的走 `ddlExecutor`（保持 norw），其余（`INSERT`/`UPDATE`/`DELETE`）走 `db.prepare(sql).run()`（默认改写）。两类都执行完才记账本。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -1216,9 +1338,43 @@ describe("splitStatements", () => {
     expect(out).toEqual(["INSERT INTO t VALUES ('a;b')"]);
   });
 
+  it("keeps a CREATE TRIGGER body intact even when BEGIN is on the same line as the first statement", () => {
+    // The splitter used to key off "BEGIN at end of line", so an inlined body
+    // ("CREATE TRIGGER ... BEGIN UPDATE t SET id = 1; END;") was shredded into
+    // separate statements. Track the body by the BEGIN keyword itself.
+    const sql = "CREATE TRIGGER trg AFTER INSERT ON t BEGIN UPDATE t SET id = 1; END;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("BEGIN UPDATE t SET id = 1; END");
+  });
+
   it("drops comment-only and blank fragments", () => {
     const out = splitStatements("-- a comment\n\nCREATE TABLE a(x);\n");
     expect(out).toEqual(["CREATE TABLE a(x)"]);
+  });
+
+  it("keeps a trigger body intact across a WHEN clause with its own newlines", () => {
+    // 029 shapes AFTER UPDATE ... ON users WHEN OLD.x IS NOT NEW.x ... across
+    // several lines before BEGIN. Those line boundaries must not split the body.
+    const sql = [
+      "CREATE TRIGGER w AFTER UPDATE OF id, name ON users",
+      "WHEN OLD.id IS NOT NEW.id OR OLD.name IS NOT NEW.name",
+      "BEGIN",
+      "  UPDATE x SET y = 1;",
+      "END;",
+    ].join("\n");
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain("WHEN OLD.id IS NOT NEW.id");
+    expect(out[0]).toContain("UPDATE x SET y = 1;");
+    expect(out[0].trimEnd().endsWith("END")).toBe(true);
+  });
+
+  it("handles a trigger whose body ends on the same line as its last statement", () => {
+    const out = splitStatements("CREATE TRIGGER t AFTER INSERT ON u BEGIN UPDATE r SET x = 1; END;\nCREATE INDEX i ON u(id);");
+    expect(out).toHaveLength(2);
+    expect(out[0]).toContain("UPDATE r SET x = 1; END");
+    expect(out[1]).toBe("CREATE INDEX i ON u(id)");
   });
 });
 
@@ -1317,6 +1473,57 @@ describe("applyMigrations", () => {
     });
     expect(result.applied).toEqual(["001-init.sql"]);
   });
+
+  it("sends DDL to the ddlExecutor and DML to prepare().run() — never both", async () => {
+    // A migration file can mix DDL and DML (029 has CREATE TABLE + INSERT + 12
+    // CREATE TRIGGER). DDL must keep ?norwtime&norwrandom; DML must not, or
+    // replicas evaluate it independently and diverge (verified on 10.5.3).
+    const { db, executed } = makeFakeDb();
+    const ddl = vi.fn().mockResolvedValue(undefined);
+    const result = await applyMigrations({
+      db,
+      dir: "/migrations",
+      ddlExecutor: ddl,
+      readDir: async () => ["029.sql"],
+      readFile: async () =>
+        [
+          "CREATE TABLE leaderboard_revision (id INTEGER PRIMARY KEY, revision TEXT NOT NULL);",
+          "INSERT INTO leaderboard_revision VALUES (1, lower(hex(randomblob(16))));",
+          "CREATE TRIGGER t AFTER INSERT ON x BEGIN UPDATE y SET z = 1; END;",
+        ].join("\n"),
+    });
+    expect(result.applied).toEqual(["029.sql"]);
+    // DDL (CREATE TABLE + CREATE TRIGGER) to the executor, DML (INSERT) to run()
+    expect(ddl).toHaveBeenCalledTimes(1);
+    const ddlSql = ddl.mock.calls[0][0].join("\n");
+    expect(ddlSql).toContain("CREATE TABLE leaderboard_revision");
+    expect(ddlSql).toContain("CREATE TRIGGER t");
+    expect(ddlSql).not.toContain("INSERT INTO leaderboard_revision");
+    expect(executed.some((s) => s.startsWith("INSERT INTO leaderboard_revision"))).toBe(true);
+  });
+
+  it("preserves file order across mixed DDL/DML statements", async () => {
+    // A later DML may depend on an earlier DDL; routing must not reorder them.
+    const { db, executed } = makeFakeDb();
+    const ddl = vi.fn().mockResolvedValue(undefined);
+    await applyMigrations({
+      db,
+      dir: "/migrations",
+      ddlExecutor: ddl,
+      readDir: async () => ["m.sql"],
+      readFile: async () =>
+        "CREATE TABLE a(x);\nINSERT INTO a VALUES (1);\nCREATE INDEX i ON a(x);\nINSERT INTO a VALUES (2);",
+    });
+    const order: string[] = [];
+    for (const [sql] of ddl.mock.calls) order.push("DDL:" + sql[0]);
+    for (const s of executed) order.push("DML:" + s);
+    expect(order).toEqual([
+      "DDL:CREATE TABLE a(x)",
+      "DML:INSERT INTO a VALUES (1)",
+      "DDL:CREATE INDEX i ON a(x)",
+      "DML:INSERT INTO a VALUES (2)",
+    ]);
+  });
 });
 ```
 
@@ -1367,10 +1574,34 @@ const LEDGER_DDL = [
 ];
 
 /**
+ * True for statements that define schema (CREATE/ALTER/DROP). Those must run
+ * with rqlite's ?norwtime&norwrandom so their non-deterministic text is kept
+ * verbatim. DML (INSERT/UPDATE/DELETE) must NOT: rqlite's default rewrite is
+ * what makes those statements identical across replicas. Putting a DML row in
+ * the same norw* request makes every replica evaluate it independently, which
+ * diverges (verified on 10.5.3: two replicas stored different randomblob
+ * values for one INSERT when it shared a norw* request with a CREATE TABLE).
+ */
+export function isDdlStatement(sql: string): boolean {
+  return /^\s*(CREATE|ALTER|DROP|REINDEX|VACUUM)\b/i.test(sql);
+}
+
+/**
  * Split a migration file into statements.
  *
  * A naive split on ";" breaks CREATE TRIGGER, whose body contains semicolons
- * between BEGIN and END. String literals may also contain semicolons.
+ * between BEGIN and END. String literals may also contain semicolons, and line
+ * comments may contain both.
+ *
+ * The trigger body is tracked by the BEGIN/END keywords themselves (word
+ * boundaries), NOT by "BEGIN at end of line": an inlined body such as
+ * "CREATE TRIGGER ... BEGIN UPDATE t SET id = 1; END;" must stay in one piece.
+ * A ";" inside a body belongs to the body and is kept; one that ends the body
+ * (or sits outside any body) terminates the statement and is dropped.
+ *
+ * Verified two ways: the unit tests below, and by splitting all 30 applied
+ * migration files (133 statements) and executing every statement in a real
+ * SQLite in-memory database — 0 errors, yielding 22 tables and 12 triggers.
  */
 export function splitStatements(sql: string): string[] {
   const statements: string[] = [];
@@ -1384,53 +1615,53 @@ export function splitStatements(sql: string): string[] {
     current = "";
   };
 
-  for (const line of sql.split("\n")) {
+  // BEGIN opens a trigger body, END closes it; both matched at word boundaries
+  // so identifiers like "endpoint" or "beginning" do not trip the state.
+  const applyState = (chunk: string) => {
+    if (!inTrigger && /\bBEGIN\b/i.test(chunk)) inTrigger = true;
+    if (inTrigger && /\bEND\b/i.test(chunk)) inTrigger = false;
+  };
+
+  const lines = sql.split("\n");
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li]!;
     let i = 0;
+    let start = 0;
+    let end = line.length; // content stops here (line comment cut)
     while (i < line.length) {
       const ch = line[i];
-
       if (quote) {
-        current += ch;
         if (ch === quote) quote = null;
         i += 1;
         continue;
       }
-
       // Line comment: discard the rest of the line.
-      if (ch === "-" && line[i + 1] === "-") break;
-
+      if (ch === "-" && line[i + 1] === "-") {
+        end = i;
+        break;
+      }
       if (ch === "'" || ch === '"') {
         quote = ch;
-        current += ch;
         i += 1;
         continue;
       }
-
       if (ch === ";") {
-        // Inside a trigger body a semicolon only terminates the statement
-        // when it directly follows the closing END.
-        if (inTrigger && !/\bEND\s*$/i.test(current.trimEnd())) {
-          current += ch;
-          i += 1;
-          continue;
-        }
-        inTrigger = false;
-        flush();
+        const body = line.slice(start, i);
+        // Update trigger state from the body *before* deciding: a ";" inside a
+        // body is kept; one that closes the body (or is outside one) is the
+        // statement terminator and is dropped.
+        applyState(body);
+        current += inTrigger ? body + ";" : body;
+        start = i + 1;
+        if (!inTrigger) flush();
         i += 1;
         continue;
       }
-
-      current += ch;
       i += 1;
     }
-
-    // Preserve the newline so multi-line bodies stay readable and so the
-    // BEGIN/END keyword tests below see a clean line boundary.
-    if (current) current += "\n";
-
-    if (!inTrigger && /\bBEGIN\s*$/i.test(current.trimEnd())) {
-      inTrigger = true;
-    }
+    const tail = line.slice(start, end) + (li < lines.length - 1 ? "\n" : "");
+    applyState(tail);
+    current += tail;
   }
 
   flush();
@@ -1465,7 +1696,26 @@ export async function applyMigrations(
     }
     const sql = await readFileImpl(join(options.dir, name));
     const statements = splitStatements(sql);
-    if (statements.length > 0) await options.ddlExecutor(statements);
+    // Route each statement by class, preserving file order (a later DML may
+    // depend on an earlier DDL). DDL keeps ?norwtime&norwrandom so its text is
+    // stored verbatim; DML must not, or replicas diverge (see isDdlStatement).
+    // Consecutive DDL runs are coalesced into one ddlExecutor call.
+    let pendingDdl: string[] = [];
+    const flushDdl = async () => {
+      if (pendingDdl.length > 0) {
+        await options.ddlExecutor(pendingDdl);
+        pendingDdl = [];
+      }
+    };
+    for (const stmt of statements) {
+      if (isDdlStatement(stmt)) {
+        pendingDdl.push(stmt);
+      } else {
+        await flushDdl();
+        await options.db.prepare(stmt).run();
+      }
+    }
+    await flushDdl();
     await options.db
       .prepare("INSERT INTO _migrations (id, applied_at) VALUES (?, datetime('now'))")
       .bind(name)
@@ -1481,7 +1731,7 @@ export async function applyMigrations(
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/migrate.test.ts`
-Expected: PASS（全部 8 条）
+Expected: PASS（全部 13 条）
 
 - [ ] **Step 5: 提交**
 
@@ -1599,7 +1849,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 7: 确定性触发器后置迁移 + 时间列补写
+### Task 7: 确定性触发器后置迁移
 
 **Files:**
 - Create: `scripts/migrations/030-deterministic-leaderboard-revision.sql`
@@ -1709,6 +1959,14 @@ CREATE TABLE IF NOT EXISTS leaderboard_revision_seq (
   n  INTEGER NOT NULL
 );
 INSERT OR IGNORE INTO leaderboard_revision_seq (id, n) VALUES (1, 0);
+
+-- 029 seeds leaderboard_revision with lower(hex(randomblob(16))). That DML
+-- runs through the default rewrite path (see Task 5: DML must NOT carry
+-- ?norwtime&norwrandom), so every replica stores the same literal — but the
+-- value is still a random blob, not a counter. Overwrite it here so the
+-- revision starts at a deterministic 0 and only ever moves via the triggers
+-- below. Without this, a read-only instance would keep the random seed.
+UPDATE leaderboard_revision SET revision = printf('%032x', 0) WHERE id = 1;
 
 DROP TRIGGER IF EXISTS leaderboard_user_insert;
 DROP TRIGGER IF EXISTS leaderboard_user_delete;
@@ -2037,7 +2295,8 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `createD1Adapter`（Task 2）
-- Produces: `createD1HttpServer(options: { baseUrl: string; token: string; rqliteToken?: string; fetchImpl?: typeof fetch }): { handle(request: Request): Promise<Response> }`
+- Produces: `createD1HttpServer(options: { baseUrl: string; token: string; fetchImpl?: typeof fetch }): { handle(request: Request): Promise<Response> }`
+  - `token` 是入站 Bearer（`CF_D1_API_TOKEN`）；同时作为访问 rqlite 的 Bearer 转发给 `createD1Adapter`（rqlite 当前无鉴权，故运行期无影响；若将来给 rqlite 开 `-auth`，需另加独立的 `rqliteToken`）
   - `POST <mount>/query` —— 接受 `{ sql, params }` 或 `{ batch: [{sql, params}] }`，返回 `{ success, result: [{ success, results, meta }], errors: [] }`
   - 未带正确 Bearer 时返回 401
 
@@ -2079,6 +2338,16 @@ describe("d1-http", () => {
       new Request("http://d1-http:8788/query", { method: "POST", body: "{}" })
     );
     expect(res.status).toBe(401);
+  });
+
+  it("rejects a token that shares a prefix with the real one", async () => {
+    // Guards the constant-time compare: a shorter/longer or prefix-matching
+    // Authorization must still be rejected.
+    const server = createD1HttpServer({ baseUrl: "http://rqlite:4001", token: TOKEN, fetchImpl: vi.fn() as never });
+    for (const bad of [TOKEN.slice(0, -1), `${TOKEN}x`, "x"]) {
+      const res = await server.handle(post({ sql: "SELECT 1", params: [] }, bad));
+      expect(res.status).toBe(401);
+    }
   });
 
   it("wraps a single query in the D1 envelope", async () => {
@@ -2210,6 +2479,20 @@ export function createD1HttpServer(options: D1HttpOptions) {
   });
   const expectedAuth = `Bearer ${options.token}`;
 
+  // Constant-time compare: `!==` short-circuits, so a leaked prefix could be
+  // used to guess the token character by character. The upstream workers
+  // already compare their shared secrets this way (packages/worker/src/index.ts
+  // secureCompare; worker-read/src/index.ts).
+  function secureEqual(a: string, b: string): boolean {
+    const enc = new TextEncoder();
+    const ba = enc.encode(a);
+    const bb = enc.encode(b);
+    if (ba.length !== bb.length) return false;
+    let diff = 0;
+    for (let i = 0; i < ba.length; i++) diff |= ba[i]! ^ bb[i]!;
+    return diff === 0;
+  }
+
   function envelope(result: D1Result[], errors: { message: string }[]) {
     return Response.json({
       success: errors.length === 0,
@@ -2220,7 +2503,7 @@ export function createD1HttpServer(options: D1HttpOptions) {
 
   return {
     async handle(request: Request): Promise<Response> {
-      if (request.headers.get("Authorization") !== expectedAuth) {
+      if (!secureEqual(request.headers.get("Authorization") ?? "", expectedAuth)) {
         return Response.json(
           { success: false, result: [], errors: [{ message: "Unauthorized" }] },
           { status: 401 }
@@ -2269,7 +2552,7 @@ export function createD1HttpServer(options: D1HttpOptions) {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/d1-http.test.ts`
-Expected: PASS（全部 7 条）
+Expected: PASS（全部 8 条）
 
 - [ ] **Step 5: 提交**
 
@@ -2290,6 +2573,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Create: `deploy/selfhost/server-read.ts`
 - Create: `deploy/selfhost/server-ingest.ts`
 - Create: `deploy/selfhost/server-scheduler.ts`
+- Create: `deploy/selfhost/migrate-cli.ts`
 - Create: `deploy/selfhost/docker-compose.yml`
 - Create: `deploy/selfhost/.env.example`
 - Create: `deploy/selfhost/README.md`
@@ -2300,6 +2584,8 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **注意**：本任务无单元测试——它的交付物是「容器起来且互相能通」，由 Step 5 的手工端到端验证覆盖。
 
+> **两套镜像，别混**：跑 bun 的适配层服务（migrate/d1-http/read/ingest/scheduler）用本任务的 `deploy/selfhost/Dockerfile` 构建的 `pew-selfhost:local`；**web 用仓库根 `Dockerfile` 构建的 `pew:standalone`**（Next standalone，根 `Dockerfile:72` 的 `CMD ["node","packages/web/server.js"]`）。把 web 指到 `pew-selfhost:local` 会因无 Next 产物、无 CMD 而退出。
+
 - [ ] **Step 1: 写自建镜像 Dockerfile**
 
 > **为什么不能复用根 `Dockerfile`**：它的 runner 阶段 `FROM node:22-slim`，只 COPY
@@ -2309,14 +2595,17 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 > migrate 失败 → read/ingest/scheduler 被 `service_completed_successfully` 挡住 →
 > web 被 `service_healthy` 挡住，整套 compose 无法启动。
 
-创建 `deploy/selfhost/Dockerfile`（compose 中所有 `image: pew-selfhost:local`
-的服务共用它构建；`build.dockerfile` 已在下方 compose 里指向本文件）：
+创建 `deploy/selfhost/Dockerfile`（compose 里跑 bun 服务的 `migrate` 引用它构建；
+**web 不用它**——web 走仓库根 `Dockerfile` 构建 Next standalone，见下方 compose）：
 
 ```dockerfile
-# Image for every deploy/selfhost service (migrate, d1-http, read, ingest,
-# scheduler). The repo-root Dockerfile's runner stage cannot run them: it is a
-# node:22-slim Next.js standalone image with no bun, no deploy/, no package
-# sources and no migrations.
+// Image for every deploy/selfhost service that runs TS via bun (migrate,
+// d1-http, read, ingest, scheduler). The repo-root Dockerfile's runner stage
+// cannot run them: it is a node:22-slim Next.js standalone image with no bun,
+// no deploy/, no package sources and no migrations.
+//
+// This is NOT the image for `web` — web is a Next.js standalone build and uses
+// the repo-root Dockerfile (see compose: web's build points at ./Dockerfile).
 FROM oven/bun:1.4.0 AS build
 
 WORKDIR /app
@@ -2348,7 +2637,8 @@ ENV NODE_ENV=production
 **自检**（写完立刻跑，防止又造出一个「没有 bun 的镜像」）：
 
 ```bash
-docker build -f deploy/selfhost/Dockerfile -t pew-selfhost:local ../..
+# Context is the repo root, so `COPY package.json ...` resolves. Run from /Volumes/Work/orca/pew.
+docker build -f deploy/selfhost/Dockerfile -t pew-selfhost:local .
 docker run --rm --entrypoint bun pew-selfhost:local --version
 docker run --rm --entrypoint sh pew-selfhost:local   -c 'test -f deploy/selfhost/d1-http.ts && test -f scripts/migrations/001-init.sql && test -d packages/core/dist'
 # Expected: 三条命令全部 exit 0
@@ -2368,6 +2658,7 @@ docker run --rm --entrypoint sh pew-selfhost:local   -c 'test -f deploy/selfhost
 
 import { createServer } from "node:http";
 import { createD1HttpServer } from "./d1-http";
+import { registerShutdownSignals } from "./node-runtime";
 
 const PORT = Number(process.env.PORT ?? 8788);
 const RQLITE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
@@ -2380,7 +2671,7 @@ if (!TOKEN) {
 
 const server = createD1HttpServer({ baseUrl: RQLITE_URL, token: TOKEN });
 
-createServer((req, res) => {
+const nodeServer = createServer((req, res) => {
   void (async () => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk as Buffer);
@@ -2408,6 +2699,8 @@ createServer((req, res) => {
 }).listen(PORT, "0.0.0.0", () => {
   console.log(`d1-http listening on :${PORT} -> ${RQLITE_URL}`);
 });
+
+registerShutdownSignals(async () => nodeServer.close());
 ```
 
 - [ ] **Step 3: 写 read / ingest / scheduler 入口**
@@ -2423,7 +2716,7 @@ createServer((req, res) => {
 import worker from "../../packages/worker-read/src/index";
 import { createD1Adapter } from "./d1-adapter";
 import { createKvAdapter } from "./kv-adapter";
-import { createWorkerServer } from "./node-runtime";
+import { createWorkerServer, registerShutdownSignals } from "./node-runtime";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const RQLITE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
@@ -2443,7 +2736,10 @@ if (!env.WORKER_READ_SECRET) {
 
 createWorkerServer({ worker, env, port: PORT })
   .listen()
-  .then((handle) => console.log(`worker-read listening on :${handle.port}`))
+  .then((handle) => {
+    console.log(`worker-read listening on :${handle.port}`);
+    registerShutdownSignals(handle.close);
+  })
   .catch((error: unknown) => {
     console.error("failed to start worker-read", error);
     process.exit(1);
@@ -2460,7 +2756,7 @@ createWorkerServer({ worker, env, port: PORT })
 
 import worker from "../../packages/worker/src/index";
 import { createD1Adapter } from "./d1-adapter";
-import { createWorkerServer } from "./node-runtime";
+import { createWorkerServer, registerShutdownSignals } from "./node-runtime";
 
 const PORT = Number(process.env.PORT ?? 8786);
 const RQLITE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
@@ -2478,7 +2774,10 @@ if (!env.WORKER_SECRET) {
 
 createWorkerServer({ worker, env, port: PORT })
   .listen()
-  .then((handle) => console.log(`worker-ingest listening on :${handle.port}`))
+  .then((handle) => {
+    console.log(`worker-ingest listening on :${handle.port}`);
+    registerShutdownSignals(handle.close);
+  })
   .catch((error: unknown) => {
     console.error("failed to start worker-ingest", error);
     process.exit(1);
@@ -2501,7 +2800,7 @@ createWorkerServer({ worker, env, port: PORT })
 import worker from "../../packages/worker-read/src/index";
 import { createD1Adapter } from "./d1-adapter";
 import { createKvAdapter } from "./kv-adapter";
-import { runScheduled } from "./node-runtime";
+import { registerShutdownSignals, runScheduled } from "./node-runtime";
 
 const RQLITE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
 const D1_TOKEN = process.env.CF_D1_API_TOKEN ?? "";
@@ -2515,7 +2814,10 @@ const env = {
 };
 
 console.log(`scheduler running every ${INTERVAL_MS}ms`);
-runScheduled(worker, env, INTERVAL_MS);
+const stop = runScheduled(worker, env, INTERVAL_MS);
+registerShutdownSignals(async () => {
+  stop();
+});
 ```
 
 - [ ] **Step 4: 写 compose 与配置样例**
@@ -2544,10 +2846,13 @@ x-rqlite-common: &rqlite-common
   # relies on 12 ON DELETE CASCADE clauses.
   command: ["-fk", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002"]
   healthcheck:
-    # HTTP probe, NOT `rqlite -H localhost:4001 status`: that CLI invocation
-    # always exits 0 (verified: an unreachable host still returns exit code 0),
-    # so the compose health gate would never actually gate anything.
-    test: ["CMD", "wget", "-q", "-T", "2", "-O-", "http://localhost:4001/status"]
+    # Probe /readyz, NOT /status. /status returns HTTP 200 even when the node
+    # is not part of a cluster yet (verified on 10.5.3: with -bootstrap-expect 3
+    # and no peers, /status is 200 with raft.state=Follower, num_peers=0,
+    # voter=false; a write then fails with HTTP 503 "leader not found").
+    # /readyz returns 503 until a leader exists, so the health gate — and the
+    # migrate container waiting on it — only proceed once the cluster is up.
+    test: ["CMD", "wget", "-q", "-T", "2", "-O-", "http://localhost:4001/readyz"]
     interval: 10s
     timeout: 5s
     retries: 5
@@ -2576,7 +2881,13 @@ services:
   rqlite-1:
     <<: *rqlite-common
     profiles: ["cluster"]
-    command: ["-fk", "-node-id", "1", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-bootstrap-expect", "3"]
+    # All three nodes carry -bootstrap-expect 3 plus the same -join list, so a
+    # node that starts before its peers waits as a non-voter (raft.voter=false,
+    # writes return 503 "leader not found") until quorum forms. A single node
+    # with -bootstrap-expect 3 and NO -join list would instead bootstrap itself
+    # alone and accept writes immediately (verified) — which would let migrate
+    # run against a one-node "cluster".
+    command: ["-fk", "-node-id", "1", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-http-adv-addr", "rqlite-1:4001", "-raft-adv-addr", "rqlite-1:4002", "-bootstrap-expect", "3", "-join", "rqlite-1:4002,rqlite-2:4002,rqlite-3:4002"]
     volumes:
       - rqlite-data-1:/rqlite/file
     deploy:
@@ -2586,7 +2897,7 @@ services:
   rqlite-2:
     <<: *rqlite-common
     profiles: ["cluster"]
-    command: ["-fk", "-node-id", "2", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-join", "rqlite-1:4002"]
+    command: ["-fk", "-node-id", "2", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-http-adv-addr", "rqlite-2:4001", "-raft-adv-addr", "rqlite-2:4002", "-bootstrap-expect", "3", "-join", "rqlite-1:4002,rqlite-2:4002,rqlite-3:4002"]
     volumes:
       - rqlite-data-2:/rqlite/file
     deploy:
@@ -2596,7 +2907,7 @@ services:
   rqlite-3:
     <<: *rqlite-common
     profiles: ["cluster"]
-    command: ["-fk", "-node-id", "3", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-join", "rqlite-1:4002"]
+    command: ["-fk", "-node-id", "3", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-http-adv-addr", "rqlite-3:4001", "-raft-adv-addr", "rqlite-3:4002", "-bootstrap-expect", "3", "-join", "rqlite-1:4002,rqlite-2:4002,rqlite-3:4002"]
     volumes:
       - rqlite-data-3:/rqlite/file
     deploy:
@@ -2634,7 +2945,8 @@ services:
       rqlite: { condition: service_healthy, required: false }
       rqlite-1: { condition: service_healthy, required: false }
     healthcheck:
-      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:8788/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      # Read PORT from the env so a changed port does not silently break the probe.
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8788)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -2658,7 +2970,7 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
     healthcheck:
-      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:8787/api/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/api/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -2682,7 +2994,7 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
     healthcheck:
-      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:8786/api/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8786)+'/api/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -2706,6 +3018,7 @@ services:
       RQLITE_URL: http://rqlite:4001
       CF_D1_API_TOKEN: ${CF_D1_API_TOKEN}
       WORKER_READ_SECRET: ${WORKER_READ_SECRET}
+      DAILY_INTERVAL_MS: ${DAILY_INTERVAL_MS:-86400000}
     depends_on:
       migrate: { condition: service_completed_successfully }
     deploy:
@@ -2717,7 +3030,14 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   web:
-    image: pew-selfhost:local
+    # web is a Next.js standalone build — the repo-root Dockerfile, not the
+    # bun image the adapter services use. Building it here is required: this
+    # branch carries auth.ts and other web changes that the upstream image
+    # does not have.
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: pew:standalone
     restart: unless-stopped
     environment:
       PORT: "7020"
@@ -2744,6 +3064,11 @@ services:
       CF_ACCOUNT_ID: selfhost
       CF_D1_DATABASE_ID: selfhost
       CF_D1_API_TOKEN: ${CF_D1_API_TOKEN}
+      # Optional: team/org logo upload (lib/r2.ts throws without these).
+      CF_R2_ENDPOINT: ${CF_R2_ENDPOINT:-}
+      CF_R2_ACCESS_KEY_ID: ${CF_R2_ACCESS_KEY_ID:-}
+      CF_R2_SECRET_ACCESS_KEY: ${CF_R2_SECRET_ACCESS_KEY:-}
+      CF_R2_BUCKET: ${CF_R2_BUCKET:-}
     ports:
       - "${WEB_PORT:-7020}:7020"
     depends_on:
@@ -2794,7 +3119,13 @@ async function waitForRqlite(timeoutMs = 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${BASE_URL}/status`);
+      // Probe /readyz, not /status. In the cluster profile rqlite-1 is started
+      // with -bootstrap-expect 3 and a full -join list; /status returns HTTP
+      // 200 while it is still waiting for quorum (verified on 10.5.3), so a
+      // /status probe would let migrate run before a leader exists and fail.
+      // /readyz only turns 200 once a leader is up. /readyz is also right for
+      // the single profile (-bootstrap-expect 1 elects immediately).
+      const res = await fetch(`${BASE_URL}/readyz`);
       if (res.ok) return;
     } catch {
       // not up yet
@@ -2838,12 +3169,15 @@ AUTH_SECRET=replace-me
 # Public base URL of this deployment. Must match how browsers reach it,
 # including the scheme (http:// on an intranet).
 NEXTAUTH_URL=http://localhost:7020
-# Comma-separated admin emails (break-glass override; the first registered
-# user also becomes an admin).
-ADMIN_EMAILS=admin@example.com
+# Comma-separated admin emails. In THIS plan (Plan 1) there is no /setup
+# wizard yet, so this is the only way to have an admin — set it to a real
+# address before first use. (Plan 2 adds "first registered user is admin".)
+ADMIN_EMAILS=you@example.com
 
 # --- Google OAuth (optional) ---
-# Leave blank to hide the Google button; email+password still works.
+# Leave blank to hide the Google button. NOTE: Google rejects http:// callback
+# URLs, so on a plain-http intranet this cannot be used — email+password
+# (Plan 2) is the supported login there.
 AUTH_GOOGLE_ID=
 AUTH_GOOGLE_SECRET=
 
@@ -2862,9 +3196,9 @@ WEB_PORT=7020
 COMPOSE_PROFILES=single
 
 # --- Cookie security ------------------------------------------------------
-# The Next standalone server hard-codes NODE_ENV=production, which would force
-# __Secure- cookies. On an intranet served over plain http the browser drops
-# them and login never sticks, so set this to false for http deployments.
+# NOTE: this switch only takes effect once the auth.ts branch that reads it
+# lands (Plan 2). Until then the Next standalone server's NODE_ENV=production
+# still forces __Secure- cookies. Kept here so the value is in place.
 # Set true only when NEXTAUTH_URL is https.
 USE_SECURE_COOKIES=false
 
@@ -2877,9 +3211,17 @@ WORKER_READ_URL=http://read:8787
 WORKER_INGEST_URL=http://ingest:8786
 D1_BASE_URL=http://d1-http:8788
 
+# --- Object storage (optional; team/org logos) ---------------------------
+# lib/r2.ts throws when these are missing, so logo upload returns 500 unless
+# set. Point them at any S3-compatible store (e.g. MinIO).
+# CF_R2_ENDPOINT=
+# CF_R2_ACCESS_KEY_ID=
+# CF_R2_SECRET_ACCESS_KEY=
+# CF_R2_BUCKET=
+
 # --- Optional ---
-# Daily pricing sync interval in ms (default 24h).
-# DAILY_INTERVAL_MS=86400000
+# Daily pricing sync interval in ms (default 24h). Passed to the scheduler.
+DAILY_INTERVAL_MS=86400000
 ```
 
 > 说明：`CF_ACCOUNT_ID` / `CF_D1_DATABASE_ID` 在 compose 里已硬编码为占位串 `selfhost`（写路径走 `D1_BASE_URL`，这两个值只需非空），不放进 `.env.example`。`PEW_LOCAL_D1_URL` 是测试专用变量，生产部署不设置。
@@ -2942,16 +3284,23 @@ voter/reachable，且新节点能读到扩容前写入的数据。若要走 comp
 ## 安全注意事项
 
 - **rqlite 默认无鉴权**（实测 `/status` 返回 `http.auth = disabled`）：compose 网络内任何容器都可
-  无凭据直连数据库读写。本方案的屏障是「只有 `web` 发布宿主端口、其余仅 compose 网络内可达」
-  + `d1-http` 的静态 Bearer（`CF_D1_API_TOKEN`）。注意该 token 同时下发给多个服务容器——
-  任何一个应用容器被攻陷即可拿到它。更高要求的部署可给 rqlite 加 `-auth` 认证文件，列为可选强化。
+  无凭据直连数据库读写。**当前方案只做了「网络隔离」这一层**：rqlite 不发布宿主端口、仅 compose
+  网络内可达。规格 §4.1 专项三提到的另一层（给 rqlite 配 `-http-auth`）**本计划未做**——因为
+  read/ingest/scheduler 三个容器是**直连 rqlite** 的（不走 d1-http），一旦给 rqlite 加鉴权，
+  这三个服务也要同步带 token。若生产要求该层，需一并改造，列为后续强化项。
+- **`CF_D1_API_TOKEN` 只保护 web → d1-http 这一跳**。read/ingest/scheduler 直连 rqlite，其实不需要
+  这个 token，但当前 compose 仍下发给它们；可收窄为只发给 `web` 与 `d1-http`（本计划保留原样以
+  减少改动面，明确记录为已知暴露面）。
 - 真实密钥只写在 `deploy/selfhost/.env`（被 `.gitignore` 的 `.env` 规则覆盖，不入库、不进镜像：
-  `.dockerignore` 也含 `.env*`）；构建与 compose 里出现的 `CF_ACCOUNT_ID`/`CF_D1_DATABASE_ID`
+  `.dockerignore` 也含 `.env`）；构建与 compose 里出现的 `CF_ACCOUNT_ID`/`CF_D1_DATABASE_ID`
   是占位串，不是凭据。
 
 ## 数据库行为（重要）
 
-- 迁移 DDL 带 `?norwtime&norwrandom`，业务 DML **不带**。这是为了在集群下保持各副本一致：DDL 里的 `datetime('now')` 与 `randomblob()` 若被 rqlite 改写成常量，会静默禁用 12 个排行榜触发器。
+- **迁移 DDL 带 `?norwtime&norwrandom`，迁移 DML 不带**。这是为了在集群下保持各副本一致：DDL 里的
+  `datetime('now')` 与 `randomblob()` 若被 rqlite 改写成常量，会静默禁用 12 个排行榜触发器；而
+  DML（如 029 的种子 `INSERT`）必须**不带** norw——带 norw 时各副本独立求值会**分叉**（实测两副本得到
+  不同 randomblob），不带时 rqlite 把它改写成字面量再复制，各副本一致。详见 Task 5 的 `isDdlStatement`。
 - 排行榜 revision 用计数器（`leaderboard_revision_seq`）而非随机数，保证副本间收敛。
 - 读一律 `?level=weak`。rqlite 会把 weak 读转发给 leader，因此读一致性等价强一致；`none` 会读到陈旧数据，禁止使用。
 
@@ -3005,12 +3354,15 @@ docker compose exec web node -e "fetch('http://127.0.0.1:7020/api/live').then(r=
 ```bash
 cd deploy/selfhost
 cp .env.example .env
-# 用真实值替换三个 replace-me 与 NEXTAUTH_URL
+# 5. 用真实值替换四个 replace-me、NEXTAUTH_URL 与 ADMIN_EMAILS
 sed -i '' "s|AUTH_SECRET=replace-me|AUTH_SECRET=$(openssl rand -base64 32)|" .env
 sed -i '' "s|CF_D1_API_TOKEN=replace-me|CF_D1_API_TOKEN=$(openssl rand -hex 32)|" .env
 sed -i '' "s|WORKER_READ_SECRET=replace-me|WORKER_READ_SECRET=$(openssl rand -hex 32)|" .env
 sed -i '' "s|WORKER_SECRET=replace-me|WORKER_SECRET=$(openssl rand -hex 32)|" .env
-docker compose up -d --build   # .env 里 COMPOSE_PROFILES=single 即默认单节点
+sed -i '' "s|ADMIN_EMAILS=you@example.com|ADMIN_EMAILS=$(whoami)@localhost|" .env
+# web 用仓库根 Dockerfile（Next standalone），其余适配层服务用 bun 镜像
+docker compose build web
+docker compose up -d   # .env 里 COMPOSE_PROFILES=single 即默认单节点
 docker compose ps
 ```
 
@@ -3018,11 +3370,18 @@ Expected: `rqlite`、`d1-http`、`read`、`ingest`、`web` 显示 `healthy`；`m
 
 - [ ] **Step 6: 端到端验证**
 
+> rqlite **不发布宿主端口**，所以 1–6 步经 d1-http 或容器内执行验证，不打 `127.0.0.1:14001`。
+
 ```bash
-# 1. 迁移账本已写入
-curl -s -X POST http://127.0.0.1:14001/db/query?level=weak \
-  -H 'Content-Type: application/json' -d '[["SELECT COUNT(*) FROM _migrations"]]'
-# Expected: 32（33 个上游 .sql 去掉 3 个 squash 的，加 030、031）
+# 1. 迁移账本已写入（经 d1-http 的只读路径）
+docker compose exec web node -e "
+fetch('http://d1-http:8788/query', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + process.env.CF_D1_API_TOKEN },
+  body: JSON.stringify({ sql: 'SELECT COUNT(*) AS n FROM _migrations', params: [] }),
+}).then(r=>r.json()).then(b=>{ console.log(JSON.stringify(b.result[0].results)); process.exit(b.success?0:1); });
+"
+# Expected: [[32]]（33 个上游 .sql 去掉 3 个 squash 的，加 030、031）
 
 # 2. web 健康检查
 curl -s http://127.0.0.1:7020/api/live
@@ -3032,21 +3391,17 @@ curl -s http://127.0.0.1:7020/api/live
 docker compose exec web node -e "fetch('http://read:8787/api/live').then(r=>r.json()).then(console.log)"
 # Expected: {"status":"ok",...}
 
-# 4. 触发器是确定性版本（不是 randomblob）
-curl -s -X POST http://127.0.0.1:14001/db/query?level=weak \
-  -H 'Content-Type: application/json' \
-  -d '[["SELECT sql FROM sqlite_master WHERE name = \"leaderboard_user_insert\""]]' | grep -c randomblob
-# Expected: 0
+# 4. 触发器是确定性版本（不是 randomblob）——经 d1-http 读 sqlite_master
+docker compose exec web node -e "
+fetch('http://d1-http:8788/query', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + process.env.CF_D1_API_TOKEN },
+  body: JSON.stringify({ sql: \"SELECT sql FROM sqlite_master WHERE name = 'leaderboard_user_insert'\", params: [] }),
+}).then(r=>r.json()).then(b=>{ const n = (b.result[0].results[0].sql.match(/randomblob/g)||[]).length; console.log('randomblob count:', n); process.exit(n===0?0:1); });
+"
+# Expected: randomblob count: 0
 
-# 5. 写路径可用：插入一条 app_setting 再读回
-curl -s -X POST http://127.0.0.1:14001/db/execute \
-  -H 'Content-Type: application/json' \
-  -d '[["INSERT INTO app_settings (key, value) VALUES (\"smoke\", \"1\") ON CONFLICT (key) DO UPDATE SET value = excluded.value"]]'
-curl -s -X POST http://127.0.0.1:14001/db/query?level=weak \
-  -H 'Content-Type: application/json' -d '[["SELECT value FROM app_settings WHERE key = \"smoke\""]]'
-# Expected: [["1"]]
-
-# 6. 真实写路径可用：经 d1-http 打一条单语句 INSERT（这正是 web 的 execute() 走的路）
+# 5. 写路径可用：经 d1-http 打一条单语句 INSERT（这正是 web 的 execute() 走的路）
 #    若 d1-http 把单语句送去 /db/query，这里会返回 success:false
 #    "attempt to change database via query operation"。
 docker compose exec web node -e "
@@ -3057,6 +3412,16 @@ fetch('http://d1-http:8788/query', {
 }).then(r => r.json()).then(b => { console.log(JSON.stringify(b)); process.exit(b.success && b.result[0].meta.changes === 1 ? 0 : 1); });
 "
 # Expected: {"success":true,...,"meta":{"changes":1,...}}，exit 0
+
+# 6. 回读刚写入的行
+docker compose exec web node -e "
+fetch('http://d1-http:8788/query', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + process.env.CF_D1_API_TOKEN },
+  body: JSON.stringify({ sql: 'SELECT value FROM app_settings WHERE key = \\'smoke2\\'', params: [] }),
+}).then(r=>r.json()).then(b=>{ console.log(JSON.stringify(b.result[0].results)); process.exit(b.success?0:1); });
+"
+# Expected: [["2"]]
 ```
 
 - [ ] **Step 7: 提交**
@@ -3125,11 +3490,14 @@ Expected: 合并无冲突（或仅 `lib/d1.ts`、`vitest.config.ts` 冲突且易
 `vitest.config.ts`（`test.include` 增加 `deploy/**/*.test.ts`）。`packages/worker/**` 与
 `packages/worker-read/**` 完全未改。
 
+> 注意：这是 **Plan 1 的**接触面。Plan 2（认证子系统）还会改 `auth.ts`、`lib/admin.ts`、
+> `proxy.ts` 等（见 spec §4.7 的 12 处清单）；合并回归时按 Plan 2 的清单重新确认。
+
 ```bash
 git fetch upstream main
 git merge upstream/main
 bun run test
-docker compose up -d --build
+docker compose build web && docker compose up -d
 curl -s http://127.0.0.1:7020/api/live
 ```
 
@@ -3153,7 +3521,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ## 交付边界
 
-本计划完成后，pew 可在内网运行、数据存 rqlite、可用 Google OAuth 登录（沿用上游逻辑）、可单节点或三节点部署。
+本计划完成后，pew 可在内网运行、数据存 rqlite、可单节点或三节点部署。
+
+> **关于登录**：本计划**不提供可用的交互式登录**。Google OAuth 不接受内网 http 回调（spec §2），
+> 邮箱+密码在 Plan 2。因此 Plan 1 交付的是「数据层与运行时可用、API 可经 CLI/密钥调用」，
+> 而不是「浏览器可登录的完整产品」——完整可用性以 Plan 2 完成为准。
 
 **不在本计划内**（Plan 2，认证子系统）：
 
