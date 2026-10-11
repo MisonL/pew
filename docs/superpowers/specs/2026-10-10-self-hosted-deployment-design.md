@@ -219,7 +219,7 @@ rqlite 用 statement-based replication（语句复制到各副本各自执行）
 - 代价：任何节点都是「转发器」，读延迟 = 本地读 + 转发；无本地读横向扩展。未来若需读扩展，须先改造 revision 一致性逻辑——列为远期方向，不在本设计内。
 - 副作用（正面）：follower 上的写与读都自动转发，**地址池轮换无需区分读写端点**；故障切换沿用已实测的 1.85s 自动切换。
 
-**版本要求**：**必须 ≥ v10**。v9.x 存在「batch 中带 RETURNING 的语句失败时事务不回滚」的缺陷，而本项目在 batch 中混用了 RETURNING（`packages/worker/src/accounting-sql.ts:24`、`packages/web/src/app/api/teams/[teamId]/route.ts:256,272`）。
+**版本要求**：**必须 ≥ v10.3.3**。v10.3.3 才修复「事务请求中某条语句 **prepare** 失败时不回滚」（CHANGELOG PR #2792，2026-09-13）。本项目在 batch 中混用 RETURNING（`packages/worker/src/accounting-sql.ts:24`、`packages/web/src/app/api/teams/[teamId]/route.ts:256,272`），一旦某条语句在 prepare 阶段就报错（如缺表），旧版本会让同批已成功的语句**残留提交**。**实测**（事务请求中间夹一条缺表语句）：10.3.2 下 `INSERT(1)`、`INSERT(2)` **都提交**（未回滚）；10.3.3 下 p 表 0 行（正确回滚）。病因是 statement-**prepare** 错误，**不是** RETURNING。
 
 **其它实测结论**：`CURRENT_TIMESTAMP` 会被 rqlite 引号化成字符串字面量，禁止在迁移与业务 SQL 中使用；rqlite HTTP 默认超时 30s；`D1Meta` 在 workers-types 里字段多为必填，适配层应 `as unknown as D1Database` 而非强造型。
 
@@ -469,7 +469,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 **刻意不改的上游文件**：`packages/worker/**`、`packages/worker-read/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。（注意：`proxy.ts` 与 `lib/auth-adapter.ts` **不在**此列——两者已在改动清单内。）
 
-**适配层的运行方式**：`deploy/selfhost/*` 用 **bun 直接运行 TS 源码**（基础镜像已含 bun，`Dockerfile:7`），不引入新的构建工具或依赖——因而无需改 `bun.lock` 与 `package.json`。适配层通过相对路径导入 `packages/worker` / `packages/worker-read` 的入口。
+**适配层的运行方式**：`deploy/selfhost/*` 用 **bun 直接运行 TS 源码**，但**不能复用仓库根的 `Dockerfile`**——实测其 `runner` 阶段是 `FROM node:22-slim`，只 COPY `.next/standalone`/`.next/static`/`public`，`awk '/AS runner/,0' Dockerfile | grep -c bun` = **0**、含 `deploy|packages/worker` 的行数 = **0**：最终镜像内**既无 bun 也无适配层源码**。而 compose 的 migrate/d1-http/read/ingest/scheduler 全部 `image: pew-selfhost:local` + `bun run deploy/selfhost/*.ts`，会全部启动失败。因此**必须新建 `deploy/selfhost/Dockerfile`**（从 `oven/bun:1.4.0` 出发，COPY 根 `package.json`/锁文件/`tsconfig.json`/`packages/`/`deploy/`/`scripts/migrations/`，并 build `@pew/core` 的 `dist`）。这也是唯一新增的「非上游目录」文件，不计入 12 处上游改动。
 
 ## 5. 数据流
 
@@ -492,7 +492,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | 层级 | 内容 |
 |---|---|
 | 适配层单元测试 | D1 形状映射（`rows_affected` 缺失兜底、错误在 HTTP 200 内、`duration` 换算、空批返回 `[]`）；KV `get(key,"text")`、`put` 带 TTL、`list` 分页 |
-| 迁移兼容测试 | 全部 32 个迁移（35 个文件中跳过 3 个被 squash 的，含本方案新增的 030/031）apply 到 rqlite。**实测基线（rqlite 10.5.3，2026-10-11）**：上游表 22 张 + 本方案 3 张（`_migrations`、`kv_cache`、`leaderboard_revision_seq`）；索引 65 个（含 SQLite 自动创建的 39 个 `sqlite_autoindex_*`；显式索引仅 26 个，因 023/024/025 三个迁移 DROP 了 projects/showcases/badges/budgets 等表并带走其索引）；触发器 12 个；视图 2 个。断言 12 触发器已替换为确定性版本，且 `kv_cache` 存在（缺表只在运行时暴露，单元测试用内存假库测不出）。原写「23 表 / 62 索引」为估计值，实测不成立，已更正 |
+| 迁移兼容测试 | 全部 32 个迁移（上游 `.sql` 实测 **33 个文件**，其中 3 个是被 squash 跳过的旧文件，含本方案新增的 030/031）apply 到 rqlite。**实测基线（rqlite 10.5.3，2026-10-11）**：上游表 22 张 + 本方案 3 张（`_migrations`、`kv_cache`、`leaderboard_revision_seq`）；索引 65 个（含 SQLite 自动创建的 39 个 `sqlite_autoindex_*`；显式索引仅 26 个，因 023/024/025 三个迁移 DROP 了 projects/showcases/badges/budgets 等表并带走其索引）；触发器 12 个；视图 2 个。断言 12 触发器已替换为确定性版本，且 `kv_cache` 存在（缺表只在运行时暴露，单元测试用内存假库测不出）。原写「23 表 / 62 索引」为估计值，实测不成立，已更正 |
 | 多节点确定性测试 | **三节点集群 + `docker pause` follower 制造重放**，用 `level=none` 直读各副本本地状态断言收敛：触发器 revision 三副本一致、应用层写入的 `created_at` 一致（这是配置①②与配置③的判别实验，见 §4.1 专项二） |
 | 迁移确定性测试 | 断言 DDL 执行后 `sqlite_master` 中 `datetime('now')` / `randomblob()` **未被冻结**（用 `?norwtime&norwrandom`） |
 | 原子性测试 | batch 中夹坏语句，断言零残留 |
@@ -515,7 +515,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | **RBAC 粗粒度** | 仅按端点的权限位 | 多租户隔离在应用层做 |
 | **bus factor = 1** | 单人维护，无商业支持 | 接受；MIT 许可下可自行 fork |
 | **写不水平扩展** | Raft 单 leader 串行 | 批量路径实测数万行/秒，量级足够 |
-| **Web 需小幅改动** | 认证与 cookie 开关需改上游文件 | 改动面收敛为 §4.7 的 6 个文件，便于后续合并 |
+| **Web 需小幅改动** | 认证与 cookie 开关需改上游文件 | 改动面收敛为 §4.7 的 12 个上游文件（另加 1 个新增 `deploy/selfhost/Dockerfile`），便于后续合并 |
 | **多节点分叉**（§4.1 专项二） | 解冻后触发器体/DEFAULT 在各副本各自求值 | **已解决**：确定性触发器（seq）+ 应用层写时间列，实测三副本收敛。残余风险见下条 |
 | **限速不跨实例**（§4.4） | `inMemoryRateLimiter` 是进程内状态 | 多 web 副本时限速弱化；需外部化（如 rqlite 表驱动）或保持单 web 实例 |
 | **`X-Forwarded-For` 可伪造**（§4.4） | 信任代理头取 IP | 反向代理必须清洗/覆写该头，写入部署文档 |
@@ -526,7 +526,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 1. **上游合并策略**：本分支改动集中在 `deploy/selfhost/` + 12 处上游文件小改动——需定期 rebase 验证；§4.7 的「不改文件」清单随上游更新需复核。
 2. **构建期变量是否被内联进构建产物**（§4.4）：Dockerfile 注释称 page data collection 需要 `CF_*`/`AUTH_SECRET`——哪些被 Next 内联需实测；确认前一律用占位值构建。
-3. **单→3 在线扩容**（§4.6）：向已运行的单节点 `-join` 是否为 rqlite 支持的路径需实现阶段验证；若不支持，切换路径为「备份 → cluster profile 恢复」。
+3. **单→3 在线扩容**（§4.6）：**已实测支持，关闭**。向已运行的单节点 `-join` 是 rqlite 支持的路径：`-bootstrap-expect 1` 单节点写入数据后，起两个新节点 `-join s1:4002`（**不带** `-bootstrap-expect`）→ 集群 3 节点全部 voter/reachable，新节点上能查到单节点时期写入的行。故扩容路径为「cluster profile + `-join`」，无需「备份 → 恢复」。
 4. **手工 SQL 规约**（§4.1 专项五）：解冻后若有人手工 INSERT 省略时间列（多节点下有分叉风险），需写进开发规约——属实现阶段产物。
 5. **向导的实例选项范围**（§4.4）：步骤 3 具体开放哪些设置（`require_invite_code` 必开；站点名、注册开放度等）在实现阶段定稿。
 6. **密码重置的令牌形态**（§4.4）：一次性令牌存库表结构（`password_reset_tokens`）、有效期、单次使用语义在实现阶段定稿；邮件自助重置是否本期做需决策。
@@ -538,8 +538,17 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 数据全部在 rqlite 单一 SQLite（持久卷），备份即备份这个文件。
 
-- **备份方式**：rqlite 的 `backup` CLI / API 生成一致性快照（不能直接 `cp` 活跃文件）。定时任务（cron / systemd timer）导出到宿主目录或对象存储。
-- **恢复**：停 rqlite → 恢复快照文件 → 启动。恢复后需验证 schema 对象数与迁移账本一致。
+**恢复已实测订正**：原写「恢复快照文件（替换 `.db`）」是**静默无效**的——实际数据文件是 `/rqlite/file/data/db.sqlite`（另有 `raft.db`/`-wal`/`-shm`/`wsnapshots/`）；且 rqlite 会用 `raft.db` **重放日志**，备份后的写入会「复活」；清空整目录再放 `db.sqlite` 则走 **bootstrap 忽略预置文件**。正确机制是 REPL 点命令 `.restore`。
+
+- **备份方式**：`.backup` 点命令产出一份一致性快照（不能直接 `cp` 活跃文件）。定时任务（cron / systemd timer）导出到宿主目录或对象存储。非交互形式：`printf '.backup /rqlite/file/backup.db\n.exit\n' | docker compose exec -T rqlite rqlite -H localhost`。
+- **恢复**：把备份拷进容器后用 `.restore` 点命令（**不可**通过替换 db 文件恢复——raft 会重放日志使恢复静默失效）：
+
+  ```bash
+  docker compose cp "./backup-2026-10-11.db" rqlite:/rqlite/file/restore.db
+  printf '.restore /rqlite/file/restore.db\n.exit\n' | docker compose exec -T rqlite rqlite -H localhost
+  ```
+
+  恢复后需验证 schema 对象数与迁移账本一致。
 - **恢复演练**：纳入端到端测试——用备份恢复到空实例，跑通「登录 → 仪表盘可见」。
 - **保留策略**：建议 7 天滚动 + 每月归档（待定，取决于数据量与合规要求）。
 - **KV 适配层数据**（`kv_cache` 表）**在同一个库里**，随 rqlite 一起备份，无额外备份点；缓存类数据可容忍丢失。
@@ -574,7 +583,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 3. 起容器 → 验证
    注意：若新版本已执行**破坏性迁移**（改列/删表），回滚必须依赖快照，不能只回退镜像——这是「升级前先备份」的硬理由。
 
-**rqlite 版本升级**：单独升级 rqlite 前需查其 release note 的存储格式兼容性；rqlite 支持滚动升级（逐节点重启）。版本**必须 ≥ v10**（§4.1）。
+**rqlite 版本升级**：单独升级 rqlite 前需查其 release note 的存储格式兼容性；rqlite 支持滚动升级（逐节点重启）。版本**必须 ≥ v10.3.3**（§4.1）。
 
 **迁移账本与回滚的关系**：账本记录「已应用」，但**不提供 down 迁移**（上游也没有）。回滚数据一律走快照，不走反向 SQL。
 
@@ -583,7 +592,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | 变量 | 说明 |
 |---|---|
 | `AUTH_SECRET` | 会话加密密钥，**运行期注入**，不入版本库 |
-| `NEXTAUTH_URL` | 外部访问基址（`http://` 或 `https://`，决定 cookie 前缀与 `TRUSTED_ORIGIN`） |
+| `NEXTAUTH_URL` | 外部访问基址（`http://` 或 `https://`，决定 cookie 前缀；`TRUSTED_ORIGIN` 由它推导，无需单独配置） |
 | `USE_SECURE_COOKIES` | 内网 http 部署设 `false`（新增的显式关闭分支） |
 | `D1_BASE_URL` | 指向 `d1-http` 的地址（新增的写路径覆盖） |
 | `WORKER_READ_URL` / `WORKER_READ_SECRET` | 读路径（`read` 容器服务名 + 密钥） |
@@ -594,6 +603,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | `CF_R2_*` | 见 §9，可用 MinIO 替代 |
 | `CF_ACCOUNT_ID` / `CF_D1_DATABASE_ID` | 自建下仅需非空占位（写路径已切 `D1_BASE_URL`）；构建用占位值 |
 | `CF_D1_API_TOKEN` | **真实密钥**（d1-http 的 Bearer 校验，见 §4.1 专项三）；构建期用占位值 |
+| `COMPOSE_PROFILES` | compose profile 默认值：`single`（单节点，默认）或 `cluster`（3 节点）。放 compose 目录 `.env`，使裸 `docker compose up -d` 起单节点 |
 
 ## 12. 超出本设计范围
 

@@ -4,7 +4,7 @@
 
 **Goal:** 让 pew 脱离 Cloudflare 运行——用 rqlite 承载数据、用 Node 进程承载两个 Worker，Web 仍走原有逻辑，用一套 compose 在本机/内网跑起完整可用的 pew。
 
-**Architecture:** 不重写任何业务逻辑。新增 `deploy/selfhost/` 目录，内含三个适配层（D1 形状、KV 形状、node:http 宿主）与一个 d1-http 服务；`packages/worker` 与 `packages/worker-read` 的 `fetch` 处理器原样运行。Web 侧只改 `lib/d1.ts` 一处，让写路径能指向自建 d1-http。
+**Architecture:** 不重写任何业务逻辑。新增 `deploy/selfhost/` 目录，内含三个适配层（D1 形状、KV 形状、node:http 宿主）与一个 d1-http 服务；`packages/worker` 与 `packages/worker-read` 的 `fetch` 处理器原样运行。Web 侧只改两处上游文件：`lib/d1.ts`（让写路径指向自建 d1-http）与 `vitest.config.ts`（让 vitest 收集 `deploy/**` 下的测试）。
 
 **Tech Stack:** Bun（运行 TS 源码，基础镜像已含）、Node 22（`node:http`、Web 标准 Request/Response）、rqlite v10.5.3+、Docker Compose、Vitest 5（`bun run test`）
 
@@ -12,15 +12,16 @@
 
 ## Global Constraints
 
-- **rqlite 版本 ≥ v10**。v9.x 有「batch 中带 RETURNING 的语句失败时事务不回滚」缺陷。
+- **rqlite 版本 ≥ v10.3.3**。v10.3.3 才修复「事务请求中某条语句 **prepare** 失败时不回滚」（CHANGELOG PR #2792，2026-09-13）。实测 10.3.2 下两条 INSERT 夹一条缺表语句，前两条仍提交；10.3.3 正确回滚为 0 行。compose 固定 `rqlite/rqlite:10.5.3`（≥ 下限）。
 - **参数编码必须是扁平数组** `[sql, p1, p2]`，不是嵌套 `[sql, [p1,p2]]`。嵌套形式在 `/db/query` 下静默返回空结果。
-- **batch 必须走 `/db/request?transaction=true&associative`**，不能用 `/db/execute`（普通 SELECT 的行会静默丢失）。
+- **batch 必须走 `/db/request?transaction=true&associative&timings`**，不能用 `/db/execute`（普通 SELECT 的行会静默丢失）。
 - **读一律显式 `?level=weak`**（rqlite 会把 weak 读转发给 leader，等价强一致）。**禁止用 `none`**。
 - **DDL 一律带 `?norwtime&norwrandom`**；业务 DML **不带**（走默认改写，保证跨副本确定）。
 - **rqlite 必须带 `-fk`**（外键默认关闭，schema 有 12 处 `ON DELETE CASCADE`）。
-- **不改上游文件**：`packages/worker/**`、`packages/worker-read/**`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。本计划只改 `lib/d1.ts`。
+- **不改上游文件**：`packages/worker/**`、`packages/worker-read/**`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。本计划只改两个上游文件：`lib/d1.ts` 与 `vitest.config.ts`。
+- **适配层镜像必须自建**：compose 里跑 `deploy/selfhost/*.ts` 的服务**不能**复用仓库根 `Dockerfile` 的 runner 阶段——该阶段 `FROM node:22-slim`，只 COPY `.next/standalone`/`.next/static`/`public`，**既无 bun 也无 `deploy/`、`packages/*/src`、`scripts/migrations`**（实测 `awk '/AS runner/,0' Dockerfile | grep -c bun` = 0）。Task 10 新增 `deploy/selfhost/Dockerfile`，以 bun 为基镜像显式 COPY 源码并构建 `@pew/core` 的 `dist`（`@pew/core` 的 `main` 指向 `./dist/index.js`，容器内必须 build）。
 - **`deploy/selfhost/` 不注册为 workspace package**（避免改 `bun.lock` 与 `Dockerfile`），用 bun 直接运行 TS 源码。
-- **测试命令**：`bun run test`（vitest run）；单文件 `bunx vitest run <path>`。测试文件与源码同目录、命名 `*.test.ts`（vitest include 为 `packages/*/src/**/*.test.{ts,tsx}` 与 `scripts/**/*.test.{ts,tsx}`）。
+- **测试命令**：`bun run test`（vitest run）；单文件一律用 `./node_modules/.bin/vitest run <path>`——**不要用 `bunx vitest`**，`bunx` 在本地可执行缺失时会走网络解析，本机实测曾因此落到临时缓存、加载不到 workspace 依赖。测试文件与源码同目录、命名 `*.test.ts`（vitest include 为 `packages/*/src/**/*.test.{ts,tsx}`、`scripts/**/*.test.{ts,tsx}` 与 `deploy/**/*.test.ts`）。
 - **提交信息**用 `feat:` / `fix:` / `test:` 前缀；每个 commit 结尾附 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`。
 
 ## Review Focus
@@ -91,7 +92,7 @@ describe("D1_BASE_URL override", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `bunx vitest run packages/web/src/__tests__/d1.test.ts -t "D1_BASE_URL"`
+Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/d1.test.ts -t "D1_BASE_URL"`
 Expected: FAIL —— 前两条断言失败（实际请求发往 `api.cloudflare.com`）
 
 - [ ] **Step 3: 实现**
@@ -126,7 +127,7 @@ export function configuredD1BaseUrl(
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `bunx vitest run packages/web/src/__tests__/d1.test.ts`
+Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/d1.test.ts`
 Expected: PASS（全部，含既有用例）
 
 - [ ] **Step 5: 提交**
@@ -158,7 +159,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **关键约束**（全部来自实测，违反即静默出错）：
 1. 参数必须扁平：`[sql, p1, p2]`。
-2. batch 走 `/db/request?transaction=true&associative`；单语句读走 `/db/query?level=weak&associative`；单语句写走 `/db/execute?associative`。
+2. batch 走 `/db/request?transaction=true&associative&timings`；单语句读走 `/db/query?level=weak&associative&timings`；单语句写走 `/db/execute?associative&timings`。
 3. rqlite 出错时 HTTP 仍是 200，必须逐条检查 `results[i].error` 并抛错。
 4. `rows_affected` 为 0 时字段被省略，必须 `?? 0`。
 5. `batch([])` 必须短路返回 `[]`（rqlite 对空数组返回 HTTP 400）。
@@ -218,7 +219,7 @@ describe("d1-adapter reads", () => {
     const db = makeAdapter(fetchImpl as unknown as typeof fetch);
     const res = await db.prepare("SELECT a FROM t WHERE b = ?").bind(7).all();
     const [url, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toBe(`${BASE}/db/query?level=weak&associative`);
+    expect(url).toBe(`${BASE}/db/query?level=weak&associative&timings`);
     expect(JSON.parse(init.body)).toEqual([["SELECT a FROM t WHERE b = ?", 7]]);
     expect(res.results).toEqual([{ a: 1 }]);
     expect(res.success).toBe(true);
@@ -291,7 +292,7 @@ describe("d1-adapter batch", () => {
     const db = makeAdapter(fetchImpl as unknown as typeof fetch);
     await db.batch([db.prepare("SELECT 1"), db.prepare("INSERT INTO t VALUES (1)")]);
     const [url, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toBe(`${BASE}/db/request?transaction=true&associative`);
+    expect(url).toBe(`${BASE}/db/request?transaction=true&associative&timings`);
     expect(JSON.parse(init.body)).toEqual([
       ["SELECT 1"],
       ["INSERT INTO t VALUES (1)"],
@@ -355,7 +356,7 @@ describe("d1-adapter batch", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `bunx vitest run deploy/selfhost/d1-adapter.test.ts`
+Run: `./node_modules/.bin/vitest run deploy/selfhost/d1-adapter.test.ts`
 Expected: FAIL —— `Failed to resolve import "./d1-adapter"`
 
 - [ ] **Step 3: 实现**
@@ -471,7 +472,7 @@ export function createD1Adapter(options: D1AdapterOptions): D1Like {
       async all<T = unknown>(): Promise<D1Result<T>> {
         // Flat param encoding: [sql, p1, p2]. Nested arrays silently return
         // empty rows on /db/query.
-        const rows = await call("/db/query?level=weak&associative", [[sql, ...params]]);
+        const rows = await call("/db/query?level=weak&associative&timings", [[sql, ...params]]);
         const first = rows[0] ?? {};
         assertNoError(first);
         return toD1Result(first) as D1Result<T>;
@@ -483,7 +484,7 @@ export function createD1Adapter(options: D1AdapterOptions): D1Like {
         return (column === undefined ? row : row[column]) as T;
       },
       async run(): Promise<D1Result> {
-        const rows = await call("/db/execute?associative", [[sql, ...params]]);
+        const rows = await call("/db/execute?associative&timings", [[sql, ...params]]);
         const first = rows[0] ?? {};
         assertNoError(first);
         return toD1Result(first);
@@ -504,7 +505,7 @@ export function createD1Adapter(options: D1AdapterOptions): D1Like {
       // /db/execute silently drops rows from plain SELECTs; only /db/request
       // routes every statement through the query path. transaction=true makes
       // the batch atomic.
-      const rows = await call("/db/request?transaction=true&associative", payload);
+      const rows = await call("/db/request?transaction=true&associative&timings", payload);
 
       // rqlite truncates `results` at the failing statement, so an error can
       // hide behind a short array. Surface it before anything else.
@@ -519,7 +520,7 @@ export function createD1Adapter(options: D1AdapterOptions): D1Like {
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `bunx vitest run deploy/selfhost/d1-adapter.test.ts`
+Run: `./node_modules/.bin/vitest run deploy/selfhost/d1-adapter.test.ts`
 Expected: PASS（全部 12 条）
 
 - [ ] **Step 5: 提交**
@@ -590,13 +591,13 @@ function makeFakeDb() {
         },
         all: async <T,>(): Promise<D1Result<T>> => {
           if (sql.includes("SELECT key FROM kv_cache")) {
-            // Bind order is (pattern, stamp, limit, offset).
-            const [pattern, stamp, limit, offset] = params as [string, string, number, number];
+            // Bind order is (pattern, after, stamp, limit).
+            const [pattern, after, stamp, limit] = params as [string, string, string, number];
             const prefix = pattern.replace(/%$/, "").replace(/\\(.)/g, "$1");
             const matched = [...rows.values()]
-              .filter((r) => r.key.startsWith(prefix) && live(r, stamp))
+              .filter((r) => r.key.startsWith(prefix) && r.key > after && live(r, stamp))
               .sort((a, b) => a.key.localeCompare(b.key))
-              .slice(offset, offset + limit)
+              .slice(0, limit)
               .map((r) => ({ key: r.key }) as unknown as T);
             return { success: true, results: matched, meta: { changes: 0, duration: 0 } };
           }
@@ -705,6 +706,26 @@ describe("kv-adapter", () => {
     expect(new Set(names).size).toBe(3);
   });
 
+  it("list survives delete-while-listing (the clearAllCache loop)", async () => {
+    // cache.ts:152-186 deletes each page before asking for the next one. With
+    // an OFFSET cursor that loses one page per page (verified: 10 keys, page
+    // size 3, 4 keys silently left behind). Keyset cursors must delete all 10.
+    const { db, rows } = makeFakeDb();
+    const kv = createKvAdapter({ db, now: () => NOW });
+    for (let i = 0; i < 10; i++) await kv.put(`p:${String(i).padStart(2, "0")}`, "1");
+
+    let cursor: string | undefined;
+    let guard = 0;
+    do {
+      const page = await kv.list({ prefix: "p:", limit: 3, cursor });
+      for (const k of page.keys) await kv.delete(k.name);
+      cursor = page.list_complete ? undefined : page.cursor;
+      guard += 1;
+      if (guard > 10) throw new Error("cursor did not advance");
+    } while (cursor);
+    expect(rows.size).toBe(0);
+  });
+
   it("list skips expired entries", async () => {
     const { db } = makeFakeDb();
     let clock = NOW;
@@ -720,7 +741,7 @@ describe("kv-adapter", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `bunx vitest run deploy/selfhost/kv-adapter.test.ts`
+Run: `./node_modules/.bin/vitest run deploy/selfhost/kv-adapter.test.ts`
 Expected: FAIL —— `Failed to resolve import "./kv-adapter"`
 
 - [ ] **Step 3: 实现**
@@ -771,11 +792,10 @@ export function createKvAdapter(options: KvAdapterOptions): KVLike {
   const { db } = options;
   const now = options.now ?? (() => Date.now());
 
-  /** Cursors are opaque offsets into the key-ordered result set. */
-  function parseCursor(cursor: string | undefined): number {
-    if (!cursor) return 0;
-    const n = Number.parseInt(cursor, 10);
-    return Number.isFinite(n) && n >= 0 ? n : 0;
+  /** Cursors carry the last key of the previous page (keyset, not offset). */
+  function parseCursor(cursor: string | undefined): string {
+    if (!cursor) return "";
+    return cursor;
   }
 
   return {
@@ -807,24 +827,29 @@ export function createKvAdapter(options: KvAdapterOptions): KVLike {
     }): Promise<KVListResult> {
       const prefix = listOptions?.prefix ?? "";
       const limit = listOptions?.limit ?? 1000;
-      const offset = parseCursor(listOptions?.cursor);
+      const after = parseCursor(listOptions?.cursor);
       const stamp = new Date(now()).toISOString();
 
-      // Fetch one extra row to learn whether another page exists.
+      // Keyset pagination: the cursor is the last key of the previous page.
+      // An OFFSET cursor silently skips keys when the caller deletes as it
+      // lists (cache.ts:152-186 clearAllCache does exactly that) — every page
+      // of deletions shifts the remaining rows left and the loop loses one
+      // page per page (verified: 10 keys, page 3, deleted 6 of 10).
       const { results } = await db
         .prepare(
-          "SELECT key FROM kv_cache WHERE key LIKE ? ESCAPE '\\' " +
-            "AND (expires_at IS NULL OR expires_at > ?) ORDER BY key LIMIT ? OFFSET ?"
+          "SELECT key FROM kv_cache WHERE key LIKE ? ESCAPE '\\' AND key > ? " +
+            "AND (expires_at IS NULL OR expires_at > ?) ORDER BY key LIMIT ?"
         )
-        .bind(`${prefix.replace(/[%_\\]/g, "\\$&")}%`, stamp, limit + 1, offset)
+        .bind(`${prefix.replace(/[%_\\]/g, "\\$&")}%`, after, stamp, limit + 1)
         .all<{ key: string }>();
 
       const hasMore = results.length > limit;
       const page = hasMore ? results.slice(0, limit) : results;
+      const last = page[page.length - 1];
       return {
         keys: page.map((r) => ({ name: r.key })),
         list_complete: !hasMore,
-        ...(hasMore ? { cursor: String(offset + limit) } : {}),
+        ...(hasMore && last ? { cursor: last.key } : {}),
       };
     },
   };
@@ -833,8 +858,8 @@ export function createKvAdapter(options: KvAdapterOptions): KVLike {
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `bunx vitest run deploy/selfhost/kv-adapter.test.ts`
-Expected: PASS（全部 9 条）
+Run: `./node_modules/.bin/vitest run deploy/selfhost/kv-adapter.test.ts`
+Expected: PASS（全部 10 条）
 
 - [ ] **Step 5: 提交**
 
@@ -860,6 +885,8 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   - `runScheduled(worker: { scheduled?: (event: unknown, env: any) => Promise<void> }, env: Record<string, unknown>, intervalMs: number): () => void` —— 返回停止函数
 
 **背景**：两个 Worker 的 `fetch` 是标准 `Request → Response`（`worker-read/src/index.ts:204`、`worker/src/index.ts:325`），Node 22 原生支持 Web 标准，套一层 `node:http` 即可。worker-read 有 `scheduled`（`index.ts:255`），worker 没有。
+
+**D1 API 子集核对（实测 grep）**：`packages/worker/**` 与 `packages/worker-read/**` 对 D1 的调用**只用到** `prepare()`、`bind()`、`first()`、`all()`、`run()`、`batch()` 六种方法（`env.DB.prepare` 5 处、`env.DB.batch` 4 处，另有 `prepare().first()/.run()` 的链式调用）；没有出现 `D1Database` 独有、适配层未实现的 `.exec()`/`.raw()`/`.dump()`/`.withSession()`（grep 仅命中 `models-dev.ts` 里对字符串的 `RegExp.exec`，无关）。因此 Task 2 的 `D1Like` 已覆盖运行时实际用到的全部方法。Task 10 的端到端验证（起真实 read/ingest + 打 `/api/live` 与一次只读 RPC）即覆盖这条核对。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -984,7 +1011,7 @@ describe("runScheduled", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `bunx vitest run deploy/selfhost/node-runtime.test.ts`
+Run: `./node_modules/.bin/vitest run deploy/selfhost/node-runtime.test.ts`
 Expected: FAIL —— `Failed to resolve import "./node-runtime"`
 
 - [ ] **Step 3: 实现**
@@ -1107,15 +1134,18 @@ export function runScheduled<E>(
       console.error("scheduled run failed", error);
     });
   }, intervalMs);
-  // Do not hold the event loop open purely for the scheduler.
-  timer.unref?.();
+  // Deliberately NOT unref'd: the scheduler container's only work is this
+  // timer, and an unref'd timer does not hold the event loop — a Node process
+  // whose only handle is unref'd exits immediately with code 0 before the
+  // first tick (verified), so pricing sync would silently never run. The
+  // stop() function is the way to release the loop.
   return () => clearInterval(timer);
 }
 ```
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `bunx vitest run deploy/selfhost/node-runtime.test.ts`
+Run: `./node_modules/.bin/vitest run deploy/selfhost/node-runtime.test.ts`
 Expected: PASS（全部 7 条）
 
 - [ ] **Step 5: 提交**
@@ -1292,7 +1322,7 @@ describe("applyMigrations", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `bunx vitest run deploy/selfhost/migrate.test.ts`
+Run: `./node_modules/.bin/vitest run deploy/selfhost/migrate.test.ts`
 Expected: FAIL —— `Failed to resolve import "./migrate"`
 
 - [ ] **Step 3: 实现**
@@ -1450,7 +1480,7 @@ export async function applyMigrations(
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `bunx vitest run deploy/selfhost/migrate.test.ts`
+Run: `./node_modules/.bin/vitest run deploy/selfhost/migrate.test.ts`
 Expected: PASS（全部 8 条）
 
 - [ ] **Step 5: 提交**
@@ -1471,7 +1501,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Test: `deploy/selfhost/selfhost-infrastructure.test.ts`
 
 **Interfaces:**
-- Consumes: Task 5 的 `applyMigrations`、Task 2 的 `createD1Adapter`、Task 8 的 `createRqliteDdlExecutor`
+- Consumes: Task 5 的 `applyMigrations`、Task 2 的 `createD1Adapter`
 - Produces: 数据库内的 `kv_cache` 表（含 `expires_at` 索引）
 
 **为什么单独一个任务**：`kv_cache` 是 Task 3 的 KV 适配层的存储后端，但 Task 3 只写代码不建表——**实测确认：没有任何上游迁移创建 `kv_cache`**（`grep -rn "kv_cache" scripts/migrations/` 为空）。缺了这张表，`worker-read` 的每次缓存读写都会 500，但单元测试用的是内存假库，**测不出来**。本任务补上这个缺口。
@@ -1651,7 +1681,7 @@ describe("030-deterministic-leaderboard-revision.sql", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `bunx vitest run deploy/selfhost/deterministic-revision.test.ts`
+Run: `./node_modules/.bin/vitest run deploy/selfhost/deterministic-revision.test.ts`
 Expected: FAIL —— `ENOENT` 找不到迁移文件
 
 - [ ] **Step 3: 实现**
@@ -1753,22 +1783,12 @@ END;
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `bunx vitest run deploy/selfhost/deterministic-revision.test.ts`
+Run: `./node_modules/.bin/vitest run deploy/selfhost/deterministic-revision.test.ts`
 Expected: PASS（全部 4 条）
 
-- [ ] **Step 5: 对真实 rqlite 验证（单节点即可）**
+- [ ] **Step 5: 提交**
 
-```bash
-docker run -d --name rq-verify -p 14001:4001 rqlite/rqlite:10.5.3 -fk
-sleep 3
-# 依次应用全部迁移（含本任务新增的 030），断言无错误
-bun run deploy/selfhost/verify-migrations.ts --base-url http://127.0.0.1:14001
-docker rm -f rq-verify
-```
-
-（`verify-migrations.ts` 在 Task 8 创建。本步先跳过，Task 8 完成后回补一次。）
-
-- [ ] **Step 6: 提交**
+> **注**：对真实 rqlite 的端到端验证（应用全部迁移并断言 schema）依赖 `verify-migrations.ts`——由 **Task 8 创建**。按编号顺序执行时本步跳过，Task 8 完成后回补一次（Task 8 Step 3 即覆盖该验证，含本任务的 030 迁移）。
 
 ```bash
 git add scripts/migrations/030-deterministic-leaderboard-revision.sql deploy/selfhost/deterministic-revision.test.ts
@@ -2072,6 +2092,22 @@ describe("d1-http", () => {
     });
   });
 
+  it("routes a single INSERT through /db/request so writes are not rejected", async () => {
+    // /db/query rejects every write ("attempt to change database via query
+    // operation", verified against rqlite 10.5.3). lib/d1.ts posts execute()
+    // to the same <mount>/query endpoint as query(), so a bare {sql} body can
+    // absolutely be a write — it must land on /db/request.
+    const fetchImpl = vi.fn().mockResolvedValue(
+      rqliteResponse([{ last_insert_id: 4, rows_affected: 1, time: 0.001 }])
+    );
+    const server = createD1HttpServer({ baseUrl: "http://rqlite:4001", token: TOKEN, fetchImpl: fetchImpl as never });
+    const res = await server.handle(post({ sql: "INSERT INTO t (v) VALUES (?)", params: ["x"] }));
+    const body = await res.json();
+    const [url] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("http://rqlite:4001/db/request?transaction=true&associative&timings");
+    expect(body.result[0].meta.changes).toBe(1);
+  });
+
   it("reports changes 0 rather than omitting meta", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(rqliteResponse([{ last_insert_id: 9 }]));
     const server = createD1HttpServer({ baseUrl: "http://rqlite:4001", token: TOKEN, fetchImpl: fetchImpl as never });
@@ -2122,7 +2158,7 @@ describe("d1-http", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `bunx vitest run deploy/selfhost/d1-http.test.ts`
+Run: `./node_modules/.bin/vitest run deploy/selfhost/d1-http.test.ts`
 Expected: FAIL —— `Failed to resolve import "./d1-http"`
 
 - [ ] **Step 3: 实现**
@@ -2202,16 +2238,21 @@ export function createD1HttpServer(options: D1HttpOptions) {
       }
 
       try {
-        if (Array.isArray(body.batch)) {
-          if (body.batch.length === 0) return envelope([], []);
-          const stmts = body.batch.map((s) => db.prepare(s.sql).bind(...(s.params ?? [])));
-          const results = await db.batch(stmts);
-          return envelope(results, []);
-        }
-
-        const stmt = db.prepare(body.sql ?? "").bind(...(body.params ?? []));
-        const result = await stmt.all();
-        return envelope([result], []);
+        // Everything goes through batch(). lib/d1.ts posts BOTH query() and
+        // execute() to <mount>/query, so a single statement arriving here may
+        // well be an INSERT/UPDATE/DELETE. The adapter's prepare().all() hits
+        // rqlite's /db/query, which rejects any write with
+        // "attempt to change database via query operation" (verified). Only
+        // /db/request routes every statement through the query path, so
+        // wrapping single statements in a one-element batch is what makes the
+        // write path work at all.
+        const batch = Array.isArray(body.batch)
+          ? body.batch
+          : [{ sql: body.sql ?? "", params: body.params ?? [] }];
+        if (batch.length === 0) return envelope([], []);
+        const stmts = batch.map((s) => db.prepare(s.sql).bind(...(s.params ?? [])));
+        const results = await db.batch(stmts);
+        return envelope(results, []);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         // Keep the array long enough for d1.ts:119's length check to pass so
@@ -2227,8 +2268,8 @@ export function createD1HttpServer(options: D1HttpOptions) {
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `bunx vitest run deploy/selfhost/d1-http.test.ts`
-Expected: PASS（全部 6 条）
+Run: `./node_modules/.bin/vitest run deploy/selfhost/d1-http.test.ts`
+Expected: PASS（全部 7 条）
 
 - [ ] **Step 5: 提交**
 
@@ -2244,6 +2285,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 10: 进程入口与 compose 编排
 
 **Files:**
+- Create: `deploy/selfhost/Dockerfile`
 - Create: `deploy/selfhost/server-d1-http.ts`
 - Create: `deploy/selfhost/server-read.ts`
 - Create: `deploy/selfhost/server-ingest.ts`
@@ -2254,11 +2296,65 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: Tasks 2–8 的全部导出
-- Produces: 可运行的五个服务；`docker compose up -d` 起全栈
+- Produces: 可运行的五个服务；`docker compose up -d`（`.env` 里 `COMPOSE_PROFILES=single`）起全栈
 
 **注意**：本任务无单元测试——它的交付物是「容器起来且互相能通」，由 Step 5 的手工端到端验证覆盖。
 
-- [ ] **Step 1: 写 d1-http 入口**
+- [ ] **Step 1: 写自建镜像 Dockerfile**
+
+> **为什么不能复用根 `Dockerfile`**：它的 runner 阶段 `FROM node:22-slim`，只 COPY
+> `.next/standalone`/`.next/static`/`public`——**没有 bun、没有 `deploy/`、没有
+> `packages/*/src`、没有 `scripts/migrations`**（实测 runner 阶段 bun 出现次数为 0）。
+> 用它构建的镜像跑 `bun run deploy/selfhost/*.ts` 会五个容器全部起不来，进而
+> migrate 失败 → read/ingest/scheduler 被 `service_completed_successfully` 挡住 →
+> web 被 `service_healthy` 挡住，整套 compose 无法启动。
+
+创建 `deploy/selfhost/Dockerfile`（compose 中所有 `image: pew-selfhost:local`
+的服务共用它构建；`build.dockerfile` 已在下方 compose 里指向本文件）：
+
+```dockerfile
+# Image for every deploy/selfhost service (migrate, d1-http, read, ingest,
+# scheduler). The repo-root Dockerfile's runner stage cannot run them: it is a
+# node:22-slim Next.js standalone image with no bun, no deploy/, no package
+# sources and no migrations.
+FROM oven/bun:1.4.0 AS build
+
+WORKDIR /app
+
+# Workspace metadata first so dependency layers cache independently of source.
+COPY package.json bun.lock ./
+COPY packages/core/package.json packages/core/
+COPY packages/web/package.json packages/web/
+COPY packages/worker/package.json packages/worker/
+COPY packages/worker-read/package.json packages/worker-read/
+COPY packages/cli/package.json packages/cli/
+RUN bun install --frozen-lockfile
+
+# Source for @pew/core — its package.json "main" is ./dist/index.js, so the
+# dist must exist even when bun runs TS entrypoints directly.
+COPY tsconfig.json ./
+COPY packages/core packages/core
+RUN bun run --filter @pew/core build
+
+COPY packages/web packages/web
+COPY packages/worker packages/worker
+COPY packages/worker-read packages/worker-read
+COPY scripts scripts
+COPY deploy deploy
+
+ENV NODE_ENV=production
+```
+
+**自检**（写完立刻跑，防止又造出一个「没有 bun 的镜像」）：
+
+```bash
+docker build -f deploy/selfhost/Dockerfile -t pew-selfhost:local ../..
+docker run --rm --entrypoint bun pew-selfhost:local --version
+docker run --rm --entrypoint sh pew-selfhost:local   -c 'test -f deploy/selfhost/d1-http.ts && test -f scripts/migrations/001-init.sql && test -d packages/core/dist'
+# Expected: 三条命令全部 exit 0
+```
+
+- [ ] **Step 2: 写 d1-http 入口**
 
 创建 `deploy/selfhost/server-d1-http.ts`：
 
@@ -2314,7 +2410,7 @@ createServer((req, res) => {
 });
 ```
 
-- [ ] **Step 2: 写 read / ingest / scheduler 入口**
+- [ ] **Step 3: 写 read / ingest / scheduler 入口**
 
 创建 `deploy/selfhost/server-read.ts`：
 
@@ -2422,7 +2518,7 @@ console.log(`scheduler running every ${INTERVAL_MS}ms`);
 runScheduled(worker, env, INTERVAL_MS);
 ```
 
-- [ ] **Step 3: 写 compose 与配置样例**
+- [ ] **Step 4: 写 compose 与配置样例**
 
 创建 `deploy/selfhost/docker-compose.yml`：
 
@@ -2430,11 +2526,12 @@ runScheduled(worker, env, INTERVAL_MS);
 # pew self-hosted deployment — no Cloudflare services involved.
 #
 # Profiles:
-#   single   (default) one rqlite node
-#   cluster            three rqlite nodes joined over Raft
+#   single   default profile (set via COMPOSE_PROFILES in .env) — one rqlite node
+#   cluster  three rqlite nodes joined over Raft — run with --profile cluster
 #
 # Usage:
-#   docker compose --profile single up -d
+#   cp .env.example .env   # COMPOSE_PROFILES=single by default
+#   docker compose up -d
 #   docker compose --profile cluster up -d
 #
 # Only `web` publishes a host port. Everything else is reachable solely on
@@ -2447,11 +2544,20 @@ x-rqlite-common: &rqlite-common
   # relies on 12 ON DELETE CASCADE clauses.
   command: ["-fk", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002"]
   healthcheck:
-    test: ["CMD", "rqlite", "-H", "localhost:4001", "status"]
+    # HTTP probe, NOT `rqlite -H localhost:4001 status`: that CLI invocation
+    # always exits 0 (verified: an unreachable host still returns exit code 0),
+    # so the compose health gate would never actually gate anything.
+    test: ["CMD", "wget", "-q", "-T", "2", "-O-", "http://localhost:4001/status"]
     interval: 10s
     timeout: 5s
     retries: 5
     start_period: 10s
+  networks:
+    default:
+      # A stable alias so every app service can keep RQLITE_URL=http://rqlite:4001
+      # in BOTH profiles. In the cluster profile the real service is rqlite-1;
+      # without this alias `rqlite` does not resolve (DNS_FAIL, verified).
+      aliases: ["rqlite"]
   logging:
     driver: json-file
     options: { max-size: "10m", max-file: "3" }
@@ -2501,7 +2607,7 @@ services:
   migrate:
     build:
       context: ../..
-      dockerfile: Dockerfile
+      dockerfile: deploy/selfhost/Dockerfile
     image: pew-selfhost:local
     entrypoint: ["bun", "run", "deploy/selfhost/migrate-cli.ts"]
     environment:
@@ -2519,6 +2625,7 @@ services:
   d1-http:
     image: pew-selfhost:local
     command: ["bun", "run", "deploy/selfhost/server-d1-http.ts"]
+    restart: unless-stopped
     environment:
       PORT: "8788"
       RQLITE_URL: http://rqlite:4001
@@ -2542,6 +2649,7 @@ services:
   read:
     image: pew-selfhost:local
     command: ["bun", "run", "deploy/selfhost/server-read.ts"]
+    restart: unless-stopped
     environment:
       PORT: "8787"
       RQLITE_URL: http://rqlite:4001
@@ -2565,6 +2673,7 @@ services:
   ingest:
     image: pew-selfhost:local
     command: ["bun", "run", "deploy/selfhost/server-ingest.ts"]
+    restart: unless-stopped
     environment:
       PORT: "8786"
       RQLITE_URL: http://rqlite:4001
@@ -2588,6 +2697,11 @@ services:
   scheduler:
     image: pew-selfhost:local
     command: ["bun", "run", "deploy/selfhost/server-scheduler.ts"]
+    restart: unless-stopped
+    # No healthcheck: the scheduler exposes no HTTP port — it is only an
+    # interval timer. Liveness is the removed-unref timer (it keeps the
+    # process running) plus the restart policy above; a crashed scheduler
+    # comes back via `restart: unless-stopped` instead of a probe.
     environment:
       RQLITE_URL: http://rqlite:4001
       CF_D1_API_TOKEN: ${CF_D1_API_TOKEN}
@@ -2604,6 +2718,7 @@ services:
 
   web:
     image: pew-selfhost:local
+    restart: unless-stopped
     environment:
       PORT: "7020"
       HOSTNAME: "0.0.0.0"
@@ -2612,15 +2727,20 @@ services:
       AUTH_GOOGLE_ID: ${AUTH_GOOGLE_ID}
       AUTH_GOOGLE_SECRET: ${AUTH_GOOGLE_SECRET}
       ADMIN_EMAILS: ${ADMIN_EMAILS}
+      # Intranet http deployments must be able to turn __Secure- cookies off
+      # (spec §11 / §4.4); absent this the browser drops the session cookie.
+      USE_SECURE_COOKIES: ${USE_SECURE_COOKIES:-true}
+      # CLI login callback + resolveHost (spec §4.5/§11).
+      PEW_HOST: ${PEW_HOST:-}
       # Read path: worker-read
-      WORKER_READ_URL: http://read:8787
+      WORKER_READ_URL: ${WORKER_READ_URL:-http://read:8787}
       WORKER_READ_SECRET: ${WORKER_READ_SECRET}
       # Ingest path: worker
-      WORKER_INGEST_URL: http://ingest:8786
+      WORKER_INGEST_URL: ${WORKER_INGEST_URL:-http://ingest:8786}
       WORKER_SECRET: ${WORKER_SECRET}
       # Write path: d1-http. CF_* IDs only need to be non-empty now that
       # D1_BASE_URL takes precedence in lib/d1.ts.
-      D1_BASE_URL: http://d1-http:8788
+      D1_BASE_URL: ${D1_BASE_URL:-http://d1-http:8788}
       CF_ACCOUNT_ID: selfhost
       CF_D1_DATABASE_ID: selfhost
       CF_D1_API_TOKEN: ${CF_D1_API_TOKEN}
@@ -2736,10 +2856,33 @@ WORKER_SECRET=replace-me
 # --- Host port for the web UI ---
 WEB_PORT=7020
 
+# --- Deployment profile ---------------------------------------------------
+# Compose reads this from ./.env, so `docker compose up -d` needs no --profile.
+# `single` is one rqlite node; `cluster` is three Raft-joined nodes.
+COMPOSE_PROFILES=single
+
+# --- Cookie security ------------------------------------------------------
+# The Next standalone server hard-codes NODE_ENV=production, which would force
+# __Secure- cookies. On an intranet served over plain http the browser drops
+# them and login never sticks, so set this to false for http deployments.
+# Set true only when NEXTAUTH_URL is https.
+USE_SECURE_COOKIES=false
+
+# --- CLI / worker wiring --------------------------------------------------
+# Host the CLI should point at (scheme + host + port), used by `pew ... --host`.
+PEW_HOST=http://localhost:7020
+# Read / write / ingest endpoints the web container talks to on the compose
+# network. Change only if you rename the services.
+WORKER_READ_URL=http://read:8787
+WORKER_INGEST_URL=http://ingest:8786
+D1_BASE_URL=http://d1-http:8788
+
 # --- Optional ---
 # Daily pricing sync interval in ms (default 24h).
 # DAILY_INTERVAL_MS=86400000
 ```
+
+> 说明：`CF_ACCOUNT_ID` / `CF_D1_DATABASE_ID` 在 compose 里已硬编码为占位串 `selfhost`（写路径走 `D1_BASE_URL`，这两个值只需非空），不放进 `.env.example`。`PEW_LOCAL_D1_URL` 是测试专用变量，生产部署不设置。
 
 创建 `deploy/selfhost/README.md`：
 
@@ -2754,7 +2897,8 @@ WEB_PORT=7020
 cd deploy/selfhost
 cp .env.example .env
 # 编辑 .env：至少填 AUTH_SECRET、NEXTAUTH_URL、三个密钥
-docker compose --profile single up -d --build
+# .env 里 COMPOSE_PROFILES=single（默认），等价于 --profile single
+docker compose up -d --build
 ```
 
 首次启动后访问 `http://<host>:7020`。
@@ -2780,6 +2924,30 @@ docker compose --profile cluster up -d --build
 ```
 
 三个 rqlite 节点通过 Raft 复制。**同机三容器只防进程故障，不防磁盘/主机故障**；跨机部署请把 compose 分发到三台机器并调整 `-join` 地址。
+
+**单节点在线扩容为 3 节点已验证可行**：向已运行的单节点 `-bootstrap-expect 1` 直接
+`-join <单节点>:4002`（join 节点**不要**带 `-bootstrap-expect`）即可，实测 3 节点全部
+voter/reachable，且新节点能读到扩容前写入的数据。若要走 compose 集群 profile，先
+`.env` 里改 `COMPOSE_PROFILES=cluster`，再 `docker compose up -d`。
+
+## 扩展（scale）
+
+- **可水平扩展**：`read`、`ingest`（无状态，缓存共享在 rqlite 的 `kv_cache` 表里）——
+  `docker compose up -d --scale read=2 --scale ingest=2`。
+- **单副本，勿扩展**：`web`（绑定固定宿主端口 `${WEB_PORT}`，多副本端口冲突；需要多副本时
+  前置反代 + 负载均衡）、`scheduler`（定时器，多副本会重复触发定价同步）、`rqlite-*`
+  （Raft 节点数由 profile 决定，不走 `--scale`）。
+- 多 web 副本时登录限速（进程内 `inMemoryRateLimiter`）会退化为按副本计，见 spec §7 风险表。
+
+## 安全注意事项
+
+- **rqlite 默认无鉴权**（实测 `/status` 返回 `http.auth = disabled`）：compose 网络内任何容器都可
+  无凭据直连数据库读写。本方案的屏障是「只有 `web` 发布宿主端口、其余仅 compose 网络内可达」
+  + `d1-http` 的静态 Bearer（`CF_D1_API_TOKEN`）。注意该 token 同时下发给多个服务容器——
+  任何一个应用容器被攻陷即可拿到它。更高要求的部署可给 rqlite 加 `-auth` 认证文件，列为可选强化。
+- 真实密钥只写在 `deploy/selfhost/.env`（被 `.gitignore` 的 `.env` 规则覆盖，不入库、不进镜像：
+  `.dockerignore` 也含 `.env*`）；构建与 compose 里出现的 `CF_ACCOUNT_ID`/`CF_D1_DATABASE_ID`
+  是占位串，不是凭据。
 
 ## 数据库行为（重要）
 
@@ -2813,20 +2981,26 @@ docker compose cp rqlite-1:/rqlite/file/backup.db "./backup-$(date +%F).db"
 
 产物是标准 SQLite 文件（已实测：`SQLite format 3` 魔数、含全部表与 `kv_cache`）。
 
-**恢复**：停掉 `web`/`read`/`ingest`/`scheduler` → 停 rqlite → 用备份文件替换卷内数据
-→ 启动 rqlite → 起其余容器 → 跑一次 `/api/live` 与登录验证。回滚到旧版本时同样走这条路
-（见 README「升级与回滚」）。
+**恢复（必须用 `.restore` 点命令，不能换文件）**：实测直接替换数据文件无效——实际数据文件在
+`/rqlite/file/data/db.sqlite`（不是 `pew.db`），且 rqlite 启动时会用 `raft.db` 重放日志，
+备份后的写入会「复活」；清空整个卷再放文件则走 bootstrap 忽略预置文件。`.restore` 走 REPL、
+经 Raft 正常应用（已实测：恢复后备份后的写入行消失，只剩备份时点的数据）。
 
 ```bash
+# 1. 停应用（读写都停，避免恢复期间写入）
 docker compose stop web read ingest scheduler
-docker compose stop rqlite
-docker compose cp "./backup-2026-10-11.db" rqlite:/rqlite/file/pew.db
-docker compose start rqlite
+# 2. 把备份放进 rqlite 容器（rqlite 保持运行，.restore 不需要停它）
+docker compose cp "./backup-2026-10-11.db" rqlite:/rqlite/file/restore.db
+# 3. 用点命令恢复（经 Raft 应用，单节点/集群同一路径）
+printf '.restore /rqlite/file/restore.db\n.exit\n' | docker compose exec -T rqlite rqlite -H localhost
+# Expected: Database restored successfully
+# 4. 起应用并验证
 docker compose start web read ingest scheduler
+docker compose exec web node -e "fetch('http://127.0.0.1:7020/api/live').then(r=>r.json()).then(console.log)"
 ```
 ```
 
-- [ ] **Step 4: 构建并启动**
+- [ ] **Step 5: 构建并启动**
 
 ```bash
 cd deploy/selfhost
@@ -2836,19 +3010,19 @@ sed -i '' "s|AUTH_SECRET=replace-me|AUTH_SECRET=$(openssl rand -base64 32)|" .en
 sed -i '' "s|CF_D1_API_TOKEN=replace-me|CF_D1_API_TOKEN=$(openssl rand -hex 32)|" .env
 sed -i '' "s|WORKER_READ_SECRET=replace-me|WORKER_READ_SECRET=$(openssl rand -hex 32)|" .env
 sed -i '' "s|WORKER_SECRET=replace-me|WORKER_SECRET=$(openssl rand -hex 32)|" .env
-docker compose --profile single up -d --build
+docker compose up -d --build   # .env 里 COMPOSE_PROFILES=single 即默认单节点
 docker compose ps
 ```
 
 Expected: `rqlite`、`d1-http`、`read`、`ingest`、`web` 显示 `healthy`；`migrate` 显示 `exited (0)`。
 
-- [ ] **Step 5: 端到端验证**
+- [ ] **Step 6: 端到端验证**
 
 ```bash
 # 1. 迁移账本已写入
 curl -s -X POST http://127.0.0.1:14001/db/query?level=weak \
   -H 'Content-Type: application/json' -d '[["SELECT COUNT(*) FROM _migrations"]]'
-# Expected: 30 条左右（29 个上游文件去掉 3 个 squash 的，加 030）
+# Expected: 32（33 个上游 .sql 去掉 3 个 squash 的，加 030、031）
 
 # 2. web 健康检查
 curl -s http://127.0.0.1:7020/api/live
@@ -2871,9 +3045,21 @@ curl -s -X POST http://127.0.0.1:14001/db/execute \
 curl -s -X POST http://127.0.0.1:14001/db/query?level=weak \
   -H 'Content-Type: application/json' -d '[["SELECT value FROM app_settings WHERE key = \"smoke\""]]'
 # Expected: [["1"]]
+
+# 6. 真实写路径可用：经 d1-http 打一条单语句 INSERT（这正是 web 的 execute() 走的路）
+#    若 d1-http 把单语句送去 /db/query，这里会返回 success:false
+#    "attempt to change database via query operation"。
+docker compose exec web node -e "
+fetch('http://d1-http:8788/query', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + process.env.CF_D1_API_TOKEN },
+  body: JSON.stringify({ sql: \"INSERT INTO app_settings (key, value) VALUES ('smoke2','2') ON CONFLICT (key) DO UPDATE SET value = excluded.value\", params: [] }),
+}).then(r => r.json()).then(b => { console.log(JSON.stringify(b)); process.exit(b.success && b.result[0].meta.changes === 1 ? 0 : 1); });
+"
+# Expected: {"success":true,...,"meta":{"changes":1,...}}，exit 0
 ```
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 7: 提交**
 
 ```bash
 git add deploy/selfhost/
@@ -2919,14 +3105,14 @@ git remote -v | grep upstream || git remote add upstream https://github.com/noco
 git fetch upstream main
 git log --oneline HEAD..upstream/main | head
 git merge upstream/main
-# 解决冲突（预期只在 lib/d1.ts 一处）
+# 解决冲突（预期只在 lib/d1.ts 与 vitest.config.ts 两处）
 bun run test
-docker compose -f deploy/selfhost/docker-compose.yml --profile single up -d --build
+docker compose -f deploy/selfhost/docker-compose.yml up -d --build
 curl -s http://127.0.0.1:7020/api/live
 docker compose -f deploy/selfhost/docker-compose.yml down
 ```
 
-Expected: 合并无冲突（或仅 `lib/d1.ts` 冲突且易解），测试通过，健康检查返回 ok。
+Expected: 合并无冲突（或仅 `lib/d1.ts`、`vitest.config.ts` 冲突且易解），测试通过，健康检查返回 ok。
 
 - [ ] **Step 4: 把回归清单写进 README**
 
@@ -2935,19 +3121,21 @@ Expected: 合并无冲突（或仅 `lib/d1.ts` 冲突且易解），测试通过
 ```markdown
 ## 合并上游
 
-本分支与上游的接触面只有 `packages/web/src/lib/d1.ts` 一处（新增 `D1_BASE_URL` 优先级）。
-`packages/worker/**` 与 `packages/worker-read/**` 完全未改。
+**本分支与上游的接触面只有两处**：`packages/web/src/lib/d1.ts`（新增 `D1_BASE_URL` 优先级）与
+`vitest.config.ts`（`test.include` 增加 `deploy/**/*.test.ts`）。`packages/worker/**` 与
+`packages/worker-read/**` 完全未改。
 
 ```bash
 git fetch upstream main
 git merge upstream/main
 bun run test
-docker compose --profile single up -d --build
+docker compose up -d --build
 curl -s http://127.0.0.1:7020/api/live
 ```
 
 若上游改动触及 `lib/d1.ts` 的构造函数，重新确认 `D1_BASE_URL` 的优先级仍在
-`localD1BaseUrl` 之前。
+`localD1BaseUrl` 之前；若上游改到 `vitest.config.ts` 的 `include`，确认 `deploy/**/*.test.ts`
+仍被收集。
 
 新增上游迁移后，重跑 `verify-migrations.ts` 并更新其 `EXPECTED` 计数。
 ```
