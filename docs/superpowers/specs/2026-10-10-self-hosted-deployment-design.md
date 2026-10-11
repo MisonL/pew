@@ -28,7 +28,7 @@ pew 官方形态依赖 Cloudflare：Web（Next.js）读写经两个 Cloudflare W
 | 与上游关系 | **保同步** | 适配层吞差异，上游 SQL 一行不改 |
 | 替换层次 | **运行时适配** | 不改 Worker 逻辑，只换运行时与存储 |
 | 存储引擎 | **rqlite** | 实测 SQL 零改动、原生原子事务、HA 开箱可用、MIT、活跃维护 |
-| 登录方式 | **邮箱 + 密码** | 自包含，无外部依赖；Google OAuth 不接受内网 http 回调 |
+| 登录方式 | **邮箱 + 密码** | 自包含，无外部依赖；Google OAuth 不接受内网 http 回调（故 Plan 1 交付时**尚无可用登录方式**，见 §4.4 分期） |
 | CLI 支持 | **加 `--host` / 环境变量** | 客户端才能真正指向自建服务 |
 | 部署形态 | **多容器 compose，单节点默认 + 3 节点可选** | 同一 compose 用 profile 切换；两种模式共用同一套 SQL 行为（见 §4.1 专项二），单机可先单节点起步，扩容时加节点不改代码 |
 
@@ -202,7 +202,14 @@ rqlite 用 statement-based replication（语句复制到各副本各自执行）
 
 另需处理：rqlite 在事务模式下出错时 **results 数组会被截断**（实测 3 条语句第 2 条坏，只回 2 条），而 `d1.ts:119` 校验 `data.result?.length !== statements.length` 会先抛 "Invalid D1 batch result"，真实 SQL 错误被掩盖。shim 必须补齐数组长度并透出错误信息。
 
-**d1-http 必须鉴权（修正 §11 原先「token 仅需占位」的写法）**：d1-http 直接对 rqlite 读写，若不做校验，compose 网络内**任何**容器（含未来新增的、或被攻陷的 web）都能直写数据库。定位企业级部署，至少做**静态 Bearer 校验**：d1-http 校验 `Authorization` 与 `CF_D1_API_TOKEN` 相等（复用 web 已有的 Bearer 头机制，约 5 行），拒绝不符请求。`CF_D1_API_TOKEN` 因此是**真实密钥**（生成随机值），不再是占位。rqlite 自身也配 `-http-auth` 或限制在 compose 网络内仅 d1-http 可达（双保险）。
+**d1-http 必须鉴权（修正 §11 原先「token 仅需占位」的写法）**：d1-http 直接对 rqlite 读写，若不做校验，compose 网络内**任何**容器（含未来新增的、或被攻陷的 web）都能直写数据库。定位企业级部署，至少做**静态 Bearer 校验**：d1-http 校验 `Authorization` 与 `CF_D1_API_TOKEN` 相等（复用 web 已有的 Bearer 头机制，约 5 行），拒绝不符请求。`CF_D1_API_TOKEN` 因此是**真实密钥**（生成随机值），不再是占位。比较必须用**常量时间**（复用上游 `secureCompare` 模式），不要用 `!==`。
+
+**rqlite 侧的「第二道屏障」在本计划（Plan 1）中未落地，如实记录**：本设计原写「rqlite 自身也配 `-http-auth` 或限制在 compose 网络内仅 d1-http 可达（双保险）」。实测两点均**未做**：
+
+- 未配 `-http-auth`（compose 的 rqlite `command` 只有 `-fk`）；
+- 也**不是**「仅 d1-http 可达」——`read`/`ingest`/`scheduler` 三个容器都**直连 rqlite**（不走 d1-http）。
+
+即当前唯一屏障是「rqlite 不发布宿主端口 + d1-http 的静态 Bearer 保护 web→d1-http 这一跳」。若要真正加第二道屏障，需给 rqlite 配 `-http-auth` 并让上述三个直连服务同步带 token——列为后续强化项，不计入 Plan 1。
 
 **专项四：Web 写路径的可配置 base URL（对应 §4.7 的 `d1.ts` 改动）**
 
@@ -286,6 +293,13 @@ CREATE TABLE kv_cache (
 **请求体大小**：Cloudflare Workers 单请求体上限 100MB，Node 的 `node:http` 默认无上限但内存压力更大；CLI 批量上传（`runUpload`）单次可能很大，适配层需与 CLI 分批策略对齐，并限制单请求体（如 32MB）防止 OOM。
 
 ### 4.4 认证：邮箱 + 密码
+
+> **分期说明（Plan 1 vs Plan 2）**：本节描述的是**完整设计**，由 **Plan 2（认证子系统）** 实现。
+> **Plan 1（存储与运行时）不交付任何可用登录方式**——Google OAuth 不接受内网 http 回调，邮箱+密码在
+> Plan 2。因此 Plan 1 完成时「浏览器可登录的完整产品」尚未成立，交付的是「数据层与运行时可用、
+> API 可经密钥调用」。本节其余内容在 Plan 1 中**不作数**，仅作为 Plan 2 的规格。
+> 特别地，`USE_SECURE_COOKIES=false` 的关闭分支、`/setup` 向导、`is_admin` 判定、首个用户即管理员
+> 均在 Plan 2；Plan 1 的 compose 里虽已下发 `USE_SECURE_COOKIES`，但代码尚无读取该值 `==="false"` 的分支。
 
 **为什么不能复用现有邀请闸门（复核新发现，原草案判断错误）**
 
@@ -404,20 +418,24 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 | 服务 | 说明 | 端口 |
 |---|---|---|
-| `rqlite` | **profile `single`：1 节点**（默认，`-bootstrap-expect 1`）；**profile `cluster`：3 节点**（各 `-bootstrap-expect 3` + `-join`，`-node-id` 稳定）持久卷，**必须带 `-fk`** | 仅内网 4001/4002 |
+| `rqlite` | **profile `single`：1 节点**（默认，`-bootstrap-expect 1`）；**profile `cluster`：3 节点**（**三节点都带 `-bootstrap-expect 3` + 完整 `-join` 列表**，`-node-id` 稳定；否则首节点会自任 leader、写成功，healthcheck 门控失效）持久卷，**必须带 `-fk`** | 仅内网 4001/4002 |
 | `d1-http` | D1 REST 形状 HTTP 服务（无状态） | 仅内网 |
 | `read` | worker-read 宿主（无状态，可 `--scale`） | 仅内网 |
 | `scheduler` | **只跑 `scheduled()`** 的独立容器（1 副本；多 read 副本时避免 N 份重复定价同步） | 仅内网 |
 | `ingest` | worker 宿主（无状态，可 `--scale`） | 仅内网 |
-| `web` | **本分支构建的镜像**（同一 `Dockerfile`），注入指向上述服务的环境变量 | 对外 7020 |
+| `web` | **本分支构建的镜像**（仓库根 `Dockerfile`，产出 Next standalone），注入指向上述服务的环境变量 | 对外 7020 |
 
 **更正**：web 不是 Docker Hub 上的「官方镜像」——本方案改了 `auth.ts` 等上游文件，必须用本分支源码构建（仍复用上游 `Dockerfile`）。
+
+> **两套镜像，不要混用**：`web` 是 Next standalone（根 `Dockerfile`，`CMD ["node","packages/web/server.js"]`）；
+> 跑 bun 的适配层服务（migrate/d1-http/read/ingest/scheduler）是另一套 `deploy/selfhost/Dockerfile`
+> （`oven/bun` 基镜像、无 `.next`、无 `CMD`）。把 web 指到后者会因无 Next 产物、无 `CMD` 而立即退出。
 
 **横向扩展路径（呼应「单节点起步、可扩规模」）**：
 
 - **起步**：profile `single`，全部 5 个服务 + 1 个 rqlite。
 - **读/写应用层扩容**：`web`/`read`/`ingest` 均无状态（KV 缓存在 rqlite 共享、会话为 JWT），`docker compose up --scale read=2` 即可，无代码改动。注意 web 多副本时**登录限速退化为按副本计**（`inMemoryRateLimiter` 进程内，§4.4），生产多副本需外部化或接受弱化。
-- **数据层扩容**：单 rqlite → 3 节点 Raft 集群。**单→3 在线扩容（向已运行的单节点 `-join`）是否支持，列实现阶段验证项**；若不支持，切换路径为「备份 → 以 cluster profile 恢复」，写进部署文档。
+- **数据层扩容**：单 rqlite → 3 节点 Raft 集群。**单→3 在线扩容已实测支持**：向已运行的 `-bootstrap-expect 1` 单节点直接 `-join <单节点>:4002`（join 节点**不带** `-bootstrap-expect`）→ 3 节点全部 voter/reachable，新节点能读到扩容前写入的数据。故扩容路径为「cluster profile + `-join`」，无需「备份 → 恢复」。（若改用 compose 的 cluster profile 从零起 3 节点，见下方启动参数说明。）
 - **失败域**：同机 3 容器只防**进程**故障，不防磁盘/主机故障；跨机部署（compose 部署到 3 台）写入部署文档，属运维配置不进设计。
 - 调度：定价同步 cron 从 read 容器拆到独立 `scheduler` 容器（单副本），多 read 副本不重复同步。
 
@@ -425,15 +443,27 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 ```
 -fk                       # 必须：外键默认关闭，而 schema 有 12 处 ON DELETE CASCADE
--bootstrap-expect=3       # 仅首次集群启动设置一次
--join <peers>             # 集群模式
+-bootstrap-expect=3       # 集群：三节点都带，配合下面的 -join 互相发现
+-join <peers>             # 集群：三节点都列全（如 rqlite-1:4002,rqlite-2:4002,rqlite-3:4002）
 -node-id <stable-id>      # 集群模式下不可变
 ```
+
+> **为什么三个节点都要 `-bootstrap-expect 3` 且都列全 `-join`**：若只给 `rqlite-1` 带 `-bootstrap-expect 3`
+> 而 `rqlite-2/3` 用 `-join`，实测 `rqlite-1` 会**立即自任 leader 并接受写入**（`state=Leader, num_peers=0,
+> voter=true`），此时写还能成功——`rqlite-2` 加入后虽然最终一致，但 migrate 可能已经跑在一个「假集群」上。
+> 三节点都带 `-bootstrap-expect 3` + 完整 `-join` 时，任一首节点在 quorum 前处于 `Follower/voter=false`，
+> **写返回 503 "leader not found"**，直到三节点互相发现才选主。这才让 healthcheck 真正门控。
+> （以上均为 rqlite 10.5.3 实测。）
 
 **编排必须补齐的工程项（复核新增，原草案缺失）**：
 
 - **资源限制**：`deploy.resources.limits`（memory/cpus）。rqlite 与 d1-http 内存占用随批量写入增长；web 是 Node standalone。
-- **健康检查 + 依赖顺序**：`web`→`/api/live`；`read`→`/api/live`；`rqlite`→`/status`；`d1-http`→`/health`。`depends_on` 用 `condition: service_healthy`，避免 web 在 rqlite 就绪前启动导致迁移/健康检查失败。
+- **健康检查 + 依赖顺序**：`web`→`/api/live`；`read`→`/api/live`；`rqlite`→**`/readyz`（不是 `/status`）**；`d1-http`→`/health`。`depends_on` 用 `condition: service_healthy`，避免 web 在 rqlite 就绪前启动导致迁移/健康检查失败。
+
+  > **必须用 `/readyz`**：实测 `/status` 在节点尚未加入集群（`-bootstrap-expect 3` 未满足 quorum）时**仍返回 HTTP 200**，
+  > 只是 `raft.state=Follower, num_peers=0, voter=false`——只看状态码无法区分「未就绪」与「就绪」，healthcheck 会恒真。
+  > `/readyz` 在无 leader 时返回 **503**（`[+]leader does not exist`），就绪后返回 200，故用它门控。
+  > migrate 的一次性容器同样必须探 `/readyz`（`waitForRqlite`），否则会在集群就绪前抢跑。
 - **端口暴露**：只有 web 的 7020 对外；read/ingest/d1-http/rqlite 一律不发布到宿主，仅 compose 网络内可达（服务名解析）。
 - **日志**：`json-file`，`max-size: 10m`、`max-file: 3`（官方部署已验证此配置）。
 - **密钥注入**：`env_file`（不入版本库）或 docker secret；见 §4.4 关于 AUTH_SECRET 的约束。
@@ -494,12 +524,12 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | 适配层单元测试 | D1 形状映射（`rows_affected` 缺失兜底、错误在 HTTP 200 内、`duration` 换算、空批返回 `[]`）；KV `get(key,"text")`、`put` 带 TTL、`list` 分页 |
 | 迁移兼容测试 | 全部 32 个迁移（上游 `.sql` 实测 **33 个文件**，其中 3 个是被 squash 跳过的旧文件，含本方案新增的 030/031）apply 到 rqlite。**实测基线（rqlite 10.5.3，2026-10-11）**：上游表 22 张 + 本方案 3 张（`_migrations`、`kv_cache`、`leaderboard_revision_seq`）；索引 65 个（含 SQLite 自动创建的 39 个 `sqlite_autoindex_*`；显式索引仅 26 个，因 023/024/025 三个迁移 DROP 了 projects/showcases/badges/budgets 等表并带走其索引）；触发器 12 个；视图 2 个。断言 12 触发器已替换为确定性版本，且 `kv_cache` 存在（缺表只在运行时暴露，单元测试用内存假库测不出）。原写「23 表 / 62 索引」为估计值，实测不成立，已更正 |
 | 多节点确定性测试 | **三节点集群 + `docker pause` follower 制造重放**，用 `level=none` 直读各副本本地状态断言收敛：触发器 revision 三副本一致、应用层写入的 `created_at` 一致（这是配置①②与配置③的判别实验，见 §4.1 专项二） |
-| 迁移确定性测试 | 断言 DDL 执行后 `sqlite_master` 中 `datetime('now')` / `randomblob()` **未被冻结**（用 `?norwtime&norwrandom`） |
+| 迁移确定性测试 | 断言 DDL 执行后 `sqlite_master` 中 `datetime('now')` / `randomblob()` **未被冻结**（用 `?norwtime&norwrandom`）。**注意 `norw*` 只能用于 DDL**：迁移文件里的 DML（如 029 的种子 `INSERT ... randomblob(16)`、008b 的 `UPDATE ... datetime('now')`）必须走不带 norw 的默认改写路径，否则各副本独立求值会**分叉**（实测两副本得到不同 randomblob）。执行器按 `isDdlStatement` 分流 |
 | 原子性测试 | batch 中夹坏语句，断言零残留 |
 | 端到端 | compose 起全栈，跑通「注册 → 登录 → CLI 登录 → 同步 → 仪表盘可见」 |
 | 上游同步回归 | 合并上游 main 后，上述测试全部通过 |
 
-**迁移执行方式变更**：从 `wrangler d1 execute --file` 改为「读文件 → 按语句切分（正确处理 `CREATE TRIGGER ... BEGIN ... END`）→ 整批事务执行」，且 DDL 批必须带 `?norwtime&norwrandom`（见 §4.1 专项二）。
+**迁移执行方式变更**：从 `wrangler d1 execute --file` 改为「读文件 → 按语句切分（正确处理 `CREATE TRIGGER ... BEGIN ... END`，含内联写法 `BEGIN ...; END;`）→ **按语句类别分流**：DDL 批带 `?norwtime&norwrandom`（见 §4.1 专项二），DML 走默认改写（不带 norw，避免副本分叉）」。切分器的正确性已用两法核验：单元测试 + 把全部 30 个迁移文件切成 133 条语句并在真实 SQLite 中逐条执行（0 错误，产出 22 表 / 12 触发器）。
 
 **迁移账本（复核新发现：上游无账本、无 down 迁移）**：上游没有迁移记录表，靠 `wrangler d1 migrations` 的本地状态文件跟踪。自建执行器必须自建 `_migrations(id TEXT PRIMARY KEY, applied_at TEXT)`，按文件名排序、跳过已应用项，保证**可重复执行**。注意多数迁移用 `CREATE TABLE IF NOT EXISTS` 幂等，但 `ALTER TABLE ADD COLUMN`（如本方案新增的 `password_hash`）**不幂等**，重复执行会报 `duplicate column`——账本正是为它而设。
 
@@ -566,12 +596,12 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 ## 10. 部署步骤（概要）
 
-1. 构建：`docker build`（AUTH_SECRET 用占位值，其余 `CF_*` 同样占位）→ 得 `pew` 镜像
+1. **构建两套镜像**：`web` 用仓库根 `Dockerfile`（`docker build -f Dockerfile -t pew:standalone .`，AUTH_SECRET 等用占位值）；适配层服务（migrate/d1-http/read/ingest/scheduler）用 `deploy/selfhost/Dockerfile`（`docker build -f deploy/selfhost/Dockerfile -t pew-selfhost:local .`）。两者构建上下文都是**仓库根**。
 2. 准备 `.env`（§11 清单，真实密钥只写这里）
-3. `docker compose up -d rqlite` → 健康后执行迁移（一次性 init 容器，`?norwtime&norwrandom`，幂等账本）→ 应用**后置迁移**（确定性触发器，§4.1 专项二）
-4. 首个访问者打开 `/setup` → 注册向导 → 首个账号自动成为管理员（绕过邀请码，见 §4.4）
+3. `docker compose up -d rqlite` → 健康后执行迁移（一次性 init 容器，DDL 带 `?norwtime&norwrandom`、DML 不带，幂等账本）→ 应用**后置迁移**（确定性触发器，§4.1 专项二）
+4. 首个访问者打开 `/setup` → 注册向导 → 首个账号自动成为管理员（绕过邀请码，见 §4.4）——**注意：此步骤属 Plan 2**，Plan 1 无 `/setup`
 5. `docker compose up -d`（d1-http / read / scheduler / ingest / web）
-6. 验证：`/api/live` → `/setup` 注册向导建首个管理员 → 登录 → CLI `--host` 登录 → 上传 → 仪表盘可见
+6. 验证：`/api/live` → 登录（**Plan 2**）→ CLI `--host` 登录 → 上传 → 仪表盘可见
 
 ## 10b. 升级与回滚
 
@@ -593,17 +623,18 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 |---|---|
 | `AUTH_SECRET` | 会话加密密钥，**运行期注入**，不入版本库 |
 | `NEXTAUTH_URL` | 外部访问基址（`http://` 或 `https://`，决定 cookie 前缀；`TRUSTED_ORIGIN` 由它推导，无需单独配置） |
-| `USE_SECURE_COOKIES` | 内网 http 部署设 `false`（新增的显式关闭分支） |
+| `USE_SECURE_COOKIES` | 内网 http 部署设 `false`。**注意**：读取该值 `==="false"` 的分支属 Plan 2，Plan 1 下此变量暂不生效 |
 | `D1_BASE_URL` | 指向 `d1-http` 的地址（新增的写路径覆盖） |
 | `WORKER_READ_URL` / `WORKER_READ_SECRET` | 读路径（`read` 容器服务名 + 密钥） |
 | `WORKER_INGEST_URL` / `WORKER_SECRET` | 写路径（`ingest` 容器服务名 + 密钥） |
-| `ADMIN_EMAILS` | 管理员邮箱列表（`lib/admin.ts`） |
-| `PEW_HOST` | （CLI 侧）指向自建服务 |
-| `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | 可选；不配置则隐藏 Google 登录按钮 |
-| `CF_R2_*` | 见 §9，可用 MinIO 替代 |
+| `ADMIN_EMAILS` | 管理员邮箱列表（`lib/admin.ts`）。Plan 1 无 `/setup`，这是唯一的管理员来源，**必须填真实地址** |
+| `PEW_HOST` | （CLI 侧）指向自建服务。Plan 1 的 CLI 改动未落地，暂不生效 |
+| `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | 可选；不配置则隐藏 Google 登录按钮。**内网 http 下 Google OAuth 不可用**（回调须 https） |
+| `CF_R2_ENDPOINT` / `CF_R2_ACCESS_KEY_ID` / `CF_R2_SECRET_ACCESS_KEY` / `CF_R2_BUCKET` | 团队/组织 logo 上传；缺则 `lib/r2.ts` throw（logo API 500）。可用 MinIO |
 | `CF_ACCOUNT_ID` / `CF_D1_DATABASE_ID` | 自建下仅需非空占位（写路径已切 `D1_BASE_URL`）；构建用占位值 |
 | `CF_D1_API_TOKEN` | **真实密钥**（d1-http 的 Bearer 校验，见 §4.1 专项三）；构建期用占位值 |
 | `COMPOSE_PROFILES` | compose profile 默认值：`single`（单节点，默认）或 `cluster`（3 节点）。放 compose 目录 `.env`，使裸 `docker compose up -d` 起单节点 |
+| `DAILY_INTERVAL_MS` | scheduler 定价同步间隔（ms），默认 86400000（24h）；由 compose 透传给 `scheduler` 容器 |
 
 ## 12. 超出本设计范围
 
