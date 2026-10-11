@@ -3289,9 +3289,10 @@ voter/reachable，且新节点能读到扩容前写入的数据。若要走 comp
   网络内可达。规格 §4.1 专项三提到的另一层（给 rqlite 配 `-http-auth`）**本计划未做**——因为
   read/ingest/scheduler 三个容器是**直连 rqlite** 的（不走 d1-http），一旦给 rqlite 加鉴权，
   这三个服务也要同步带 token。若生产要求该层，需一并改造，列为后续强化项。
-- **`CF_D1_API_TOKEN` 只保护 web → d1-http 这一跳**。read/ingest/scheduler 直连 rqlite，其实不需要
-  这个 token，但当前 compose 仍下发给它们；可收窄为只发给 `web` 与 `d1-http`（本计划保留原样以
-  减少改动面，明确记录为已知暴露面）。
+- **`CF_D1_API_TOKEN` 只保护 web → d1-http 这一跳**。read/ingest/scheduler 直连 rqlite，不需要
+  这个 token，因此 compose **只把它下发给 `migrate`、`d1-http`、`web`**（`d1-http` 是校验方、
+  `web` 是客户端、`migrate` 建表初始化）；`read`/`ingest`/`scheduler` 的 `environment` 不含它，
+  收窄了密钥在容器内的暴露面。
 - 真实密钥只写在 `deploy/selfhost/.env`（被 `.gitignore` 的 `.env` 规则覆盖，不入库、不进镜像：
   `.dockerignore` 也含 `.env`）；构建与 compose 里出现的 `CF_ACCOUNT_ID`/`CF_D1_DATABASE_ID`
   是占位串，不是凭据。
