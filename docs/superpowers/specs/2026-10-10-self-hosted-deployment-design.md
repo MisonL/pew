@@ -211,6 +211,8 @@ rqlite 用 statement-based replication（语句复制到各副本各自执行）
 
 即当前唯一屏障是「rqlite 不发布宿主端口 + d1-http 的静态 Bearer 保护 web→d1-http 这一跳」。若要真正加第二道屏障，需给 rqlite 配 `-http-auth` 并让上述三个直连服务同步带 token——列为后续强化项，不计入 Plan 1。
 
+**token 投放范围据此收窄**：既然 `read`/`ingest`/`scheduler` 直连 rqlite、不经过 d1-http，compose 里这三个服务**不再注入 `CF_D1_API_TOKEN`**（原先照抄了 `web` 的 environment 块）。`CF_D1_API_TOKEN` 仅出现在 `migrate`（建表初始化）、`d1-http`（校验方）、`web`（客户端）三处。这同时缩小了密钥在容器内的暴露面。
+
 **专项四：Web 写路径的可配置 base URL（对应 §4.7 的 `d1.ts` 改动）**
 
 `D1Client` 构造时（`packages/web/src/lib/d1.ts:79-80`）只有两条路：设 `PEW_LOCAL_D1_URL`（生产下守卫直接 `throw`），或拼死 `api.cloudflare.com`。**没有任何环境变量能把写路径指到自建 d1-http**——这是「Web 零改动」不成立的根本原因。
@@ -632,7 +634,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | 可选；不配置则隐藏 Google 登录按钮。**内网 http 下 Google OAuth 不可用**（回调须 https） |
 | `CF_R2_ENDPOINT` / `CF_R2_ACCESS_KEY_ID` / `CF_R2_SECRET_ACCESS_KEY` / `CF_R2_BUCKET` | 团队/组织 logo 上传；缺则 `lib/r2.ts` throw（logo API 500）。可用 MinIO |
 | `CF_ACCOUNT_ID` / `CF_D1_DATABASE_ID` | 自建下仅需非空占位（写路径已切 `D1_BASE_URL`）；构建用占位值 |
-| `CF_D1_API_TOKEN` | **真实密钥**（d1-http 的 Bearer 校验，见 §4.1 专项三）；构建期用占位值 |
+| `CF_D1_API_TOKEN` | **真实密钥**（d1-http 的 Bearer 校验，见 §4.1 专项三）；**仅 `migrate`/`d1-http`/`web` 三个服务持有**——`read`/`ingest`/`scheduler` 直连 rqlite、不经 d1-http，不需要也不应拿到它；构建期用占位值 |
 | `COMPOSE_PROFILES` | compose profile 默认值：`single`（单节点，默认）或 `cluster`（3 节点）。放 compose 目录 `.env`，使裸 `docker compose up -d` 起单节点 |
 | `DAILY_INTERVAL_MS` | scheduler 定价同步间隔（ms），默认 86400000（24h）；由 compose 透传给 `scheduler` 容器 |
 

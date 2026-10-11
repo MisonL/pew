@@ -2965,7 +2965,8 @@ services:
     environment:
       PORT: "8787"
       RQLITE_URL: http://rqlite:4001
-      CF_D1_API_TOKEN: ${CF_D1_API_TOKEN}
+      # No CF_D1_API_TOKEN: this service talks to rqlite directly, and rqlite
+      # has no auth. Only d1-http (verifier) and web (client) need the token.
       WORKER_READ_SECRET: ${WORKER_READ_SECRET}
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -2989,7 +2990,7 @@ services:
     environment:
       PORT: "8786"
       RQLITE_URL: http://rqlite:4001
-      CF_D1_API_TOKEN: ${CF_D1_API_TOKEN}
+      # No CF_D1_API_TOKEN: direct rqlite access, no auth needed.
       WORKER_SECRET: ${WORKER_SECRET}
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -3016,7 +3017,7 @@ services:
     # comes back via `restart: unless-stopped` instead of a probe.
     environment:
       RQLITE_URL: http://rqlite:4001
-      CF_D1_API_TOKEN: ${CF_D1_API_TOKEN}
+      # No CF_D1_API_TOKEN: direct rqlite access, no auth needed.
       WORKER_READ_SECRET: ${WORKER_READ_SECRET}
       DAILY_INTERVAL_MS: ${DAILY_INTERVAL_MS:-86400000}
     depends_on:
