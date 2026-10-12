@@ -83,9 +83,18 @@ voter/reachable，且新节点能读到扩容前写入的数据。若要走 comp
 ## 验证
 
 ```bash
-bun run test                                    # 单元测试
+bun run test                                    # 单元测试（含 deploy/selfhost 的 75 个用例）
 bun run deploy/selfhost/verify-migrations.ts --base-url http://127.0.0.1:14001
 ```
+
+> **已知类型检查缺口**：`deploy/selfhost/` 不在 `bun run typecheck` 范围内（它只覆盖
+> `packages/*` 与 e2e 清单），因此适配层与上游 `D1Database`/`KVNamespace` 的类型兼容性没有编译期
+> 校验。原因：`deploy/` 通过**源码**导入两个 worker，而 worker 的 `@cloudflare/workers-types`
+> 是 per-package 安装、不从仓库根解析；用一份独立 tsconfig 拉入 worker 源码会与 worker 自身的
+> workers-types 实例冲突（`KVNamespace` 双重身份，5 处假报错）。运行时由 75 个 vitest 用例覆盖。
+> 若要补齐，正确做法是给 worker 包加 `composite: true` 并输出声明、用 project references——但那要改
+> 上游 `tsconfig`，超出 Plan 1 的「只改两个上游文件」约束，列为后续项。
+
 
 ## 备份
 

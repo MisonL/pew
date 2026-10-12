@@ -66,6 +66,18 @@ describe("d1-adapter reads", () => {
     const url = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string;
     expect(url).toBe(`${BASE}/db/request?transaction=true&associative&timings`);
   });
+
+  it("strong() reads with level=strong for linearizable reads", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      rqliteResponse([{ rows: [{ id: "m1" }] }])
+    );
+    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    const res = await db.prepare("SELECT id FROM _migrations").strong<{ id: string }>();
+    expect(res.results).toEqual([{ id: "m1" }]);
+    expect((fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toBe(
+      `${BASE}/db/query?level=strong&associative&timings`
+    );
+  });
 });
 
 describe("d1-adapter error and edge handling", () => {

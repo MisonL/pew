@@ -21,6 +21,13 @@ export interface D1StatementLike {
   readonly params: unknown[];
   bind(...params: unknown[]): D1StatementLike;
   all<T = unknown>(): Promise<D1Result<T>>;
+  /**
+   * Linearizable read (`level=strong`). Unlike all(), this always reflects the
+   * latest committed write, at the cost of an extra round-trip to the leader.
+   * The migration ledger uses it: reading a stale `_migrations` could re-run an
+   * already-applied (and non-idempotent) migration.
+   */
+  strong<T = unknown>(): Promise<D1Result<T>>;
   first<T = unknown>(column?: string): Promise<T | null>;
   run(): Promise<D1Result>;
 }
@@ -59,7 +66,12 @@ function toD1Result(raw: RqliteStatementResult): D1Result {
     success: true,
     results: raw.rows ?? [],
     meta: {
-      // rqlite omits rows_affected entirely when zero rows changed.
+      // rqlite omits rows_affected entirely when zero rows changed (correct:
+      // D1 also reports changes 0). But rqlite ALSO omits it for a write with a
+      // RETURNING clause even when rows were affected — so `meta.changes` is 0
+      // there while Cloudflare D1 would report 1. Callers that branch on
+      // `changes === 0` must not do so after a RETURNING write (use the
+      // returned rows instead).
       changes: raw.rows_affected ?? 0,
       duration: toMillis(raw.time),
       ...(typeof raw.last_insert_id === "number"
@@ -110,6 +122,12 @@ export function createD1Adapter(options: D1AdapterOptions): D1Like {
         // Flat param encoding: [sql, p1, p2]. Nested arrays silently return
         // empty rows on /db/query.
         const rows = await call("/db/query?level=weak&associative&timings", [[sql, ...params]]);
+        const first = rows[0] ?? {};
+        assertNoError(first);
+        return toD1Result(first) as D1Result<T>;
+      },
+      async strong<T = unknown>(): Promise<D1Result<T>> {
+        const rows = await call("/db/query?level=strong&associative&timings", [[sql, ...params]]);
         const first = rows[0] ?? {};
         assertNoError(first);
         return toD1Result(first) as D1Result<T>;

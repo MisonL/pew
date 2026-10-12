@@ -164,7 +164,7 @@ export async function applyMigrations(
 
   const { results } = await options.db
     .prepare("SELECT id FROM _migrations")
-    .all<{ id: string }>();
+    .strong<{ id: string }>();
   const done = new Set(results.map((r) => r.id));
 
   const files = (await readDirImpl(options.dir))

@@ -88,6 +88,8 @@ function makeFakeDb() {
         },
         all: async <T,>(): Promise<D1Result<T>> =>
           ({ success: true, results: applied.map((id) => ({ id })) as unknown as T[], meta: { changes: 0, duration: 0 } }),
+        strong: async <T,>(): Promise<D1Result<T>> =>
+          ({ success: true, results: applied.map((id) => ({ id })) as unknown as T[], meta: { changes: 0, duration: 0 } }),
         first: async <T,>(): Promise<T | null> => null,
         run: async (): Promise<D1Result> => {
           executed.push(sql);
@@ -218,6 +220,11 @@ describe("applyMigrations", () => {
             return stmt;
           },
           all: async <T,>(): Promise<D1Result<T>> => ({
+            success: true,
+            results: applied.map((id) => ({ id })) as unknown as T[],
+            meta: { changes: 0, duration: 0 },
+          }),
+          strong: async <T,>(): Promise<D1Result<T>> => ({
             success: true,
             results: applied.map((id) => ({ id })) as unknown as T[],
             meta: { changes: 0, duration: 0 },
