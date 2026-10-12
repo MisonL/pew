@@ -18,7 +18,19 @@ const server = createD1HttpServer({ baseUrl: RQLITE_URL, token: TOKEN });
 const nodeServer = createServer((req, res) => {
   void (async () => {
     const chunks: Buffer[] = [];
-    for await (const chunk of req) chunks.push(chunk as Buffer);
+    let total = 0;
+    for await (const chunk of req) {
+      const buf = chunk as Buffer;
+      total += buf.length;
+      // A d1-http request is a single SQL batch; 8MB is far beyond any real
+      // query and stops a token-holder from OOMing the 512m container.
+      if (total > 8 * 1024 * 1024) {
+        res.writeHead(413, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, errors: [{ message: "Request body too large" }] }));
+        return;
+      }
+      chunks.push(buf);
+    }
     const body = Buffer.concat(chunks);
     const request = new Request(new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`), {
       method: req.method ?? "GET",
@@ -27,8 +39,18 @@ const nodeServer = createServer((req, res) => {
     });
 
     if (request.method === "GET" && new URL(request.url).pathname === "/health") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok" }));
+      // Probe rqlite too: a process-only health check reports "ok" while the
+      // write path is down, and web (which waits on this being healthy) would
+      // start against a dead database.
+      let dbOk = false;
+      try {
+        const probe = await fetch(`${RQLITE_URL}/readyz`);
+        dbOk = probe.ok;
+      } catch {
+        dbOk = false;
+      }
+      res.writeHead(dbOk ? 200 : 503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: dbOk ? "ok" : "degraded", database: { connected: dbOk } }));
       return;
     }
 
