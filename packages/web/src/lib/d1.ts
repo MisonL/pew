@@ -30,6 +30,22 @@ export function localD1BaseUrl(config: D1Config, env: Record<string, string | un
   return url.origin;
 }
 
+/**
+ * Production-usable D1 endpoint override for self-hosted deployments.
+ *
+ * Distinct from `localD1BaseUrl`, which is locked to an isolated loopback
+ * test environment and throws in production. This override is deliberately
+ * available in every environment so a self-hosted d1-http service can stand
+ * in for the Cloudflare REST API.
+ */
+export function configuredD1BaseUrl(
+  env: Record<string, string | undefined>
+): string | undefined {
+  const raw = env.D1_BASE_URL;
+  if (!raw) return undefined;
+  return raw.replace(/\/+$/, "");
+}
+
 export interface D1Meta {
   changes: number;
   duration: number;
@@ -76,7 +92,8 @@ export class D1Client {
     if (!config.databaseId) throw new Error("databaseId is required");
     if (!config.apiToken) throw new Error("apiToken is required");
 
-    this.baseUrl = localD1BaseUrl(config, process.env) ??
+    this.baseUrl = configuredD1BaseUrl(process.env) ??
+      localD1BaseUrl(config, process.env) ??
       `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/d1/database/${config.databaseId}`;
     this.headers = {
       Authorization: `Bearer ${config.apiToken}`,
