@@ -129,6 +129,26 @@ export function splitStatements(sql: string): string[] {
   return statements;
 }
 
+/**
+ * SQLite errors that mean "this DDL already took effect". A migration file is
+ * applied statement-by-statement and only recorded in the ledger once every
+ * statement succeeds; if the process dies partway (or a file mixes DDL and DML,
+ * which cannot be one atomic request), a re-run replays the file from the top
+ * and trips over objects that already exist. Upstream migrations use bare
+ * CREATE TABLE / CREATE TRIGGER (e.g. 029), so this is the recovery path.
+ *
+ * Only these specific idempotency errors are tolerated, and only for DDL —
+ * a genuine error (missing table, syntax, constraint) still aborts.
+ */
+function isBenignReplayError(stmt: string, error: unknown): boolean {
+  if (!isDdlStatement(stmt)) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /already exists/i.test(message) ||
+    /duplicate column name/i.test(message)
+  );
+}
+
 export async function applyMigrations(
   options: ApplyMigrationsOptions
 ): Promise<ApplyMigrationsResult> {
@@ -164,12 +184,27 @@ export async function applyMigrations(
     // Route each statement by class, preserving file order (a later DML may
     // depend on an earlier DDL). DDL keeps ?norwtime&norwrandom so its text is
     // stored verbatim; DML must not, or replicas diverge (see isDdlStatement).
-    // Consecutive DDL runs are coalesced into one ddlExecutor call.
+    // Consecutive DDL runs are coalesced into one ddlExecutor call, which is
+    // itself atomic (see rqlite-client: transaction=true).
     let pendingDdl: string[] = [];
     const flushDdl = async () => {
-      if (pendingDdl.length > 0) {
-        await options.ddlExecutor(pendingDdl);
-        pendingDdl = [];
+      if (pendingDdl.length === 0) return;
+      const batch = pendingDdl;
+      pendingDdl = [];
+      try {
+        await options.ddlExecutor(batch);
+      } catch {
+        // A partially-applied earlier run may have created some of these
+        // objects. Retry the batch statement-by-statement, skipping only the
+        // ones that already exist, so the rest still apply.
+        for (const stmt of batch) {
+          try {
+            await options.ddlExecutor([stmt]);
+          } catch (statementError) {
+            if (isBenignReplayError(stmt, statementError)) continue;
+            throw statementError;
+          }
+        }
       }
     };
     for (const stmt of statements) {

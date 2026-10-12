@@ -7,8 +7,11 @@ coverage
 dist
 *.tsbuildinfo
 .DS_Store
-.env
-.env.local
-.env.*.local
+# Match .env at ANY depth. A bare `.env` only excludes the context root, so
+# deploy/selfhost/.env (created by the quickstart) would still be COPYed into
+# the pew-selfhost:local image — leaking real secrets into an image layer.
+**/.env
+**/.env.local
+**/.env.*.local
 logo.png
 scripts/resize-logos.py
