@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { D1Client, D1Error, getD1Client, resetD1Client, localD1BaseUrl } from "../lib/d1";
 
 // Mock global fetch
@@ -360,5 +360,38 @@ describe("getD1Client / resetD1Client", () => {
     vi.stubEnv("CF_D1_DATABASE_ID", undefined as unknown as string);
     vi.stubEnv("CF_D1_API_TOKEN", undefined as unknown as string);
     expect(() => getD1Client()).toThrow("accountId is required");
+  });
+});
+
+describe("D1_BASE_URL override", () => {
+  const original = process.env.D1_BASE_URL;
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.D1_BASE_URL;
+    else process.env.D1_BASE_URL = original;
+  });
+
+  it("uses D1_BASE_URL when set, even in production", async () => {
+    process.env.D1_BASE_URL = "http://d1-http:8788";
+    mockFetch.mockResolvedValueOnce(mockD1Response([{ ok: 1 }]));
+    const client = new D1Client(TEST_CONFIG);
+    await client.query("SELECT 1");
+    expect(mockFetch.mock.calls[0]![0]).toBe("http://d1-http:8788/query");
+  });
+
+  it("strips trailing slash from D1_BASE_URL", async () => {
+    process.env.D1_BASE_URL = "http://d1-http:8788/";
+    mockFetch.mockResolvedValueOnce(mockD1Response([{ ok: 1 }]));
+    const client = new D1Client(TEST_CONFIG);
+    await client.query("SELECT 1");
+    expect(mockFetch.mock.calls[0]![0]).toBe("http://d1-http:8788/query");
+  });
+
+  it("falls back to Cloudflare when D1_BASE_URL is unset", async () => {
+    delete process.env.D1_BASE_URL;
+    mockFetch.mockResolvedValueOnce(mockD1Response([{ ok: 1 }]));
+    const client = new D1Client(TEST_CONFIG);
+    await client.query("SELECT 1");
+    expect(String(mockFetch.mock.calls[0]![0])).toContain("api.cloudflare.com");
   });
 });
