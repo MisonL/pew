@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { createWorkerServer, registerShutdownSignals, runScheduled } from "./node-runtime";
+import { createWorkerServer, registerShutdownSignals, requireSecret, runScheduled } from "./node-runtime";
 
 describe("createWorkerServer", () => {
   it("bridges node:http requests into the worker fetch handler", async () => {
@@ -147,6 +147,24 @@ describe("createWorkerServer.listen", () => {
       await expect(createWorkerServer({ worker, env: {}, port }).listen()).rejects.toThrow();
     } finally {
       await first.close();
+    }
+  });
+});
+
+describe("requireSecret", () => {
+  it("returns the value when it is a real secret", () => {
+    expect(requireSecret("X", "s3cr3t")).toBe("s3cr3t");
+  });
+
+  it.each(["", "replace-me"])("exits when the value is %j", (value) => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      requireSecret("CF_D1_API_TOKEN", value);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      exitSpy.mockRestore();
+      errSpy.mockRestore();
     }
   });
 });

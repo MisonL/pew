@@ -30,15 +30,22 @@ export function createRqliteDdlExecutor(options: RqliteClientOptions): DdlExecut
 
   return async (statements: string[]): Promise<void> => {
     if (statements.length === 0) return;
-    const response = await doFetch(`${base}/db/execute?norwtime&norwrandom`, {
+    // transaction=true makes the whole DDL batch atomic: verified on rqlite
+    // 10.5.3 that a batch whose second statement fails leaves the first
+    // unapplied (without it, "CREATE TABLE a; CREATE TABLE a;" leaves table a
+    // behind, which then blocks every retry with "already exists").
+    const response = await doFetch(`${base}/db/execute?transaction=true&norwtime&norwrandom`, {
       method: "POST",
       headers,
       body: JSON.stringify(statements.map((sql) => [sql])),
+      // rqlite has no default timeout; a wedged node would hang migrate forever.
+      signal: AbortSignal.timeout(30_000),
     });
     const body = (await response.json()) as RqliteResponse;
     if (!response.ok) {
       throw new Error(body.error ?? `rqlite HTTP ${response.status}`);
     }
+    if (body.error) throw new Error(body.error);
     const failure = body.results?.find((r) => r.error);
     if (failure?.error) throw new Error(failure.error);
   };

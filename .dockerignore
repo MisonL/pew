@@ -1,3 +1,7 @@
+# Allowlist, not blocklist: the context starts empty and only the paths a
+# build actually reads are re-included. A blocklist kept missing new secret
+# and artifact shapes (verified: deploy/selfhost/.env and packages/web/.next
+# both entered image layers under the old list).
 **
 !package.json
 !bun.lock
@@ -6,14 +10,59 @@
 !packages/**
 !scripts/
 !scripts/fix-standalone-swc-helpers.ts
-**/node_modules
-**/.next*
-**/dist
-**/.wrangler
-**/coverage
-**/*.tsbuildinfo
-**/.DS_Store
+# The self-hosted compose builds from this same root context with
+# deploy/selfhost/Dockerfile, which COPYs deploy/ — without these two lines
+# that build has no deploy directory at all.
+!deploy/
+!deploy/**
+#
+# Everything below must stay AFTER every `!` negation: Docker applies the LAST
+# matching rule, and a `!` after an exclusion would re-open it.
+#
+# Secrets at ANY depth. A bare `.env` only excludes the context root, so
+# deploy/selfhost/.env (created by the quickstart) would still be COPYed into
+# the pew-selfhost:local image — leaking real secrets into an image layer.
+# `cp .env .env.bak` must not reopen the hole.
 **/.env*
 **/.dev.vars*
+**/.rqlite-auth.json
+**/.rqlite-auth.json.*
+# The render script's staging file holds every plaintext password until the
+# atomic rename; `.auth.json` alone does not match a `.tmp` suffix. Two
+# spellings are needed, and not because of a leading dot (Docker's `*` DOES
+# match one — verified): the default file is `.rqlite-auth.json`, whose name
+# has a HYPHEN before `auth`, so `*.auth.json*` can never match it.
+deploy/selfhost/*.auth.json
+deploy/selfhost/*.auth.json.*
 **/*.pem
 **/*.key
+# Build artifacts and dependencies at ANY depth: both Dockerfiles run
+# `bun install` inside the image, so host copies are never needed (and could
+# shadow the linux-native install).
+**/node_modules
+**/.next*
+**/coverage
+**/coverage-tmp
+**/dist
+**/*.tsbuildinfo
+**/.DS_Store
+# Local wrangler/miniflare state (D1 emulation caches; git ignores them, the
+# images must too — deploy/selfhost/Dockerfile copies packages/worker whole).
+**/.wrangler
+# Playwright output: gitignored, but Docker does not read nested .gitignore
+# files, so it would otherwise reach the image layers.
+**/test-results
+**/playwright-report
+# Backup archives and their staging dirs (backup.sh output; the archive holds
+# every password_hash/api_key, and build contexts are the repo root, so a
+# build running while an archive exists would bake it into an image layer).
+# The two patterns are not redundant: backup.sh's default name is
+# backup-YYYY-MM-DD.db, but an operator may pass any path (`/var/backups/pew/
+# pew.db`, `pre-cluster-*.db`, `dump.db`). A `*.db` inside the repo therefore
+# must never reach a build context — verified: only the default name was being
+# excluded while a `dump.db` next to it entered /ctx intact.
+**/backup-*.db
+**/*.db
+**/*.db-*
+**/.pew-backup.*/
+.git

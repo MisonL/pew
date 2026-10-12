@@ -253,4 +253,55 @@ describe("applyMigrations", () => {
       "DML:INSERT INTO a VALUES (2)",
     ]);
   });
+
+  it("recovers from a partially-applied file by skipping already-existing DDL", async () => {
+    // Simulates a process that died after creating some objects but before
+    // recording the file: the DDL batch fails as a whole, then the per-statement
+    // retry skips the "already exists" ones and applies the rest.
+    const { db, applied } = makeFakeDb();
+    const ddl = vi.fn().mockImplementation(async (statements: string[]) => {
+      if (statements.some((s) => s.includes("_migrations"))) return;
+      if (statements.length > 1) {
+        // The atomic batch trips on an object a previous run already created.
+        throw new Error("table leaderboard_revision already exists");
+      }
+      // Per-statement retry: the first object exists, the second is new.
+      if (statements[0]?.includes("leaderboard_revision (")) {
+        throw new Error("table leaderboard_revision already exists");
+      }
+    });
+    const result = await applyMigrations({
+      db,
+      dir: "/migrations",
+      ddlExecutor: ddl,
+      readDir: async () => ["029.sql"],
+      readFile: async () =>
+        [
+          "CREATE TABLE leaderboard_revision (id INTEGER PRIMARY KEY, revision TEXT NOT NULL);",
+          "CREATE TRIGGER trg AFTER INSERT ON x BEGIN UPDATE y SET z = 1; END;",
+        ].join("\n"),
+    });
+    expect(result.applied).toEqual(["029.sql"]);
+    expect(applied).toEqual(["029.sql"]);
+    // After the batch failure, each statement is retried individually.
+    const singleCalls = ddl.mock.calls.filter((c) => (c[0] as string[]).length === 1);
+    expect(singleCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("still aborts on a genuine (non-idempotency) DDL error during retry", async () => {
+    const { db } = makeFakeDb();
+    const ddl = vi.fn().mockImplementation(async (statements: string[]) => {
+      if (statements.some((s) => s.includes("_migrations"))) return;
+      throw new Error("near \"CREAT\": syntax error");
+    });
+    await expect(
+      applyMigrations({
+        db,
+        dir: "/migrations",
+        ddlExecutor: ddl,
+        readDir: async () => ["bad.sql"],
+        readFile: async () => "CREATE TABLE a(x);",
+      })
+    ).rejects.toThrow(/syntax error/);
+  });
 });

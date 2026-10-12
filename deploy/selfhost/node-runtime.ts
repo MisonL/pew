@@ -49,8 +49,12 @@ function toRequest(req: IncomingMessage, body: Buffer | undefined): Request {
     else headers.set(name, value);
   }
   const method = req.method ?? "GET";
-  const hasBody = method !== "GET" && method !== "HEAD" && body !== undefined;
-  return new Request(url, { method, headers, body: hasBody ? body : undefined });
+  // Buffer is a Uint8Array at runtime but does not structurally satisfy
+  // BodyInit's DOM lib type; hand over an ArrayBuffer-backed view instead.
+  // GET/HEAD have no body regardless of what readBody returned.
+  const bodyInit: BodyInit | undefined =
+    body && method !== "GET" && method !== "HEAD" ? new Uint8Array(body).buffer : undefined;
+  return new Request(url, { method, headers, body: bodyInit });
 }
 
 async function sendResponse(res: ServerResponse, response: Response): Promise<void> {
@@ -157,4 +161,18 @@ export function registerShutdownSignals(close: () => Promise<void>): void {
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
+}
+
+/**
+ * Fails fast when a required secret is missing OR left at the `.env.example`
+ * placeholder. A bare non-empty check would let the quickstart's `replace-me`
+ * through, leaving every service authenticated by a value that is published
+ * in this repo — the one default an operator is most likely to forget.
+ */
+export function requireSecret(name: string, value: string): string {
+  if (!value || value === "replace-me") {
+    console.error(`${name} is required and must not be the placeholder "replace-me"`);
+    process.exit(1);
+  }
+  return value;
 }

@@ -132,12 +132,12 @@ interface D1Result<T> {
 |---|---|---|
 | 参数编码 | **扁平数组 `[sql, p1, p2]`** | **不是**嵌套 `[sql, [p1,p2]]`。实测嵌套形式在 `/db/query` 下静默返回空结果、在 `/db/execute` 下报 `unsupported type string`——这是最容易静默出错的陷阱 |
 | `prepare().all()` | `POST /db/query?associative` | 带 `associative` 时响应 `rows` 为对象数组，即 D1 的 `results`（不带时是 `columns`+`values`） |
-| `prepare().run()` | `POST /db/execute?associative` | 写语句必须走 execute；`/db/query` 对写语句返回错误「attempt to change database via query operation」 |
+| `prepare().run()` | `POST /db/request?transaction=true&associative` | 单语句写也走 request，与 batch 一致：`/db/execute` 会丢弃带 `RETURNING` 的行，且 `/db/query` 对写返回错误「attempt to change database via query operation」 |
 | **`batch()`** | **`POST /db/request?transaction=true&associative`** | **两个参数都必需**，见下方专项说明 |
 | `meta.changes` | `rows_affected` | **字段在值为 0 时被省略**（实测 `UPDATE` 影响 0 行时只返回 `last_insert_id`），必须 `?? 0` |
 | `meta.duration` | rqlite 的 `time`（秒） | 需换算为毫秒；且需 `?timings` 才有值 |
 | `meta.last_row_id` | `last_insert_id` | 只读语句上该值是上一条的残留值，需甄别 |
-| DDL | `POST /db/execute?norwtime&norwrandom` | 见下方「DDL 冻结」专项；DDL 返回空对象 `{}`，无 `rows_affected` |
+| DDL | `POST /db/execute?transaction=true&norwtime&norwrandom` | 见下方「DDL 冻结」专项；DDL 返回空对象 `{}`，无 `rows_affected`。`transaction=true` 使整个 DDL 批原子（实测：批内第二条失败则第一条不落库），避免迁移重放撞 `already exists` |
 | 错误 | **HTTP 仍为 200** | 必须逐条检查 `results[i].error` 并抛错，否则静默吞错 |
 | 空批 | 短路返回 `[]` | rqlite 对空数组返回 HTTP 400 `no statements`；D1 的 `batch([])` 返回 `[]`（`packages/web/src/lib/d1.ts:115` 也如此兜底） |
 
@@ -524,14 +524,14 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | 层级 | 内容 |
 |---|---|
 | 适配层单元测试 | D1 形状映射（`rows_affected` 缺失兜底、错误在 HTTP 200 内、`duration` 换算、空批返回 `[]`）；KV `get(key,"text")`、`put` 带 TTL、`list` 分页 |
-| 迁移兼容测试 | 全部 32 个迁移（上游 `.sql` 实测 **33 个文件**，其中 3 个是被 squash 跳过的旧文件，含本方案新增的 030/031）apply 到 rqlite。**实测基线（rqlite 10.5.3，2026-10-11）**：上游表 22 张 + 本方案 3 张（`_migrations`、`kv_cache`、`leaderboard_revision_seq`）；索引 65 个（含 SQLite 自动创建的 39 个 `sqlite_autoindex_*`；显式索引仅 26 个，因 023/024/025 三个迁移 DROP 了 projects/showcases/badges/budgets 等表并带走其索引）；触发器 12 个；视图 2 个。断言 12 触发器已替换为确定性版本，且 `kv_cache` 存在（缺表只在运行时暴露，单元测试用内存假库测不出）。原写「23 表 / 62 索引」为估计值，实测不成立，已更正 |
+| 迁移兼容测试 | 全部 32 个迁移（磁盘 `scripts/migrations/` 实测 **35 个 .sql**：33 个上游文件 + 本方案新增的 030/031；其中 3 个上游文件被 squash 跳过，故**应用 32 个**）apply 到 rqlite。**实测基线（rqlite 10.5.3，2026-10-11）**：上游表 22 张 + 本方案 3 张（`_migrations`、`kv_cache`、`leaderboard_revision_seq`）；索引 65 个（含 SQLite 自动创建的 39 个 `sqlite_autoindex_*`；显式索引仅 26 个，因 023/024/025 三个迁移 DROP 了 projects/showcases/badges/budgets 等表并带走其索引）；触发器 12 个；视图 2 个。断言 12 触发器已替换为确定性版本，且 `kv_cache` 存在（缺表只在运行时暴露，单元测试用内存假库测不出）。原写「23 表 / 62 索引」为估计值，实测不成立，已更正 |
 | 多节点确定性测试 | **三节点集群 + `docker pause` follower 制造重放**，用 `level=none` 直读各副本本地状态断言收敛：触发器 revision 三副本一致、应用层写入的 `created_at` 一致（这是配置①②与配置③的判别实验，见 §4.1 专项二） |
 | 迁移确定性测试 | 断言 DDL 执行后 `sqlite_master` 中 `datetime('now')` / `randomblob()` **未被冻结**（用 `?norwtime&norwrandom`）。**注意 `norw*` 只能用于 DDL**：迁移文件里的 DML（如 029 的种子 `INSERT ... randomblob(16)`、008b 的 `UPDATE ... datetime('now')`）必须走不带 norw 的默认改写路径，否则各副本独立求值会**分叉**（实测两副本得到不同 randomblob）。执行器按 `isDdlStatement` 分流 |
 | 原子性测试 | batch 中夹坏语句，断言零残留 |
 | 端到端 | compose 起全栈，跑通「注册 → 登录 → CLI 登录 → 同步 → 仪表盘可见」 |
 | 上游同步回归 | 合并上游 main 后，上述测试全部通过 |
 
-**迁移执行方式变更**：从 `wrangler d1 execute --file` 改为「读文件 → 按语句切分（正确处理 `CREATE TRIGGER ... BEGIN ... END`，含内联写法 `BEGIN ...; END;`）→ **按语句类别分流**：DDL 批带 `?norwtime&norwrandom`（见 §4.1 专项二），DML 走默认改写（不带 norw，避免副本分叉）」。切分器的正确性已用两法核验：单元测试 + 把全部 30 个迁移文件切成 133 条语句并在真实 SQLite 中逐条执行（0 错误，产出 22 表 / 12 触发器）。
+**迁移执行方式变更**：从 `wrangler d1 execute --file` 改为「读文件 → 按语句切分（正确处理 `CREATE TRIGGER ... BEGIN ... END`，含内联写法 `BEGIN ...; END;`）→ **按语句类别分流**：DDL 批带 `?transaction=true&norwtime&norwrandom`（原子且保持文本原样，见 §4.1 专项二），DML 走默认改写（不带 norw，避免副本分叉）」。切分器的正确性已用两法核验：单元测试 + 把全部 30 个上游迁移文件切成 133 条语句并在真实 SQLite 中逐条执行（0 错误，产出 22 表 / 12 触发器）。**断点恢复**：文件级无法用单次请求做到 DDL+DML 原子（二者 norw 语义互斥），故 `applyMigrations` 在账本记账前逐条执行；若某 DDL 批失败，改为逐条重试并**跳过「已存在 / 重复列」这类幂等错误**（保护 029 等含裸 `CREATE TABLE`/`CREATE TRIGGER` 的上游文件），真正的错误（缺表、语法、约束）仍中止。
 
 **迁移账本（复核新发现：上游无账本、无 down 迁移）**：上游没有迁移记录表，靠 `wrangler d1 migrations` 的本地状态文件跟踪。自建执行器必须自建 `_migrations(id TEXT PRIMARY KEY, applied_at TEXT)`，按文件名排序、跳过已应用项，保证**可重复执行**。注意多数迁移用 `CREATE TABLE IF NOT EXISTS` 幂等，但 `ALTER TABLE ADD COLUMN`（如本方案新增的 `password_hash`）**不幂等**，重复执行会报 `duplicate column`——账本正是为它而设。
 
