@@ -166,11 +166,13 @@ services:
     environment:
       PORT: "8787"
       RQLITE_URL: http://rqlite:4001
-      # No CF_D1_API_TOKEN: direct rqlite access; uses optional read-only
-      # rqlite credentials. The fallback to the full credentials lives in
-      # server-read.ts / server-scheduler.ts (empty string = unset here).
+      # No CF_D1_API_TOKEN: direct rqlite access. Both pairs are injected so
+      # the server-side fallback works: READ_* is preferred; empty READ_* (the
+      # ${VAR:-} default) falls back to the full credentials as a unit.
       RQLITE_READ_USERNAME: ${RQLITE_READ_USERNAME:-}
       RQLITE_READ_PASSWORD: ${RQLITE_READ_PASSWORD:-}
+      RQLITE_USERNAME: ${RQLITE_USERNAME:-}
+      RQLITE_PASSWORD: ${RQLITE_PASSWORD:-}
       WORKER_READ_SECRET: ${WORKER_READ_SECRET}
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -224,11 +226,13 @@ services:
     # comes back via `restart: unless-stopped` instead of a probe.
     environment:
       RQLITE_URL: http://rqlite:4001
-      # No CF_D1_API_TOKEN: direct rqlite access; uses optional read-only
-      # rqlite credentials. The fallback to the full credentials lives in
-      # server-read.ts / server-scheduler.ts (empty string = unset here).
+      # No CF_D1_API_TOKEN: direct rqlite access. Both pairs are injected so
+      # the server-side fallback works: READ_* is preferred; empty READ_* (the
+      # ${VAR:-} default) falls back to the full credentials as a unit.
       RQLITE_READ_USERNAME: ${RQLITE_READ_USERNAME:-}
       RQLITE_READ_PASSWORD: ${RQLITE_READ_PASSWORD:-}
+      RQLITE_USERNAME: ${RQLITE_USERNAME:-}
+      RQLITE_PASSWORD: ${RQLITE_PASSWORD:-}
       WORKER_READ_SECRET: ${WORKER_READ_SECRET}
       DAILY_INTERVAL_MS: ${DAILY_INTERVAL_MS:-86400000}
     depends_on:
