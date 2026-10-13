@@ -9,7 +9,7 @@ import { LoadingScreen } from "@nocoo/basalt/components/loading-screen";
 import { signIn } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 import Image from "next/image";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { BadgeAmbientGlow, BadgeCard } from "@/components/brand/badge-card";
 import { Github } from "@/components/icons/github";
 import { HeaderTooltip, HexlyLink } from "@/components/layout/hexly-link";
@@ -49,8 +49,48 @@ function LoginContent() {
   const [inviteError, setInviteError] = useState("");
   const [verifying, setVerifying] = useState(false);
 
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [credError, setCredError] = useState("");
+  const [credLoading, setCredLoading] = useState(false);
+  // Server-derived flags (see /api/auth/login-options): the /setup link only
+  // shows while no user exists, and Google only when an OAuth client is set.
+  const [setupNeeded, setSetupNeeded] = useState(false);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/login-options")
+      .then((r) => (r.ok ? r.json() : { setupNeeded: false, googleEnabled: false }))
+      .then((data) => {
+        if (cancelled) return;
+        setSetupNeeded(Boolean(data.setupNeeded));
+        setGoogleEnabled(Boolean(data.googleEnabled));
+      })
+      .catch(() => {
+        // Both flags are conveniences — ignore failures.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleGoogleLogin = () => {
     signIn("google", { callbackUrl });
+  };
+
+  const handleCredentialLogin = async () => {
+    setCredError("");
+    setCredLoading(true);
+    // redirect:false so we can surface CredentialsSignin inline instead of
+    // bouncing to /login?error=CredentialsSignin.
+    const result = await signIn("credentials", { email, password, redirect: false });
+    setCredLoading(false);
+    if (result?.error) {
+      setCredError("Invalid email or password");
+    } else {
+      window.location.href = callbackUrl;
+    }
   };
 
   const handleInviteSubmit = async () => {
@@ -169,14 +209,61 @@ function LoginContent() {
                 </Button>
               </div>
             ) : (
-              <Button
-                variant="secondary"
-                className="w-full rounded-xl py-3"
-                onClick={handleGoogleLogin}
+              <form
+                className="w-full space-y-3"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (email && password && !credLoading) handleCredentialLogin();
+                }}
               >
-                <GoogleIcon />
-                Sign in with Google
-              </Button>
+                <Input
+                  type="email"
+                  autoComplete="email"
+                  placeholder="Email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="rounded-xl py-3"
+                />
+                <Input
+                  type="password"
+                  autoComplete="current-password"
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="rounded-xl py-3"
+                />
+                {credError && (
+                  <Banner variant="error" size="sm" description={credError} />
+                )}
+                <Button
+                  type="submit"
+                  variant="secondary"
+                  className="w-full rounded-xl py-3"
+                  disabled={!email || !password || credLoading}
+                  loading={credLoading}
+                >
+                  {credLoading ? "Signing in..." : "Sign in"}
+                </Button>
+
+                {googleEnabled && (
+                  <>
+                    <div className="flex items-center gap-2 pt-1">
+                      <div className="h-px flex-1 bg-basalt-border" />
+                      <span className="text-[10px] text-basalt-muted-foreground">OR</span>
+                      <div className="h-px flex-1 bg-basalt-border" />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="w-full rounded-xl py-3"
+                      onClick={handleGoogleLogin}
+                    >
+                      <GoogleIcon />
+                      Continue with Google
+                    </Button>
+                  </>
+                )}
+              </form>
             )}
 
             <p className="mt-3 text-center text-[10px] leading-relaxed text-basalt-muted-foreground/60">
@@ -188,6 +275,15 @@ function LoginContent() {
                 privacy policy
               </Link>
             </p>
+
+            {setupNeeded && (
+              <p className="mt-3 text-center text-[11px] text-basalt-muted-foreground">
+                First time here?{" "}
+                <a href="/setup" className="underline hover:text-basalt-foreground">
+                  Create the administrator account
+                </a>
+              </p>
+            )}
           </BadgeCard>
         </div>
       </div>

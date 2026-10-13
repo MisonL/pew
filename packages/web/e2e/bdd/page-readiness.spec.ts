@@ -46,12 +46,23 @@ const checks: Record<typeof READINESS_PAGES[number]["check"], (page: Page) => Pr
     await expect(page.getByText("npm install -g @nocoo/pew", { exact: true })).toBeVisible();
   },
   login: async (page) => {
-    await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeEnabled();
+    // Credentials is the always-available sign-in path (self-hosted spec §4.4).
+    // The Google button only appears when an OAuth client is configured, which
+    // the seeded e2e environment does not do; assert the email/password form.
+    await expect(page.getByPlaceholder("Email")).toBeVisible();
+    await expect(page.getByPlaceholder("Password")).toBeVisible();
     await expect(page.getByRole("link", { name: "privacy policy", exact: true })).toHaveAttribute("href", "/privacy");
   },
   privacy: async (page) => {
     await expect(page.getByText("Token counts (input, cached input, output, reasoning output)", { exact: true })).toBeVisible();
     await expect(page.getByText("one-way SHA-256 hash", { exact: true }).first()).toBeVisible();
+  },
+  setup: async (page) => {
+    // The wizard is reachable without auth (proxy.ts); in the seeded e2e
+    // environment users already exist, so submitting would be rejected — assert
+    // the form renders rather than driving a full bootstrap.
+    await expect(page.getByRole("button", { name: "Create administrator" })).toBeVisible();
+    await expect(page.getByPlaceholder("Email")).toBeVisible();
   },
   overview: async (page) => {
     await stat(page, "Total Tokens", "1.8M");

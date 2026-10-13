@@ -120,6 +120,7 @@ describe("isPublicRoute", () => {
     "/api/leaderboard?period=week",
     "/u/john",
     "/",
+    "/setup",
   ])("should return true for public route: %s", (path) => {
     expect(isPublicRoute(path)).toBe(true);
   });

@@ -22,6 +22,7 @@ vi.mock("@/lib/auth-helpers", () => ({
 // Mock admin helpers
 vi.mock("@/lib/admin", () => ({
   isAdmin: vi.fn(),
+  isAdminInDb: vi.fn(async () => false),
 }));
 
 function makeRequest(
