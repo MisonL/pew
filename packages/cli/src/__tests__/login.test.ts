@@ -2,19 +2,51 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { join } from "node:path";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { executeLogin, resolveHost, DEFAULT_HOST, DEV_HOST } from "../commands/login.js";
+import { executeLogin, resolveHost, parseHostArg, DEFAULT_HOST, DEV_HOST } from "../commands/login.js";
 
 // ---------------------------------------------------------------------------
 // resolveHost
 // ---------------------------------------------------------------------------
 
 describe("resolveHost", () => {
+  const ORIGINAL_ENV = process.env;
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
   it("should return DEFAULT_HOST when dev is false", () => {
     expect(resolveHost(false)).toBe(DEFAULT_HOST);
   });
 
   it("should return DEV_HOST when dev is true", () => {
     expect(resolveHost(true)).toBe(DEV_HOST);
+  });
+
+  it("prefers an explicit override for self-hosted deployments", () => {
+    expect(resolveHost(false, "http://pew.corp:7020")).toBe("http://pew.corp:7020");
+    // Trailing slashes are trimmed so URL joins stay well-formed.
+    expect(resolveHost(false, "http://pew.corp:7020/")).toBe("http://pew.corp:7020");
+  });
+
+  it("falls back to PEW_HOST when no override is given", () => {
+    process.env = { ...ORIGINAL_ENV, PEW_HOST: "https://pew.internal" };
+    expect(resolveHost(false)).toBe("https://pew.internal");
+  });
+
+  it("lets an explicit override beat PEW_HOST", () => {
+    process.env = { ...ORIGINAL_ENV, PEW_HOST: "https://env.example" };
+    expect(resolveHost(false, "https://flag.example")).toBe("https://flag.example");
+  });
+});
+
+describe("parseHostArg", () => {
+  it("parses --host=<url> and --host <url>", () => {
+    expect(parseHostArg(["--host=https://a.b"])).toBe("https://a.b");
+    expect(parseHostArg(["login", "--host", "https://a.b"])).toBe("https://a.b");
+  });
+
+  it("returns undefined when absent", () => {
+    expect(parseHostArg(["login", "--force"])).toBeUndefined();
   });
 });
 
@@ -73,6 +105,34 @@ describe("executeLogin", () => {
       await readFile(join(tempDir, "config.json"), "utf-8")
     );
     expect(config.token).toBe("pk_test123abc");
+  });
+
+  it("stores credentials in a per-host file when hostIsolation is set", async () => {
+    const loginPromise = executeLogin({
+      configDir: tempDir,
+      apiUrl: "http://pew.corp:7020",
+      timeoutMs: 5000,
+      hostIsolation: "http://pew.corp:7020",
+      openBrowser: async (url) => {
+        const callbackParam = new URL(url).searchParams.get("callback");
+        const state = new URL(url).searchParams.get("state");
+        const callbackUrl = new URL(callbackParam!);
+        callbackUrl.searchParams.set("api_key", "pk_selfhosted");
+        callbackUrl.searchParams.set("state", state!);
+        await new Promise((r) => setTimeout(r, 10));
+        await fetch(callbackUrl.toString());
+      },
+    });
+
+    const result = await loginPromise;
+    expect(result.success).toBe(true);
+
+    // Isolated file, NOT the shared config.json.
+    const config = JSON.parse(
+      await readFile(join(tempDir, "config.pew.corp_7020.json"), "utf-8")
+    );
+    expect(config.token).toBe("pk_selfhosted");
+    await expect(readFile(join(tempDir, "config.json"), "utf-8")).rejects.toThrow();
   });
 
   it("should return existing config info if already logged in and force=false", async () => {

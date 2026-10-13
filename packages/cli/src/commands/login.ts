@@ -18,8 +18,30 @@ import { ConfigManager } from "../config/manager.js";
 export const DEFAULT_HOST = "https://pew.md";
 export const DEV_HOST = "https://pew.dev.hexly.ai";
 
-export function resolveHost(dev: boolean): string {
+/**
+ * Resolve the API host, with an explicit override winning over dev/prod.
+ *
+ * Precedence: explicit `--host` value > PEW_HOST env > DEV_HOST (dev) >
+ * DEFAULT_HOST. Used by self-hosted deployments pointing the CLI at an
+ * intranet pew instance.
+ */
+export function resolveHost(dev: boolean, override?: string): string {
+  const host = override ?? process.env.PEW_HOST;
+  if (host?.trim()) return host.trim().replace(/\/+$/, "");
   return dev ? DEV_HOST : DEFAULT_HOST;
+}
+
+/**
+ * Parse `--host=<url>` / `--host <url>` from argv, for callers that do not
+ * route through the command-arg parser.
+ */
+export function parseHostArg(argv: string[]): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--host") return argv[i + 1];
+    if (arg?.startsWith("--host=")) return arg.slice("--host=".length);
+  }
+  return undefined;
 }
 
 // Pew accent color (green)
@@ -46,6 +68,13 @@ export interface LoginOptions {
   generateNonce?: () => string;
   /** One-time auth code from web UI (skips browser flow) */
   code?: string;
+  /**
+   * When set, credentials are stored in a per-host config file
+   * (config.<host>.json) instead of the shared config.json. Callers set this
+   * only when the host came from an explicit --host / PEW_HOST override, so a
+   * self-hosted login cannot clobber SaaS credentials.
+   */
+  hostIsolation?: string;
   /** Injected fetch function (for testing) */
   fetch?: typeof globalThis.fetch;
   /** Log function for browser flow messages (default: console.log) */
@@ -77,7 +106,10 @@ export async function executeLogin(options: LoginOptions): Promise<LoginResult> 
   } = options;
   // log is accessed via options.log below (not destructured to avoid shadowing)
 
-  const configManager = new ConfigManager(configDir, dev);
+  // A caller that resolved the host from an explicit --host / PEW_HOST
+  // override asks for an isolated config file, so its token never overwrites
+  // the SaaS default's credentials (spec §4.5).
+  const configManager = new ConfigManager(configDir, dev, options.hostIsolation);
 
   // 1. Check existing login
   if (!force) {
