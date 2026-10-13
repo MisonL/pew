@@ -73,6 +73,12 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
     expect(sched).not.toContain("WORKER_SECRET: ${WORKER_SECRET}");
   });
 
+  it("wires the login limiter backend switch into web (spec Plan 3 §3.2)", () => {
+    // top-level "volumes:" key (services' own volumes: keys are indented)
+    const web = compose.slice(compose.indexOf("  web:"), compose.indexOf("\nvolumes:"));
+    expect(web).toContain("LOGIN_RATE_LIMIT_BACKEND: ${LOGIN_RATE_LIMIT_BACKEND:-}");
+  });
+
   it("ignores the rendered auth file in git and docker contexts", () => {
     expect(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../.gitignore"), "utf8"))
       .toContain("deploy/selfhost/.rqlite-auth.json");
