@@ -17,13 +17,20 @@ import { D1AuthAdapter } from "@/lib/auth-adapter";
 import { getDbRead, getDbWrite } from "@/lib/db";
 import { handleInviteGate } from "@/lib/invite";
 import { findCredentialUser, verifyPassword, verifyPasswordDummy, passwordVersion } from "@/lib/credentials";
-import { inMemoryRateLimiter, type RateLimitConfig } from "@/lib/rate-limit";
+import {
+  getClientIp,
+  inMemoryRateLimiter,
+  ipv6PrefixKey,
+  type RateLimitConfig,
+} from "@/lib/rate-limit";
 import type { JWT } from "next-auth/jwt";
 import type { Session, User } from "next-auth";
 
 /**
- * Login brute-force guard. Per-email and per-IP sliding windows, in-process
- * only (single web replica; spec §4.4 known limitation).
+ * Login brute-force guard: 10 attempts / 60s. The default in-memory limiter
+ * keys per-email only (single web replica; spec §4.4 known limitation); set
+ * LOGIN_RATE_LIMIT_BACKEND=rqlite for dual-key (email + IP) limiting shared
+ * across replicas.
  */
 export const LOGIN_RATE_LIMIT: RateLimitConfig = {
   maxRequests: 10,
@@ -59,16 +66,29 @@ export async function authorizeCredentials(input: {
   email?: unknown;
   password?: unknown;
   rateKey?: string;
+  ip?: string | undefined;
 }): Promise<{ id: string; email: string; name: string; pwd_v: string } | null> {
   const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
   const password = typeof input.password === "string" ? input.password : "";
   if (!email || !password) return null;
 
-  const limit = inMemoryRateLimiter.check(
-    `login:${input.rateKey ?? email}`,
-    LOGIN_RATE_LIMIT
-  );
-  if (!limit.allowed) return null;
+  // Docstring fix: this function previously claimed per-IP limiting but only
+  // ever keyed per-email (auth.ts:68). The IP dimension arrives with the
+  // rqlite backend, which the NextAuth(req) closure feeds via getClientIp.
+  if (process.env.LOGIN_RATE_LIMIT_BACKEND === "rqlite") {
+    const limiter = await import("@/lib/rate-limit").then((m) => m.rqliteRateLimiter);
+    const ipKey = `login:ip:${input.ip ? ipv6PrefixKey(input.ip) : "unknown"}`;
+    for (const key of [`login:email:${email}`, ipKey]) {
+      const result = await limiter.check(key, LOGIN_RATE_LIMIT);
+      if (!result.allowed) return null;
+    }
+  } else {
+    const limit = inMemoryRateLimiter.check(
+      `login:${input.rateKey ?? email}`,
+      LOGIN_RATE_LIMIT
+    );
+    if (!limit.allowed) return null;
+  }
 
   const user = await findCredentialUser(email);
   if (!user?.password_hash) {
@@ -180,6 +200,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth(async (req) => {
         authorizeCredentials({
           email: creds?.email,
           password: creds?.password,
+          ip: req ? getClientIp(req as Request) : undefined,
         }),
     })
   );

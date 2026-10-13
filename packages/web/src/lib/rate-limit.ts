@@ -210,7 +210,25 @@ export const RQLITE_RATE_LIMIT_WINDOW_SECONDS = 3600;
 /** IPv6 privacy extensions rotate addresses per connection; collapse to /64. */
 export function ipv6PrefixKey(ip: string): string {
   if (!ip.includes(":")) return ip;
-  const groups = ip.split(":").filter(Boolean);
+  // Expand the compressed form to exactly 8 groups before truncating, so
+  // "::1" expands to "0:0:0:0:...:1" rather than collapsing every
+  // "::"-leading address into one bucket.
+  const head: string[] = [];
+  const tail: string[] = [];
+  let atTail = false;
+  for (const part of ip.split(":")) {
+    if (part === "") {
+      if (!atTail) {
+        atTail = true;
+        if (head.length === 0) head.push("0"); // leading "::"
+      }
+      continue;
+    }
+    (atTail ? tail : head).push(part);
+  }
+  if (!atTail) return `${head.slice(0, 4).join(":")}::/64`; // uncompressed form
+  const tailCount = 8 - head.length - tail.length;
+  const groups = [...head, ...Array(tailCount).fill("0"), ...tail];
   return `${groups.slice(0, 4).join(":")}::/64`;
 }
 
