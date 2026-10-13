@@ -108,6 +108,54 @@ describe("d1-adapter error and edge handling", () => {
   });
 });
 
+describe("basic auth", () => {
+  const capture = () => {
+    const calls: { headers: Record<string, string> }[] = [];
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      calls.push({ headers: Object.fromEntries(new Headers(init?.headers).entries()) });
+      return Response.json({ results: [{}] });
+    };
+    return { calls, fetchImpl };
+  };
+
+  it("sends Basic when basicAuth is set (overrides Bearer)", async () => {
+    const { calls, fetchImpl } = capture();
+    const db = createD1Adapter({
+      baseUrl: "http://x", token: "tok",
+      basicAuth: { username: "pew", password: "s:ecret" },
+      fetchImpl,
+    });
+    await db.prepare("SELECT 1").all();
+    const expected = `Basic ${Buffer.from("pew:s:ecret").toString("base64")}`;
+    expect(calls[0]?.headers.authorization).toBe(expected);
+  });
+
+  it("keeps Bearer when only token is set (existing behaviour)", async () => {
+    const { calls, fetchImpl } = capture();
+    const db = createD1Adapter({ baseUrl: "http://x", token: "tok", fetchImpl });
+    await db.prepare("SELECT 1").all();
+    expect(calls[0]?.headers.authorization).toBe("Bearer tok");
+  });
+
+  it("sends NO Authorization header when token is empty and basicAuth unset", async () => {
+    const { calls, fetchImpl } = capture();
+    const db = createD1Adapter({ baseUrl: "http://x", token: "", fetchImpl });
+    await db.prepare("SELECT 1").all();
+    expect(calls[0]?.headers.authorization).toBeUndefined();
+  });
+
+  it("never includes the header value in an error message", async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response("unauthorized", { status: 401 });
+    const db = createD1Adapter({
+      baseUrl: "http://x", token: "",
+      basicAuth: { username: "pew", password: "supersecret" }, fetchImpl,
+    });
+    await expect(db.prepare("SELECT 1").all()).rejects.toThrow(/401/);
+    await expect(db.prepare("SELECT 1").all()).rejects.not.toThrow(/supersecret/);
+  });
+});
+
 describe("d1-adapter batch", () => {
   it("uses /db/request with transaction=true and associative", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
