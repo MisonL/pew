@@ -17,6 +17,9 @@ coverage-tmp/
 .env.*.local
 .env.test
 
+# Rendered rqlite credentials (deploy/selfhost, Plan 3)
+deploy/selfhost/.rqlite-auth.json
+
 # Playwright
 playwright-report/
 test-results/

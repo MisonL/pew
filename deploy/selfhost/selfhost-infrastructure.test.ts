@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { splitStatements } from "./migrate";
@@ -34,5 +35,39 @@ describe("031-selfhost-infrastructure.sql", () => {
     const sql = await readFile(MIGRATION, "utf8");
     expect(sql).not.toMatch(/DEFAULT\s*\(\s*datetime\s*\(\s*'now'/i);
     expect(sql).not.toMatch(/randomblob\s*\(/i);
+  });
+});
+
+describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
+  // vitest runs ESM in Node, so import.meta.dir (Bun-only) is undefined; same
+  // pattern as deterministic-revision.test.ts and render-auth.test.ts.
+  const compose = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "docker-compose.yml"), "utf8");
+
+  it("wraps every rqlite service with the entrypoint script and auth mount", () => {
+    expect(compose).toContain('entrypoint: ["sh", "/entrypoint.sh"]');
+    expect(compose.match(/\.\/rqlite-entrypoint\.sh:\/entrypoint\.sh:ro/g)?.length).toBe(4);
+    expect(compose.match(/\.\/\.rqlite-auth\.json:\/auth\/auth\.json:ro/g)?.length).toBe(4);
+  });
+
+  it("cluster nodes join as the dedicated joiner user; single node does not", () => {
+    const cluster = compose.slice(compose.indexOf("rqlite-1:"), compose.indexOf("migrate:"));
+    expect(cluster.match(/RQLITE_JOIN_AS: joiner/g)?.length).toBe(3);
+    const single = compose.slice(compose.indexOf("  rqlite:"), compose.indexOf("  rqlite-1:"));
+    expect(single).not.toContain("RQLITE_JOIN_AS");
+  });
+
+  it("write services get full credentials; read/scheduler get read-only ones", () => {
+    expect(compose).toContain("RQLITE_USERNAME: ${RQLITE_USERNAME:-}");
+    expect(compose).toContain("RQLITE_READ_USERNAME: ${RQLITE_READ_USERNAME:-}");
+    const sched = compose.slice(compose.indexOf("  scheduler:"), compose.indexOf("  web:"));
+    expect(sched).toContain("RQLITE_READ_USERNAME");
+    expect(sched).not.toContain("RQLITE_USERNAME: ${RQLITE_USERNAME:-}");
+  });
+
+  it("ignores the rendered auth file in git and docker contexts", () => {
+    expect(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../.gitignore"), "utf8"))
+      .toContain("deploy/selfhost/.rqlite-auth.json");
+    expect(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../.dockerignore"), "utf8"))
+      .toContain("**/.rqlite-auth.json");
   });
 });
