@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v3.3.1
+
+### Changed
+- Sync Next.js lockfile for 16.3.8
+- Upgrade Next.js from 16.3.6 to 16.3.8
+
+### Fixed
+- Tolerate missing E2E build output
+
 ## v3.3.0
 
 ### Added
