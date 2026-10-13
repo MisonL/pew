@@ -409,8 +409,6 @@ describe("render-rqlite-auth.sh", () => {
     expect(parsed.find((u: { username: string }) => u.username === "pew-ro").perms).toEqual(["select"]);
     expect(parsed.find((u: { username: string }) => u.username === "*").perms).toEqual(["status", "ready"]);
     expect(parsed.find((u: { username: string }) => u.username === "joiner").password).toBe("pw2");
-    const mode = (await Bun.file(file).stat?.()) ?? null; // fallback below
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { statSync } = await import("node:fs");
     expect(statSync(file).mode & 0o777).toBe(0o600);
   });
@@ -772,12 +770,14 @@ class RqliteRateLimiter {
   async check(key: string, config: RateLimitConfig): Promise<RateLimitResult> {
     try {
       const db = getD1Client();
+      // d1.ts query signature: query<T>(sql, params: unknown[]) - params as
+      // one array arg, NOT rest args. Same for execute(sql, params).
       const { meta } = await db.query(
         `INSERT INTO rate_limit_hits(key, hit_at)
          SELECT ?, datetime('now')
          WHERE (SELECT COUNT(*) FROM rate_limit_hits
                 WHERE key = ? AND hit_at > datetime('now', ?)) < ?`,
-        key, key, `-${config.windowSeconds} seconds`, config.maxRequests
+        [key, key, `-${config.windowSeconds} seconds`, config.maxRequests]
       );
       if ((meta?.changes ?? 0) === 0) {
         // Over-limit: the DB is healthy, the bucket is full. Not an error.
@@ -806,7 +806,7 @@ class RqliteRateLimiter {
 export const rqliteRateLimiter = new RqliteRateLimiter();
 ```
 
-（import `getD1Client` 加到文件头；若 `db.query` 的参数签名是 `(sql, ...params)` 与现库一致即照用，否则按 `d1.ts` 实际签名微调——实现时先读 `packages/web/src/lib/d1.ts:100-130` 确认。真机项 2 会最终裁决 `changes` 解析路径。）
+（import `getD1Client` 加到文件头；`db.query(sql, params[])` 签名已按 `packages/web/src/lib/d1.ts:102-121` 核实。真机项 2 会最终裁决 `changes` 经 d1-http 信封的解析路径。）
 
 - [ ] **Step 4: 确认通过** — 同 Step 2 命令，PASS（含既有 InMemory 用例无回归）。
 - [ ] **Step 5: 提交**
@@ -866,7 +866,7 @@ describe("login limiter backend switch", () => {
   // rqlite backend, which the NextAuth(req) closure feeds via getClientIp.
   if (process.env.LOGIN_RATE_LIMIT_BACKEND === "rqlite") {
     const limiter = await import("@/lib/rate-limit").then((m) => m.rqliteRateLimiter);
-    const ipKey = `login:ip:${input.ip ? limiterPrefix(input.ip) : "unknown"}`;
+    const ipKey = `login:ip:${input.ip ? ipv6PrefixKey(input.ip) : "unknown"}`;
     for (const key of [`login:email:${email}`, ipKey]) {
       const result = await limiter.check(key, LOGIN_RATE_LIMIT);
       if (!result.allowed) return null;
@@ -983,7 +983,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - [ ] **Step 1: Quickstart 改写**——鉴权路径三步固定序列（render → up → 自检），加粗警告「**先 up 后 render 会以无鉴权静默启动**」；无鉴权路径保持现状一行。
 - [ ] **Step 2: 备份/恢复订正**——带凭据 `-u user:pass`、端点 `POST /db/backup`（注明 GET /backup 在 10.5.3 是 404）、备份后校验非空（`[ -s file ]`）、恢复命令同凭据。
 - [ ] **Step 3: 破窗命令订正**——替换 `README.md:28` 的 `RQLITE_URL=http://127.0.0.1:14001`（端口从未发布）为 `docker compose exec -e RQLITE_USERNAME -e RQLITE_PASSWORD rqlite ...` 形态，凭据从 `.env` 读入 exec 环境。
-- [ ] **Step 4: 新增「升级」小节 + auth.json 丢失恢复 runbook**（spec §3.1.5 两种情形逐字落地）+ 回滚清理 checklist（.env 三变量、磁盘 auth.json、dockerignore 回退）。
+- [ ] **Step 4: 新增「升级」小节 + auth.json 丢失恢复 runbook**（spec §3.1.5 两种情形逐字落地；runbook 注明：auth 文件误删 `*` 条目 → healthcheck 401 → rqlite 永不 healthy → migrate 永不跑，启动门卡死难定位，spec §2.1 要求明示）+ 回滚清理 checklist（.env 三变量、磁盘 auth.json、dockerignore 回退）。
 - [ ] **Step 5: 安全注意事项改写**——「rqlite 默认无鉴权…本计划未做」改为条件描述（默认关、三变量开启）；跨机集群段补 auth.json 逐字节一致 / 轮换 = 全节点 recreate / 4002 明文需 WireGuard；三节点降级信号（单节点 down = 只读、两节点 down 须同时恢复）；限速段改写为 `LOGIN_RATE_LIMIT_BACKEND` 双后端描述 + 其余 5 处消费方保持 memory 的原因清单。
 - [ ] **Step 6: 提交**
 
