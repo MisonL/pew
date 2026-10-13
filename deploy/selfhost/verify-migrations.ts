@@ -38,8 +38,10 @@ const EXPECTED = {
   // _migrations, kv_cache, leaderboard_revision_seq (Plan 1) + instance_setup,
   // password_resets (Plan 2 / migration 032).
   planTables: 5,
-  // 65 upstream/Plan-1 indexes + idx_password_resets_user (Plan 2 / 032).
-  indexes: 66,
+  // 65 upstream/Plan-1 indexes + two from password_resets (Plan 2 / 032):
+  // the explicit idx_password_resets_user and the sqlite_autoindex for its
+  // TEXT PRIMARY KEY. instance_setup's INTEGER PRIMARY KEY adds no autoindex.
+  indexes: 67,
   triggers: 12,
   views: 2,
 };
