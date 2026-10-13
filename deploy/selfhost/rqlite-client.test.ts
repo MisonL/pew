@@ -70,4 +70,27 @@ describe("createRqliteDdlExecutor", () => {
       "Bearer tok"
     );
   });
+
+  it("sends Basic auth when basicAuth is set", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ results: [{}] }));
+    const ddl = createRqliteDdlExecutor({
+      baseUrl: BASE,
+      basicAuth: { username: "pew", password: "s:ecret" },
+      fetchImpl: fetchImpl as never,
+    });
+    await ddl(["CREATE TABLE a(x)"]);
+    const expected = `Basic ${Buffer.from("pew:s:ecret").toString("base64")}`;
+    expect((fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0][1].headers.Authorization).toBe(
+      expected
+    );
+  });
+
+  it("sends NO Authorization header when neither token nor basicAuth is set", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ results: [{}] }));
+    const ddl = createRqliteDdlExecutor({ baseUrl: BASE, fetchImpl: fetchImpl as never });
+    await ddl(["CREATE TABLE a(x)"]);
+    expect(
+      (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0][1].headers.Authorization
+    ).toBeUndefined();
+  });
 });

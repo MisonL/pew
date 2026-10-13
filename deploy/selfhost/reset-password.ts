@@ -45,6 +45,18 @@ export function parseArg(argv: string[], flag: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Basic auth only when BOTH env vars are set; otherwise undefined, so the
+ * adapter is built with token: "" and no basicAuth — which sends no
+ * Authorization header at all (correct for rqlite started without -auth).
+ * Exported for reset-password.test.ts.
+ */
+export function resolveBasicAuth(): { username: string; password: string } | undefined {
+  return process.env.RQLITE_USERNAME && process.env.RQLITE_PASSWORD
+    ? { username: process.env.RQLITE_USERNAME, password: process.env.RQLITE_PASSWORD }
+    : undefined;
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const email = parseArg(argv, "--email");
@@ -60,7 +72,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const db = createD1Adapter({ baseUrl, token: process.env.CF_D1_API_TOKEN ?? "" });
+  const basicAuth = resolveBasicAuth();
+  const db = createD1Adapter({ baseUrl, token: "", ...(basicAuth ? { basicAuth } : {}) });
 
   const existing = await db
     .prepare("SELECT id FROM users WHERE email = ?")
