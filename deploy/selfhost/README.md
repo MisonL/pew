@@ -14,6 +14,26 @@ docker compose up -d --build
 
 首次启动后访问 `http://<host>:7020`。
 
+## 登录与初始化（Plan 2）
+
+浏览器登录用**邮箱 + 密码**，无需外部 OAuth：
+
+1. **首次部署**：访问 `/setup`（登录页在实例为空时会显示「Create the administrator
+   account」入口）。第一个注册的用户自动成为管理员（库内 `is_admin=1`）。
+2. **邀请后续用户**：管理员在后台生成邀请码，新用户带邀请码注册。
+3. **密码重置**：管理员可为用户签发一次性重置令牌（无邮件能力，令牌线下交付）。
+   若**管理员自己**也进不去，用破窗脚本直连 rqlite 改密：
+
+   ```bash
+   RQLITE_URL=http://127.0.0.1:14001 bun deploy/selfhost/reset-password.ts \
+     --email admin@corp.local --password 'new-secret-123'
+   ```
+
+   改密后旧会话自动失效（JWT 携带密码版本号，不匹配即判无效）。
+
+**限速**：登录限速是**进程内**的（`inMemoryRateLimiter`），多 `web` 副本时退化为按副本
+计；且它信任 `X-Forwarded-For`，反代必须清洗/覆写该头。单副本部署下按 IP + 邮箱限流。
+
 ## 架构
 
 | 容器 | 作用 |
@@ -83,7 +103,7 @@ voter/reachable，且新节点能读到扩容前写入的数据。若要走 comp
 ## 验证
 
 ```bash
-bun run test                                    # 单元测试（含 deploy/selfhost 的 75 个用例）
+bun run test                                    # 单元测试（含 deploy/selfhost 的适配层用例）
 bun run deploy/selfhost/verify-migrations.ts --base-url http://127.0.0.1:14001
 ```
 
@@ -135,17 +155,26 @@ docker compose exec web node -e "fetch('http://127.0.0.1:7020/api/live').then(r=
 
 ## 交付边界
 
-本计划（Plan 1）**不提供可用的交互式登录**。Google OAuth 不接受内网 http 回调，邮箱+密码在
-Plan 2。Plan 1 交付的是「数据层与运行时可用、API 可经 CLI/密钥调用」。完整可用性以 Plan 2 为准。
+Plan 1 交付「数据层与运行时可用、API 可经 CLI/密钥调用」。Plan 2（认证子系统）补齐
+**完整的浏览器登录闭环**：`/setup` 首个管理员 → 邀请码邀请后续用户 → 邮箱密码登录 →
+管理员重置密码。**外网/邮件自助重置**不在本期（无 SMTP），密码重置为管理员线下交付
+令牌，或用破窗脚本。多 `web` 副本时登录限速退化为按副本计（见上）。
 
 ## 合并上游
 
-本分支与上游的接触面只有两处：`packages/web/src/lib/d1.ts`（新增 `D1_BASE_URL` 优先级）与
-`vitest.config.ts`（`test.include` 增加 `deploy/**/*.test.ts`）。`packages/worker/**` 与
-`packages/worker-read/**` 完全未改。
+上游接触面分两批：
 
-> 注意：这是 **Plan 1 的**接触面。Plan 2（认证子系统）还会改 `auth.ts`、`lib/admin.ts`、
-> `proxy.ts` 等；合并回归时按 Plan 2 的清单重新确认。
+**Plan 1（数据层）**：`packages/web/src/lib/d1.ts`（新增 `D1_BASE_URL` 优先级）与
+`vitest.config.ts`（`test.include` 增加 `deploy/**/*.test.ts`）。
+
+**Plan 2（认证）**：`auth.ts`（条件 providers、Credentials、`pwd_v`、`USE_SECURE_COOKIES`
+分支）、`app/login/page.tsx`（邮箱密码表单）、`lib/admin.ts` + `api/admin/check` +
+`api/users/[slug]`（库内 `is_admin` 判定）、`proxy.ts`（`/setup` 公开）、`cli.ts` +
+`cli/src/commands/login.ts` + `cli/src/config/manager.ts`（`--host`/`PEW_HOST` 与按 host
+隔离凭据）。新增文件（`lib/credentials.ts`、`app/setup/`、`app/api/auth/register|reset-password|
+login-options`、`api/admin/users/[userId]/reset-password` 等）不与上游冲突。
+
+`packages/worker/**` 与 `packages/worker-read/**` 完全未改。
 
 ```bash
 git fetch upstream main
@@ -153,9 +182,12 @@ git merge upstream/main
 bun run test
 docker compose build web && docker compose up -d
 curl -s http://127.0.0.1:7020/api/live
+# 认证回归：/setup 可达、登录成功、改密后旧会话失效
 ```
 
 若上游改动触及 `lib/d1.ts` 的构造函数，重新确认 `D1_BASE_URL` 的优先级仍在 `localD1BaseUrl`
-之前；若上游改到 `vitest.config.ts` 的 `include`，确认 `deploy/**/*.test.ts` 仍被收集。
-新增上游迁移后，重跑 `verify-migrations.ts` 并更新其 `EXPECTED` 计数。
+之前；若上游改到 `vitest.config.ts` 的 `include`，确认 `deploy/**/*.test.ts` 仍被收集；
+若上游改到 `auth.ts` 的 `signIn` 回调或 `admin.ts` 的 `isAdmin`/`resolveAdmin`，重新确认
+Credentials 放行分支与库内管理员判定仍在。新增上游迁移后，重跑 `verify-migrations.ts` 并
+更新其 `EXPECTED` 计数。
 
