@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 // deterministic-revision.test.ts.
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "render-rqlite-auth.sh");
 const dirs: string[] = [];
-afterAll(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
+afterAll(() => dirs.forEach((d) => { rmSync(d, { recursive: true, force: true }); }));
 
 function run(env: Record<string, string>, outDir: string) {
   const child = spawn("bash", [SCRIPT], {
