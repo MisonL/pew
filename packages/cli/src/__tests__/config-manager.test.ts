@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConfigManager } from "../config/manager.js";
+import { ConfigManager, hostConfigStem } from "../config/manager.js";
 
 describe("ConfigManager", () => {
   let tempDir: string;
@@ -61,6 +61,34 @@ describe("ConfigManager", () => {
   it("should use config.dev.json in dev mode", () => {
     const manager = new ConfigManager(tempDir, true);
     expect(manager.configPath).toBe(join(tempDir, "config.dev.json"));
+  });
+
+  it("isolates credentials per self-hosted host", () => {
+    const a = new ConfigManager(tempDir, false, "http://pew.corp:7020");
+    const b = new ConfigManager(tempDir, false, "http://other.corp:7020");
+    expect(a.configPath).toBe(join(tempDir, "config.pew.corp_7020.json"));
+    expect(a.configPath).not.toBe(b.configPath);
+    // A per-host config never collides with the SaaS default.
+    const saas = new ConfigManager(tempDir, false);
+    expect(saas.configPath).toBe(join(tempDir, "config.json"));
+  });
+
+  it("prefers the per-host file even in dev mode (no dev/prod collision)", () => {
+    const manager = new ConfigManager(tempDir, true, "https://pew.internal");
+    expect(manager.configPath).toBe(join(tempDir, "config.pew.internal.json"));
+  });
+
+  it("derives a stable filename stem from host[:port] regardless of scheme", () => {
+    expect(hostConfigStem("http://pew.corp:7020")).toBe("config.pew.corp_7020.json");
+    expect(hostConfigStem("https://pew.corp:7020")).toBe("config.pew.corp_7020.json");
+    // Ports are significant (two instances on one host must not collide).
+    expect(hostConfigStem("http://pew.corp:7020")).not.toBe(hostConfigStem("http://pew.corp:7021"));
+  });
+
+  it("sanitizes characters that would escape the config directory", () => {
+    // A crafted host must not introduce path separators.
+    expect(hostConfigStem("http://../../etc/passwd")).not.toContain("/");
+    expect(hostConfigStem("http://../../etc/passwd")).not.toContain("..");
   });
 
   it("getToken() returns undefined when no config exists", () => {

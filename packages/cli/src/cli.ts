@@ -549,11 +549,18 @@ const loginCommand = defineCommand({
       description: "One-time code from web UI (for headless login)",
       required: false,
     },
+    host: {
+      type: "string",
+      description: "API host for a self-hosted instance (e.g. http://pew.corp:7020)",
+      required: false,
+    },
   },
   async run({ args }) {
     const paths = resolveDefaultPaths();
     const dev = isDevMode();
-    const host = resolveHost(dev);
+    // Explicit --host (or PEW_HOST) wins and isolates credentials per host.
+    const hostOverride = args.host ?? process.env.PEW_HOST;
+    const host = resolveHost(dev, hostOverride);
 
     if (args.code) {
       log.start("Verifying authentication code...");
@@ -577,6 +584,7 @@ const loginCommand = defineCommand({
       openBrowser: buildOpenBrowserFn(host),
       code: args.code,
       log: loginLog,
+      hostIsolation: hostOverride,
     });
 
     if (result.alreadyLoggedIn) {
