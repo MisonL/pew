@@ -60,10 +60,18 @@ function arg(name: string): string | undefined {
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
+/** Basic auth only when both env vars are set; otherwise send no header. */
+function optionalBasicAuth(): { username: string; password: string } | undefined {
+  return process.env.RQLITE_USERNAME && process.env.RQLITE_PASSWORD
+    ? { username: process.env.RQLITE_USERNAME, password: process.env.RQLITE_PASSWORD }
+    : undefined;
+}
+
 async function main(): Promise<void> {
   const baseUrl = arg("base-url") ?? "http://127.0.0.1:14001";
-  const db = createD1Adapter({ baseUrl, token: "" });
-  const ddlExecutor = createRqliteDdlExecutor({ baseUrl });
+  const basicAuth = optionalBasicAuth();
+  const db = createD1Adapter({ baseUrl, token: "", ...(basicAuth ? { basicAuth } : {}) });
+  const ddlExecutor = createRqliteDdlExecutor({ baseUrl, ...(basicAuth ? { basicAuth } : {}) });
 
   const readDir = async (dir: string) => {
     const { readdir } = await import("node:fs/promises");

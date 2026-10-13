@@ -14,6 +14,7 @@ import type { DdlExecutor } from "./migrate";
 export interface RqliteClientOptions {
   baseUrl: string;
   token?: string;
+  basicAuth?: { username: string; password: string };
   fetchImpl?: typeof fetch;
 }
 
@@ -26,7 +27,16 @@ export function createRqliteDdlExecutor(options: RqliteClientOptions): DdlExecut
   const base = options.baseUrl.replace(/\/+$/, "");
   const doFetch = options.fetchImpl ?? fetch;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (options.token) headers.Authorization = `Bearer ${options.token}`;
+  // Same rule as d1-adapter: basicAuth wins; an empty token sends nothing
+  // (rqlite ignores Authorization when started without -auth, and a literal
+  // "Bearer " header on unauthenticated deployments is worse than none).
+  if (options.basicAuth) {
+    headers.Authorization = `Basic ${Buffer.from(
+      `${options.basicAuth.username}:${options.basicAuth.password}`
+    ).toString("base64")}`;
+  } else if (options.token) {
+    headers.Authorization = `Bearer ${options.token}`;
+  }
 
   return async (statements: string[]): Promise<void> => {
     if (statements.length === 0) return;
