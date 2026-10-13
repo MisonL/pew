@@ -111,3 +111,26 @@ describe("d1-http", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
+
+describe("basicAuth passthrough", () => {
+  it("forwards basicAuth to the inner adapter", async () => {
+    const calls: Request[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      calls.push(new Request(input as string, init));
+      return Response.json({ results: [{}] });
+    };
+    const server = createD1HttpServer({
+      baseUrl: "http://x", token: "tok",
+      basicAuth: { username: "pew", password: "pw" },
+      fetchImpl,
+    });
+    const res = await server.handle(new Request("http://localhost/query", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok" },
+      body: JSON.stringify({ sql: "SELECT 1" }),
+    }));
+    expect(res.status).toBe(200);
+    const expected = `Basic ${Buffer.from("pew:pw").toString("base64")}`;
+    expect(new Headers(calls[0]?.headers).get("Authorization")).toBe(expected);
+  });
+});

@@ -13,7 +13,10 @@ const PORT = Number(process.env.PORT ?? 8788);
 const RQLITE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
 const TOKEN = requireSecret("CF_D1_API_TOKEN", process.env.CF_D1_API_TOKEN ?? "");
 
-const server = createD1HttpServer({ baseUrl: RQLITE_URL, token: TOKEN });
+const BASIC = process.env.RQLITE_USERNAME && process.env.RQLITE_PASSWORD
+  ? { username: process.env.RQLITE_USERNAME, password: process.env.RQLITE_PASSWORD }
+  : undefined;
+const server = createD1HttpServer({ baseUrl: RQLITE_URL, token: TOKEN, ...(BASIC ? { basicAuth: BASIC } : {}) });
 
 const nodeServer = createServer((req, res) => {
   void (async () => {
@@ -44,8 +47,20 @@ const nodeServer = createServer((req, res) => {
       // start against a dead database.
       let dbOk = false;
       try {
-        const probe = await fetch(`${RQLITE_URL}/readyz`);
-        dbOk = probe.ok;
+        // Credentialed probe on the SAME linearizable path as writes. The old
+        // anonymous /readyz probe stayed green when credentials were wrong
+        // (the '*' user grants ready), so web only failed at first write.
+        const authHeader = BASIC
+          ? { Authorization: `Basic ${Buffer.from(`${BASIC.username}:${BASIC.password}`).toString("base64")}` }
+          : {};
+        const probe = await fetch(`${RQLITE_URL}/db/request?transaction=true&associative`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeader },
+          body: JSON.stringify([["SELECT 1"]]),
+        });
+        const probeBody = (await probe.json()) as { results?: { error?: string }[] };
+        if (!probe.ok || probeBody.results?.[0]?.error) throw new Error("db probe failed");
+        dbOk = true;
       } catch {
         dbOk = false;
       }
