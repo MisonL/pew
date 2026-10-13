@@ -57,7 +57,9 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
   });
 
   it("write services get full credentials; read/scheduler get read-only ones", () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: compose var-expansion literal, not interpolation
     expect(compose).toContain("RQLITE_USERNAME: ${RQLITE_USERNAME:-}");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: compose var-expansion literal, not interpolation
     expect(compose).toContain("RQLITE_READ_USERNAME: ${RQLITE_READ_USERNAME:-}");
     const sched = compose.slice(compose.indexOf("  scheduler:"), compose.indexOf("  web:"));
     expect(sched).toContain("RQLITE_READ_USERNAME");
@@ -65,7 +67,9 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
     // RQLITE_USERNAME/PASSWORD pair so the server-side READ_* fallback works
     // (resolveReadBasicAuth). The remaining checkable minimal-exposure intent:
     // no d1-http verifier token and no ingest secret injected into scheduler.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: compose var-expansion literal, not interpolation
     expect(sched).not.toContain("CF_D1_API_TOKEN: ${CF_D1_API_TOKEN}");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: compose var-expansion literal, not interpolation
     expect(sched).not.toContain("WORKER_SECRET: ${WORKER_SECRET}");
   });
 
