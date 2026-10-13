@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { isAdmin, resolveAdmin, isAdminUser } from "@/lib/admin";
+import { isAdmin, isAdminInDb, resolveAdmin, isAdminUser } from "@/lib/admin";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -15,6 +15,12 @@ vi.mock("@/lib/auth-helpers", () => ({
   resolveUser: vi.fn(),
   E2E_TEST_USER_ID: "e2e-test-user-id",
   E2E_TEST_USER_EMAIL: "e2e@test.local",
+}));
+
+const mockAdminQuery = vi.fn();
+vi.mock("@/lib/d1", () => ({
+  getD1Client: () => ({ query: mockAdminQuery, execute: vi.fn(), batch: vi.fn() }),
+  resetD1Client: vi.fn(),
 }));
 
 const { resolveUser } = await loadMockedAuthHelpers();
@@ -293,5 +299,80 @@ describe("isAdminUser", () => {
     });
 
     expect(result).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// In-database admin (first /setup user)
+// ---------------------------------------------------------------------------
+
+describe("isAdminInDb", () => {
+  beforeEach(() => {
+    mockAdminQuery.mockReset();
+    delete process.env.RAILWAY_ENVIRONMENT;
+  });
+
+  it("returns true when the row is flagged is_admin", async () => {
+    mockAdminQuery.mockResolvedValueOnce({ results: [{ is_admin: 1 }] });
+    expect(await isAdminInDb("u1")).toBe(true);
+    expect(mockAdminQuery.mock.calls[0]![1]).toEqual(["u1"]);
+  });
+
+  it("returns false for a non-admin row", async () => {
+    mockAdminQuery.mockResolvedValueOnce({ results: [{ is_admin: 0 }] });
+    expect(await isAdminInDb("u1")).toBe(false);
+  });
+
+  it("returns false for a missing id without querying", async () => {
+    expect(await isAdminInDb(undefined)).toBe(false);
+    expect(await isAdminInDb(null)).toBe(false);
+    expect(mockAdminQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns false (not a crash) when the query throws", async () => {
+    mockAdminQuery.mockRejectedValueOnce(new Error("no such table: users"));
+    expect(await isAdminInDb("u1")).toBe(false);
+  });
+});
+
+describe("resolveAdmin with in-database admin", () => {
+  const ORIGINAL_ENV = process.env;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdminQuery.mockReset();
+    const mockDbRead = createMockDbRead();
+    vi.mocked(getDbRead).mockResolvedValue(mockDbRead);
+    process.env = { ...ORIGINAL_ENV, ADMIN_EMAILS: "admin@example.com" };
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  it("grants admin to an is_admin user not on the allowlist", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u9", email: "first@example.com" });
+    mockAdminQuery.mockResolvedValueOnce({ results: [{ is_admin: 1 }] });
+
+    const result = await resolveAdmin(new Request("http://localhost"));
+    expect(result).toEqual({ userId: "u9", email: "first@example.com" });
+    expect(mockAdminQuery).toHaveBeenCalled();
+  });
+
+  it("still denies a non-admin, non-allowlisted user", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u9", email: "nobody@example.com" });
+    mockAdminQuery.mockResolvedValueOnce({ results: [{ is_admin: 0 }] });
+
+    expect(await resolveAdmin(new Request("http://localhost"))).toBeNull();
+  });
+
+  it("short-circuits on an allowlist match without a DB query", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u9", email: "admin@example.com" });
+
+    expect(await resolveAdmin(new Request("http://localhost"))).toEqual({
+      userId: "u9",
+      email: "admin@example.com",
+    });
+    expect(mockAdminQuery).not.toHaveBeenCalled();
   });
 });

@@ -20,7 +20,7 @@ import { NextResponse } from "next/server";
 import { sumCounts, VALID_SOURCES } from "@pew/core";
 import { getDbRead, type DbRead } from "@/lib/db";
 import { resolveUser } from "@/lib/auth-helpers";
-import { isAdmin } from "@/lib/admin";
+import { isAdmin, isAdminInDb } from "@/lib/admin";
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -50,7 +50,7 @@ async function canBypassPublic(
   if (!auth) return false;
 
   // 1. Admin bypass
-  if (isAdmin(auth.email)) return true;
+  if (isAdmin(auth.email) || (await isAdminInDb(auth.userId))) return true;
 
   // 2. Teammate check — caller and target share at least one team
   try {

@@ -49,6 +49,7 @@ export function isPublicRoute(pathname: string): boolean {
   return (
     pathname === "/" ||
     pathname === "/privacy" ||
+    pathname === "/setup" ||
     pathname.startsWith("/api/auth") ||
     pathname.startsWith("/api/ingest") ||
     pathname.startsWith("/api/users/") ||

@@ -11,7 +11,7 @@
 
 import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
-import { isAdmin } from "@/lib/admin";
+import { isAdmin, isAdminInDb } from "@/lib/admin";
 import { getDbRead } from "@/lib/db";
 
 /** Check if admin bypass is enabled (for L3 Playwright tests) */
@@ -41,5 +41,7 @@ export async function GET(request: Request) {
     email = await db.getUserEmail(authResult.userId);
   }
 
-  return NextResponse.json({ isAdmin: isAdmin(email) });
+  // Allowlist match OR the in-database is_admin flag (first /setup user).
+  const admin = isAdmin(email) || (await isAdminInDb(authResult.userId));
+  return NextResponse.json({ isAdmin: admin });
 }

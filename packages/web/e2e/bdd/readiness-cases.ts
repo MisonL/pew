@@ -1,6 +1,7 @@
 export const READINESS_PAGES = [
   { route: "/", check: "landing", apis: [] },
   { route: "/login", check: "login", apis: [] },
+  { route: "/setup", check: "setup", apis: [] },
   { route: "/privacy", check: "privacy", apis: [] },
   { route: "/dashboard", check: "overview", apis: ["/api/usage#5", "/api/pricing", "/api/usage/by-device", "/api/seasons?status=ended"] },
   { route: "/devices", check: "devices", apis: ["/api/usage/by-device", "/api/usage?deviceId", "/api/pricing"] },

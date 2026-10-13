@@ -10,6 +10,7 @@ vi.mock("next-auth", () => ({
   })),
 }));
 vi.mock("next-auth/providers/google", () => ({ default: {} }));
+vi.mock("next-auth/providers/credentials", () => ({ default: vi.fn(() => ({})) }));
 vi.mock("@/lib/auth-adapter", () => ({
   D1AuthAdapter: vi.fn(),
 }));
@@ -20,14 +21,27 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/invite", () => ({
   handleInviteGate: vi.fn(() => true),
 }));
+vi.mock("@/lib/credentials", () => ({
+  findCredentialUser: vi.fn(),
+  verifyPassword: vi.fn(),
+  verifyPasswordDummy: vi.fn(),
+  passwordVersion: vi.fn(),
+}));
 
 import {
   shouldUseSecureCookies,
   jwtCallback,
   sessionCallback,
+  authorizeCredentials,
+  LOGIN_RATE_LIMIT,
 } from "@/auth";
+import { inMemoryRateLimiter } from "@/lib/rate-limit";
+import { findCredentialUser, verifyPassword } from "@/lib/credentials";
 import type { JWT } from "next-auth/jwt";
-import type { Session } from "next-auth";
+import type { Session, User } from "next-auth";
+
+const mockFindCredentialUser = findCredentialUser as unknown as ReturnType<typeof vi.fn>;
+const mockVerifyPassword = verifyPassword as unknown as ReturnType<typeof vi.fn>;
 
 // ---------------------------------------------------------------------------
 // shouldUseSecureCookies
@@ -68,6 +82,92 @@ describe("shouldUseSecureCookies", () => {
     delete process.env.USE_SECURE_COOKIES;
     expect(shouldUseSecureCookies()).toBe(false);
   });
+
+  it("disables secure cookies when USE_SECURE_COOKIES is explicitly false, even in production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("USE_SECURE_COOKIES", "false");
+    expect(shouldUseSecureCookies()).toBe(false);
+  });
+
+  it("still forces secure cookies in production by default", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    delete process.env.USE_SECURE_COOKIES;
+    expect(shouldUseSecureCookies()).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// authorizeCredentials
+// ---------------------------------------------------------------------------
+
+describe("authorizeCredentials", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+    inMemoryRateLimiter.reset();
+  });
+
+  it("returns null for missing email or password", async () => {
+    expect(await authorizeCredentials({ email: "", password: "x" })).toBeNull();
+    expect(await authorizeCredentials({ email: "a@b.c", password: "" })).toBeNull();
+    expect(await authorizeCredentials({})).toBeNull();
+    expect(mockFindCredentialUser).not.toHaveBeenCalled();
+  });
+
+  it("returns the user on a correct password", async () => {
+    mockFindCredentialUser.mockResolvedValueOnce({
+      id: "u1",
+      email: "a@b.c",
+      name: "A",
+      password_hash: "scrypt$32768$8$1$AAAA$BBBBCCCC",
+      is_public: 1,
+      is_admin: 0,
+    });
+    mockVerifyPassword.mockResolvedValueOnce(true);
+    expect(await authorizeCredentials({ email: "A@B.C", password: "pw" })).toEqual({
+      id: "u1",
+      email: "a@b.c",
+      name: "A",
+      pwd_v: "BBBBCCCC",
+    });
+  });
+
+  it("returns null on a wrong password", async () => {
+    mockFindCredentialUser.mockResolvedValueOnce({
+      id: "u1",
+      email: "a@b.c",
+      name: "A",
+      password_hash: "scrypt$...",
+      is_public: 1,
+      is_admin: 0,
+    });
+    mockVerifyPassword.mockResolvedValueOnce(false);
+    expect(await authorizeCredentials({ email: "a@b.c", password: "wrong" })).toBeNull();
+  });
+
+  it("runs a dummy verify for an unknown user (no timing leak)", async () => {
+    mockFindCredentialUser.mockResolvedValueOnce(null);
+    const { verifyPasswordDummy } = await import("@/lib/credentials");
+    expect(await authorizeCredentials({ email: "nobody@x.y", password: "pw" })).toBeNull();
+    expect(verifyPasswordDummy).toHaveBeenCalledWith("pw");
+    expect(mockVerifyPassword).not.toHaveBeenCalled();
+  });
+
+  it("returns null once the per-key rate limit is exceeded", async () => {
+    mockFindCredentialUser.mockResolvedValue({
+      id: "u1",
+      email: "a@b.c",
+      name: "A",
+      password_hash: "scrypt$...",
+      is_public: 1,
+      is_admin: 0,
+    });
+    mockVerifyPassword.mockResolvedValue(true);
+    for (let i = 0; i < LOGIN_RATE_LIMIT.maxRequests; i++) {
+      expect(await authorizeCredentials({ email: "a@b.c", password: "pw", rateKey: "ip:1" })).not.toBeNull();
+    }
+    expect(await authorizeCredentials({ email: "a@b.c", password: "pw", rateKey: "ip:1" })).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -92,6 +192,15 @@ describe("jwtCallback", () => {
     const result = jwtCallback({ token, user: {} });
     expect(result.userId).toBeUndefined();
   });
+
+  it("carries pwd_v from the credentials authorize result", () => {
+    const token = {} as JWT;
+    const result = jwtCallback({
+      token,
+      user: { id: "u1", pwd_v: "VERSION1" } as unknown as User,
+    });
+    expect(result.pwd_v).toBe("VERSION1");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -99,24 +208,54 @@ describe("jwtCallback", () => {
 // ---------------------------------------------------------------------------
 
 describe("sessionCallback", () => {
-  it("should expose token.userId in session.user.id", () => {
+  it("should expose token.userId in session.user.id", async () => {
     const session = { user: { id: "", name: "Alice" }, expires: "2026-12-31" } as Session;
     const token = { userId: "user-123" } as JWT;
-    const result = sessionCallback({ session, token });
-    expect(result.user?.id).toBe("user-123");
+    const result = await sessionCallback({ session, token });
+    expect(result?.user?.id).toBe("user-123");
   });
 
-  it("should not modify session when token has no userId", () => {
+  it("should not modify session when token has no userId", async () => {
     const session = { user: { id: "old", name: "Bob" }, expires: "2026-12-31" } as Session;
     const token = {} as JWT;
-    const result = sessionCallback({ session, token });
-    expect(result.user?.id).toBe("old");
+    const result = await sessionCallback({ session, token });
+    expect(result?.user?.id).toBe("old");
   });
 
-  it("should not crash when session.user is undefined", () => {
+  it("should not crash when session.user is undefined", async () => {
     const session = { expires: "2026-12-31" } as Session;
     const token = { userId: "user-123" } as JWT;
-    const result = sessionCallback({ session, token });
-    expect(result.user).toBeUndefined();
+    const result = await sessionCallback({ session, token });
+    expect(result?.user).toBeUndefined();
+  });
+
+  it("invalidates the session when the password version changed", async () => {
+    const session = { user: { id: "", name: "A" }, expires: "2026-12-31" } as Session;
+    const token = { userId: "u1", pwd_v: "OLDOLDOL" } as JWT;
+    const { passwordVersion } = await import("@/lib/credentials");
+    vi.mocked(passwordVersion).mockResolvedValueOnce("NEWNEWNE");
+    const result = await sessionCallback({ session, token });
+    // Auth.js forbids returning null; dropping the user id makes resolveUser
+    // treat the session as unauthenticated.
+    expect(result?.user?.id).toBe("");
+  });
+
+  it("keeps the session when the password version matches", async () => {
+    const session = { user: { id: "", name: "A" }, expires: "2026-12-31" } as Session;
+    const token = { userId: "u1", pwd_v: "SAMESAME" } as JWT;
+    const { passwordVersion } = await import("@/lib/credentials");
+    vi.mocked(passwordVersion).mockResolvedValueOnce("SAMESAME");
+    const result = await sessionCallback({ session, token });
+    expect(result?.user?.id).toBe("u1");
+  });
+
+  it("does not version-check OAuth tokens (no pwd_v)", async () => {
+    const session = { user: { id: "", name: "A" }, expires: "2026-12-31" } as Session;
+    const token = { userId: "u1" } as JWT;
+    const { passwordVersion } = await import("@/lib/credentials");
+    vi.mocked(passwordVersion).mockClear();
+    const result = await sessionCallback({ session, token });
+    expect(result?.user?.id).toBe("u1");
+    expect(passwordVersion).not.toHaveBeenCalled();
   });
 });
