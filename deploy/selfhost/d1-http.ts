@@ -19,6 +19,8 @@ import { createD1Adapter, type D1Like, type D1Result } from "./d1-adapter";
 export interface D1HttpOptions {
   baseUrl: string;
   token: string;
+  /** rqlite -auth credentials, forwarded to the inner d1 adapter. */
+  basicAuth?: { username: string; password: string };
   fetchImpl?: typeof fetch;
 }
 
@@ -38,6 +40,7 @@ export function createD1HttpServer(options: D1HttpOptions) {
   const db: D1Like = createD1Adapter({
     baseUrl: options.baseUrl,
     token: options.token,
+    ...(options.basicAuth ? { basicAuth: options.basicAuth } : {}),
     fetchImpl: options.fetchImpl,
   });
   const expectedAuth = `Bearer ${options.token}`;
