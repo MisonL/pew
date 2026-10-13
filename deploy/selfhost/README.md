@@ -75,6 +75,84 @@ voter/reachable，且新节点能读到扩容前写入的数据。若要走 comp
   （Raft 节点数由 profile 决定，不走 `--scale`）。
 - 多 web 副本时登录限速（进程内 `inMemoryRateLimiter`）会退化为按副本计，见 spec §7 风险表。
 
+## 反向代理
+
+推荐形态：**Caddy 以 compose 服务加入**（`reverse_proxy web:7020`，在 compose 网络内解析上游；
+发布 80/443）。次选宿主 Nginx（上游指向 `127.0.0.1:7020`，配合下述端口改绑）。
+
+### Caddy（推荐）
+
+两行配置自动 HTTPS；**需 Caddy ≥ 2.5**——[官方文档](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)
+确认 v2.5 起 `reverse_proxy` **默认忽略入站 `X-Forwarded-For`** 并自行设置该头以防伪造
+（"the proxy will ignore their values from incoming requests, to prevent spoofing"），
+天然满足我们的 XFF 覆写硬约束，无需额外 `header_up`。无公网 DNS 的内网域名需在站点块里
+取消注释 `tls internal`（自签证书）或走 DNS-01。
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+```
+
+接入骨架见 `docker-compose.caddy.yml` + `Caddyfile`（把 `Caddyfile` 里的
+`example.intranet.corp` 换成你的内网域名）。
+
+### Nginx（宿主，次选）
+
+完整 server 块示例——三条 `proxy_set_header` 与 `client_max_body_size` **都不可省**：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name pew.example.corp;
+    # ssl_certificate ...; ssl_certificate_key ...;
+
+    client_max_body_size 25m;   # worker 允许 /ingest/details 至 24MB；默认 1m 会直接 413
+
+    location / {
+        proxy_pass http://127.0.0.1:7020;
+        proxy_set_header Host $host;                        # 默认 $proxy_host 会让 Auth.js 的 trustHost origin 校验失败、登录全挂
+        proxy_set_header X-Forwarded-For $remote_addr;      # 覆写，不是 $proxy_add_x_forwarded_for（追加，保留攻击者伪造段）
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+```
+
+### ★ 硬约束清单
+
+- ★ **web 的 7020 端口只绑 `127.0.0.1` 或不发布**：任何能直连 7020 的客户端都可以整体伪造
+  `X-Forwarded-For` 第一段，反代清洗形同虚设（`getClientIp` 取第一段）。用 `docker-compose.proxy.yml`
+  覆盖文件把端口改绑到回环：
+
+  ```bash
+  # !override 替换（而非追加）基础 compose 的 ports 列表，需 Compose >= v2.24.4
+  docker compose -f docker-compose.yml -f docker-compose.proxy.yml config   # 冒烟核对合并结果
+  docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d
+  ```
+
+  注意：此约束防的是**网络外**直连；同宿主其他本地用户进程仍可达 `127.0.0.1:7020`（多租户宿主
+  属部署者自担），compose 网络内攻击者本就绕过 web 直达数据层，7020 收紧不改变该模型。
+- ★ **`NEXTAUTH_URL` 必须与反代对外访问 URL 逐字符一致**（协议+域名+端口；`TRUSTED_ORIGIN`
+  永远 pinned 到它，不一致则重定向/回调指向错误主机）。CLI 侧 `PEW_HOST` 同步。
+- ★ **反代必须覆写 `X-Forwarded-For`**（pew 取第一段），同时覆写 `X-Real-IP`、清空
+  `CF-Connecting-IP`（`getClientIp` 依次信任三者）。Caddy ≥ 2.5 默认满足；Nginx 按上面
+  `$remote_addr` 覆写。
+- **漏配 XFF 的后果**：`X-Forwarded-For` 缺失时所有登录请求都落到 `login:ip:unknown`
+  **共享限速桶**，攻击者打满该桶即造成**全员登录 DoS**（fail-closed 方向）——这是上面
+  XFF 覆写为硬约束的直接原因。
+
+### Cookie 与 USE_SECURE_COOKIES
+
+镜像以 `NODE_ENV=production` 运行，secure cookie 默认开启；`.env.example`/compose 默认
+`USE_SECURE_COOKIES=false` 显式覆盖。**https 部署必须显式改 `USE_SECURE_COOKIES=true`**。
+
+| 部署协议 | USE_SECURE_COOKIES | 结果 |
+|---|---|---|
+| https | true | ✓ 正常（`__Secure-` 前缀 cookie） |
+| https | false | 可登录，但无 `__Secure-` 前缀（**降级可用**，不是浏览器丢弃） |
+| http | true（或未显式 false） | **登录坏**——`__Secure-` cookie 被 http origin 拒收（镜像 `NODE_ENV=production` 下这是默认行为） |
+| http | false | ✓ 正常 |
+
+`TRUSTED_ORIGIN` 由 `NEXTAUTH_URL` 推导，无需单独配置。
+
 ## 安全注意事项
 
 - **rqlite 默认无鉴权**（实测 `/status` 返回 `http.auth = disabled`）：compose 网络内任何容器都可

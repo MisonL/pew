@@ -1,0 +1,6 @@
+# Replace with your intranet hostname. Public DNS + ports 80/443 reachable:
+# automatic HTTPS. Otherwise uncomment tls internal (self-signed).
+example.intranet.corp {
+    reverse_proxy web:7020
+    # tls internal
+}
