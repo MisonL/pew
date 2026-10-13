@@ -50,6 +50,12 @@ describe("password hashing (scrypt)", () => {
     }
   });
 
+  it("returns false when a hash component is empty", async () => {
+    // Six segments but a blank salt — the destructure guard must catch it.
+    expect(await verifyPassword("x", "scrypt$32768$8$1$$AAAA")).toBe(false);
+    expect(await verifyPassword("x", "scrypt$32768$8$1$AAAA$")).toBe(false);
+  });
+
   it("works with the production scrypt params (maxmem set, no throw)", async () => {
     // A missing maxmem makes scryptSync throw "Invalid scrypt params" here.
     const stored = hashPassword("p@ssw0rd");
