@@ -40,6 +40,8 @@ export interface D1Like {
 export interface D1AdapterOptions {
   baseUrl: string;
   token: string;
+  /** rqlite -auth credentials. When set, replaces the Bearer token header. */
+  basicAuth?: { username: string; password: string };
   fetchImpl?: typeof fetch;
 }
 
@@ -89,9 +91,16 @@ function assertNoError(raw: RqliteStatementResult): void {
 export function createD1Adapter(options: D1AdapterOptions): D1Like {
   const base = options.baseUrl.replace(/\/+$/, "");
   const doFetch = options.fetchImpl ?? fetch;
-  const headers = {
-    Authorization: `Bearer ${options.token}`,
+  const authorization = options.basicAuth
+    ? `Basic ${Buffer.from(
+        `${options.basicAuth.username}:${options.basicAuth.password}`
+      ).toString("base64")}`
+    : options.token
+      ? `Bearer ${options.token}`
+      : undefined;
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...(authorization ? { Authorization: authorization } : {}),
   };
 
   async function call(path: string, statements: unknown[][]): Promise<RqliteStatementResult[]> {
@@ -103,10 +112,12 @@ export function createD1Adapter(options: D1AdapterOptions): D1Like {
       // hang the caller forever (Node's fetch has no default timeout).
       signal: AbortSignal.timeout(30_000),
     });
-    const body = (await response.json()) as RqliteResponse;
-    if (!response.ok) {
+    // Non-JSON body (e.g. a proxy's plain-text 401) must surface the status
+    // code, not a parse error — and must never include request credentials.
+    const body = (await response.json().catch(() => null)) as RqliteResponse | null;
+    if (!response.ok || !body) {
       throw new Error(
-        body.error ?? body.results?.[0]?.error ?? `rqlite HTTP ${response.status}`
+        body?.error ?? body?.results?.[0]?.error ?? `rqlite HTTP ${response.status}`
       );
     }
     if (body.error) throw new Error(body.error);
