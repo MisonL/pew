@@ -5,6 +5,8 @@
  * No external dependencies (Redis, etc.) required.
  */
 
+import { getD1Client } from "@/lib/d1";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -192,3 +194,68 @@ export function getClientIp(request: Request): string {
 
   return "unknown";
 }
+
+// ---------------------------------------------------------------------------
+// rqlite-Backed Login Rate Limiter (Plan 3 §3.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Table-level cleanup horizon: the largest window any consumer of this SHARED
+ * table may use, plus margin. Per-process maxWindowMs is wrong here — a peer
+ * that has only ever seen the 60s login window would delete rows another
+ * consumer is still counting (3600s auth-code windows would vanish).
+ */
+export const RQLITE_RATE_LIMIT_WINDOW_SECONDS = 3600;
+
+/** IPv6 privacy extensions rotate addresses per connection; collapse to /64. */
+export function ipv6PrefixKey(ip: string): string {
+  if (!ip.includes(":")) return ip;
+  const groups = ip.split(":").filter(Boolean);
+  return `${groups.slice(0, 4).join(":")}::/64`;
+}
+
+/**
+ * One atomic statement decides allow/deny: the INSERT happens only while the
+ * window count is below the cap, so a single leader-side statement is the
+ * whole decision (no COUNT-then-INSERT race across replicas). Window math is
+ * SQL-side — app-side ISO strings do not compare against SQLite's
+ * 'YYYY-MM-DD HH:MM:SS' format (space < 'T', verified).
+ */
+class RqliteRateLimiter {
+  async check(key: string, config: RateLimitConfig): Promise<RateLimitResult> {
+    try {
+      const db = getD1Client();
+      // d1.ts query signature: query<T>(sql, params: unknown[]) - params as
+      // one array arg, NOT rest args. Same for execute(sql, params).
+      const { meta } = await db.query(
+        `INSERT INTO rate_limit_hits(key, hit_at)
+         SELECT ?, datetime('now')
+         WHERE (SELECT COUNT(*) FROM rate_limit_hits
+                WHERE key = ? AND hit_at > datetime('now', ?)) < ?`,
+        [key, key, `-${config.windowSeconds} seconds`, config.maxRequests]
+      );
+      if ((meta?.changes ?? 0) === 0) {
+        // Over-limit: the DB is healthy, the bucket is full. Not an error.
+        return { allowed: false, current: config.maxRequests, limit: config.maxRequests, retryAfter: config.windowSeconds };
+      }
+      this.maybeCleanup(db);
+      return { allowed: true, current: 1, limit: config.maxRequests, retryAfter: 0 };
+    } catch (error) {
+      // Fail-open (spec §3.2): a login limiter must not out-wait the login DB.
+      // Distinguishable from over-limit precisely because it THROWS here.
+      console.warn(`login rate limiter degraded (allowing): ${error instanceof Error ? error.message : error}`);
+      return { allowed: true, current: 0, limit: config.maxRequests, retryAfter: 0 };
+    }
+  }
+
+  /** 1/100 sampled DELETE bounded by the table-level constant. */
+  private maybeCleanup(db: ReturnType<typeof getD1Client>): void {
+    if (Math.random() >= 0.01) return;
+    void db.query(
+      `DELETE FROM rate_limit_hits WHERE hit_at < datetime('now', ?)`,
+      [`-${RQLITE_RATE_LIMIT_WINDOW_SECONDS} seconds`]
+    ).catch(() => { /* best effort */ });
+  }
+}
+
+export const rqliteRateLimiter = new RqliteRateLimiter();
