@@ -63,6 +63,8 @@ const ALLOWED_SITES: Record<string, string> = {
     "hook cleanup: dynamic key = PLUGIN_ID const",
   "packages/cli/src/notifier/openclaw-hook.ts:135":
     "hook cleanup: dynamic key = installs entry from a loop over Object.entries",
+  "deploy/selfhost/reset-password.test.ts:61":
+    "test env restore: dynamic key from const KEYS list mirrors the CLI's own env handling under test",
 };
 
 interface Violation {
