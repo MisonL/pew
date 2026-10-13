@@ -296,12 +296,19 @@ CREATE TABLE kv_cache (
 
 ### 4.4 认证：邮箱 + 密码
 
-> **分期说明（Plan 1 vs Plan 2）**：本节描述的是**完整设计**，由 **Plan 2（认证子系统）** 实现。
-> **Plan 1（存储与运行时）不交付任何可用登录方式**——Google OAuth 不接受内网 http 回调，邮箱+密码在
-> Plan 2。因此 Plan 1 完成时「浏览器可登录的完整产品」尚未成立，交付的是「数据层与运行时可用、
-> API 可经密钥调用」。本节其余内容在 Plan 1 中**不作数**，仅作为 Plan 2 的规格。
-> 特别地，`USE_SECURE_COOKIES=false` 的关闭分支、`/setup` 向导、`is_admin` 判定、首个用户即管理员
-> 均在 Plan 2；Plan 1 的 compose 里虽已下发 `USE_SECURE_COOKIES`，但代码尚无读取该值 `==="false"` 的分支。
+> **状态：已实现（Plan 2）。** 本节原先是 Plan 2 的规格，现已落地：
+> `lib/credentials.ts`（scrypt 哈希 + 注册 + bootstrap + 重置令牌）、
+> `app/api/auth/register`（引导/邀请两模式）、`app/setup/`（首个管理员向导）、
+> `auth.ts`（条件 providers、Credentials 直通、`USE_SECURE_COOKIES=false` 分支、
+> JWT `pwd_v` 会话失效）、`lib/admin.ts` + 两处调用点（库内 `is_admin`）、
+> `proxy.ts`（`/setup` 公开）、`app/api/admin/users/[userId]/reset-password` +
+> `app/api/auth/reset-password` + `deploy/selfhost/reset-password.ts`（三重重置路径）。
+> 实现细节见 `docs/superpowers/plans/2026-10-11-self-hosted-auth.md` 与
+> `deploy/selfhost/README.md` 的「登录与初始化」。
+>
+> 与本节规格的差异（实现期定稿）：密码重置表名为 `password_resets`（规格写作
+> `password_reset_tokens`）；令牌有效期 60 分钟；邮件自助重置未做（无 SMTP），
+> 改为管理员线下交付令牌 + 破窗脚本两条路径。
 
 **为什么不能复用现有邀请闸门（复核新发现，原草案判断错误）**
 
@@ -601,7 +608,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 1. **构建两套镜像**：`web` 用仓库根 `Dockerfile`（`docker build -f Dockerfile -t pew:standalone .`，AUTH_SECRET 等用占位值）；适配层服务（migrate/d1-http/read/ingest/scheduler）用 `deploy/selfhost/Dockerfile`（`docker build -f deploy/selfhost/Dockerfile -t pew-selfhost:local .`）。两者构建上下文都是**仓库根**。
 2. 准备 `.env`（§11 清单，真实密钥只写这里）
 3. `docker compose up -d rqlite` → 健康后执行迁移（一次性 init 容器，DDL 带 `?norwtime&norwrandom`、DML 不带，幂等账本）→ 应用**后置迁移**（确定性触发器，§4.1 专项二）
-4. 首个访问者打开 `/setup` → 注册向导 → 首个账号自动成为管理员（绕过邀请码，见 §4.4）——**注意：此步骤属 Plan 2**，Plan 1 无 `/setup`
+4. 首个访问者打开 `/setup` → 注册向导 → 首个账号自动成为管理员（绕过邀请码，见 §4.4）——此步骤由 Plan 2（认证子系统）实现，现已可用。
 5. `docker compose up -d`（d1-http / read / scheduler / ingest / web）
 6. 验证：`/api/live` → 登录（**Plan 2**）→ CLI `--host` 登录 → 上传 → 仪表盘可见
 

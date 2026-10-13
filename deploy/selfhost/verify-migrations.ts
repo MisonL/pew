@@ -23,8 +23,9 @@ const SQUASHED = new Set(["004-is-public.sql", "006-device-id.sql", "006c-team-l
 /**
  * Measured against rqlite 10.5.3 after applying every migration.
  *
- * `upstreamTables` counts tables the upstream migrations create; the plan adds
- * three more (_migrations, kv_cache, leaderboard_revision_seq).
+ * `upstreamTables` counts tables the upstream migrations create; the plan
+ * adds five more (_migrations, kv_cache, leaderboard_revision_seq from Plan 1;
+ * instance_setup, password_resets from Plan 2 / migration 032).
  *
  * `indexes` counts every sqlite_master entry of type 'index', which includes
  * the auto-indexes SQLite creates for PRIMARY KEY and UNIQUE constraints.
@@ -34,14 +35,23 @@ const SQUASHED = new Set(["004-is-public.sql", "006-device-id.sql", "006c-team-l
  */
 const EXPECTED = {
   upstreamTables: 22,
-  planTables: 3,
-  indexes: 65,
+  // _migrations, kv_cache, leaderboard_revision_seq (Plan 1) + instance_setup,
+  // password_resets (Plan 2 / migration 032).
+  planTables: 5,
+  // 65 upstream/Plan-1 indexes + idx_password_resets_user (Plan 2 / 032).
+  indexes: 66,
   triggers: 12,
   views: 2,
 };
 
 /** Tables this plan creates, on top of what upstream migrations define. */
-const PLAN_TABLES = new Set(["_migrations", "kv_cache", "leaderboard_revision_seq"]);
+const PLAN_TABLES = new Set([
+  "_migrations",
+  "kv_cache",
+  "leaderboard_revision_seq",
+  "instance_setup",
+  "password_resets",
+]);
 
 function arg(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);

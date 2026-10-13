@@ -218,15 +218,13 @@ services:
       HOSTNAME: "0.0.0.0"
       NEXTAUTH_URL: ${NEXTAUTH_URL}
       AUTH_SECRET: ${AUTH_SECRET}
-      AUTH_GOOGLE_ID: ${AUTH_GOOGLE_ID}
-      AUTH_GOOGLE_SECRET: ${AUTH_GOOGLE_SECRET}
-      ADMIN_EMAILS: ${ADMIN_EMAILS}
-      # NOT YET EFFECTIVE in Plan 1: auth.ts's shouldUseSecureCookies() treats
-      # NODE_ENV=production (always set by the web image) as "use secure
-      # cookies", with no USE_SECURE_COOKIES=false branch. The value is wired
-      # through so it works once that branch lands (Plan 2); until then an
-      # intranet http deployment has no usable login anyway.
-      USE_SECURE_COOKIES: ${USE_SECURE_COOKIES:-true}
+      AUTH_GOOGLE_ID: ${AUTH_GOOGLE_ID:-}
+      AUTH_GOOGLE_SECRET: ${AUTH_GOOGLE_SECRET:-}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      # Effective as of Plan 2: shouldUseSecureCookies() now honours an explicit
+      # false, so an intranet http deployment gets non-__Secure cookies (the
+      # browser drops __Secure- cookies over plain http).
+      USE_SECURE_COOKIES: ${USE_SECURE_COOKIES:-false}
       # CLI login callback + resolveHost (spec §4.5/§11).
       PEW_HOST: ${PEW_HOST:-}
       # Read path: worker-read
