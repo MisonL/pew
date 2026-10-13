@@ -25,7 +25,8 @@ const SQUASHED = new Set(["004-is-public.sql", "006-device-id.sql", "006c-team-l
  *
  * `upstreamTables` counts tables the upstream migrations create; the plan
  * adds five more (_migrations, kv_cache, leaderboard_revision_seq from Plan 1;
- * instance_setup, password_resets from Plan 2 / migration 032).
+ * instance_setup, password_resets from Plan 2 / migration 032; rate_limit_hits
+ * from Plan 3 / migration 033).
  *
  * `indexes` counts every sqlite_master entry of type 'index', which includes
  * the auto-indexes SQLite creates for PRIMARY KEY and UNIQUE constraints.
@@ -36,12 +37,14 @@ const SQUASHED = new Set(["004-is-public.sql", "006-device-id.sql", "006c-team-l
 const EXPECTED = {
   upstreamTables: 22,
   // _migrations, kv_cache, leaderboard_revision_seq (Plan 1) + instance_setup,
-  // password_resets (Plan 2 / migration 032).
-  planTables: 5,
+  // password_resets (Plan 2 / migration 032) + rate_limit_hits (Plan 3 / 033).
+  planTables: 6,
   // 65 upstream/Plan-1 indexes + two from password_resets (Plan 2 / 032):
   // the explicit idx_password_resets_user and the sqlite_autoindex for its
   // TEXT PRIMARY KEY. instance_setup's INTEGER PRIMARY KEY adds no autoindex.
-  indexes: 67,
+  // rate_limit_hits (Plan 3 / 033) adds two explicit indexes and no UNIQUE or
+  // PRIMARY KEY constraints, so no autoindex.
+  indexes: 69,
   triggers: 12,
   views: 2,
 };
@@ -53,6 +56,8 @@ const PLAN_TABLES = new Set([
   "leaderboard_revision_seq",
   "instance_setup",
   "password_resets",
+  // Plan 3 / migration 033.
+  "rate_limit_hits",
 ]);
 
 function arg(name: string): string | undefined {
