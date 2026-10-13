@@ -28,7 +28,3 @@ reason = "Next.js 16.3.6 advisory pending patch qualification."
 [[IgnoredVulns]]
 id = "GHSA-wq5f-xc86-pv6w"
 reason = "sharp 0.35.4 advisory pending patch qualification."
-
-[[IgnoredVulns]]
-id = "GHSA-68fv-2mgg-jv7q"
-reason = "source-map-js 1.2.1 advisory pending patch qualification."
