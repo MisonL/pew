@@ -171,6 +171,37 @@ describe("authorizeCredentials", () => {
 });
 
 // ---------------------------------------------------------------------------
+// login limiter backend switch
+// ---------------------------------------------------------------------------
+
+describe("login limiter backend switch", () => {
+  afterEach(() => {
+    delete process.env.LOGIN_RATE_LIMIT_BACKEND;
+    vi.restoreAllMocks();
+    inMemoryRateLimiter.reset();
+  });
+
+  it("uses the rqlite backend with dual keys when LOGIN_RATE_LIMIT_BACKEND=rqlite", async () => {
+    process.env.LOGIN_RATE_LIMIT_BACKEND = "rqlite";
+    const { rqliteRateLimiter } = await import("@/lib/rate-limit");
+    const spy = vi.spyOn(rqliteRateLimiter, "check").mockResolvedValue({ allowed: true, current: 1, limit: 5, retryAfter: 0 });
+    mockFindCredentialUser.mockResolvedValue(null);
+    await authorizeCredentials({ email: "a@b.c", password: "x", ip: "203.0.113.9" });
+    const keys = spy.mock.calls.map((c) => c[0]);
+    expect(keys).toContain("login:email:a@b.c");
+    expect(keys).toContain("login:ip:203.0.113.9");
+  });
+
+  it("keeps the in-memory per-email limiter by default", async () => {
+    delete process.env.LOGIN_RATE_LIMIT_BACKEND;
+    const { rqliteRateLimiter } = await import("@/lib/rate-limit");
+    const spy = vi.spyOn(rqliteRateLimiter, "check");
+    await authorizeCredentials({ email: "default@b.c", password: "x" });
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // jwtCallback
 // ---------------------------------------------------------------------------
 

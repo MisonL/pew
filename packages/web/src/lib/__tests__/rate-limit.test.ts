@@ -57,6 +57,10 @@ describe("RqliteRateLimiter", () => {
   it("merges IPv6 addresses to /64 prefixes", async () => {
     const { ipv6PrefixKey } = await import("../rate-limit");
     expect(ipv6PrefixKey("2001:db8:1:2:aaaa:bbbb:cccc:dddd")).toBe("2001:db8:1:2::/64");
+    // Compressed forms must expand to their full group sequence first, or all
+    // "::"-leading addresses collapse into one bucket.
+    expect(ipv6PrefixKey("::1")).toBe("0:0:0:0::/64");
+    expect(ipv6PrefixKey("2001:db8::1:2:3:4")).toBe("2001:db8:0:0::/64");
     expect(ipv6PrefixKey("192.168.1.5")).toBe("192.168.1.5");
   });
 
