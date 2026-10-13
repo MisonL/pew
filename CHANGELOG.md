@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v3.3.2
+
+### Changed
+- Bump minor/patch dependencies and resolve OSV advisories for next, sharp, and source-map-js
+
 ## v3.3.1
 
 ### Changed
