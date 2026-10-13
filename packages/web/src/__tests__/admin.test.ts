@@ -323,6 +323,11 @@ describe("isAdminInDb", () => {
     expect(await isAdminInDb("u1")).toBe(false);
   });
 
+  it("returns false when the row is missing entirely", async () => {
+    mockAdminQuery.mockResolvedValueOnce({ results: [] });
+    expect(await isAdminInDb("gone")).toBe(false);
+  });
+
   it("returns false for a missing id without querying", async () => {
     expect(await isAdminInDb(undefined)).toBe(false);
     expect(await isAdminInDb(null)).toBe(false);
