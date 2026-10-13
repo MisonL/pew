@@ -41,7 +41,7 @@ docker compose up -d --build
    `/status`，所以匿名探测就能看出鉴权状态）：
 
    ```bash
-   docker compose exec rqlite wget -qO- http://localhost:4001/status | grep -o '"auth": *"[a-z]*"'
+   docker compose exec rqlite wget -qO- http://localhost:4001/status | grep -o '"auth":"[a-z]*"'
    # Expected: "auth":"enabled"
    # 若显示 "auth":"disabled"：凭据已配置但服务端以无鉴权启动 —— 立即停下按上面序列重做
    ```
@@ -292,12 +292,14 @@ docker compose exec -T \
 
 ## 备份
 
-rqlite 的 CLI **没有** `backup` 子命令；备份是交互式 REPL 里的 `.backup` 点命令。
+rqlite 的 CLI **没有** `backup` 子命令；备份是交互式 REPL 里的 `.backup` 点命令
+（非交互场景经 stdin 管道喂 `.backup` + `.exit`，如下例）。
 直接 `cp` 活跃的数据库文件会拿到损坏的副本，不要那样做。
 
-替代通道是 HTTP 端点 **`POST /db/backup`**（rqlite 10.5.3 实测；`GET /backup` 是 404，
-不要用 GET）。鉴权开启时带 `-u user:pass`（凭据即 `.env` 的 `RQLITE_USERNAME`/
-`RQLITE_PASSWORD`；rqlite 未发布宿主端口，HTTP 方式需在容器内执行）。
+替代通道是 HTTP 端点 **`GET /db/backup` 带 `-u user:pass`**（10.5.3 实测 200，返回全库
+SQLite 文件；`POST /db/backup` 是 405；`GET /backup`（少 `/db` 前缀）是 404）。
+鉴权开启时凭据即 `.env` 的 `RQLITE_USERNAME`/`RQLITE_PASSWORD`；rqlite 未发布宿主端口，
+HTTP 方式需在容器内执行。
 
 **备份后务必校验文件非空**：实测 `.backup` 失败仍会创建 0 字节假文件，`[ -s ]` 是必须的
 最后一道检查。
