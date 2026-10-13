@@ -1,0 +1,6 @@
+# Overlay: bind web's port to loopback only when a reverse proxy fronts it.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d
+# !override replaces (not appends) the base ports list; needs Compose >= v2.24.4.
+services:
+  web:
+    ports: !override ["127.0.0.1:${WEB_PORT:-7020}:7020"]
