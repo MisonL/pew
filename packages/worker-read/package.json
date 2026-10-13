@@ -1,6 +1,6 @@
 {
   "name": "@pew/worker-read",
-  "version": "3.3.1",
+  "version": "3.3.2",
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
@@ -8,8 +8,8 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20260924.1",
+    "@cloudflare/workers-types": "5.20261012.1",
     "@pew/core": "workspace:*",
-    "wrangler": "4.138.0"
+    "wrangler": "4.149.0"
   }
 }
