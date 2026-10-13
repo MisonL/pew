@@ -17,8 +17,15 @@ import { registerShutdownSignals, runScheduled } from "./node-runtime";
 const RQLITE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
 const D1_TOKEN = process.env.CF_D1_API_TOKEN ?? "";
 const INTERVAL_MS = Number(process.env.DAILY_INTERVAL_MS ?? 24 * 60 * 60 * 1000);
+// Read-only rqlite credentials (Plan 3 §3.1.2), same fallback as server-read;
+// `||` not `??` because compose injects empty strings when unset.
+const RQLITE_USERNAME = process.env.RQLITE_READ_USERNAME || process.env.RQLITE_USERNAME;
+const RQLITE_PASSWORD = process.env.RQLITE_READ_PASSWORD || process.env.RQLITE_PASSWORD;
+const BASIC_AUTH = RQLITE_USERNAME && RQLITE_PASSWORD
+  ? { username: RQLITE_USERNAME, password: RQLITE_PASSWORD }
+  : undefined;
 
-const db = createD1Adapter({ baseUrl: RQLITE_URL, token: D1_TOKEN });
+const db = createD1Adapter({ baseUrl: RQLITE_URL, token: D1_TOKEN, ...(BASIC_AUTH ? { basicAuth: BASIC_AUTH } : {}) });
 // Same narrowing as server-read: the adapters cover the worker's actual call
 // surface, not the full D1Database/KVNamespace interfaces.
 const env = {

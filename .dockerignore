@@ -13,5 +13,6 @@ dist
 **/.env
 **/.env.local
 **/.env.*.local
+**/.rqlite-auth.json
 logo.png
 scripts/resize-logos.py

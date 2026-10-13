@@ -18,6 +18,13 @@ x-rqlite-common: &rqlite-common
   # -fk is mandatory: foreign keys are off by default in SQLite and the schema
   # relies on 12 ON DELETE CASCADE clauses.
   command: ["-fk", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002"]
+  # The official image ENTRYPOINT is rqlited itself; the wrapper appends
+  # -auth /auth/auth.json (only when the rendered file exists) and, for
+  # cluster joiners, -join-as from RQLITE_JOIN_AS. The two bind-mounts below
+  # are NOT listed here: `<<:` replaces sequences wholesale, so a common
+  # volumes list would be dropped by every service's own volumes — each
+  # service therefore re-lists all three mounts itself.
+  entrypoint: ["sh", "/entrypoint.sh"]
   healthcheck:
     # Probe /readyz, NOT /status. /status returns HTTP 200 even when the node
     # is not part of a cluster yet (verified on 10.5.3: with -bootstrap-expect 3
@@ -47,6 +54,8 @@ services:
     command: ["-fk", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-bootstrap-expect", "1"]
     volumes:
       - rqlite-data:/rqlite/file
+      - ./rqlite-entrypoint.sh:/entrypoint.sh:ro
+      - ./.rqlite-auth.json:/auth/auth.json:ro
     deploy:
       resources:
         limits: { memory: 2g }
@@ -60,9 +69,16 @@ services:
     # with -bootstrap-expect 3 and NO -join list would instead bootstrap itself
     # alone and accept writes immediately (verified) — which would let migrate
     # run against a one-node "cluster".
+    # RQLITE_JOIN_AS (env below) makes the entrypoint wrapper append
+    # -join-as joiner: nodes join as the dedicated join user
+    # (perms: ["join"]) instead of needing full credentials.
+    environment:
+      RQLITE_JOIN_AS: joiner
     command: ["-fk", "-node-id", "1", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-http-adv-addr", "rqlite-1:4001", "-raft-adv-addr", "rqlite-1:4002", "-bootstrap-expect", "3", "-join", "rqlite-1:4002,rqlite-2:4002,rqlite-3:4002"]
     volumes:
       - rqlite-data-1:/rqlite/file
+      - ./rqlite-entrypoint.sh:/entrypoint.sh:ro
+      - ./.rqlite-auth.json:/auth/auth.json:ro
     deploy:
       resources:
         limits: { memory: 2g }
@@ -70,9 +86,13 @@ services:
   rqlite-2:
     <<: *rqlite-common
     profiles: ["cluster"]
+    environment:
+      RQLITE_JOIN_AS: joiner
     command: ["-fk", "-node-id", "2", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-http-adv-addr", "rqlite-2:4001", "-raft-adv-addr", "rqlite-2:4002", "-bootstrap-expect", "3", "-join", "rqlite-1:4002,rqlite-2:4002,rqlite-3:4002"]
     volumes:
       - rqlite-data-2:/rqlite/file
+      - ./rqlite-entrypoint.sh:/entrypoint.sh:ro
+      - ./.rqlite-auth.json:/auth/auth.json:ro
     deploy:
       resources:
         limits: { memory: 2g }
@@ -80,9 +100,13 @@ services:
   rqlite-3:
     <<: *rqlite-common
     profiles: ["cluster"]
+    environment:
+      RQLITE_JOIN_AS: joiner
     command: ["-fk", "-node-id", "3", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-http-adv-addr", "rqlite-3:4001", "-raft-adv-addr", "rqlite-3:4002", "-bootstrap-expect", "3", "-join", "rqlite-1:4002,rqlite-2:4002,rqlite-3:4002"]
     volumes:
       - rqlite-data-3:/rqlite/file
+      - ./rqlite-entrypoint.sh:/entrypoint.sh:ro
+      - ./.rqlite-auth.json:/auth/auth.json:ro
     deploy:
       resources:
         limits: { memory: 2g }
@@ -97,6 +121,8 @@ services:
     environment:
       RQLITE_URL: http://rqlite:4001
       CF_D1_API_TOKEN: ${CF_D1_API_TOKEN}
+      RQLITE_USERNAME: ${RQLITE_USERNAME:-}
+      RQLITE_PASSWORD: ${RQLITE_PASSWORD:-}
     depends_on:
       rqlite:
         condition: service_healthy
@@ -114,6 +140,8 @@ services:
       PORT: "8788"
       RQLITE_URL: http://rqlite:4001
       CF_D1_API_TOKEN: ${CF_D1_API_TOKEN}
+      RQLITE_USERNAME: ${RQLITE_USERNAME:-}
+      RQLITE_PASSWORD: ${RQLITE_PASSWORD:-}
     depends_on:
       rqlite: { condition: service_healthy, required: false }
       rqlite-1: { condition: service_healthy, required: false }
@@ -138,8 +166,11 @@ services:
     environment:
       PORT: "8787"
       RQLITE_URL: http://rqlite:4001
-      # No CF_D1_API_TOKEN: this service talks to rqlite directly, and rqlite
-      # has no auth. Only d1-http (verifier) and web (client) need the token.
+      # No CF_D1_API_TOKEN: direct rqlite access; uses optional read-only
+      # rqlite credentials. The fallback to the full credentials lives in
+      # server-read.ts / server-scheduler.ts (empty string = unset here).
+      RQLITE_READ_USERNAME: ${RQLITE_READ_USERNAME:-}
+      RQLITE_READ_PASSWORD: ${RQLITE_READ_PASSWORD:-}
       WORKER_READ_SECRET: ${WORKER_READ_SECRET}
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -163,7 +194,10 @@ services:
     environment:
       PORT: "8786"
       RQLITE_URL: http://rqlite:4001
-      # No CF_D1_API_TOKEN: direct rqlite access, no auth needed.
+      # No CF_D1_API_TOKEN: direct rqlite access; uses optional full rqlite
+      # credentials.
+      RQLITE_USERNAME: ${RQLITE_USERNAME:-}
+      RQLITE_PASSWORD: ${RQLITE_PASSWORD:-}
       WORKER_SECRET: ${WORKER_SECRET}
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -190,7 +224,11 @@ services:
     # comes back via `restart: unless-stopped` instead of a probe.
     environment:
       RQLITE_URL: http://rqlite:4001
-      # No CF_D1_API_TOKEN: direct rqlite access, no auth needed.
+      # No CF_D1_API_TOKEN: direct rqlite access; uses optional read-only
+      # rqlite credentials. The fallback to the full credentials lives in
+      # server-read.ts / server-scheduler.ts (empty string = unset here).
+      RQLITE_READ_USERNAME: ${RQLITE_READ_USERNAME:-}
+      RQLITE_READ_PASSWORD: ${RQLITE_READ_PASSWORD:-}
       WORKER_READ_SECRET: ${WORKER_READ_SECRET}
       DAILY_INTERVAL_MS: ${DAILY_INTERVAL_MS:-86400000}
     depends_on:

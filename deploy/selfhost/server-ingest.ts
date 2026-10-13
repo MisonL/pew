@@ -11,11 +11,15 @@ import { createWorkerServer, registerShutdownSignals, requireSecret } from "./no
 const PORT = Number(process.env.PORT ?? 8786);
 const RQLITE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
 const D1_TOKEN = process.env.CF_D1_API_TOKEN ?? "";
+// Full rqlite credentials (Plan 3 §3.1.2); unset or empty means no auth.
+const BASIC_AUTH = process.env.RQLITE_USERNAME && process.env.RQLITE_PASSWORD
+  ? { username: process.env.RQLITE_USERNAME, password: process.env.RQLITE_PASSWORD }
+  : undefined;
 
 // The adapter implements the D1 methods the worker actually calls, not the
 // full D1Database interface; narrow through `unknown` at this wiring point.
 const env = {
-  DB: createD1Adapter({ baseUrl: RQLITE_URL, token: D1_TOKEN }),
+  DB: createD1Adapter({ baseUrl: RQLITE_URL, token: D1_TOKEN, ...(BASIC_AUTH ? { basicAuth: BASIC_AUTH } : {}) }),
   WORKER_SECRET: requireSecret("WORKER_SECRET", process.env.WORKER_SECRET ?? ""),
 } as unknown as Env;
 
