@@ -83,7 +83,9 @@ migrate 启动时的对账自检会显式报错（「credentials configured but 
    改密后旧会话自动失效（JWT 携带密码版本号，不匹配即判无效）。
 
 **限速**：登录限速默认**进程内**（`inMemoryRateLimiter`），多 `web` 副本时退化为按副本
-计；且它信任 `X-Forwarded-For`，反代必须清洗/覆写该头。单副本部署下按 IP + 邮箱双键限流。
+计；且它信任 `X-Forwarded-For`，反代必须清洗/覆写该头。默认路径按**邮箱单键**
+限流（`login:<email>`，无 IP 维度）；只有 `LOGIN_RATE_LIMIT_BACKEND=rqlite` 时才
+启用邮箱 + IP 双键。
 
 **登录限速后端开关 `LOGIN_RATE_LIMIT_BACKEND`**（`.env`/compose，默认 `memory`）：
 设为 `rqlite` 时登录失败计数外置到 rqlite 的 `rate_limit_hits` 表（单条原子
@@ -196,6 +198,8 @@ server {
         proxy_set_header Host $host;                        # 默认 $proxy_host 会让 Auth.js 的 trustHost origin 校验失败、登录全挂
         proxy_set_header X-Forwarded-For $remote_addr;      # 覆写，不是 $proxy_add_x_forwarded_for（追加，保留攻击者伪造段）
         proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Real-IP $remote_addr;            # 不覆写则攻击者伪造的 X-Real-IP 穿透到 web，IP 限速键可伪造
+        proxy_set_header CF-Connecting-IP "";               # 同理：getClientIp 依次信任 XFF/X-Real-IP/CF-Connecting-IP
     }
 }
 ```
@@ -305,15 +309,15 @@ HTTP 方式需在容器内执行。
 最后一道检查。
 
 ```bash
-# 单节点（REPL 点命令通道）
+# 单节点（REPL 点命令通道；鉴权开启时必须带 -u，匿名 .backup 会 401）
 printf '.backup /rqlite/file/backup.db\n.exit\n' | \
-  docker compose exec -T rqlite rqlite -H localhost
+  docker compose exec -T rqlite rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost
 docker compose cp rqlite:/rqlite/file/backup.db "./backup-$(date +%F).db"
 [ -s "./backup-$(date +%F).db" ] || echo "备份为空，失败！" >&2
 
-# 集群模式（节点名是 rqlite-1）
+# 集群模式（节点名是 rqlite-1；同样带 -u）
 printf '.backup /rqlite/file/backup.db\n.exit\n' | \
-  docker compose exec -T rqlite-1 rqlite -H localhost
+  docker compose exec -T rqlite-1 rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost
 docker compose cp rqlite-1:/rqlite/file/backup.db "./backup-$(date +%F).db"
 [ -s "./backup-$(date +%F).db" ] || echo "备份为空，失败！" >&2
 ```

@@ -24,5 +24,7 @@ jq -n \
     { username: "pew-ro", password: $p2, perms: ["select"] },
     { username: "joiner", password: $jp, perms: ["join"] },
     { username: "*", perms: ["status", "ready"] }
-  ]' > "$OUT"
+  ]' > "$OUT.tmp"
+# Write-then-rename: a killed render must never leave a half-written auth file.
+mv "$OUT.tmp" "$OUT"
 chmod 600 "$OUT"
