@@ -115,13 +115,15 @@ Plan 1/2 交付后，规格（`docs/superpowers/specs/2026-10-10-self-hosted-dep
 
 #### 3.1.2 服务端（compose）与「默认关闭」的实现机制
 
-**渲染脚本** `deploy/selfhost/render-rqlite-auth.sh`：读 `RQLITE_USERNAME` / `RQLITE_PASSWORD` / `RQLITE_JOIN_PASSWORD`。三要素都非空 → 生成 `deploy/selfhost/.rqlite-auth.json`（§2.1 数组格式：`pew` 全权用户、`pew-ro` 只读用户 `["select"]`、`joiner` 用户 `[join]` 密码取 `RQLITE_JOIN_PASSWORD`、`*` 通配 `[status, ready]`）；任一为空 → **删除残留文件**（含误建的同名目录，`rm -rf`）并不产出。**文件权限（红队 Medium 2.3）**：脚本开头 `umask 077`，产出后 `chmod 600`——文件是明文 JSON 含全部密码，同宿主其他用户不得读。密码用 `printf '%s'` 写入（不用 `echo`，避免 zsh 反斜杠转义差异），脚本对密码中的 `/` 等字符只要求 JSON 转义正确（用 `jq -n` 生成，不手拼字符串）。
+**渲染脚本** `deploy/selfhost/render-rqlite-auth.sh`：读 `RQLITE_USERNAME` / `RQLITE_PASSWORD` / `RQLITE_JOIN_PASSWORD`。三要素都非空 → 生成 `deploy/selfhost/.rqlite-auth.json`（§2.1 数组格式：`pew` 全权用户、`pew-ro` 只读用户 `["select"]`、`joiner` 用户 `[join]` 密码取 `RQLITE_JOIN_PASSWORD`、`*` 通配 `[status, ready]`）；任一为空 → **删除残留文件**（含误建的同名目录，`rm -rf`）并不产出。**实现更正（注记 2026-10-14，多维审查）**：上文 `pew-ro` 只读用户已移除（rqlite 10.5.3 无合法只读权限名，实际产出 `pew` 全权 / `joiner` / `*` 三条目）；渲染脚本以 `jq -n` 写临时文件后 `mv` 原子落盘，并在落盘前清除 `$OUT` 位置可能存在的同名目录（bind-mount 目录陷阱）、落盘后校验其为常规文件。**文件权限（红队 Medium 2.3）**：脚本开头 `umask 077`，产出后 `chmod 600`——文件是明文 JSON 含全部密码，同宿主其他用户不得读。密码用 `printf '%s'` 写入（不用 `echo`，避免 zsh 反斜杠转义差异），脚本对密码中的 `/` 等字符只要求 JSON 转义正确（用 `jq -n` 生成，不手拼字符串）。
 
 **rqlite 容器**：两个 bind-mount **无条件**存在（docker 对不存在的宿主路径做 bind-mount 会在宿主创建同名**目录**，实测；常驻挂载 + 文件由脚本按需产出/删除规避此坑）：
 - `deploy/selfhost/.rqlite-auth.json` → `/auth/auth.json:ro`
 - `deploy/selfhost/rqlite-entrypoint.sh` → `/entrypoint.sh:ro`
 
 **entrypoint 包装脚本**（完整内容，v2 只有一句话不可实施）：
+
+> **实现更正（注记 2026-10-14，多维审查）**：最终实现见 `deploy/selfhost/rqlite-entrypoint.sh`——除下述 -auth/-join-as 逻辑外，还补了官方 docker-entrypoint.sh 原本代办的 `-http-adv-addr`/`-raft-adv-addr` 兜底（rqlite 拒绝 0.0.0.0 作为 advertise 地址）与末尾数据目录位置参数（compose 不传，默认 `/rqlite/file/data`，`DATA_DIR` 仍可覆盖）。下述片段不含这两处，不可直接照抄。
 
 ```sh
 #!/bin/sh
@@ -305,4 +307,4 @@ README 新增「反向代理」小节，推荐形态：**Caddy 以 compose 服�
 - 三项均**默认关闭**（A：不设凭据；B：不设 `LOGIN_RATE_LIMIT_BACKEND`；C：纯文档），已有部署升级无需任何动作。
 - 回滚 = revert 对应提交；迁移 033 是纯新增表，回滚无副作用（账本只增不删，表与旧行冻结无害——revert 后无人读写且有界）。
 - **注意**：`_migrations` 账本按文件名跳过——revert 后若以**同名文件**重做 033 且内容变更会被静默跳过，重做必须换文件名；`EXPECTED` 计数更新须与迁移同提交，避免部分回滚时计数错配。回滚后按 §3.1.5 清理 checklist 处理 `.env` 残留变量与磁盘明文 auth.json。
-- **三节点降级信号与升级判据**（运维演练 Low，写进 README 集群小节）：单节点 down → 集群只读（无多数派，raft 拒写）——信号：`/status` 的 `leader` 为空、web 写请求 500；恢复该节点即自动重新选主，无需人工。两节点 down → 全不可用；只允许**同时**恢复，不要逐台改配置（auth.json 不一致会导致 recreate 后 join 失败）。read 副本 down 不影响写路径（weak 读自动重试其他节点），信号仅在日志。
+- **三节点降级信号与升级判据**（运维演练 Low，写进 README 集群小节）：单节点 down → 集群**仍有多数派，可写**（3 节点 down 1 后 2/3 多数派存活，raft 正常选主）——事实更正：本节原稿「单节点 down → 集群只读（无多数派）」错误，单节点 down 不影响写可用性；真正的只读/不可用阈值是两节点 down（无多数派）→ 全不可用；只允许**同时**恢复，不要逐台改配置（auth.json 不一致会导致 recreate 后 join 失败）。read 副本 down 不影响写路径（weak 读自动重试其他节点），信号仅在日志。

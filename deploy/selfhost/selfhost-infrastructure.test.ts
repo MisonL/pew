@@ -56,7 +56,7 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
     expect(single).not.toContain("RQLITE_JOIN_AS");
   });
 
-  it("write services get full credentials; read/scheduler get read-only ones", () => {
+  it("write services get full credentials; read/scheduler get the READ_* pair with full-credential fallback", () => {
     // biome-ignore lint/suspicious/noTemplateCurlyInString: compose var-expansion literal, not interpolation
     expect(compose).toContain("RQLITE_USERNAME: ${RQLITE_USERNAME:-}");
     // biome-ignore lint/suspicious/noTemplateCurlyInString: compose var-expansion literal, not interpolation
@@ -77,6 +77,7 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
   it("wires the login limiter backend switch into web (spec Plan 3 §3.2)", () => {
     // top-level "volumes:" key (services' own volumes: keys are indented)
     const web = compose.slice(compose.indexOf("  web:"), compose.indexOf("\nvolumes:"));
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: compose var-expansion literal, not interpolation
     expect(web).toContain("LOGIN_RATE_LIMIT_BACKEND: ${LOGIN_RATE_LIMIT_BACKEND:-}");
   });
 

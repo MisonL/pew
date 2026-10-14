@@ -13,9 +13,11 @@ import { resolveReadBasicAuth } from "./basic-auth";
 const PORT = Number(process.env.PORT ?? 8787);
 const RQLITE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
 const D1_TOKEN = process.env.CF_D1_API_TOKEN ?? "";
-// Read-only rqlite credentials (Plan 3 §3.1.2): the READ_* pair when set,
-// falling back to the full pair as a unit (pew-ro defaults to RQLITE_PASSWORD
-// in the render script, so the full user is a valid read-only principal).
+// Read-only credentials (Plan 3 §3.1.2): the READ_* pair when set, falling
+// back to the full pair as a unit. NOTE: there is deliberately no pew-ro user
+// (rqlite 10.5.3 has no "select" permission name and read/scheduler carry
+// /db/request write paths, so a read-only user is unreachable here) — the
+// READ_* vars are deprecated and this effectively always uses the full user.
 const BASIC_AUTH = resolveReadBasicAuth(
   process.env.RQLITE_READ_USERNAME,
   process.env.RQLITE_READ_PASSWORD,

@@ -12,8 +12,16 @@ const dirs: string[] = [];
 afterAll(() => dirs.forEach((d) => { rmSync(d, { recursive: true, force: true }); }));
 
 function run(env: Record<string, string>, outDir: string) {
+  // Whitelist the environment (M1, review round 2): inheriting {...process.env}
+  // leaks host variables (e.g. RQLITE_* exported via `set -a; . ./.env`), which
+  // can turn the negative paths into false failures or false passes.
   const child = spawn("bash", [SCRIPT], {
-    env: { ...process.env, ...env, AUTH_OUT_FILE: join(outDir, ".rqlite-auth.json") },
+    env: {
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+      ...env,
+      AUTH_OUT_FILE: join(outDir, ".rqlite-auth.json"),
+    },
     stdio: "pipe",
   });
   return new Promise<{ code: number; stderr: string }>((resolve, reject) => {
@@ -96,7 +104,45 @@ describe("render-rqlite-auth.sh", () => {
   it("refuses a dangerous AUTH_OUT_FILE instead of rm -rf'ing it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ra-")); dirs.push(dir);
     const child = spawn("/bin/bash", [SCRIPT], {
-      env: { ...process.env, RQLITE_USERNAME: "pew", RQLITE_PASSWORD: "pw1", RQLITE_JOIN_PASSWORD: "pw2", AUTH_OUT_FILE: "/etc" },
+      env: {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        RQLITE_USERNAME: "pew", RQLITE_PASSWORD: "pw1", RQLITE_JOIN_PASSWORD: "pw2",
+        AUTH_OUT_FILE: "/etc",
+      },
+      stdio: "pipe",
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => { stderr += chunk; });
+    const code = await new Promise<number>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("exit", (c) => resolve(c ?? -1));
+    });
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("refusing dangerous AUTH_OUT_FILE");
+  });
+
+  it("removes a stale DIRECTORY before rendering and still succeeds (N1 success-path trap)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ra-")); dirs.push(dir);
+    const file = join(dir, ".rqlite-auth.json");
+    // If $OUT is a directory, `mv OUT.tmp OUT` moves INTO it and chmod exits 0
+    // on the directory — the entrypoint would silently start without auth.
+    mkdirSync(file);
+    const p = run({ RQLITE_USERNAME: "pew", RQLITE_PASSWORD: "pw1", RQLITE_JOIN_PASSWORD: "pw2" }, dir);
+    expect((await p).code).toBe(0);
+    expect(statSync(file).isFile()).toBe(true);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it("refuses a dangerous AUTH_OUT_FILE even with duplicate leading slashes (S1)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ra-")); dirs.push(dir);
+    const child = spawn("/bin/bash", [SCRIPT], {
+      env: {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        RQLITE_USERNAME: "pew", RQLITE_PASSWORD: "pw1", RQLITE_JOIN_PASSWORD: "pw2",
+        AUTH_OUT_FILE: "//etc",
+      },
       stdio: "pipe",
     });
     let stderr = "";
