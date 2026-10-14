@@ -16,6 +16,7 @@
  */
 
 import { randomBytes, scryptSync } from "node:crypto";
+import { resolveEnvBasicAuth } from "./basic-auth";
 import { createD1Adapter } from "./d1-adapter";
 
 // Must match lib/credentials.ts's SCRYPT parameters and storage format so a
@@ -45,18 +46,6 @@ export function parseArg(argv: string[], flag: string): string | undefined {
   return undefined;
 }
 
-/**
- * Basic auth only when BOTH env vars are set; otherwise undefined, so the
- * adapter is built with token: "" and no basicAuth — which sends no
- * Authorization header at all (correct for rqlite started without -auth).
- * Exported for reset-password.test.ts.
- */
-export function resolveBasicAuth(): { username: string; password: string } | undefined {
-  return process.env.RQLITE_USERNAME && process.env.RQLITE_PASSWORD
-    ? { username: process.env.RQLITE_USERNAME, password: process.env.RQLITE_PASSWORD }
-    : undefined;
-}
-
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const email = parseArg(argv, "--email");
@@ -72,7 +61,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const basicAuth = resolveBasicAuth();
+  const basicAuth = resolveEnvBasicAuth();
   const db = createD1Adapter({ baseUrl, token: "", ...(basicAuth ? { basicAuth } : {}) });
 
   const existing = await db

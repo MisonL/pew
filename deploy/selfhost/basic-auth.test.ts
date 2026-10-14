@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { resolveBasicAuth, resolveReadBasicAuth } from "./basic-auth";
+import { describe, it, expect, afterEach } from "vitest";
+import { resolveBasicAuth, resolveEnvBasicAuth, resolveReadBasicAuth } from "./basic-auth";
 
 describe("resolveBasicAuth (full credentials)", () => {
   it("returns the pair when both are non-empty", () => {
@@ -45,5 +45,40 @@ describe("resolveReadBasicAuth (read-only with full fallback)", () => {
       username: "pew",
       password: "full-pw",
     });
+  });
+});
+
+// Credential selection over the process environment: Basic only when both
+// RQLITE_USERNAME and RQLITE_PASSWORD are set, else no credentials at all
+// (token "" + no basicAuth ⇒ d1-adapter sends no header).
+describe("resolveEnvBasicAuth", () => {
+  const saved: Record<string, string | undefined> = {};
+  const KEYS = ["RQLITE_USERNAME", "RQLITE_PASSWORD"];
+
+  afterEach(() => {
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  function snapshotEnv() {
+    for (const k of KEYS) saved[k] = process.env[k];
+  }
+
+  it("resolves NO credentials when none are configured", () => {
+    snapshotEnv();
+    delete process.env.RQLITE_USERNAME;
+    delete process.env.RQLITE_PASSWORD;
+    expect(resolveEnvBasicAuth()).toBeUndefined();
+  });
+
+  it("returns credentials only when both username and password are set", () => {
+    snapshotEnv();
+    delete process.env.RQLITE_PASSWORD;
+    process.env.RQLITE_USERNAME = "pew";
+    expect(resolveEnvBasicAuth()).toBeUndefined();
+    process.env.RQLITE_PASSWORD = "pw";
+    expect(resolveEnvBasicAuth()).toEqual({ username: "pew", password: "pw" });
   });
 });
