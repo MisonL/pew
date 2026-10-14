@@ -111,6 +111,7 @@ Plan 1/2 交付后，规格（`docs/superpowers/specs/2026-10-10-self-hosted-dep
 | `LOGIN_RATE_LIMIT_BACKEND` | 仅 web（`memory` 默认 / `rqlite`，见 §3.2） | 全文唯一开关名（v2 中 §3.1.1/§4 曾误写 `RATE_LIMIT_BACKEND`，已统一） |
 
 **凭据暴露面的结构性弱点（红队 High，接受并注明）**：同一 `RQLITE_PASSWORD` 注入六个容器 environment，单容器 RCE（`/proc/1/environ`、`docker inspect` 可读）= 全库写凭据。**缓解**：auth.json 增加第二个具名只读用户（`perms: ["select"]`，实测 perms 缺失 = 全拒、fail-closed），`read` 与 `scheduler` 用只读凭据（二者无写路径），缩小写凭据暴露面至 migrate/d1-http/ingest 三个必需容器；进一步拆分（每容器独立用户）属 YAGNI。
+> **实现更正**：rqlite 10.5.3 实测无 `select` 权限名（`query` 有效但仅限 /db/query，/db/request 拒绝），且 read/scheduler 均有 `/db/request` 写路径——只读用户在此架构不可达，pew-ro 已移除，所有服务统一用全权凭据（Ruling 2026-10-14 多维审查）。
 
 #### 3.1.2 服务端（compose）与「默认关闭」的实现机制
 
@@ -185,6 +186,7 @@ exec rqlited "$@"
 #### 3.1.5 连带文档订正（评审 M4/H4 + 运维演练报告）
 
 - README 备份/恢复命令补 rqlite CLI 凭据（`-u user:pass`，实测可用），**端点写明 `POST /db/backup`**（红队 1.4：`GET /backup` 在 10.5.3 是 404，旧 README 若用 GET 须一并修），**并在备份后校验文件非空**——实测 `.backup` 失败仍创建 0 字节假备份。**备份端点鉴权行为需真机验证**（`/db/backup` 在 `-auth` 开启下对 `*` 用户匿名是否 401；§3.1.7 验收项 6 覆盖）。
+  > **实现更正**：10.5.3 实测 **GET `/db/backup` = 200**（返回全库 SQLite 文件）、`POST /db/backup` = 405（Ruling 7fe93059）——与本条原写的 POST 端点相反，README 已按实测结果写为 GET。
 - **README 破窗命令端口错误（存量 bug，运维演练 Blocker 2）**：`README.md:28` 的 `RQLITE_URL=http://127.0.0.1:14001` 引用的端口从未在 compose 发布（rqlite 不发布宿主端口）——Plan 2 现状下这条灾难恢复命令就跑不通。订正为 `docker compose exec -e RQLITE_USERNAME=... -e RQLITE_PASSWORD=... rqlite ...` 形态或经 d1-http 容器内访问；与「补凭据透传」一并改写。
 - README「安全注意事项」首段（「rqlite 默认无鉴权…本计划未做」）在 A 落地后改写为条件描述——**同时删掉与已交付功能矛盾的措辞**。
 - README 跨机集群一节：auth.json 必须同源逐字节一致；轮换 = 全节点 recreate；join/复制流量 4002 明文，跨机需 WireGuard/私有网段。
