@@ -35,7 +35,7 @@ const nodeServer = createServer((req, res) => {
       chunks.push(buf);
     }
     const body = Buffer.concat(chunks);
-    const request = new Request(new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`), {
+    const request = new Request(`${`http://${req.headers.host ?? "localhost"}`}${req.url ?? "/"}`, {
       method: req.method ?? "GET",
       headers: req.headers as Record<string, string>,
       body: body.length > 0 ? body : undefined,
@@ -50,7 +50,7 @@ const nodeServer = createServer((req, res) => {
         // Credentialed probe on the SAME linearizable path as writes. The old
         // anonymous /readyz probe stayed green when credentials were wrong
         // (the '*' user grants ready), so web only failed at first write.
-        const authHeader = BASIC
+        const authHeader: Record<string, string> = BASIC
           ? { Authorization: `Basic ${Buffer.from(`${BASIC.username}:${BASIC.password}`).toString("base64")}` }
           : {};
         const probe = await fetch(`${RQLITE_URL}/db/request?transaction=true&associative`, {

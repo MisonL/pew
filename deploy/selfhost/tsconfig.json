@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "types": ["node", "bun"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "typeRoots": ["../../node_modules/@types", "../../packages/web/node_modules/@types"],
+    "paths": {
+      "@pew/core": ["../../packages/core/dist/index.d.ts"]
+    }
+  },
+  "include": ["*.ts"],
+  "exclude": ["node_modules"],
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/worker/tsconfig.build.json" },
+    { "path": "../../packages/worker-read/tsconfig.build.json" }
+  ]
+}

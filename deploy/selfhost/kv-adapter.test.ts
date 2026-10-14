@@ -63,6 +63,7 @@ function makeFakeDb() {
           }
           return { success: true, results: [], meta: { changes: 0, duration: 0 } };
         },
+        strong: async <T,>(): Promise<D1Result<T>> => ({ success: true, results: [] as T[], meta: { changes: 0, duration: 0 } }),
       };
       return stmt;
     },

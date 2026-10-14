@@ -15,7 +15,7 @@ export interface RqliteClientOptions {
   baseUrl: string;
   token?: string;
   basicAuth?: { username: string; password: string };
-  fetchImpl?: typeof fetch;
+  fetchImpl?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 }
 
 interface RqliteResponse {

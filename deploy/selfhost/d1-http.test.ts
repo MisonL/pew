@@ -59,7 +59,7 @@ describe("d1-http", () => {
     );
     const server = createD1HttpServer({ baseUrl: "http://rqlite:4001", token: TOKEN, fetchImpl: fetchImpl as never });
     const res = await server.handle(post({ sql: "INSERT INTO t (v) VALUES (?)", params: ["x"] }));
-    const body = await res.json();
+    const body = (await res.json()) as { result: { meta: { changes: number } }[]; success: boolean; errors: { message: string }[] };
     const [url] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(url).toBe("http://rqlite:4001/db/request?transaction=true&associative&timings");
     expect(body.result[0].meta.changes).toBe(1);
@@ -69,7 +69,7 @@ describe("d1-http", () => {
     const fetchImpl = vi.fn().mockResolvedValue(rqliteResponse([{ last_insert_id: 9 }]));
     const server = createD1HttpServer({ baseUrl: "http://rqlite:4001", token: TOKEN, fetchImpl: fetchImpl as never });
     const res = await server.handle(post({ sql: "UPDATE t SET a = 1 WHERE 0", params: [] }));
-    const body = await res.json();
+    const body = (await res.json()) as { result: { meta: { changes: number } }[]; success: boolean; errors: { message: string }[] };
     expect(body.result[0].meta.changes).toBe(0);
   });
 
@@ -88,7 +88,7 @@ describe("d1-http", () => {
         ],
       })
     );
-    const body = await res.json();
+    const body = (await res.json()) as { result: { meta: { changes: number } }[]; success: boolean; errors: { message: string }[] };
     expect(body.result).toHaveLength(3);
     expect(body.success).toBe(false);
     expect(body.errors[0].message).toMatch(/UNIQUE constraint failed/);
@@ -98,7 +98,7 @@ describe("d1-http", () => {
     const fetchImpl = vi.fn().mockResolvedValue(rqliteResponse([{ error: "no such table: nope" }]));
     const server = createD1HttpServer({ baseUrl: "http://rqlite:4001", token: TOKEN, fetchImpl: fetchImpl as never });
     const res = await server.handle(post({ sql: "SELECT * FROM nope", params: [] }));
-    const body = await res.json();
+    const body = (await res.json()) as { result: { meta: { changes: number } }[]; success: boolean; errors: { message: string }[] };
     expect(body.success).toBe(false);
     expect(body.errors[0].message).toMatch(/no such table/);
   });
@@ -115,7 +115,7 @@ describe("d1-http", () => {
 describe("basicAuth passthrough", () => {
   it("forwards basicAuth to the inner adapter", async () => {
     const calls: Request[] = [];
-    const fetchImpl: typeof fetch = async (input, init) => {
+    const fetchImpl: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = async (input, init) => {
       calls.push(new Request(input as string, init));
       return Response.json({ results: [{}] });
     };

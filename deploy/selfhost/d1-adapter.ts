@@ -42,7 +42,7 @@ export interface D1AdapterOptions {
   token: string;
   /** rqlite -auth credentials. When set, replaces the Bearer token header. */
   basicAuth?: { username: string; password: string };
-  fetchImpl?: typeof fetch;
+  fetchImpl?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 }
 
 interface RqliteStatementResult {
