@@ -6,6 +6,7 @@
  */
 
 import { createServer } from "node:http";
+import { resolveEnvBasicAuth } from "./basic-auth";
 import { createD1HttpServer } from "./d1-http";
 import { registerShutdownSignals, requireSecret } from "./node-runtime";
 
@@ -13,9 +14,7 @@ const PORT = Number(process.env.PORT ?? 8788);
 const RQLITE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
 const TOKEN = requireSecret("CF_D1_API_TOKEN", process.env.CF_D1_API_TOKEN ?? "");
 
-const BASIC = process.env.RQLITE_USERNAME && process.env.RQLITE_PASSWORD
-  ? { username: process.env.RQLITE_USERNAME, password: process.env.RQLITE_PASSWORD }
-  : undefined;
+const BASIC = resolveEnvBasicAuth();
 const server = createD1HttpServer({ baseUrl: RQLITE_URL, token: TOKEN, ...(BASIC ? { basicAuth: BASIC } : {}) });
 
 const nodeServer = createServer((req, res) => {

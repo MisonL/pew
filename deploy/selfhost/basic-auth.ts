@@ -21,6 +21,11 @@ export function resolveBasicAuth(
   return username && password ? { username, password } : undefined;
 }
 
+/** resolveBasicAuth over the RQLITE_USERNAME / RQLITE_PASSWORD env pair. */
+export function resolveEnvBasicAuth(): BasicAuth | undefined {
+  return resolveBasicAuth(process.env.RQLITE_USERNAME, process.env.RQLITE_PASSWORD);
+}
+
 /**
  * Read-only credentials: prefer the READ_* pair, falling back to the FULL
  * pair as a unit. There is deliberately no pew-ro user (rqlite 10.5.3 has no

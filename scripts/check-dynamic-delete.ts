@@ -65,6 +65,8 @@ const ALLOWED_SITES: Record<string, string> = {
     "hook cleanup: dynamic key = installs entry from a loop over Object.entries",
   "deploy/selfhost/reset-password.test.ts:61":
     "test env restore: dynamic key from const KEYS list mirrors the CLI's own env handling under test",
+  "deploy/selfhost/basic-auth.test.ts:60":
+    "test env restore: dynamic key from const KEYS list, moved here from reset-password.test.ts with the resolver under test",
 };
 
 interface Violation {

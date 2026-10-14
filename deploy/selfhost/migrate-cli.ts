@@ -7,6 +7,7 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { resolveEnvBasicAuth } from "./basic-auth";
 import { createD1Adapter } from "./d1-adapter";
 import { createRqliteDdlExecutor } from "./rqlite-client";
 import { applyMigrations } from "./migrate";
@@ -63,11 +64,8 @@ async function waitForRqlite(timeoutMs = 60_000): Promise<void> {
 
 async function main(): Promise<void> {
   await waitForRqlite();
-  const expectAuth = Boolean(process.env.RQLITE_USERNAME && process.env.RQLITE_PASSWORD);
-  await assertAuthReconciled(fetch, BASE_URL, expectAuth);
-  const basicAuth = process.env.RQLITE_USERNAME && process.env.RQLITE_PASSWORD
-    ? { username: process.env.RQLITE_USERNAME, password: process.env.RQLITE_PASSWORD }
-    : undefined;
+  const basicAuth = resolveEnvBasicAuth();
+  await assertAuthReconciled(fetch, BASE_URL, basicAuth !== undefined);
   const db = createD1Adapter({ baseUrl: BASE_URL, token: "", ...(basicAuth ? { basicAuth } : {}) });
   const ddlExecutor = createRqliteDdlExecutor({ baseUrl: BASE_URL, ...(basicAuth ? { basicAuth } : {}) });
   const result = await applyMigrations({
