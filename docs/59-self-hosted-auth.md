@@ -8,9 +8,9 @@
 
 **Tech Stack:** Next.js（App Router）+ Auth.js（NextAuth v5，JWT strategy）、Node `crypto.scryptSync`（密码哈希）、rqlite/D1（经 Plan 1 的 `D1_BASE_URL` → d1-http）、Vitest 5（`bun run test`）
 
-**Spec:** `docs/superpowers/specs/2026-10-10-self-hosted-deployment-design.md`（§4.4 认证、§4.5 CLI、§4.7 改动面）
+**Spec:** `docs/57-self-hosted-deployment-design.md`（§4.4 认证、§4.5 CLI、§4.7 改动面）
 
-**前置：** Plan 1（`docs/superpowers/plans/2026-10-10-self-hosted-storage-runtime.md`）必须已完成——本计划依赖 `D1_BASE_URL`（Plan 1 Task 1）、`deploy/selfhost/` 适配层与 compose（Plan 1 Task 2–10）、`vitest.config.ts` 的 `deploy/**` include（Plan 1 Task 2）。
+**前置：** Plan 1（`docs/58-self-hosted-storage-runtime.md`）必须已完成——本计划依赖 `D1_BASE_URL`（Plan 1 Task 1）、`deploy/selfhost/` 适配层与 compose（Plan 1 Task 2–10）、`vitest.config.ts` 的 `deploy/**` include（Plan 1 Task 2）。
 
 ## Global Constraints
 
@@ -731,7 +731,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `deploy/selfhost/README.md`（登录流程、`/setup`、密码重置、限速前提）
-- Modify: `docs/superpowers/specs/2026-10-10-self-hosted-deployment-design.md`（把 §4.4 从「Plan 2 规格」改为「已实现」）
+- Modify: `docs/57-self-hosted-deployment-design.md`（把 §4.4 从「Plan 2 规格」改为「已实现」）
 
 **Step 1: 全栈端到端**（真实 compose）：
 

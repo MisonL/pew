@@ -2,7 +2,7 @@
 
 **日期**：2026-10-13（v3，经四轮独立评审修订：v1 一轮 19 项 → v2；v2 二轮红队/可实施性/运维演练 → v3）
 **状态**：设计稿，待评审确认
-**前置**：Plan 1（`docs/superpowers/plans/2026-10-10-self-hosted-storage-runtime.md`）、Plan 2（`docs/superpowers/plans/2026-10-11-self-hosted-auth.md`）均已交付，分支 `feat/self-hosted-deployment`
+**前置**：Plan 1（`docs/58-self-hosted-storage-runtime.md`）、Plan 2（`docs/59-self-hosted-auth.md`）均已交付，分支 `feat/self-hosted-deployment`
 
 **v2 修订摘要**（评审发现 → 修订位置）：
 - `*` 通配用户权限被自己的 auth.json 击穿（匿名 join-read-only 复制全库）→ §3.1 权限收敛
@@ -41,7 +41,7 @@
 
 ## 1. 背景与目标
 
-Plan 1/2 交付后，规格（`docs/superpowers/specs/2026-10-10-self-hosted-deployment-design.md`）§7 风险表与 README「安全注意事项」中遗留三项已识别但未做的强化项：
+Plan 1/2 交付后，规格（`docs/57-self-hosted-deployment-design.md`）§7 风险表与 README「安全注意事项」中遗留三项已识别但未做的强化项：
 
 | # | 遗留项 | 现状 | 风险 |
 |---|---|---|---|

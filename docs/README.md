@@ -57,5 +57,10 @@
 | 46 | [46-omp-support.md](46-omp-support.md) | Historical Oh My Pi collector design | archived; collector retired |
 | 51 | [51-antigravity-support.md](51-antigravity-support.md) | Antigravity CLI SQLite/Protobuf accounting and source safety | implemented |
 | 52 | [52-jp2-migration.md](52-jp2-migration.md) | Railway to jp2 staging, acceptance and approval boundaries | in-progress |
+| 57 | [57-self-hosted-deployment-design.md](57-self-hosted-deployment-design.md) | Self-hosted deployment design (rqlite + Node workers replace D1/KV/Workers) | done |
+| 58 | [58-self-hosted-storage-runtime.md](58-self-hosted-storage-runtime.md) | Self-hosted Plan 1: storage & runtime implementation plan | done |
+| 59 | [59-self-hosted-auth.md](59-self-hosted-auth.md) | Self-hosted Plan 2: auth subsystem implementation plan | done |
+| 60 | [60-selfhosted-hardening-design.md](60-selfhosted-hardening-design.md) | Self-hosted Plan 3 hardening design (rqlite auth, login rate limit, proxy/TLS) | done |
+| 61 | [61-selfhosted-hardening.md](61-selfhosted-hardening.md) | Self-hosted Plan 3 hardening implementation plan | done |
 
 > **Note:** Number 14 is intentionally vacant (original doc 14 was renumbered to 12 to fill a gap). Numbers 19, 36, and 40 have multiple entries (`Nb`, `Nc`) as history-preserving disambiguators.
