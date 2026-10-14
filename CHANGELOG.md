@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+- Self-hosted deployment (`deploy/selfhost/`): rqlite replaces D1/KV, the two
+  worker handlers run on Node under compose, email+password auth with setup
+  wizard and invite codes, rqlite Basic-auth hardening, externalized login
+  rate limiting, proxy/TLS runbooks. See `deploy/selfhost/README.md` and docs 57–61.
+
+### Fixed
+- Tighten session maxAge to 7 days and reject placeholder AUTH_SECRET values
+  at web startup (session-forgery hardening)
+- Parse password-reset expiry SQL-side (UTC) instead of local-time Date parsing
+- Make the leaderboard-revision seed idempotent and tolerate crash-before-ledger
+  replay of seed DML in the selfhost migration runner
+
 ## v3.4.1
 
 ### Changed

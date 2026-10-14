@@ -203,13 +203,15 @@ export async function consumePasswordReset(
   newPassword: string
 ): Promise<{ userId: string } | null> {
   const { results } = await getD1Client().query<{ user_id: string; expires_at: string }>(
+    // Compare expiry SQL-side: expires_at is SQLite 'YYYY-MM-DD HH:MM:SS' (UTC,
+    // written via datetime('now', ...)). JS Date parses the space-separated
+    // form as LOCAL time, which would skew the window on any non-UTC host.
     `SELECT user_id, expires_at FROM password_resets
-     WHERE token = ? AND used_at IS NULL`,
+     WHERE token = ? AND used_at IS NULL AND expires_at > datetime('now')`,
     [token]
   );
   const row = results[0];
   if (!row) return null;
-  if (new Date(row.expires_at).getTime() < Date.now()) return null;
 
   const dbWrite = await getDbWrite();
   const now = new Date().toISOString();

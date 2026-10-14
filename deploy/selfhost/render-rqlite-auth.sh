@@ -16,12 +16,15 @@ OUT="${AUTH_OUT_FILE:-$(dirname "$0")/.rqlite-auth.json}"
 while :; do
   case "$OUT" in //*) OUT="${OUT#/}";; *) break;; esac
 done
-# Guard rm -rf against a nonsensical AUTH_OUT_FILE pointing at system paths —
-# the stale-file cleanup below must never nuke one. (/var is deliberately NOT
-# listed: macOS temp dirs live under /var/folders, and the default output is
-# a repo-relative path anyway.)
+# Guard rm -rf against a nonsensical AUTH_OUT_FILE: system paths as below,
+# and relative "." / ".." / trailing-dot components, which would let a stray
+# AUTH_OUT_FILE=.. (wrong cwd, typo) delete the parent tree. (/var is
+# deliberately NOT listed: macOS temp dirs live under /var/folders, and the
+# default output is a repo-relative path anyway.)
 case "$OUT" in /|/etc|/etc/*|/usr|/usr/*|/bin|/bin/*|/sbin|/sbin/*|/boot|/boot/*|/dev|/dev/*|/proc|/proc/*|/sys|/sys/*)
   echo "render-rqlite-auth: refusing dangerous AUTH_OUT_FILE: $OUT" >&2; exit 1;; esac
+case "$OUT" in .|..|*/.|*/..|*/|/.|/..)
+  echo "render-rqlite-auth: refusing relative or self-referential AUTH_OUT_FILE: $OUT" >&2; exit 1;; esac
 
 if [ -z "${RQLITE_USERNAME:-}" ] || [ -z "${RQLITE_PASSWORD:-}" ] || [ -z "${RQLITE_JOIN_PASSWORD:-}" ]; then
   rm -rf "$OUT"   # rm -rf also removes the directory docker may have created for a missing bind-mount

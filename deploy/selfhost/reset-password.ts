@@ -7,12 +7,12 @@
  * useless precisely when there is no reachable admin.
  *
  * Usage:
- *   RQLITE_URL=http://127.0.0.1:14001 bun deploy/selfhost/reset-password.ts \
- *     --email admin@corp.local --password 'new-secret-123'
+ *   RQLITE_URL=http://127.0.0.1:14001 RQLITE_RESET_PW='new-secret-123' bun deploy/selfhost/reset-password.ts \
+ *     --email admin@corp.local
  *
  * Or, inside the compose network:
- *   docker compose exec -e RQLITE_URL=http://rqlite:4001 d1-http \
- *     bun /app/deploy/selfhost/reset-password.ts --email ... --password ...
+ *   docker compose exec -e RQLITE_URL=http://rqlite:4001 -e RQLITE_RESET_PW=... d1-http \
+ *     bun /app/deploy/selfhost/reset-password.ts --email ...
  */
 
 import { randomBytes, scryptSync } from "node:crypto";
@@ -49,11 +49,27 @@ export function parseArg(argv: string[], flag: string): string | undefined {
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const email = parseArg(argv, "--email");
-  const password = parseArg(argv, "--password");
+  // Prefer the env/stdin channel over argv: a password on the command line
+  // is visible in host `ps` output for the life of the process and lands in
+  // shell history. --password stays accepted for backwards compatibility.
+  const password =
+    process.env.RQLITE_RESET_PW ??
+    (argv.includes("--password-stdin")
+      ? await new Promise<string>((resolve) => {
+          let data = "";
+          process.stdin.setEncoding("utf8");
+          process.stdin.on("data", (chunk) => {
+            data += chunk;
+          });
+          process.stdin.on("end", () => resolve(data.trimEnd()));
+        })
+      : parseArg(argv, "--password"));
   const baseUrl = process.env.RQLITE_URL ?? "http://rqlite:4001";
 
   if (!email || !password) {
-    console.error("usage: reset-password.ts --email <email> --password <new password>");
+    console.error(
+      "usage: reset-password.ts --email <email> (--password-stdin | RQLITE_RESET_PW=... | --password <new password>)",
+    );
     process.exit(1);
   }
   if (password.length < 8) {

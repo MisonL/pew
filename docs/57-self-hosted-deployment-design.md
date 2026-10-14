@@ -88,7 +88,7 @@ libSQL 因维护主体缺失与数据正确性缺陷被否决。
 | **多节点确定性** | `lib/auth-adapter.ts`、`app/api/admin/invites/route.ts` 等 | 省略时间列的 INSERT 补 `datetime('now')`（§4.1 专项五） |
 | **路由与 CLI** | `proxy.ts`、`cli/src/commands/login.ts`、`cli/src/config/manager.ts` | `/setup` 公开可达、`--host` 支持、凭据按 host 隔离 |
 
-**不改动的上游文件**（刻意规避）：`Dockerfile`、`bun.lock`、根 `package.json`、`.dockerignore`、`biome.json`、`cli.ts`、`packages/worker/**`、`packages/worker-read/**`。规避方式见 §4.7。
+**不改动的上游文件**（刻意规避）：`Dockerfile`、`bun.lock`、根 `package.json`、`.dockerignore`、`biome.json`、`cli.ts`、`packages/worker/src/**`、`packages/worker-read/src/**`。规避方式见 §4.7。（实现更正 2026-10-14：为把 selfhost 适配层纳入编译期类型校验，两个 worker 包的 `tsconfig*.json`/`package.json` typecheck 脚本有 composite 声明构建改动——`src/` 业务代码与 SQL 仍零改动，见 `scripts/parallel-typecheck.sh`。）
 
 **差异全部收敛在适配层。** 新增代码只存在于新目录 `deploy/selfhost/`，且**不注册为 workspace package**（避免改 `bun.lock` 与 `Dockerfile`）。
 
@@ -395,7 +395,7 @@ Credentials 无内建限速。在 `authorize()` 内复用现有 `lib/rate-limit.
 
 - 收紧 `session.maxAge`（见上）缩小窗口；
 - 在 JWT 中携带 `pwd_v`（`password_hash` 的短哈希前缀），`sessionCallback` 比对库内当前值，不一致即视为失效——代价是每次会话校验多一次读（可接受，读走 §4.1 的 `weak` 级别）。
-- 本期至少实现 `maxAge` 收紧；`pwd_v` 校验列入实现阶段（属增强，非阻塞）。
+- 本期至少实现 `maxAge` 收紧；`pwd_v` 校验列入实现阶段（属增强，非阻塞）。（实现 2026-10-15：两项均已实现——`session.maxAge = 7 天`（auth.ts session 配置），`pwd_v` 校验已落地。）
 
 **`email_verified` 语义**：Credentials 下无邮箱验证环节，该列保持 NULL。这不影响鉴权——`/setup` 首个管理员与邀请码注册的用户，其**授权来源是邀请码/首次认领**，而非邮箱验证。已核验代码中 `email_verified` 仅做映射（`auth-adapter.ts:23,43,102-104`），**无任何鉴权门禁依赖它**，故无需额外处理。
 
@@ -506,7 +506,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 - `packages/web/src/lib/credentials.ts`、`packages/web/src/app/api/auth/register/route.ts`、`packages/web/src/app/setup/`（注册向导）、`packages/web/src/app/api/admin/users/[...]/reset-password`（管理员发起重置，§4.4）
 - `deploy/selfhost/`：`d1-adapter`、`kv-adapter`、`node-runtime`、`d1-http`、`docker-compose.yml`、迁移执行器、`reset-password`（破窗脚本）
 
-**刻意不改的上游文件**：`packages/worker/**`、`packages/worker-read/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。（注意：`proxy.ts` 与 `lib/auth-adapter.ts` **不在**此列——两者已在改动清单内。）
+**刻意不改的上游文件**：`packages/worker/src/**`、`packages/worker-read/src/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。（注意：`proxy.ts` 与 `lib/auth-adapter.ts` **不在**此列——两者已在改动清单内。worker 包的 `tsconfig*.json`/`package.json` 例外见 §3.2 实现更正。）
 
 **适配层的运行方式**：`deploy/selfhost/*` 用 **bun 直接运行 TS 源码**，但**不能复用仓库根的 `Dockerfile`**——实测其 `runner` 阶段是 `FROM node:22-slim`，只 COPY `.next/standalone`/`.next/static`/`public`，`awk '/AS runner/,0' Dockerfile | grep -c bun` = **0**、含 `deploy|packages/worker` 的行数 = **0**：最终镜像内**既无 bun 也无适配层源码**。而 compose 的 migrate/d1-http/read/ingest/scheduler 全部 `image: pew-selfhost:local` + `bun run deploy/selfhost/*.ts`，会全部启动失败。因此**必须新建 `deploy/selfhost/Dockerfile`**（从 `oven/bun:1.4.0` 出发，COPY 根 `package.json`/锁文件/`tsconfig.json`/`packages/`/`deploy/`/`scripts/migrations/`，并 build `@pew/core` 的 `dist`）。这也是唯一新增的「非上游目录」文件，不计入 12 处上游改动。
 

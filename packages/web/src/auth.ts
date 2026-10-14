@@ -78,7 +78,11 @@ export async function authorizeCredentials(input: {
   if (process.env.LOGIN_RATE_LIMIT_BACKEND === "rqlite") {
     const limiter = await import("@/lib/rate-limit").then((m) => m.rqliteRateLimiter);
     const ipKey = `login:ip:${input.ip ? ipv6PrefixKey(input.ip) : "unknown"}`;
-    for (const key of [`login:email:${email}`, ipKey]) {
+    // Clamp the email-derived key: the email comes from the request body and
+    // the rqlite backend persists one row per attempt, so an unbounded key
+    // turns each login POST into a storage write of attacker-chosen size.
+    const emailKey = `login:email:${email.slice(0, 254)}`;
+    for (const key of [emailKey, ipKey]) {
       const result = await limiter.check(key, LOGIN_RATE_LIMIT);
       if (!result.allowed) return null;
     }
@@ -178,6 +182,22 @@ export async function sessionCallback({
 
 const useSecureCookies = shouldUseSecureCookies();
 
+// AUTH_SECRET signs every session JWT. A repo-visible placeholder (or empty
+// value) means any visitor who can reach the login page can forge a valid
+// session — the exact failure class requireSecret guards in the selfhost
+// adapters. Fail loudly on first auth use instead of silently trusting it.
+export const AUTH_SECRET_PLACEHOLDERS = new Set(["", "replace-me", "changeme", "secret"]);
+
+export function requireAuthSecret(): string {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret || AUTH_SECRET_PLACEHOLDERS.has(secret)) {
+    throw new Error(
+      "AUTH_SECRET is missing or still set to its placeholder value; refusing to sign sessions with a publicly-known key. Set a real random secret (e.g. `openssl rand -base64 32`) and restart.",
+    );
+  }
+  return secret;
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth(async (req) => {
   const dbRead = await getDbRead();
   const dbWrite = await getDbWrite();
@@ -206,6 +226,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth(async (req) => {
   );
 
   return {
+    secret: requireAuthSecret(),
     // Must be true for Railway reverse proxy: Auth.js needs to read
     // X-Forwarded-Host to match the session cookie domain. Setting this to
     // false breaks session validation (auth() returns null → 401 on /api/*).
@@ -215,6 +236,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth(async (req) => {
     providers,
     session: {
       strategy: "jwt",
+      // Spec §4.4 (docs/52): tighten from Auth.js's 30-day default so a
+      // stolen session cookie has a bounded life (pwd_v invalidation handles
+      // the password-change case; this bounds the copy-around case).
+      maxAge: 7 * 24 * 60 * 60,
     },
     // Cookie configuration for reverse proxy environments
     cookies: {
