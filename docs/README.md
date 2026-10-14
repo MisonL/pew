@@ -19,12 +19,12 @@
 | 11 | [11-phase2-run-log-and-notify-fix.md](11-phase2-run-log-and-notify-fix.md) | Phase 2: Run log + notify session sync fix | done |
 | 12 | [12-invite-code-system.md](12-invite-code-system.md) | Invite code gated registration system | done |
 | 13 | [13-phase3-unified-source-drivers.md](13-phase3-unified-source-drivers.md) | Phase 3+4: Unified source driver architecture | done |
-| 15 | [15-dashboard-viz-improvements.md](15-dashboard-viz-improvements.md) | Dashboard visualization improvements roadmap | in-progress |
+| 15 | [15-dashboard-viz-improvements.md](15-dashboard-viz-improvements.md) | Dashboard visualization improvements roadmap | implemented (core features shipped; roadmap doc kept as reference) |
 | 16 | [16-public-leaderboard-overhaul.md](16-public-leaderboard-overhaul.md) | Public leaderboard & profile overhaul | done |
 | 17 | [17-projects.md](17-projects.md) | Two-layer project management | retired |
-| 18 | [18-season-system.md](18-season-system.md) | 赛季系统 — team-based seasonal competition | in-progress |
+| 18 | [18-season-system.md](18-season-system.md) | 赛季系统 — team-based seasonal competition | done |
 | 19 | [19-vscode-copilot-token-estimation.md](19-vscode-copilot-token-estimation.md) | VSCode Copilot token tracking research | done |
-| 19b | [19-leaderboard-agents-models.md](19-leaderboard-agents-models.md) | Leaderboard: Agents & Models tabs | draft |
+| 19b | [19-leaderboard-agents-models.md](19-leaderboard-agents-models.md) | Leaderboard: Agents & Models tabs | implemented (agents + models pages live; doc header stale) |
 | 20 | [20-by-device.md](20-by-device.md) | Multi-device analytics & management pages | done |
 | 21 | [21-token-inflation-audit.md](21-token-inflation-audit.md) | Token inflation audit & fix plan | done |
 | 22 | [22-e2e-validation-record.md](22-e2e-validation-record.md) | E2E validation record (v1.6.0 inflation fixes) | done |
@@ -33,8 +33,8 @@
 | 25 | [25-leaderboard-armory-refactor.md](25-leaderboard-armory-refactor.md) | Leaderboard armory-style shared layout refactor | done |
 | 26 | [26-by-project.md](26-by-project.md) | By-project analytics page | retired |
 | 27 | [27-token-queue-full-reupload.md](27-token-queue-full-reupload.md) | Token queue dirty-key tracking (eliminate full re-uploads) | done |
-| 28 | [28-notify-concurrency-dirty-key-loss.md](28-notify-concurrency-dirty-key-loss.md) | Notify concurrency: dirty-key loss under unlocked parallel sync | in-progress |
-| 29 | [29-worker-read-migration.md](29-worker-read-migration.md) | Worker read migration — D1 REST API → Worker native binding | in-progress |
+| 28 | [28-notify-concurrency-dirty-key-loss.md](28-notify-concurrency-dirty-key-loss.md) | Notify concurrency: dirty-key loss under unlocked parallel sync | done |
+| 29 | [29-worker-read-migration.md](29-worker-read-migration.md) | Worker read migration — D1 REST API → Worker native binding | done (high-value migrations landed; low-complexity call sites stay raw SQL) |
 | 30 | [30-quality-system-upgrade.md](30-quality-system-upgrade.md) | Quality system upgrade — L1+L2+L3+G1+G2 | done |
 | 31 | [31-d1-test-isolation.md](31-d1-test-isolation.md) | D1 test isolation — quality system → Tier S | done |
 | 32 | [32-proxy-token-gap-investigation.md](32-proxy-token-gap-investigation.md) | Proxy token gap investigation | reference |
@@ -43,17 +43,17 @@
 | 35 | [35-hermes-support.md](35-hermes-support.md) | Hermes Agent token tracking (SQLite session-level diff) | done |
 | 36 | [36-kosmos-support-design.md](36-kosmos-support-design.md) | Historical Kosmos / PM Studio collector design | archived; collector retired |
 | 36b | [36-organization-system.md](36-organization-system.md) | Organization entity for interest-based grouping | done |
-| 36c | [36-github-actions-ci.md](36-github-actions-ci.md) | GitHub Actions CI — Phase 1 (no secrets) | in-progress |
+| 36c | [36-github-actions-ci.md](36-github-actions-ci.md) | GitHub Actions CI — Phase 1 (no secrets) | done (Phase 2 gates live in ci.yml) |
 | 37 | [37-worker-read-security-hardening.md](37-worker-read-security-hardening.md) | Worker-read security hardening | reference |
 | 38 | [38-cloudflare-kv-cache.md](38-cloudflare-kv-cache.md) | Edge caching for worker-read via Cloudflare KV | design |
 | 39 | [39-badge-system.md](39-badge-system.md) | Admin-assigned leaderboard badges (7-day spotlight) | retired |
 | 40 | [40-dynamic-model-pricing.md](40-dynamic-model-pricing.md) | Dynamic model pricing (shipped) + [c1–c6 subdocs](40-dynamic-model-pricing/) | done |
 | 40b | [40-l3-bdd-refactor.md](40-l3-bdd-refactor.md) | L3 → BDD test refactor plan | reference |
-| 41 | [41-code-hygiene-metrics.md](41-code-hygiene-metrics.md) | Code hygiene metrics (G1–G10) baseline + cleanup roadmap | in-progress |
+| 41 | [41-code-hygiene-metrics.md](41-code-hygiene-metrics.md) | Code hygiene metrics (G1–G10) baseline + cleanup roadmap | closed 2026-07-08 |
 | 42 | [42-grok-support.md](42-grok-support.md) | Grok CLI token support — `~/.grok/logs/unified.jsonl` parser | design |
 | 43 | [43-zcode-support.md](43-zcode-support.md) | Historical ZCode CLI collector design | archived; collector retired |
 | 44 | [44-biome-migration-ts7.md](44-biome-migration-ts7.md) | Biome migration + TypeScript 7 stable upgrade | done |
-| 45 | [45-codex-notifier-cycle-containment.md](45-codex-notifier-cycle-containment.md) | Codex notifier forwarding-cycle containment | proposed |
+| 45 | [45-codex-notifier-cycle-containment.md](45-codex-notifier-cycle-containment.md) | Codex notifier forwarding-cycle containment | implemented 2026-07-15 |
 | 46 | [46-omp-support.md](46-omp-support.md) | Historical Oh My Pi collector design | archived; collector retired |
 | 51 | [51-antigravity-support.md](51-antigravity-support.md) | Antigravity CLI SQLite/Protobuf accounting and source safety | implemented |
 | 52 | [52-self-hosted-deployment-design.md](52-self-hosted-deployment-design.md) | Self-hosted deployment design (rqlite + Node workers replace D1/KV/Workers) | done |
