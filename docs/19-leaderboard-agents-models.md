@@ -1,6 +1,6 @@
 # 19 — Leaderboard: Agents & Models Tabs
 
-> Status: **Draft** — pending review before implementation.
+> Status: **Implemented** — the Agents and Models leaderboard pages shipped (routes /agents and /leaderboard/models with BDD coverage); this header predates delivery.
 
 ## 1 Overview
 
