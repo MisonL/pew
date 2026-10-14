@@ -303,7 +303,7 @@ CREATE TABLE kv_cache (
 > JWT `pwd_v` 会话失效）、`lib/admin.ts` + 两处调用点（库内 `is_admin`）、
 > `proxy.ts`（`/setup` 公开）、`app/api/admin/users/[userId]/reset-password` +
 > `app/api/auth/reset-password` + `deploy/selfhost/reset-password.ts`（三重重置路径）。
-> 实现细节见 `docs/superpowers/plans/2026-10-11-self-hosted-auth.md` 与
+> 实现细节见 `docs/54-self-hosted-auth.md` 与
 > `deploy/selfhost/README.md` 的「登录与初始化」。
 >
 > 与本节规格的差异（实现期定稿）：密码重置表名为 `password_resets`（规格写作

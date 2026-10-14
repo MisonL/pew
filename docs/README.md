@@ -56,5 +56,10 @@
 | 45 | [45-codex-notifier-cycle-containment.md](45-codex-notifier-cycle-containment.md) | Codex notifier forwarding-cycle containment | proposed |
 | 46 | [46-omp-support.md](46-omp-support.md) | Historical Oh My Pi collector design | archived; collector retired |
 | 51 | [51-antigravity-support.md](51-antigravity-support.md) | Antigravity CLI SQLite/Protobuf accounting and source safety | implemented |
+| 52 | [52-self-hosted-deployment-design.md](52-self-hosted-deployment-design.md) | Self-hosted deployment design (rqlite + Node workers replace D1/KV/Workers) | done |
+| 53 | [53-self-hosted-storage-runtime.md](53-self-hosted-storage-runtime.md) | Self-hosted Plan 1: storage & runtime implementation plan | done |
+| 54 | [54-self-hosted-auth.md](54-self-hosted-auth.md) | Self-hosted Plan 2: auth subsystem implementation plan | done |
+| 55 | [55-selfhosted-hardening-design.md](55-selfhosted-hardening-design.md) | Self-hosted Plan 3 hardening design (rqlite auth, login rate limit, proxy/TLS) | done |
+| 56 | [56-selfhosted-hardening.md](56-selfhosted-hardening.md) | Self-hosted Plan 3 hardening implementation plan | done |
 
 > **Note:** Number 14 is intentionally vacant (original doc 14 was renumbered to 12 to fill a gap). Numbers 19, 36, and 40 have multiple entries (`Nb`, `Nc`) as history-preserving disambiguators.

@@ -8,7 +8,7 @@
 
 **Tech Stack:** rqlite 10.5.3、Bun、Next.js/Auth.js（v5）、docker compose（`!override` 需 ≥ v2.24.4）、vitest（deploy/selfhost 与 packages/web 两套）。
 
-**Spec:** `docs/superpowers/specs/2026-10-13-selfhosted-hardening-design.md`（v3，f84e5f45）——本计划从它论证，执行者须同时读两者。
+**Spec:** `docs/55-selfhosted-hardening-design.md`（v3，f84e5f45）——本计划从它论证，执行者须同时读两者。
 
 ## Global Constraints
 

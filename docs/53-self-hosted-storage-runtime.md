@@ -8,7 +8,7 @@
 
 **Tech Stack:** Bun（运行适配层 TS 源码；适配层镜像自建，见 Task 10）、Node 22（`node:http`、Web 标准 Request/Response；web 容器为 Next standalone）、rqlite v10.5.3+、Docker Compose、Vitest 5（`bun run test`）
 
-**Spec:** `docs/superpowers/specs/2026-10-10-self-hosted-deployment-design.md`
+**Spec:** `docs/52-self-hosted-deployment-design.md`
 
 ## Global Constraints
 
