@@ -120,7 +120,6 @@ services:
     entrypoint: ["bun", "run", "deploy/selfhost/migrate-cli.ts"]
     environment:
       RQLITE_URL: http://rqlite:4001
-      CF_D1_API_TOKEN: ${CF_D1_API_TOKEN}
       RQLITE_USERNAME: ${RQLITE_USERNAME:-}
       RQLITE_PASSWORD: ${RQLITE_PASSWORD:-}
     depends_on:

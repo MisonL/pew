@@ -152,11 +152,17 @@ export function registerShutdownSignals(close: () => Promise<void>): void {
     console.log(`received ${signal}, shutting down gracefully`);
     const forced = setTimeout(() => {
       console.error("graceful shutdown timed out; forcing exit");
-      process.exit(0);
+      process.exit(1);
     }, 10_000);
     forced.unref();
     close()
-      .catch((error: unknown) => console.error("shutdown error", error))
+      .catch((error: unknown) => {
+        // A failed drain (port still bound, in-flight write lost) must not
+        // report success to the supervisor: restart policies key off the
+        // exit code.
+        console.error("shutdown error", error);
+        process.exit(1);
+      })
       .finally(() => process.exit(0));
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));

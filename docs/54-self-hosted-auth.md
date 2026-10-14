@@ -1,6 +1,5 @@
 # pew 私有化部署 — Plan 2：认证子系统 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **状态：已交付（任务全部实现并验证）。**Goal:** 让自建部署（Plan 1 的数据层与运行时）具备**可用的浏览器登录**——邮箱 + 密码（Credentials）、首个用户即管理员的 `/setup` 引导、库内 `is_admin` 判定、密码重置路径、内网 http 的 cookie 关闭分支，以及 CLI 指向自建 host。Plan 1 交付「数据层可用」，Plan 2 交付「浏览器可登录的完整产品」。
 

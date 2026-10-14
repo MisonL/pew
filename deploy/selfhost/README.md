@@ -14,6 +14,11 @@ docker compose up -d --build
 
 首次启动后访问 `http://<host>:7020`。
 
+> **重要**：web 容器启动时会校验 `AUTH_SECRET`——缺失或仍是 `replace-me` 占位符会拒绝启动
+> （会话 JWT 用公开已知密钥签名等于认证 bypass）。若第一次 `up` 在填好三个 rqlite 密钥之前执行，
+> 后续启用鉴权时必须 `docker compose up -d --build --force-recreate rqlite`（或整个栈）——
+> bind-mount 路径不变时 compose 不会重建容器，rqlite 会继续以无鉴权运行。
+
 ### 启用 rqlite 鉴权（可选，固定序列）
 
 默认无鉴权（上文 Quickstart 即无鉴权路径）。要启用时在 `.env` 填三个变量：
@@ -38,8 +43,10 @@ fallback）。
 2. **再启动**：
 
    ```bash
-   docker compose up -d --build
+   docker compose up -d --build --force-recreate
    ```
+   （`--force-recreate` 不可省：如果此前有一次无鉴权的 `up`，bind-mount 路径未变时 compose
+   不会重建 rqlite 容器，`-auth` 就不会生效。）
 
 3. **自检**（rqlite 未发布宿主端口，在容器内探测；auth.json 的 `*` 条目允许匿名读
    `/status`，所以匿名探测就能看出鉴权状态）：
@@ -48,7 +55,8 @@ fallback）。
    docker compose exec rqlite wget -qO- http://localhost:4001/status | grep -o '"auth":"[a-z]*"'  # single
    # cluster: 把 rqlite 换成 rqlite-1
    # Expected: "auth":"enabled"
-   # 若显示 "auth":"disabled"：凭据已配置但服务端以无鉴权启动 —— 立即停下按上面序列重做
+   # 若显示 "auth":"disabled"：凭据已配置但服务端以无鉴权启动 —— 立即停下，
+   # 用上面的 --force-recreate 序列重做（普通 up -d 不会重建容器，重试无效）
    ```
 
    带凭据复核（应 200 且 `enabled`）：`docker compose exec d1-http bun -e
@@ -78,10 +86,13 @@ migrate 启动时的对账自检会显式报错（「credentials configured but 
      -e RQLITE_URL=http://rqlite:4001 \
      -e RQLITE_USERNAME="$RQLITE_USERNAME" \
      -e RQLITE_PASSWORD="$RQLITE_PASSWORD" \
+     -e RQLITE_RESET_PW='new-secret-123' \
      d1-http \
-     bun /app/deploy/selfhost/reset-password.ts \
-       --email admin@corp.local --password 'new-secret-123'
+     bun /app/deploy/selfhost/reset-password.ts --email admin@corp.local
    ```
+
+   新密码经 `RQLITE_RESET_PW` 环境变量传入（也支持 `--password-stdin` 管道输入）；
+   **不要**用 `--password` 命令行参数——它会留在宿主 `ps`/shell history 里。
 
    （脚本在 `pew-selfhost:local` 镜像内的路径是 `/app/deploy/selfhost/reset-password.ts`，
    `d1-http` 与 rqlite 同网络且 `RQLITE_URL` 默认就指 `http://rqlite:4001`。）
@@ -207,7 +218,7 @@ server {
 
     location / {
         proxy_pass http://127.0.0.1:7020;
-        proxy_set_header Host $host;                        # 默认 $proxy_host 会让 Auth.js 的 trustHost origin 校验失败、登录全挂
+        proxy_set_header Host $host;                        # 保证生成的 URL/redirect 正确；真实 origin 由 NEXTAUTH_URL (TRUSTED_ORIGIN) 锚定，误配 Host 不会破登录但会生成错误链接
         proxy_set_header X-Forwarded-For $remote_addr;      # 覆写，不是 $proxy_add_x_forwarded_for（追加，保留攻击者伪造段）
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Real-IP $remote_addr;            # 不覆写则攻击者伪造的 X-Real-IP 穿透到 web，IP 限速键可伪造
@@ -269,9 +280,14 @@ server {
   或 `docker inspect` 读出（同宿主 RCE 即全库凭据），这是已接受并如实注明的结构性弱点；
   网络内的 migrate 对账自检只防配置错误，不做安全边界。
 - **`CF_D1_API_TOKEN` 只保护 web → d1-http 这一跳**。read/ingest/scheduler 直连 rqlite，不需要
-  这个 token，因此 compose **只把它下发给 `migrate`、`d1-http`、`web`**（`d1-http` 是校验方、
-  `web` 是客户端、`migrate` 建表初始化）；`read`/`ingest`/`scheduler` 的 `environment` 不含它，
-  收窄了密钥在容器内的暴露面。
+  这个 token，因此 compose **只把它下发给 `d1-http`、`web`**（`d1-http` 是校验方、`web` 是
+  客户端；migrate 只做 DDL，凭据走 `RQLITE_USERNAME`/`RQLITE_PASSWORD`）；`read`/`ingest`/
+  `scheduler`/`migrate` 的 `environment` 不含它，收窄了密钥在容器内的暴露面。
+- **web 启动时校验 `AUTH_SECRET`**：缺失或仍是 `.env.example` 的 `replace-me` 占位符会在首次
+  使用认证时抛错拒绝签发会话——用仓库公开的密钥签 JWT 等于允许任何访问者伪造会话。
+- **rqlite 的 SQL 错误文本会透传到 web 客户端**（如 `no such table: ...`），可能泄漏表名/列名。
+  这是已接受的信息泄漏面：d1-http 只在 compose 网络内可达、调用方只有 web 自身的参数化查询，
+  构造出 SQL 错误的输入受 web 路由校验约束。如需收窄，在 d1-http 的错误封套处做通用化映射。
 - 真实密钥只写在 `deploy/selfhost/.env`：`.gitignore` 的 `.env` 规则使其**不入库**；`.dockerignore`
   用 `**/.env` 匹配任意层级，使其**不进镜像**（注意必须是 `**/.env`——裸 `.env` 只排除构建上下文
   根目录，`deploy/selfhost/.env` 会被 `COPY deploy deploy` 带进 `pew-selfhost:local` 的最终层）。
@@ -301,13 +317,11 @@ docker compose exec -T \
   bun /app/deploy/selfhost/verify-migrations.ts --base-url http://rqlite:4001
 ```
 
-> **已知类型检查缺口**：`deploy/selfhost/` 不在 `bun run typecheck` 范围内（它只覆盖
-> `packages/*` 与 e2e 清单），因此适配层与上游 `D1Database`/`KVNamespace` 的类型兼容性没有编译期
-> 校验。原因：`deploy/` 通过**源码**导入两个 worker，而 worker 的 `@cloudflare/workers-types`
-> 是 per-package 安装、不从仓库根解析；用一份独立 tsconfig 拉入 worker 源码会与 worker 自身的
-> workers-types 实例冲突（`KVNamespace` 双重身份，5 处假报错）。运行时由 75 个 vitest 用例覆盖。
-> 若要补齐，正确做法是给 worker 包加 `composite: true` 并输出声明、用 project references——但那要改
-> 上游 `tsconfig`，超出 Plan 1 的「只改两个上游文件」约束，列为后续项。
+> **类型检查**：`deploy/selfhost/` 由 `scripts/parallel-typecheck.sh` 的
+> `tsc -b deploy/selfhost/tsconfig.json` lane 编译期校验（project references 指向 core 与两个
+> worker 的 composite 声明构建 `tsconfig.build.json`），适配层与上游 `D1Database`/`KVNamespace`
+> 的类型兼容性由此获得保证；入口是 `bun run lint:typecheck`（`bun run typecheck` 本身只覆盖
+> `packages/*` 与 e2e 清单，不含 deploy/）。运行时另由 113 个 vitest 用例覆盖。
 
 
 ## 备份
@@ -327,26 +341,33 @@ HTTP 方式需在容器内执行。
 ```bash
 set -a; . ./.env; set +a   # 备份小节命令读 $RQLITE_USERNAME/$RQLITE_PASSWORD，先导出
 
-# 单节点（REPL 点命令通道；鉴权开启时必须带 -u，匿名 .backup 会 401）
+# 单节点（REPL 点命令通道；鉴权开启时必须带 -u，匿名 .backup 会 401；无鉴权部署 RQLITE_AUTH 为空串、直接省略 -u）
+RQLITE_AUTH=$RQLITE_USERNAME:$RQLITE_PASSWORD
+[ -n "$RQLITE_USERNAME" ] || RQLITE_AUTH=""
 printf '.backup /rqlite/file/backup.db\n.exit\n' | \
-  docker compose exec -T rqlite rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost
+  docker compose exec -T rqlite rqlite ${RQLITE_AUTH:+-u "$RQLITE_AUTH"} -H localhost
 docker compose cp rqlite:/rqlite/file/backup.db "./backup-$(date +%F).db"
 [ -s "./backup-$(date +%F).db" ] || echo "备份为空，失败！" >&2
 
 # 集群模式（对 leader 节点执行即可，默认 rqlite-1；.backup 读本地文件但产物经 Raft 复制）
 printf '.backup /rqlite/file/backup.db\n.exit\n' | \
-  docker compose exec -T rqlite-1 rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost
+  docker compose exec -T rqlite-1 rqlite ${RQLITE_AUTH:+-u "$RQLITE_AUTH"} -H localhost
 docker compose cp rqlite-1:/rqlite/file/backup.db "./backup-$(date +%F).db"
 [ -s "./backup-$(date +%F).db" ] || echo "备份为空，失败！" >&2
 ```
 
 产物是标准 SQLite 文件（已实测：`SQLite format 3` 魔数、含全部表与 `kv_cache`）。
 
+**`.env` 与 `.rqlite-auth.json` 不在 rqlite 备份产物里**：数据库备份恢复不了鉴权。把
+`deploy/selfhost/.env` 与（如存在）`.rqlite-auth.json` 复制到与 `.db` 备份相同的位置——
+灾难恢复 runbook 的凭据重建（§恢复 case ②）依赖它们；丢了它们意味着重走完整的鉴权渲染序列。
+同时建议备份命令以 `umask 077` 执行：`.db` 内含全部 `password_hash`。
+
 **恢复（必须用 `.restore` 点命令，不能换文件）**：实测直接替换数据文件无效——实际数据文件在
 `/rqlite/file/data/db.sqlite`（不是 `pew.db`），且 rqlite 启动时会用 `raft.db` 重放日志，
 备份后的写入会「复活」；清空整个卷再放文件则走 bootstrap 忽略预置文件。`.restore` 走 REPL、
 经 Raft 正常应用（已实测：恢复后备份后的写入行消失，只剩备份时点的数据）。鉴权开启时同样
-带 `-u "$RQLITE_USERNAME:$RQLITE_PASSWORD"`。
+带 `-u "$RQLITE_AUTH"`（无鉴权部署省略，同上）。
 
 ```bash
 set -a; . ./.env; set +a   # 恢复命令带 -u，需先导出 .env 凭据
@@ -357,7 +378,7 @@ docker compose cp "./backup-2026-10-11.db" rqlite:/rqlite/file/restore.db
 # 3. 用点命令恢复（经 Raft 应用，单节点/集群同一路径；鉴权开启时必须带 -u user:pass，
 #    集群对 leader（rqlite-1）执行即可，.restore 经 Raft 复制到其余节点）
 printf '.restore /rqlite/file/restore.db\n.exit\n' | \
-  docker compose exec -T rqlite rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost
+  docker compose exec -T rqlite rqlite ${RQLITE_AUTH:+-u "$RQLITE_AUTH"} -H localhost
 # Expected: Database restored successfully
 # 4. 起应用并验证
 docker compose start d1-http read ingest scheduler web
@@ -378,6 +399,10 @@ docker compose up -d
 ```
 
 - 迁移在 `migrate` 服务启动时自动跑（`_migrations` 账本按文件名幂等，已跑过的不会重跑）。
+- **migrate 失败的排障入口**：migrate 非零退出时 `read`/`ingest`/`scheduler`/`web` 都不会启动
+  （`service_completed_successfully` 门），这是刻意的 fail-closed。修好原因后重跑
+  `docker compose up -d --build migrate` 即可——依赖方在 migrate 退出 0 之前保持停止。
+  瞬态错误（如慢启动的 60s 就绪超时）直接重跑即可，已应用的迁移会被账本跳过。
 - **rqlite 版本升级前**先做一次备份（见上），并确认新版本的 auth.json 格式兼容
   （凭据条目数组格式自 8.x 起稳定，跨大版本升级后先在测试实例验证一遍
   「自检三步」再动生产）。
@@ -465,7 +490,10 @@ Plan 1 交付「数据层与运行时可用、API 可经 CLI/密钥调用」。P
 隔离凭据）。新增文件（`lib/credentials.ts`、`app/setup/`、`app/api/auth/register|reset-password|
 login-options`、`api/admin/users/[userId]/reset-password` 等）不与上游冲突。
 
-`packages/worker/**` 与 `packages/worker-read/**` 完全未改。
+`packages/worker` 与 `packages/worker-read` 的 **`src/` 业务代码与 SQL 一行未改**；为把
+selfhost 适配层纳入编译期类型校验，两个包的 `tsconfig.json`/`package.json` 与新增的
+`tsconfig.build.json` 有 composite 声明构建配置（不影响 Cloudflare 部署路径，见
+`scripts/parallel-typecheck.sh` 的 selfhost lane）。
 
 ```bash
 git fetch upstream main

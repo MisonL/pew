@@ -27,8 +27,12 @@ const nodeServer = createServer((req, res) => {
       // A d1-http request is a single SQL batch; 8MB is far beyond any real
       // query and stops a token-holder from OOMing the 512m container.
       if (total > 8 * 1024 * 1024) {
+        // Close the connection: the unread remainder of the aborted body
+        // would otherwise be re-parsed as the next keep-alive request.
+        res.setHeader("Connection", "close");
         res.writeHead(413, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: false, errors: [{ message: "Request body too large" }] }));
+        req.destroy();
         return;
       }
       chunks.push(buf);
@@ -69,7 +73,10 @@ const nodeServer = createServer((req, res) => {
     }
 
     const response = await server.handle(request);
-    res.writeHead(response.status, Object.fromEntries(response.headers));
+    // appendHeader, not Object.fromEntries: Headers yields repeated
+    // Set-Cookie entries separately and a plain object keeps only the last.
+    res.writeHead(response.status);
+    for (const [name, value] of response.headers) res.appendHeader(name, value);
     res.end(Buffer.from(await response.arrayBuffer()));
   })().catch((error: unknown) => {
     console.error("d1-http request failed", error);

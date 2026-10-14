@@ -89,6 +89,8 @@ bun run --filter '@nocoo/pew' build
 
 根 `build` 只构建 core 和 Web，CLI 需单独构建。Web 使用 Next.js standalone 产物，容器入口见 [Dockerfile](Dockerfile)。CLI 的正式与开发主机目前在 [login.ts](packages/cli/src/commands/login.ts) 中固定，自部署时需要调整对应地址。
 
+除默认的 Cloudflare 托管路径外，pew 也支持**完全本地的私有化部署**（rqlite + Node 容器，零 Cloudflare 依赖）：见 [deploy/selfhost/README.md](deploy/selfhost/README.md) 与设计文档 `docs/52`–`docs/56`。
+
 | 目录 | 内容 |
 | --- | --- |
 | `packages/core` | 共享 TypeScript 类型 |

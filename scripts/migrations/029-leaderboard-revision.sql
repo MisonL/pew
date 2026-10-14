@@ -2,7 +2,7 @@ CREATE TABLE leaderboard_revision (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   revision TEXT NOT NULL
 );
-INSERT INTO leaderboard_revision VALUES (1, lower(hex(randomblob(16))));
+INSERT OR IGNORE INTO leaderboard_revision VALUES (1, lower(hex(randomblob(16))));
 
 CREATE TRIGGER leaderboard_user_insert AFTER INSERT ON users BEGIN
   UPDATE leaderboard_revision SET revision = lower(hex(randomblob(16))) WHERE id = 1;

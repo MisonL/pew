@@ -51,6 +51,12 @@ function makeFakeDb() {
           if (!row || !live(row, stamp)) return null;
           return { value: row.value } as unknown as T;
         },
+        strong: async <T,>(): Promise<D1Result<T>> => {
+          const [key, stamp] = params as [string, string];
+          const row = rows.get(key);
+          if (!row || !live(row, stamp)) return { success: true, results: [], meta: { changes: 0, duration: 0 } };
+          return { success: true, results: [{ value: row.value } as unknown as T], meta: { changes: 0, duration: 0 } };
+        },
         run: async (): Promise<D1Result> => {
           if (sql.startsWith("INSERT INTO kv_cache")) {
             const [key, value, expiresAt] = params as [string, string, string | null];
@@ -63,7 +69,6 @@ function makeFakeDb() {
           }
           return { success: true, results: [], meta: { changes: 0, duration: 0 } };
         },
-        strong: async <T,>(): Promise<D1Result<T>> => ({ success: true, results: [] as T[], meta: { changes: 0, duration: 0 } }),
       };
       return stmt;
     },

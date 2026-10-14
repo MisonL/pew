@@ -25,7 +25,7 @@ const SQUASHED = new Set(["004-is-public.sql", "006-device-id.sql", "006c-team-l
  * Measured against rqlite 10.5.3 after applying every migration.
  *
  * `upstreamTables` counts tables the upstream migrations create; the plan
- * adds five more (_migrations, kv_cache, leaderboard_revision_seq from Plan 1;
+ * adds six more (_migrations, kv_cache, leaderboard_revision_seq from Plan 1;
  * instance_setup, password_resets from Plan 2 / migration 032; rate_limit_hits
  * from Plan 3 / migration 033).
  *

@@ -34,6 +34,8 @@ import {
   sessionCallback,
   authorizeCredentials,
   LOGIN_RATE_LIMIT,
+  requireAuthSecret,
+  AUTH_SECRET_PLACEHOLDERS,
 } from "@/auth";
 import { inMemoryRateLimiter } from "@/lib/rate-limit";
 import { findCredentialUser, verifyPassword } from "@/lib/credentials";
@@ -197,6 +199,18 @@ describe("login limiter backend switch", () => {
     }
   });
 
+  it("clamps the email-derived key so a huge request-body email cannot inflate rqlite rows", async () => {
+    process.env.LOGIN_RATE_LIMIT_BACKEND = "rqlite";
+    const { rqliteRateLimiter } = await import("@/lib/rate-limit");
+    const spy = vi.spyOn(rqliteRateLimiter, "check").mockResolvedValue({ allowed: true, current: 1, limit: 5, retryAfter: 0 });
+    mockFindCredentialUser.mockResolvedValue(null);
+    const huge = `${"x".repeat(5000)}@attacker.example`;
+    await authorizeCredentials({ email: huge, password: "x", ip: "203.0.113.9" });
+    const keys = spy.mock.calls.map((c) => c[0]) as string[];
+    const emailKey = keys.find((k) => k.startsWith("login:email:"));
+    expect(emailKey?.length).toBeLessThanOrEqual("login:email:".length + 254);
+  });
+
   it("anchors the login limiter numbers (guards against local-copy drift)", async () => {
     // Both the in-memory and rqlite paths must consume these exact values; a
     // change to the 10/60s policy should be a conscious edit of auth.ts.
@@ -248,6 +262,35 @@ describe("jwtCallback", () => {
       user: { id: "u1", pwd_v: "VERSION1" } as unknown as User,
     });
     expect(result.pwd_v).toBe("VERSION1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// requireAuthSecret
+// ---------------------------------------------------------------------------
+
+describe("requireAuthSecret", () => {
+  const saved = process.env.AUTH_SECRET;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.AUTH_SECRET;
+    else process.env.AUTH_SECRET = saved;
+  });
+
+  it("rejects a missing secret", () => {
+    delete process.env.AUTH_SECRET;
+    expect(() => requireAuthSecret()).toThrow(/missing or still set to its placeholder/);
+  });
+
+  it("rejects every placeholder value", () => {
+    for (const placeholder of AUTH_SECRET_PLACEHOLDERS) {
+      process.env.AUTH_SECRET = placeholder;
+      expect(() => requireAuthSecret()).toThrow(/placeholder/);
+    }
+  });
+
+  it("accepts a real secret", () => {
+    process.env.AUTH_SECRET = "a-real-random-secret-value-with-entropy";
+    expect(requireAuthSecret()).toBe("a-real-random-secret-value-with-entropy");
   });
 });
 

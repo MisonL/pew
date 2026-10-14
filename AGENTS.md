@@ -5,8 +5,8 @@ Bun-workspaces monorepo tracking token usage from local AI coding tools. Human o
 - `packages/core` — shared TypeScript types (`@pew/core`, private, zero runtime deps)
 - `packages/cli` — CLI tool (`@nocoo/pew`, published to npm, citty + consola + picocolors)
 - `packages/web` — SaaS dashboard (`@pew/web`, private, Next.js 16 + App Router)
-- `packages/worker` — Cloudflare Worker for D1 ingest writes (`@pew/worker`, private)
-- `packages/worker-read` — Cloudflare Worker for D1 read queries (`@pew/worker-read`, private)
+- `packages/worker` — D1 ingest-write handler (`@pew/worker`, private): runs as a Cloudflare Worker in the hosted deployment, and as a Node service over rqlite via `deploy/selfhost/` (docs 52–56)
+- `packages/worker-read` — D1 read-query handler (`@pew/worker-read`, private): same dual runtime
 
 Supported tools (9): Antigravity CLI, Claude Code, Codex, GitHub Copilot CLI, Grok, Hermes, OpenCode, OpenClaw, Pi.
 
@@ -113,7 +113,7 @@ npm publication of `@nocoo/pew` follows the full procedure; it is an authorized 
 7. Verify with `npx @nocoo/pew@latest --help`.
 8. Watch CI: after push, check `gh run list --limit 5` within a few minutes; local pre-push does not catch every failure mode (workspace links, deploy pipeline).
 
-Web deploys go through `git push` (Railway auto-deploy); never `railway up`, which bypasses the git-based gates. Any Worker code or schema change requires `wrangler deploy` plus a real verification request before the feature counts as complete. See [Retrospective.md](Retrospective.md) for the shipped-bug narratives behind these rules.
+Web deploys go through `git push` (Railway auto-deploy); never `railway up`, which bypasses the git-based gates. Any Worker code or schema change requires `wrangler deploy` plus a real verification request before the feature counts as complete — this applies to the **hosted Cloudflare path only**. The self-hosted alternative (`deploy/selfhost/`, docs 52–56) applies schema changes through `deploy/selfhost/migrate.ts` against rqlite and runs the same worker handlers on Node under compose; there, `wrangler deploy` is not part of the loop, and worker `src/` must stay runtime-agnostic. See [Retrospective.md](Retrospective.md) for the shipped-bug narratives behind these rules.
 
 ## Ponytail audit
 

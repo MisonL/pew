@@ -96,11 +96,13 @@ describe("password reset", () => {
   });
 
   it("consumePasswordReset rejects an expired token", async () => {
-    mockQuery.mockResolvedValueOnce({
-      results: [{ user_id: "u1", expires_at: new Date(Date.now() - 60_000).toISOString() }],
-    });
+    // Expiry is compared SQL-side (expires_at > datetime('now')); a token
+    // past its window is filtered out of the WHERE and returns no row.
+    mockQuery.mockResolvedValueOnce({ results: [] });
     expect(await consumePasswordReset("t", "newpassword")).toBeNull();
     expect(dbWrite.batch).not.toHaveBeenCalled();
+    const call = mockQuery.mock.calls[0];
+    expect(String(call?.[0])).toContain("expires_at > datetime('now')");
   });
 
   it("consumePasswordReset sets the new hash and marks the token used", async () => {

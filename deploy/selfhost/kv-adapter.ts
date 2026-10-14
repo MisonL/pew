@@ -50,7 +50,12 @@ export function createKvAdapter(options: KvAdapterOptions): KVLike {
   return {
     async get(key: string, type: "text" | "json" = "text"): Promise<unknown> {
       const stamp = new Date(now()).toISOString();
-      const row = await db.prepare(SELECT_SQL).bind(key, stamp).first<{ value: string }>();
+      // strong read: cache.invalidate()/clear() must be visible to the next
+      // get() even when a cluster follower lags (read-after-write contract
+      // the worker's cache layer assumes; the migration ledger documents the
+      // extra leader round-trip as accepted for exactly this path).
+      const result = await db.prepare(SELECT_SQL).bind(key, stamp).strong<{ value: string }>();
+      const row = result.results[0] ?? null;
       if (!row) return null;
       if (type === "json") {
         // Mirror Cloudflare KV: malformed JSON yields null, not a throw. The

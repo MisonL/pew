@@ -137,16 +137,18 @@ export function splitStatements(sql: string): string[] {
  * and trips over objects that already exist. Upstream migrations use bare
  * CREATE TABLE / CREATE TRIGGER (e.g. 029), so this is the recovery path.
  *
- * Only these specific idempotency errors are tolerated, and only for DDL —
- * a genuine error (missing table, syntax, constraint) still aborts.
+ * Only these specific idempotency errors are tolerated — a genuine error
+ * (missing table, syntax, constraint on unseeded data) still aborts.
  */
 function isBenignReplayError(stmt: string, error: unknown): boolean {
-  if (!isDdlStatement(stmt)) return false;
   const message = error instanceof Error ? error.message : String(error);
-  return (
-    /already exists/i.test(message) ||
-    /duplicate column name/i.test(message)
-  );
+  if (isDdlStatement(stmt)) {
+    return /already exists/i.test(message) || /duplicate column name/i.test(message);
+  }
+  // DML: a crash between a seed INSERT and the ledger write replays the file;
+  // single-row seeds written with INSERT OR IGNORE tolerate the replay, and a
+  // UNIQUE hit on a re-applied seed row is the same idempotency story.
+  return /UNIQUE constraint failed/i.test(message);
 }
 
 export async function applyMigrations(
@@ -212,7 +214,13 @@ export async function applyMigrations(
         pendingDdl.push(stmt);
       } else {
         await flushDdl();
-        await options.db.prepare(stmt).run();
+        try {
+          await options.db.prepare(stmt).run();
+        } catch (statementError) {
+          // Crash-before-ledger replay: idempotent seeds re-apply cleanly.
+          if (isBenignReplayError(stmt, statementError)) continue;
+          throw statementError;
+        }
       }
     }
     await flushDdl();
