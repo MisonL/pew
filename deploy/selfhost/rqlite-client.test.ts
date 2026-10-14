@@ -62,6 +62,26 @@ describe("createRqliteDdlExecutor", () => {
     await expect(ddl(["CREATE TABLE a(x)"])).rejects.toThrow(/rqlite HTTP 503/);
   });
 
+  it("surfaces the HTTP status when the body is not JSON (proxy HTML 502)", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: () => Promise.reject(new SyntaxError("Unexpected token < in JSON")),
+    } as unknown as Response);
+    const ddl = createRqliteDdlExecutor({ baseUrl: BASE, fetchImpl: fetchImpl as never });
+    await expect(ddl(["CREATE TABLE a(x)"])).rejects.toThrow(/rqlite HTTP 502/);
+  });
+
+  it("surfaces the HTTP status when a 200 response has a non-JSON body", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.reject(new SyntaxError("Unexpected end of JSON input")),
+    } as unknown as Response);
+    const ddl = createRqliteDdlExecutor({ baseUrl: BASE, fetchImpl: fetchImpl as never });
+    await expect(ddl(["CREATE TABLE a(x)"])).rejects.toThrow(/rqlite HTTP 200/);
+  });
+
   it("sends a bearer token when provided", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ results: [{}] }));
     const ddl = createRqliteDdlExecutor({ baseUrl: BASE, token: "tok", fetchImpl: fetchImpl as never });

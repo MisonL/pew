@@ -67,10 +67,11 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
     // RQLITE_USERNAME/PASSWORD pair so the server-side READ_* fallback works
     // (resolveReadBasicAuth). The remaining checkable minimal-exposure intent:
     // no d1-http verifier token and no ingest secret injected into scheduler.
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: compose var-expansion literal, not interpolation
-    expect(sched).not.toContain("CF_D1_API_TOKEN: ${CF_D1_API_TOKEN}");
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: compose var-expansion literal, not interpolation
-    expect(sched).not.toContain("WORKER_SECRET: ${WORKER_SECRET}");
+    // Key-name-level matching (not full `${VAR}` literals): compose var
+    // expansion spelling (${VAR} vs ${VAR:-}) may change without changing the
+    // exposure intent, so match the key name anywhere in the scheduler block.
+    expect(/CF_D1_API_TOKEN\s*:/.test(sched)).toBe(false);
+    expect(/WORKER_SECRET\s*:/.test(sched)).toBe(false);
   });
 
   it("wires the login limiter backend switch into web (spec Plan 3 §3.2)", () => {
