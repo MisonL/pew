@@ -23,9 +23,11 @@ export function resolveBasicAuth(
 
 /**
  * Read-only credentials: prefer the READ_* pair, falling back to the FULL
- * pair as a unit (pew-ro defaults to RQLITE_PASSWORD in the render script,
- * so the full user is always a valid read-only principal there). One READ_*
- * var alone never mixes users — the pair falls back together.
+ * pair as a unit. There is deliberately no pew-ro user (rqlite 10.5.3 has no
+ * "select" permission name, and read/scheduler carry /db/request write paths,
+ * so a read-only user is unreachable here) — the READ_* vars are a deprecated
+ * compatibility surface and in practice this always resolves to the full
+ * user. One READ_* var alone never mixes users — the pair falls back together.
  */
 export function resolveReadBasicAuth(
   readUsername: string | undefined,

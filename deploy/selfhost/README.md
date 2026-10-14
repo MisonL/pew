@@ -368,6 +368,11 @@ docker compose exec web node -e "fetch('http://127.0.0.1:7020/api/live').then(r=
 
 ```bash
 git fetch upstream main && git merge upstream/main   # 或拉取自有 fork 的对应分支
+# 鉴权部署下先确认 .rqlite-auth.json 在磁盘（升级不删卷，但若宿主目录被清理，
+# rqlite 容器 recreate 后 entrypoint 找不到 /auth/auth.json 会以无鉴权启动）：
+ls -l deploy/selfhost/.rqlite-auth.json || docker compose run --rm --entrypoint sh rqlite \
+  -c 'echo "auth file missing — re-render before up:"; exit 1'
+# 缺失则先重新渲染（见「Quickstart」固定序列），再 up。
 docker compose build                                 # 镜像本地构建，无远端可 pull
 docker compose up -d
 ```
@@ -422,6 +427,22 @@ docker compose up -d --force-recreate rqlite   # cluster: rqlite-1 rqlite-2 rqli
 - [ ] rqlite 数据卷无需清理（`rate_limit_hits` 表为冻结无害的纯新增；数据敏感性由部署者判断）。
 - [ ] 迁移账本注意：`_migrations` 按文件名跳过——revert 后若以**同名文件**重做 033 且内容
       变更会被静默跳过，重做必须换文件名。
+
+### 最小排障入口
+
+上述任何一步之后服务行为异常，先看两处再动配置：
+
+```bash
+docker compose ps          # 哪个容器在 restarting / unhealthy / exited
+docker compose logs --tail=100 <svc>   # svc = web / rqlite / migrate / read / ...
+```
+
+rqlite 容器反复 unhealthy 时优先怀疑 auth.json 问题（`*` 条目缺失、文件未渲染、
+半填凭据）——详见上文「auth.json 丢失恢复 runbook」的警告块。
+
+**overlay 互斥注**：`docker-compose.proxy.yml` 与 `docker-compose.caddy.yml` 都对
+`web` 服务声明 `ports: !override`（前者改绑 127.0.0.1，后者清空发布端口），二者
+**不可同时叠加**（后者覆盖前者），三套文件两两组合时只叠一个。
 
 ## 交付边界
 
