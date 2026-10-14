@@ -51,9 +51,13 @@ export function createRqliteDdlExecutor(options: RqliteClientOptions): DdlExecut
       // rqlite has no default timeout; a wedged node would hang migrate forever.
       signal: AbortSignal.timeout(30_000),
     });
-    const body = (await response.json()) as RqliteResponse;
-    if (!response.ok) {
-      throw new Error(body.error ?? `rqlite HTTP ${response.status}`);
+    // Non-JSON body (e.g. a proxy's HTML 502) must surface the status code,
+    // not a SyntaxError — same pattern as d1-adapter's call().
+    const body = (await response.json().catch(() => null)) as RqliteResponse | null;
+    if (!response.ok || !body) {
+      throw new Error(
+        body?.error ?? `rqlite HTTP ${response.status}`
+      );
     }
     if (body.error) throw new Error(body.error);
     const failure = body.results?.find((r) => r.error);

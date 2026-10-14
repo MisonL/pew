@@ -24,8 +24,29 @@ function run(env: Record<string, string>, outDir: string) {
   });
 }
 
+// Run the script with a stripped-down PATH (bash resolved by absolute path so
+// spawn itself still works). Used for the jq-missing negative path.
+function runWithoutPath(outDir: string) {
+  const child = spawn("/bin/bash", [SCRIPT], {
+    env: {
+      RQLITE_USERNAME: "pew",
+      RQLITE_PASSWORD: "pw1",
+      RQLITE_JOIN_PASSWORD: "pw2",
+      AUTH_OUT_FILE: join(outDir, ".rqlite-auth.json"),
+      PATH: "/nonexistent",
+    },
+    stdio: "pipe",
+  });
+  return new Promise<{ code: number; stderr: string }>((resolve, reject) => {
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("exit", (code) => resolve({ code: code ?? -1, stderr }));
+  });
+}
+
 describe("render-rqlite-auth.sh", () => {
-  it("renders all four entries with 0600 perms when all three vars are set", async () => {
+  it("renders all three entries with 0600 perms when all three vars are set", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ra-")); dirs.push(dir);
     const p = run({ RQLITE_USERNAME: "pew", RQLITE_PASSWORD: "pw1", RQLITE_JOIN_PASSWORD: "pw2" }, dir);
     expect((await p).code).toBe(0);
@@ -33,10 +54,12 @@ describe("render-rqlite-auth.sh", () => {
     const parsed = JSON.parse(readFileSync(file, "utf8"));
     expect(Array.isArray(parsed)).toBe(true);
     const names = parsed.map((u: { username: string }) => u.username);
-    expect(names).toEqual(["pew", "pew-ro", "joiner", "*"]);
-    expect(parsed.find((u: { username: string }) => u.username === "pew-ro").perms).toEqual(["select"]);
+    // No pew-ro: rqlite 10.5.3 has no "select" permission name and
+    // read/scheduler carry /db/request write paths, so it was removed.
+    expect(names).toEqual(["pew", "joiner", "*"]);
     expect(parsed.find((u: { username: string }) => u.username === "*").perms).toEqual(["status", "ready"]);
     expect(parsed.find((u: { username: string }) => u.username === "joiner").password).toBe("pw2");
+    expect(parsed.find((u: { username: string }) => u.username === "pew").perms).toEqual(["all"]);
     expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 
@@ -68,5 +91,31 @@ describe("render-rqlite-auth.sh", () => {
     const p = run({}, dir);
     expect((await p).code).toBe(0);
     expect(existsSync(file)).toBe(false);
+  });
+
+  it("refuses a dangerous AUTH_OUT_FILE instead of rm -rf'ing it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ra-")); dirs.push(dir);
+    const child = spawn("/bin/bash", [SCRIPT], {
+      env: { ...process.env, RQLITE_USERNAME: "pew", RQLITE_PASSWORD: "pw1", RQLITE_JOIN_PASSWORD: "pw2", AUTH_OUT_FILE: "/etc" },
+      stdio: "pipe",
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => { stderr += chunk; });
+    const code = await new Promise<number>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("exit", (c) => resolve(c ?? -1));
+    });
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("refusing dangerous AUTH_OUT_FILE");
+  });
+
+  it("errors and leaves no .tmp residue when jq is missing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ra-")); dirs.push(dir);
+    const file = join(dir, ".rqlite-auth.json");
+    const { code, stderr } = await runWithoutPath(dir);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("jq is required");
+    expect(existsSync(file)).toBe(false);
+    expect(existsSync(`${file}.tmp`)).toBe(false);
   });
 });

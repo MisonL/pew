@@ -1,5 +1,8 @@
 # Optional extension: Caddy terminates TLS in front of web.
 # Usage: docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+# The web ports override below removes the 0.0.0.0:7020 publish once Caddy
+# fronts it (the hard-constraint list in the README); with Caddy in the
+# compose network you do NOT need docker-compose.proxy.yml on top.
 services:
   caddy:
     image: caddy:2
@@ -9,6 +12,8 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     depends_on: [web]
+  web:
+    ports: !override []
 volumes:
   caddy-data: {}
   caddy-config: {}

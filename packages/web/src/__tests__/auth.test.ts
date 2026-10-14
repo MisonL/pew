@@ -190,6 +190,23 @@ describe("login limiter backend switch", () => {
     const keys = spy.mock.calls.map((c) => c[0]);
     expect(keys).toContain("login:email:a@b.c");
     expect(keys).toContain("login:ip:203.0.113.9");
+    // The limiter must be called with the imported LOGIN_RATE_LIMIT itself,
+    // not a locally-copied config that could drift from auth.ts.
+    for (const config of spy.mock.calls.map((c) => c[1])) {
+      expect(config).toBe(LOGIN_RATE_LIMIT);
+    }
+  });
+
+  it("anchors the login limiter numbers (guards against local-copy drift)", async () => {
+    // Both the in-memory and rqlite paths must consume these exact values; a
+    // change to the 10/60s policy should be a conscious edit of auth.ts.
+    expect(LOGIN_RATE_LIMIT.maxRequests).toBe(10);
+    expect(LOGIN_RATE_LIMIT.windowSeconds).toBe(60);
+    const { inMemoryRateLimiter } = await import("@/lib/rate-limit");
+    const spy = vi.spyOn(inMemoryRateLimiter, "check");
+    mockFindCredentialUser.mockResolvedValue(null);
+    await authorizeCredentials({ email: "anchor@b.c", password: "x" });
+    expect(spy.mock.calls[0][1]).toBe(LOGIN_RATE_LIMIT);
   });
 
   it("keeps the in-memory per-email limiter by default", async () => {
