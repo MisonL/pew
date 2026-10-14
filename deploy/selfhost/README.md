@@ -95,7 +95,7 @@ migrate 启动时的对账自检会显式报错（「credentials configured but 
 
 **登录限速后端开关 `LOGIN_RATE_LIMIT_BACKEND`**（`.env`/compose，默认 `memory`）：
 设为 `rqlite` 时登录失败计数外置到 rqlite 的 `rate_limit_hits` 表（单条原子
-INSERT...SELECT，多 web 副本共享同一计数），双键   `login:ip:<ip>` 各查一次——email 键攻击者可任意轮换，**IP 键是唯一硬防线**（IPv6 按
+INSERT...SELECT，多 web 副本共享同一计数），双键 `login:email:<email>` 与 `login:ip:<ip>` 各查一次——email 键攻击者可任意轮换，**IP 键是唯一硬防线**（IPv6 按
   /64 前缀归并防隐私扩展轮换）。已知绕过（如实注明）：反代漏配 XFF 时全部请求落
 `login:ip:unknown` 共享桶，打满即全员登录 DoS——按反代小节的 XFF 硬约束部署即可避免。
 rqlite 后端写异常时 **fail-open 放行并告警**（不误判为超限拒绝）；仅 `meta.changes=0`
