@@ -22,7 +22,7 @@ const BASE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
  * NOT a security boundary (in-network spoofing is out of scope).
  */
 export async function assertAuthReconciled(
-  fetchImpl: typeof fetch,
+  fetchImpl: (input: string | URL | Request, init?: RequestInit) => Promise<Response>,
   baseUrl: string,
   expectAuth: boolean
 ): Promise<void> {

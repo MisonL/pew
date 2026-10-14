@@ -17,10 +17,13 @@ PIDS+=($!)
 bun run --cwd packages/web typecheck &
 PIDS+=($!)
 
-tsc --noEmit -p packages/worker/tsconfig.json &
+tsc -b packages/worker/tsconfig.build.json &
 PIDS+=($!)
 
-tsc --noEmit -p packages/worker-read/tsconfig.json &
+tsc -b packages/worker-read/tsconfig.build.json &
+PIDS+=($!)
+
+tsc -b deploy/selfhost/tsconfig.json &
 PIDS+=($!)
 
 # Wait for each process and collect exit codes

@@ -119,10 +119,10 @@ describe("registerShutdownSignals", () => {
     const handlers: Record<string, () => void> = {};
     const onSpy = vi
       .spyOn(process, "on")
-      .mockImplementation((signal: string | symbol, handler: (...args: unknown[]) => void) => {
+      .mockImplementation(((signal: string | symbol, handler: (...args: unknown[]) => void) => {
         handlers[String(signal)] = handler as () => void;
         return process;
-      });
+      }) as never);
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     try {
       registerShutdownSignals(close);

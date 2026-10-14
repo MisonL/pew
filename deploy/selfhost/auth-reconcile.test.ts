@@ -12,13 +12,13 @@ describe("assertAuthReconciled (expectAuth=true)", () => {
     const f = vi.fn()
       .mockImplementationOnce(stub(200, { http: { auth: "enabled" } }))
       .mockImplementationOnce(stub(401, { error: "unauthorized" }));
-    await expect(assertAuthReconciled(f as typeof fetch, URL, true)).resolves.toBeUndefined();
+    await expect(assertAuthReconciled(f, URL, true)).resolves.toBeUndefined();
   });
 
   it("fails when auth is disabled (credentials configured but server open)", async () => {
     const f = vi.fn()
       .mockImplementationOnce(stub(200, { http: { auth: "disabled" } }));
-    await expect(assertAuthReconciled(f as typeof fetch, URL, true))
+    await expect(assertAuthReconciled(f, URL, true))
       .rejects.toThrow(/credentials configured but auth is disabled/);
   });
 
@@ -26,13 +26,13 @@ describe("assertAuthReconciled (expectAuth=true)", () => {
     const f = vi.fn()
       .mockImplementationOnce(stub(200, { http: { auth: "enabled" } }))
       .mockImplementationOnce(stub(200, { results: [{ rows: [] }] }));
-    await expect(assertAuthReconciled(f as typeof fetch, URL, true))
+    await expect(assertAuthReconciled(f, URL, true))
       .rejects.toThrow(/anonymous query succeeded/);
   });
 
   it("is a no-op when expectAuth is false", async () => {
     const f = vi.fn();
-    await expect(assertAuthReconciled(f as typeof fetch, URL, false)).resolves.toBeUndefined();
+    await expect(assertAuthReconciled(f, URL, false)).resolves.toBeUndefined();
     expect(f).not.toHaveBeenCalled();
   });
 });

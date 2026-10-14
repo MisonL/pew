@@ -41,7 +41,7 @@ async function readBody(req: IncomingMessage): Promise<Buffer | undefined> {
 
 function toRequest(req: IncomingMessage, body: Buffer | undefined): Request {
   const host = req.headers.host ?? "localhost";
-  const url = new URL(req.url ?? "/", `http://${host}`);
+  const url = new URL(req.url ?? "/", `http://${host}`).toString();
   const headers = new Headers();
   for (const [name, value] of Object.entries(req.headers)) {
     if (value === undefined) continue;
@@ -52,7 +52,7 @@ function toRequest(req: IncomingMessage, body: Buffer | undefined): Request {
   // Buffer is a Uint8Array at runtime but does not structurally satisfy
   // BodyInit's DOM lib type; hand over an ArrayBuffer-backed view instead.
   // GET/HEAD have no body regardless of what readBody returned.
-  const bodyInit: BodyInit | undefined =
+  const bodyInit: RequestInit["body"] =
     body && method !== "GET" && method !== "HEAD" ? new Uint8Array(body).buffer : undefined;
   return new Request(url, { method, headers, body: bodyInit });
 }

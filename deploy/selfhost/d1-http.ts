@@ -21,7 +21,7 @@ export interface D1HttpOptions {
   token: string;
   /** rqlite -auth credentials, forwarded to the inner d1 adapter. */
   basicAuth?: { username: string; password: string };
-  fetchImpl?: typeof fetch;
+  fetchImpl?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 }
 
 interface D1HttpBody {

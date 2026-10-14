@@ -12,7 +12,7 @@ function rqliteResponse(results: unknown[], status = 200) {
   } as unknown as Response;
 }
 
-function makeAdapter(fetchImpl: typeof fetch) {
+function makeAdapter(fetchImpl: (input: string | URL | Request, init?: RequestInit) => Promise<Response>) {
   return createD1Adapter({ baseUrl: BASE, token: TOKEN, fetchImpl });
 }
 
@@ -21,7 +21,7 @@ describe("d1-adapter reads", () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       rqliteResponse([{ types: { a: "integer" }, rows: [{ a: 1 }] }])
     );
-    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    const db = makeAdapter(fetchImpl);
     const res = await db.prepare("SELECT a FROM t WHERE b = ?").bind(7).all();
     const [url, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(url).toBe(`${BASE}/db/query?level=weak&associative&timings`);
@@ -34,7 +34,7 @@ describe("d1-adapter reads", () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(rqliteResponse([{ rows: [{ a: 1 }, { a: 2 }] }]))
       .mockResolvedValueOnce(rqliteResponse([{ rows: [] }]));
-    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    const db = makeAdapter(fetchImpl);
     expect(await db.prepare("SELECT a FROM t").first()).toEqual({ a: 1 });
     expect(await db.prepare("SELECT a FROM t").first()).toBeNull();
   });
@@ -43,7 +43,7 @@ describe("d1-adapter reads", () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       rqliteResponse([{ rows: [{ a: 1, b: 2 }] }])
     );
-    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    const db = makeAdapter(fetchImpl);
     expect(await db.prepare("SELECT a, b FROM t").first("b")).toBe(2);
   });
 
@@ -51,7 +51,7 @@ describe("d1-adapter reads", () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       rqliteResponse([{ last_insert_id: 5, rows_affected: 1 }])
     );
-    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    const db = makeAdapter(fetchImpl);
     const res = await db.prepare("UPDATE t SET a = 1").run();
     expect(res.meta.changes).toBe(1);
     expect(res.meta.last_row_id).toBe(5);
@@ -61,7 +61,7 @@ describe("d1-adapter reads", () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       rqliteResponse([{ last_insert_id: 5, rows_affected: 1 }])
     );
-    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    const db = makeAdapter(fetchImpl);
     await db.prepare("UPDATE t SET a = 1").run();
     const url = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string;
     expect(url).toBe(`${BASE}/db/request?transaction=true&associative&timings`);
@@ -71,7 +71,7 @@ describe("d1-adapter reads", () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       rqliteResponse([{ rows: [{ id: "m1" }] }])
     );
-    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    const db = makeAdapter(fetchImpl);
     const res = await db.prepare("SELECT id FROM _migrations").strong<{ id: string }>();
     expect(res.results).toEqual([{ id: "m1" }]);
     expect((fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toBe(
@@ -85,7 +85,7 @@ describe("d1-adapter error and edge handling", () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       rqliteResponse([{ error: "no such table: nope" }])
     );
-    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    const db = makeAdapter(fetchImpl);
     await expect(db.prepare("SELECT * FROM nope").all()).rejects.toThrow(
       /no such table/
     );
@@ -95,14 +95,14 @@ describe("d1-adapter error and edge handling", () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       rqliteResponse([{ last_insert_id: 3 }])
     );
-    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    const db = makeAdapter(fetchImpl);
     const res = await db.prepare("UPDATE t SET a = 1 WHERE 0").run();
     expect(res.meta.changes).toBe(0);
   });
 
   it("returns [] for an empty batch without calling rqlite", async () => {
     const fetchImpl = vi.fn();
-    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    const db = makeAdapter(fetchImpl);
     expect(await db.batch([])).toEqual([]);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -111,7 +111,7 @@ describe("d1-adapter error and edge handling", () => {
 describe("basic auth", () => {
   const capture = () => {
     const calls: { headers: Record<string, string> }[] = [];
-    const fetchImpl: typeof fetch = async (_url, init) => {
+    const fetchImpl: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = async (_url, init) => {
       calls.push({ headers: Object.fromEntries(new Headers(init?.headers).entries()) });
       return Response.json({ results: [{}] });
     };
@@ -145,7 +145,7 @@ describe("basic auth", () => {
   });
 
   it("never includes the header value in an error message", async () => {
-    const fetchImpl: typeof fetch = async () =>
+    const fetchImpl: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = async () =>
       new Response("unauthorized", { status: 401 });
     const db = createD1Adapter({
       baseUrl: "http://x", token: "",
@@ -164,7 +164,7 @@ describe("d1-adapter batch", () => {
         { last_insert_id: 1, rows_affected: 1 },
       ])
     );
-    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    const db = makeAdapter(fetchImpl);
     await db.batch([db.prepare("SELECT 1"), db.prepare("INSERT INTO t VALUES (1)")]);
     const [url, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(url).toBe(`${BASE}/db/request?transaction=true&associative&timings`);
@@ -182,7 +182,7 @@ describe("d1-adapter batch", () => {
         { rows: [{ c: 3 }] },
       ])
     );
-    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    const db = makeAdapter(fetchImpl);
     const out = await db.batch([
       db.prepare("SELECT 1"),
       db.prepare("INSERT INTO t VALUES (1)"),
@@ -197,14 +197,14 @@ describe("d1-adapter batch", () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       rqliteResponse([{ rows: [] }, { rows: [] }])
     );
-    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    const db = makeAdapter(fetchImpl);
     await db.batch([db.prepare("SELECT 1"), db.prepare("SELECT 2")]);
     const [, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(JSON.parse(init.body)).toEqual([["SELECT 1"], ["SELECT 2"]]);
   });
 
   it("exposes sql and params as public properties for Proxy-based consumers", () => {
-    const db = makeAdapter(vi.fn() as unknown as typeof fetch);
+    const db = makeAdapter(vi.fn());
     const stmt = db.prepare("SELECT 1").bind(9);
     expect(Reflect.get(stmt, "sql")).toBe("SELECT 1");
     expect(Reflect.get(stmt, "params")).toEqual([9]);
@@ -217,7 +217,7 @@ describe("d1-adapter batch", () => {
         { error: "UNIQUE constraint failed" },
       ])
     );
-    const db = makeAdapter(fetchImpl as unknown as typeof fetch);
+    const db = makeAdapter(fetchImpl);
     await expect(
       db.batch([
         db.prepare("INSERT INTO t VALUES (1)"),
