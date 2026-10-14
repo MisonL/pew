@@ -1,7 +1,7 @@
 # pew 私有化部署加固与运维（Plan 3）— 设计文档
 
 **日期**：2026-10-13（v3，经四轮独立评审修订：v1 一轮 19 项 → v2；v2 二轮红队/可实施性/运维演练 → v3）
-**状态**：设计稿，待评审确认
+**状态**：已交付（13 任务全部实现，经两轮六维度审查修复）
 **前置**：Plan 1（`docs/53-self-hosted-storage-runtime.md`）、Plan 2（`docs/54-self-hosted-auth.md`）均已交付，分支 `feat/self-hosted-deployment`
 
 **v2 修订摘要**（评审发现 → 修订位置）：
