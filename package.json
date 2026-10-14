@@ -1,6 +1,6 @@
 {
   "name": "pew-monorepo",
-  "version": "3.3.1",
+  "version": "3.3.2",
   "private": true,
   "workspaces": [
     "packages/*"
@@ -28,15 +28,15 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.14",
-    "@playwright/test": "1.63.0",
-    "@types/bun": "1.4.2",
-    "@vitest/coverage-v8": "5.0.1",
+    "@biomejs/biome": "2.5.15",
+    "@playwright/test": "1.64.0",
+    "@types/bun": "1.4.3",
+    "@vitest/coverage-v8": "5.0.4",
     "husky": "^9.1.7",
-    "lint-staged": "17.5.1",
-    "oxc-parser": "0.151.0",
+    "lint-staged": "17.6.0",
+    "oxc-parser": "0.153.0",
     "typescript": "^7.0.2",
-    "vitest": "5.0.1"
+    "vitest": "5.0.4"
   },
   "overrides": {
     "brace-expansion@^2": "2.0.3",
@@ -52,7 +52,8 @@
     "baseline-browser-mapping": "^2.11.0",
     "picomatch": "^4.0.7",
     "postcss": "^8.5.26",
-    "sharp": "^0.35.4",
+    "source-map-js": "^1.2.2",
+    "sharp": "^0.35.5",
     "undici": "7.29.1",
     "yaml": "^2.8.3"
   }
