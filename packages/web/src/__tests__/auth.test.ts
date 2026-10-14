@@ -206,7 +206,7 @@ describe("login limiter backend switch", () => {
     const spy = vi.spyOn(inMemoryRateLimiter, "check");
     mockFindCredentialUser.mockResolvedValue(null);
     await authorizeCredentials({ email: "anchor@b.c", password: "x" });
-    expect(spy.mock.calls[0][1]).toBe(LOGIN_RATE_LIMIT);
+    expect(spy.mock.calls[0]?.[1]).toBe(LOGIN_RATE_LIMIT);
   });
 
   it("keeps the in-memory per-email limiter by default", async () => {
