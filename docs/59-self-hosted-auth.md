@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让自建部署（Plan 1 的数据层与运行时）具备**可用的浏览器登录**——邮箱 + 密码（Credentials）、首个用户即管理员的 `/setup` 引导、库内 `is_admin` 判定、密码重置路径、内网 http 的 cookie 关闭分支，以及 CLI 指向自建 host。Plan 1 交付「数据层可用」，Plan 2 交付「浏览器可登录的完整产品」。
+**状态：已交付（任务全部实现并验证）。**Goal:** 让自建部署（Plan 1 的数据层与运行时）具备**可用的浏览器登录**——邮箱 + 密码（Credentials）、首个用户即管理员的 `/setup` 引导、库内 `is_admin` 判定、密码重置路径、内网 http 的 cookie 关闭分支，以及 CLI 指向自建 host。Plan 1 交付「数据层可用」，Plan 2 交付「浏览器可登录的完整产品」。
 
 **Architecture:** 仍是「不重写业务逻辑」。认证接缝集中在 `auth.ts` 一处组装：`providers` 按环境条件挂 Google/Credentials，`signIn` 对 credentials 直接放行，邀请闸门逻辑从 `lib/invite.ts`（不改）移到新的 `lib/credentials.ts`。密码哈希（scrypt）与注册都由新增文件承担；`password_hash` 的读取走 D1 REST 原始查询（`getD1Client().query`），从而**不改 worker-read、不改 `lib/db.ts`**。管理员判定从「纯 `ADMIN_EMAILS`」扩展为「`ADMIN_EMAILS` 命中 OR 库内 `is_admin=1`」。首个用户即管理员，用一次性单行表 `instance_setup` 做并发安全的认领，解开「无用户建不了邀请码、无邀请码建不了用户」的死锁。
 

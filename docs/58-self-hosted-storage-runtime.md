@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让 pew 脱离 Cloudflare 运行——用 rqlite 承载数据、用 Node 进程承载两个 Worker，Web 仍走原有逻辑，用一套 compose 在本机/内网跑起完整可用的 pew。
+**状态：已交付（任务全部实现并验证）。**Goal:** 让 pew 脱离 Cloudflare 运行——用 rqlite 承载数据、用 Node 进程承载两个 Worker，Web 仍走原有逻辑，用一套 compose 在本机/内网跑起完整可用的 pew。
 
 **Architecture:** 不重写任何业务逻辑。新增 `deploy/selfhost/` 目录，内含三个适配层（D1 形状、KV 形状、node:http 宿主）与一个 d1-http 服务；`packages/worker` 与 `packages/worker-read` 的 `fetch` 处理器原样运行。Web 侧只改两处上游文件：`lib/d1.ts`（让写路径指向自建 d1-http）与 `vitest.config.ts`（让 vitest 收集 `deploy/**` 下的测试）。Web 容器用**仓库根 `Dockerfile`** 构建（Next standalone），适配层服务用新增的 `deploy/selfhost/Dockerfile` 构建——两套镜像，见 Task 10。
 

@@ -2,7 +2,7 @@
 
 - 日期：2026-10-10
 - 分支：`feat/self-hosted-deployment`（基线 `0d8f26bb`，官方 v3.3.0）
-- 状态：待评审
+- 状态：已交付（Plan 1/2/3 全部实现，分支 feat/self-hosted-deployment）
 
 ## 1. 目标与背景
 

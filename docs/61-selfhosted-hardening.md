@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在不破坏现有部署的前提下交付三项独立强化：A rqlite 鉴权层（默认关闭）、B 登录限速外置到 rqlite（默认关闭）、C 反代/TLS 部署文档。
+**状态：已交付（任务全部实现并验证）。**Goal:** 在不破坏现有部署的前提下交付三项独立强化：A rqlite 鉴权层（默认关闭）、B 登录限速外置到 rqlite（默认关闭）、C 反代/TLS 部署文档。
 
 **Architecture:** A 用「无条件 bind-mount + entrypoint 包装脚本按文件存在性追加 `-auth`」实现零破坏开关；客户端凭据经 `d1-adapter` → `d1-http` 双层透传为 Basic 头。B 用单条原子 `INSERT...SELECT`（SQL 侧窗口运算）以 `meta.changes` 分支判定放行/拒绝，执行异常 fail-open。C 是纯文档 + 两个 compose 扩展文件。
 
