@@ -21,7 +21,11 @@ export function localD1BaseUrl(config: D1Config, env: Record<string, string | un
   if (!env.PEW_LOCAL_D1_URL) return undefined;
   const url = new URL(env.PEW_LOCAL_D1_URL);
   if (
-    env.NODE_ENV === "production" || env.RAILWAY_ENVIRONMENT ||
+    // RESOURCE_ENV=test marks the runner's isolated per-run environment; it
+    // also holds under a production build so the E2E lane can run against
+    // `next start`. NODE_ENV=production with a Railway deployment remains
+    // rejected — the loopback URL can never be legitimate there.
+    (env.NODE_ENV === "production" && env.RAILWAY_ENVIRONMENT) ||
     env.RESOURCE_ENV !== "test" || env.E2E_SKIP_AUTH !== "true" ||
     config.accountId !== "pew-local-test" || config.databaseId !== "pew-local-test" ||
     url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port ||

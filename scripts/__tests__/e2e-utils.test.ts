@@ -43,7 +43,12 @@ describe("E2E process isolation", () => {
           send() { this.kill(); },
         };
         if (options.ipc) queueMicrotask(() => options.ipc?.({ env, state: root }));
-        else if (!command.includes("dev")) child.kill();
+        // ui lane: `next build` succeeds and exits 0, then `next start` is
+        // the long-lived server. api lane: `next dev` is the server. Both
+        // servers stay alive (exitCode null); only the test-runner command
+        // is "killed" with code 0.
+        else if (command.includes("build")) exit.resolve(0);
+        else if (!command.includes("dev") && !command.includes("start")) child.kill();
         return child;
       }),
       sleep: vi.fn(async () => {}),

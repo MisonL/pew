@@ -7,7 +7,10 @@ export default defineConfig({
   timeout: 60_000,
   // Development compilation and chart hydration can exceed the default 5 seconds.
   expect: { timeout: 15_000 },
-  retries: process.env.CI ? 1 : 0,
+  // One local retry to ride out machine-load spikes (a navigation over
+  // navigationTimeout is retried on a warm server and usually passes); CI
+  // keeps the same value. A deterministic failure fails twice and stays red.
+  retries: 1,
   workers: process.env.CI ? 2 : 1,
   use: {
     baseURL: `http://localhost:${E2E_UI_PORT}`,
