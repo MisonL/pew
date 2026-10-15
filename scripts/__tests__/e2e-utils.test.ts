@@ -34,6 +34,7 @@ describe("E2E process isolation", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({
       success: true, result: [{ results: [{ key: "env", value: "test" }, { key: "run", value: "owned-run" }] }],
     })));
+    let buildExitCode = 0;
     vi.stubGlobal("Bun", {
       spawn: vi.fn((command: string[], options: { ipc?: (message: unknown) => void }) => {
         const exit = Promise.withResolvers<number>();
@@ -47,7 +48,7 @@ describe("E2E process isolation", () => {
         // the long-lived server. api lane: `next dev` is the server. Both
         // servers stay alive (exitCode null); only the test-runner command
         // is "killed" with code 0.
-        else if (command.includes("build")) exit.resolve(0);
+        else if (command.includes("build")) exit.resolve(buildExitCode);
         else if (!command.includes("dev") && !command.includes("start")) child.kill();
         return child;
       }),
@@ -57,6 +58,14 @@ describe("E2E process isolation", () => {
       await expect(runLocalE2e(tier)).resolves.toBe(0);
       expect(remove).toHaveBeenCalledExactlyOnceWith(join("packages/web", tier === "api" ? ".next-e2e" : ".next-e2e-ui"), { recursive: true, force: true });
       expect(existsSync(root)).toBe(true);
+      if (tier === "ui") {
+        // A failing `next build` must abort the run and still clean the
+        // isolated dist dir (the removal happens in the finally chain).
+        buildExitCode = 1;
+        await expect(runLocalE2e(tier)).rejects.toThrow("next build failed (1)");
+        expect(remove).toHaveBeenCalledTimes(2);
+        buildExitCode = 0;
+      }
       failRemoval = true;
       await expect(runLocalE2e(tier)).rejects.toBe(denied);
     } finally {

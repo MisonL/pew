@@ -2,8 +2,15 @@ import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-// Skip auth in E2E test environment
-const SKIP_AUTH = process.env.E2E_SKIP_AUTH === "true";
+// Skip auth in E2E test environment. Same gate as the API routes'
+// isE2EMode(): requires the runner's isolated RESOURCE_ENV, so a stray
+// E2E_SKIP_AUTH=true on a deployed host cannot disable the page-level
+// invite/redirect logic. (proxy.ts cannot import @/lib/admin — it runs on
+// the edge runtime — hence the inline condition, kept in sync by tests.)
+const SKIP_AUTH =
+  process.env.E2E_SKIP_AUTH === "true" &&
+  process.env.RESOURCE_ENV === "test" &&
+  !process.env.RAILWAY_ENVIRONMENT;
 
 /**
  * Trusted origin derived from NEXTAUTH_URL at startup.

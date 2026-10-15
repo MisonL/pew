@@ -2863,6 +2863,12 @@ services:
   rqlite:
     <<: *rqlite-common
     profiles: ["single"]
+    # 实现更正 2026-10-15：交付版在服务级 command 固定 `-node-id rqlite` 与
+    # `-http-adv-addr/-raft-adv-addr rqlite:4001/4002`——rqlited 默认从容器
+    # hostname（=容器 ID）派生节点 ID 与通告地址，recreate（启用鉴权的文档化
+    # 序列）后两者变化，持久化 raft 配置不再包含该节点，节点永不选举
+    # （"not part of stable configuration, aborting election"）。样例保留
+    # 计划时点原文，以 deploy/selfhost/docker-compose.yml 为准。
     command: ["-fk", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-bootstrap-expect", "1"]
     volumes:
       - rqlite-data:/rqlite/file

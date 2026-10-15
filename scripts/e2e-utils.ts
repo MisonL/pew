@@ -80,7 +80,16 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
   let local: Awaited<ReturnType<typeof startLocalBindings>> | undefined;
   let server: ReturnType<typeof Bun.spawn> | undefined;
   let tests: ReturnType<typeof Bun.spawn> | undefined;
-  const killChildren = () => { server?.kill(); tests?.kill(); };
+  let build: ReturnType<typeof Bun.spawn> | undefined;
+  const killChildren = () => {
+    server?.kill(); tests?.kill();
+    // The build must not outlive the run: an interrupted build would keep
+    // writing into the dist dir that the finally block is about to remove.
+    build?.kill();
+    void build?.exited.catch(() => {
+      // Ignore: an aborted build's exit code is irrelevant to cleanup.
+    });
+  };
   abort.signal.addEventListener("abort", killChildren);
   // Rejects when SIGINT/SIGTERM aborts the run, so deadline() races can lose
   // to interruption.
@@ -123,10 +132,15 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
       // A prod server answers every navigation in milliseconds, and the
       // journeys then exercise the deployed shape of the app. The build runs
       // in the same isolated NEXT_DIST_DIR that `next start` reads below.
-      const build = Bun.spawn(["node", resolve("packages/web/node_modules/next/dist/bin/next"), "build"], {
+      build = Bun.spawn(["node", resolve("packages/web/node_modules/next/dist/bin/next"), "build"], {
         cwd: "packages/web", env, stdout: "inherit", stderr: "inherit",
       });
       const buildCode = await deadline(Promise.race([build.exited, interrupted]), 600_000, "next build");
+      // Await exit before the finally rmSync races a still-writing process.
+      await build.exited.catch(() => {
+        // A rejected exited promise (killed mid-build) must not fail the run.
+      });
+      build = undefined;
       if (buildCode !== 0) throw new Error(`next build failed (${buildCode})`);
       server = Bun.spawn(["node", resolve("packages/web/node_modules/next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", port], {
         cwd: "packages/web", env, stdout: "inherit", stderr: "inherit",

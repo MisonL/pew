@@ -5,7 +5,7 @@
  * a comma-separated list of email addresses.
  *
  * In E2E mode with admin bypass (E2E_SKIP_AUTH=true + E2E_ADMIN_BYPASS=true
- * in development), all users are treated as admins so Playwright tests
+ * + RESOURCE_ENV=test), all users are treated as admins so Playwright tests
  * can exercise admin pages. This is separate from E2E_SKIP_AUTH alone,
  * which only bypasses authentication but preserves admin role checks.
  */

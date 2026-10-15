@@ -481,7 +481,21 @@ docker compose logs --tail=100 <svc>   # svc = web / rqlite / migrate / read / .
 ```
 
 rqlite 容器反复 unhealthy 时优先怀疑 auth.json 问题（`*` 条目缺失、文件未渲染、
-半填凭据）——详见上文「auth.json 丢失恢复 runbook」的警告块。
+半填凭据）——详见上文「auth.json 丢失恢复 runbook」的警告块。若日志出现的是
+`not part of stable configuration, aborting election` 循环则不是 auth 问题：节点 ID
+不在持久化的 raft 配置里。当前 compose 已为 rqlite 固定 `-node-id`/`-adv-addr`
+（recreate 安全）；只有**旧版本 compose 部署过、且 recreate 过 rqlite 容器**的实例
+会卡在这里——卷里记录的是旧容器 ID 派生的节点。恢复（rqlite 支持从 peers.json
+强制重建配置，已对照 10.5.3 源码验证）：
+
+```bash
+docker compose stop rqlite
+docker volume ls --format '{{.Name}}' | grep rqlite-data   # 确认实际卷名
+docker compose run --rm --entrypoint sh -v <卷名>:/rqlite/file rqlite \
+  -c 'printf "[{\"id\":\"rqlite\",\"address\":\"rqlite:4002\",\"non_voter\":false}]\n" > /rqlite/file/raft/peers.json'
+docker compose up -d rqlite
+# Expected: 日志出现 "attempting node recovery using ..."，随后 healthy
+```
 
 **`unhealthy` 不等于自动重启**：`restart: unless-stopped` 只对进程退出生效；进程活着但
 服务僵死（探针持续失败）时 Docker 不会重启容器。处置靠人工 `docker compose restart <svc>`；
