@@ -366,6 +366,8 @@ git commit -m "feat: auth reconciliation self-check + optional credentials in op
 **Interfaces:**
 - Produces: `render-rqlite-auth.sh`（读 `RQLITE_USERNAME/RQLITE_PASSWORD/RQLITE_JOIN_PASSWORD`，产出/删除 `deploy/selfhost/.rqlite-auth.json`，含 pew 全权、pew-ro 只读 `["select"]`、joiner `[join]`、`*` `[status,ready]` 四条目）；`rqlite-entrypoint.sh`（spec §3.1.2 原文照抄）。Task 5 的 compose 挂载这两个文件；Task 8 真机验证依赖其行为。
 
+> **实现更正 2026-10-15（Task 3/4 勘误）：** 交付实现已**整体移除 `pew-ro` 条目**，auth.json 实为**三个条目**：`pew` 全权、`joiner` `[join]`、`*` `[status,ready]`。原因：rqlite 10.5.3 没有 `select` 这一权限名（`["select"]` 无法表达只读语义）；且 `read`/`scheduler` 携带的凭据经 `/db/request` 走写接口路径，在 rqlite 的权限模型下只读用户不可达。Task 4 的脚本、测试快照与 Task 5 的「只读凭据注入」表述均以三条目为准。
+
 - [ ] **Step 1: 写失败测试**（`render-auth.test.ts`，用 `Bun.spawn` 跑脚本）
 
 ```ts
@@ -386,7 +388,7 @@ function run(env: Record<string, string>, outDir: string) {
 }
 
 describe("render-rqlite-auth.sh", () => {
-  it("renders all four entries with 0600 perms when all three vars are set", async () => {
+  it("renders all entries with 0600 perms when all three vars are set", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ra-")); dirs.push(dir);
     const p = run({ RQLITE_USERNAME: "pew", RQLITE_PASSWORD: "pw1", RQLITE_JOIN_PASSWORD: "pw2" }, dir);
     expect(await p.exited).toBe(0);
@@ -394,8 +396,8 @@ describe("render-rqlite-auth.sh", () => {
     const parsed = JSON.parse(readFileSync(file, "utf8"));
     expect(Array.isArray(parsed)).toBe(true);
     const names = parsed.map((u: { username: string }) => u.username);
-    expect(names).toEqual(["pew", "pew-ro", "joiner", "*"]);
-    expect(parsed.find((u: { username: string }) => u.username === "pew-ro").perms).toEqual(["select"]);
+    // 实现更正 2026-10-15：pew-ro 已移除，实际三条目（见上方勘误段）。
+    expect(names).toEqual(["pew", "joiner", "*"]);
     expect(parsed.find((u: { username: string }) => u.username === "*").perms).toEqual(["status", "ready"]);
     expect(parsed.find((u: { username: string }) => u.username === "joiner").password).toBe("pw2");
     const { statSync } = await import("node:fs");
@@ -455,14 +457,13 @@ jq -n \
   --arg u "$RQLITE_USERNAME" --arg p "$RQLITE_PASSWORD" --arg jp "$RQLITE_JOIN_PASSWORD" \
   '[
     { username: $u, password: $p, perms: ["all"] },
-    { username: "pew-ro", password: $p, perms: ["select"] },
     { username: "joiner", password: $jp, perms: ["join"] },
     { username: "*", perms: ["status", "ready"] }
   ]' > "$OUT"
 chmod 600 "$OUT"
 ```
 
-（注意：`pew-ro` 复用 `RQLITE_PASSWORD`——只读用户与写用户同密码是可接受的折衷，规格 §3.1.1 只要求「进一步拆分属 YAGNI」；如需独立密码，实现时加 `RQLITE_READ_PASSWORD` 并同步 compose。默认不复用也行：`--arg p2 "${RQLITE_READ_PASSWORD:-$RQLITE_PASSWORD}"`。**实现采用后者**，即 `pew-ro` 用 `RQLITE_READ_PASSWORD`，缺省回落 `RQLITE_PASSWORD`。）
+（实现更正 2026-10-15：上文脚本与快照已按交付实现**移除 `pew-ro`**，只输出 `pew`/`joiner`/`*` 三条目——理由见上方勘误段。原设计中 `pew-ro` 复用/独立密码（`RQLITE_READ_PASSWORD`）的讨论随条目一并失效。）
 
 `deploy/selfhost/rqlite-entrypoint.sh`：spec §3.1.2 的脚本原文逐字照抄（含注释），`chmod +x` 两个脚本。
 
@@ -599,7 +600,7 @@ git commit -m "feat: compose auth wiring for rqlite + service credentials (spec 
   2. 无凭据 `docker compose exec web node -e "fetch('http://rqlite:4001/db/query?q=SELECT%201').then(r=>console.log(r.status))"` → `401`；带凭据（Basic 头）→ `200`
   3. **对账自检触发**：另起一个无 `-auth` 的裸 rqlite 容器同网络，把 migrate 指过去（或临时删 auth.json 后 recreate rqlite 保持客户端凭据）→ migrate 显式报「credentials configured but auth is disabled」exit 1
 - [ ] **Step 3: cluster**。`--profile cluster` 重复 Step 2（三节点全部 `-join-as joiner`），真机项 2/4/5：迁移通过、数据一致（写一条 leaderboard 记录三副本可读）；**匿名 join 拒绝**：同网络起 `rqlite/rqlite:10.5.3 -raft-non-voter -join rqlite-1:4002`（无 `-join-as`）→ 日志 unauthorized。
-- [ ] **Step 4: 备份**（真机项 6）：带凭据 `POST /db/backup` 到宿主文件，文件非空；恢复到临时节点可读。
+- [ ] **Step 4: 备份**（真机项 6）：带凭据 `GET /db/backup`（实现更正 2026-10-15：原文写 `POST /db/backup`，实测 10.5.3 下 POST 返回 405，**GET 才是 200**）到宿主文件，文件非空；恢复到临时节点可读。
 - [ ] **Step 5: 镜像层抽查**（真机项 7）：`git grep rqlite-auth .gitignore .dockerignore` 确认规则在；`docker build` 两个镜像后 `docker history pew-selfhost:local` 逐层确认无 auth.json，`docker save` 导出 grep 无命中。
 - [ ] **Step 6: 清理实验容器/卷；提交**（若有回改，逐文件提交并引用对应 Task）。
 
@@ -952,7 +953,7 @@ git commit -m "docs: reverse-proxy deployment guide + compose overlays (spec §3
 **Interfaces:** 纯文档。Consumes Task 4/5/7/8 的既成事实。
 
 - [ ] **Step 1: Quickstart 改写**——鉴权路径三步固定序列（render → up → 自检），加粗警告「**先 up 后 render 会以无鉴权静默启动**」；无鉴权路径保持现状一行。
-- [ ] **Step 2: 备份/恢复订正**——带凭据 `-u user:pass`、端点 `POST /db/backup`（注明 GET /backup 在 10.5.3 是 404）、备份后校验非空（`[ -s file ]`）、恢复命令同凭据。
+- [ ] **Step 2: 备份/恢复订正**——带凭据 `-u user:pass`、端点 `GET /db/backup`（实现更正 2026-10-15：原文写 `POST /db/backup` 且称 GET /backup 在 10.5.3 是 404——实测恰好相反，**POST 是 405、GET /db/backup 返回 200**）、备份后校验非空（`[ -s file ]`）、恢复命令同凭据。
 - [ ] **Step 3: 破窗命令订正**——替换 `README.md:28` 的 `RQLITE_URL=http://127.0.0.1:14001`（端口从未发布）为 `docker compose exec -e RQLITE_USERNAME -e RQLITE_PASSWORD rqlite ...` 形态，凭据从 `.env` 读入 exec 环境。
 - [ ] **Step 4: 新增「升级」小节 + auth.json 丢失恢复 runbook**（spec §3.1.5 两种情形逐字落地；runbook 注明：auth 文件误删 `*` 条目 → healthcheck 401 → rqlite 永不 healthy → migrate 永不跑，启动门卡死难定位，spec §2.1 要求明示）+ 回滚清理 checklist（.env 三变量、磁盘 auth.json、dockerignore 回退）。
 - [ ] **Step 5: 安全注意事项改写**——「rqlite 默认无鉴权…本计划未做」改为条件描述（默认关、三变量开启）；跨机集群段补 auth.json 逐字节一致 / 轮换 = 全节点 recreate / 4002 明文需 WireGuard；三节点降级信号（单节点 down = 只读、两节点 down 须同时恢复）；限速段改写为 `LOGIN_RATE_LIMIT_BACKEND` 双后端描述 + 其余 5 处消费方保持 memory 的原因清单。

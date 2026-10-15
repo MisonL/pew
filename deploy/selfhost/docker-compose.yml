@@ -265,7 +265,10 @@ services:
       # Effective as of Plan 2: shouldUseSecureCookies() now honours an explicit
       # false, so an intranet http deployment gets non-__Secure cookies (the
       # browser drops __Secure- cookies over plain http).
-      USE_SECURE_COOKIES: ${USE_SECURE_COOKIES:-false}
+      # Unset by default: shouldUseSecureCookies() then derives Secure from
+      # NODE_ENV/URL. A hard `false` default here would silently strip Secure
+      # from session cookies on HTTPS (Caddy) deployments that never edit .env.
+      USE_SECURE_COOKIES: ${USE_SECURE_COOKIES:-}
       # Plan 3 §3.2: switch the LOGIN limiter to the shared rqlite backend.
       LOGIN_RATE_LIMIT_BACKEND: ${LOGIN_RATE_LIMIT_BACKEND:-}
       # CLI login callback + resolveHost (spec §4.5/§11).

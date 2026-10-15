@@ -231,8 +231,11 @@ server {
 ### ★ 硬约束清单
 
 - ★ **web 的 7020 端口只绑 `127.0.0.1` 或不发布**：任何能直连 7020 的客户端都可以整体伪造
-  `X-Forwarded-For`（无反代时它就是唯一的 IP 信任来源）。用 `docker-compose.proxy.yml`
-  覆盖文件把端口改绑到回环：
+  `X-Forwarded-For`（无反代时它就是唯一的 IP 信任来源）。**绕过后果**：攻击者每个请求带
+  不同的自造 XFF 即可获得无限个新的 IP 限速桶，IP 维度登录限速形同虚设（邮箱桶仍有效）。
+  用 `docker-compose.proxy.yml`
+  覆盖文件把端口改绑到回环；直接暴露 7020 的部署（如纯内网无反代）应视为**不受支持的
+  公网拓扑**，IP 限速不可依赖。
 
   ```bash
   # !override 替换（而非追加）基础 compose 的 ports 列表，需 Compose >= v2.24.4
@@ -322,7 +325,7 @@ docker compose exec -T \
 > `tsc -b deploy/selfhost/tsconfig.json` lane 编译期校验（project references 指向 core 与两个
 > worker 的 composite 声明构建 `tsconfig.build.json`），适配层与上游 `D1Database`/`KVNamespace`
 > 的类型兼容性由此获得保证；入口是 `bun run lint:typecheck`（`bun run typecheck` 本身只覆盖
-> `packages/*` 与 e2e 清单，不含 deploy/）。运行时另由 113 个 vitest 用例覆盖。
+> `packages/*` 与 e2e 清单，不含 deploy/）。运行时另由 deploy/selfhost 的 12 个 vitest 测试文件覆盖（用例数随交付增长，以 `bunx vitest run deploy/selfhost` 实际输出为准）。
 
 
 ## 备份
@@ -350,14 +353,15 @@ printf '.backup /rqlite/file/backup.db\n.exit\n' | \
   docker compose exec -T rqlite rqlite "${RQLITE_ARGS[@]}" -H localhost
 docker compose cp rqlite:/rqlite/file/backup.db "./backup-$(date +%F).db"
 chmod 600 "./backup-$(date +%F).db"   # 备份含全部 password_hash/api_key，禁止 world-readable
-[ -s "./backup-$(date +%F).db" ] || echo "备份为空，失败！" >&2
+# 非空校验必须退出非零：包进 cron/systemd timer 时，0 字节假文件否则只会留一条 stderr、退出码仍为 0，无人告警。
+[ -s "./backup-$(date +%F).db" ] || { echo "备份为空，失败！" >&2; exit 1; }
 
 # 集群模式（对 leader 节点执行即可，默认 rqlite-1；.backup 读本地文件但产物经 Raft 复制）
 printf '.backup /rqlite/file/backup.db\n.exit\n' | \
   docker compose exec -T rqlite-1 rqlite "${RQLITE_ARGS[@]}" -H localhost
 docker compose cp rqlite-1:/rqlite/file/backup.db "./backup-$(date +%F).db"
 chmod 600 "./backup-$(date +%F).db"
-[ -s "./backup-$(date +%F).db" ] || echo "备份为空，失败！" >&2
+[ -s "./backup-$(date +%F).db" ] || { echo "备份为空，失败！" >&2; exit 1; }
 ```
 
 产物是标准 SQLite 文件（已实测：`SQLite format 3` 魔数、含全部表与 `kv_cache`）。
@@ -386,9 +390,11 @@ docker compose cp "./backup-2026-10-11.db" rqlite:/rqlite/file/restore.db
 printf '.restore /rqlite/file/restore.db\n.exit\n' | \
   docker compose exec -T rqlite rqlite "${RQLITE_ARGS[@]}" -H localhost
 # Expected: Database restored successfully
-# 4. 起应用并验证
+# 4. 起应用并验证（存活 + 迁移账本对账，后者用「验证」小节的 exec 形态）
 docker compose start d1-http read ingest scheduler web
 docker compose exec web node -e "fetch('http://127.0.0.1:7020/api/live').then(r=>r.json()).then(console.log)"
+# 5. 清理临时文件（不清理会常驻 rqlite 卷、计入磁盘占用）
+docker compose exec rqlite rm -f /rqlite/file/restore.db
 ```
 
 ## 升级
@@ -396,7 +402,8 @@ docker compose exec web node -e "fetch('http://127.0.0.1:7020/api/live').then(r=
 ```bash
 git fetch upstream main && git merge upstream/main   # 或拉取自有 fork 的对应分支
 # 鉴权部署下先确认 .rqlite-auth.json 在磁盘（升级不删卷，但若宿主目录被清理，
-# rqlite 容器 recreate 后 entrypoint 找不到 /auth/auth.json 会以无鉴权启动）：
+# rqlite 容器 recreate 后 entrypoint 找不到 /auth/auth.json 会以无鉴权启动）。
+# cluster profile 下没有 rqlite 服务，命令中的服务名换成 rqlite-1：
 ls -l deploy/selfhost/.rqlite-auth.json || docker compose run --rm --entrypoint sh rqlite \
   -c 'echo "auth file missing — re-render before up:"; exit 1'
 # 缺失则先重新渲染（见「Quickstart」固定序列），再 up。
@@ -412,7 +419,12 @@ docker compose up -d
 - **rqlite 版本升级前**先做一次备份（见上），并确认新版本的 auth.json 格式兼容
   （凭据条目数组格式自 8.x 起稳定，跨大版本升级后先在测试实例验证一遍
   「自检三步」再动生产）。
-- 升级后跑一次 `bun run deploy/selfhost/verify-migrations.ts` 对账表/索引计数（见「验证」小节）。
+- 升级后跑一次 `verify-migrations.ts` 对账表/索引计数（rqlite 未发布宿主端口，用「验证」小节的 `docker compose exec d1-http` 形态，不要在宿主直接 `bun run`）。
+- **应用回滚**：迁移只进不退（`_migrations` 无 down migration），回滚前先备份 `.db`。在
+  `docker compose build` 之前用 `docker tag pew-selfhost:local pew-selfhost:previous`（及
+  `pew:standalone`）保留旧镜像，回滚即 `docker tag pew-selfhost:previous pew-selfhost:local
+  && docker compose up -d`。历史迁移多为加列/建表，旧代码 + 新 schema 大体兼容，但这一
+  兼容性**没有契约承诺**——重大 schema 变更的迁移文件会在提交说明中标注破坏性，回滚前核对。
 
 ## auth.json 丢失恢复 runbook
 
@@ -471,6 +483,13 @@ docker compose logs --tail=100 <svc>   # svc = web / rqlite / migrate / read / .
 rqlite 容器反复 unhealthy 时优先怀疑 auth.json 问题（`*` 条目缺失、文件未渲染、
 半填凭据）——详见上文「auth.json 丢失恢复 runbook」的警告块。
 
+**`unhealthy` 不等于自动重启**：`restart: unless-stopped` 只对进程退出生效；进程活着但
+服务僵死（探针持续失败）时 Docker 不会重启容器。处置靠人工 `docker compose restart <svc>`；
+本栈无自动告警通道，长期部署建议把 `docker compose ps` 纳入外部巡检。
+
+**数据层故障不改变任何容器状态**：read/ingest/d1-http 的探针只探自身 `/api/live`，
+rqlite 宕机/磁盘满时它们仍显示 healthy，唯一信号是 web 的 5xx 与 rqlite 日志。
+
 **宿主磁盘满**：rqlite 是唯一有状态组件，`rqlite-data` 卷写满后 Raft 无法提交日志，
 症状是**所有写路径 500**（无任何指向磁盘的报错）。恢复：清理宿主空间后
 `docker compose restart rqlite`；若 SQLite 卷已损坏则走备份恢复 runbook。
@@ -501,7 +520,8 @@ Plan 1 交付「数据层与运行时可用、API 可经 CLI/密钥调用」。P
 隔离凭据）。新增文件（`lib/credentials.ts`、`app/setup/`、`app/api/auth/register|reset-password|
 login-options`、`api/admin/users/[userId]/reset-password` 等）不与上游冲突。
 
-`packages/worker` 与 `packages/worker-read` 的 **`src/` 业务代码与 SQL 一行未改**；为把
+`packages/worker` 与 `packages/worker-read` 的 **`src/` 业务代码与 SQL 零改动**（仅
+`WORKER_VERSION` 常量随版本 bump）；为把
 selfhost 适配层纳入编译期类型校验，两个包的 `tsconfig.json`/`package.json` 与新增的
 `tsconfig.build.json` 有 composite 声明构建配置（不影响 Cloudflare 部署路径，见
 `scripts/parallel-typecheck.sh` 的 selfhost lane）。

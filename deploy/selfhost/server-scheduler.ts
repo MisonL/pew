@@ -17,7 +17,13 @@ import { resolveReadBasicAuth } from "./basic-auth";
 
 const RQLITE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
 const D1_TOKEN = process.env.CF_D1_API_TOKEN ?? "";
-const INTERVAL_MS = Number(process.env.DAILY_INTERVAL_MS ?? 24 * 60 * 60 * 1000);
+// Number("") is 0 and Number("abc") is NaN; setInterval treats both as a ~1ms
+// tick, which would hammer rqlite in a tight loop. Fall back to 24h instead.
+const RAW_INTERVAL = Number(process.env.DAILY_INTERVAL_MS ?? 24 * 60 * 60 * 1000);
+const INTERVAL_MS = Number.isFinite(RAW_INTERVAL) && RAW_INTERVAL > 0 ? RAW_INTERVAL : 24 * 60 * 60 * 1000;
+if (INTERVAL_MS !== RAW_INTERVAL) {
+  console.error(`invalid DAILY_INTERVAL_MS "${process.env.DAILY_INTERVAL_MS}", falling back to 24h`);
+}
 // Read-only rqlite credentials (Plan 3 §3.1.2), same fallback as server-read.
 const BASIC_AUTH = resolveReadBasicAuth(
   process.env.RQLITE_READ_USERNAME,
@@ -32,6 +38,9 @@ const db = createD1Adapter({ baseUrl: RQLITE_URL, token: D1_TOKEN, ...(BASIC_AUT
 const env = {
   DB: db,
   CACHE: createKvAdapter({ db }),
+  // Not requireSecret: the scheduler only calls scheduled(), which syncs
+  // pricing outbound and never serves requests, so the read secret gate
+  // (worker-read's /api/rpc Bearer check) is not on its path.
   WORKER_READ_SECRET: process.env.WORKER_READ_SECRET ?? "",
 } as unknown as Env;
 

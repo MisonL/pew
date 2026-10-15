@@ -80,8 +80,15 @@ export function createWorkerServer<E>(options: WorkerServerOptions<E>) {
             await sendResponse(res, response);
           } catch (error) {
             console.error("worker request failed", error);
-            if (!res.headersSent) res.statusCode = 500;
-            res.end(JSON.stringify({ error: "Internal server error" }));
+            // An aborted readBody leaves unread request bytes in flight; under
+            // keep-alive Node would parse that remainder as the next request
+            // (same trap server-d1-http.ts fixes with its 413 path). Tear the
+            // connection down after responding instead of reusing it.
+            if (!res.headersSent) {
+              res.statusCode = 500;
+              res.setHeader("Connection", "close");
+            }
+            res.end(JSON.stringify({ error: "Internal server error" }), () => req.destroy());
           }
         })();
       });
@@ -171,14 +178,20 @@ export function registerShutdownSignals(close: () => Promise<void>): void {
 }
 
 /**
- * Fails fast when a required secret is missing OR left at the `.env.example`
- * placeholder. A bare non-empty check would let the quickstart's `replace-me`
- * through, leaving every service authenticated by a value that is published
- * in this repo — the one default an operator is most likely to forget.
+ * Fails fast when a required secret is missing OR left at a well-known
+ * placeholder. A bare non-empty check would let a published default through,
+ * leaving every service authenticated by a value that is public in this repo —
+ * the one default an operator is most likely to forget. The set matches
+ * requireAuthSecret in packages/web/src/auth.ts so both runtimes reject the
+ * same values.
  */
+export const SECRET_PLACEHOLDERS = new Set(["", "replace-me", "changeme", "secret"]);
+
 export function requireSecret(name: string, value: string): string {
-  if (!value || value === "replace-me") {
-    console.error(`${name} is required and must not be the placeholder "replace-me"`);
+  if (SECRET_PLACEHOLDERS.has(value)) {
+    console.error(
+      `${name} is required and must not be empty or a well-known placeholder (replace-me / changeme / secret)`
+    );
     process.exit(1);
   }
   return value;
