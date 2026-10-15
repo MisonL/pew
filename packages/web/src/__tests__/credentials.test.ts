@@ -117,6 +117,11 @@ describe("password reset", () => {
     const stmts = dbWrite.batch.mock.calls[0]![0] as Array<{ sql: string; params?: unknown[] }>;
     // The token is claimed first (atomic guard), then the password is set.
     expect(stmts[0]!.sql).toMatch(/UPDATE password_resets SET used_at = \? WHERE token = \? AND used_at IS NULL/);
+    // The password write is gated on used_at = THE TIMESTAMP THIS TRANSACTION
+    // WROTE (params[3] === params of the claim): an EXISTS on "IS NOT NULL"
+    // would also pass for a concurrent loser that saw the winner's claim.
+    expect(stmts[1]!.sql).toMatch(/used_at = \?\s*\)/);
+    expect(stmts[1]!.params![3]).toBe(stmts[0]!.params![0]);
     expect(stmts[1]!.sql).toMatch(/UPDATE users SET password_hash/);
     expect(stmts[1]!.params![0]).toMatch(/^scrypt\$/);
   });

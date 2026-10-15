@@ -35,9 +35,11 @@ export function resolveEnvBasicAuth(): BasicAuth | undefined {
  * Read-only credentials: prefer the READ_* pair, falling back to the FULL
  * pair as a unit. There is deliberately no pew-ro user (rqlite 10.5.3 has no
  * "select" permission name, and read/scheduler carry /db/request write paths,
- * so a read-only user is unreachable here) — the READ_* vars are a deprecated
- * compatibility surface and in practice this always resolves to the full
- * user. One READ_* var alone never mixes users — the pair falls back together.
+ * so a read-only user is unreachable here). The READ_* vars are deprecated:
+ * a fully-set pair is PREFERRED over the full pair, and that user does not
+ * exist in auth.json, so setting it makes read/scheduler 401 — operators
+ * must leave both empty. One READ_* var alone never mixes users — the pair
+ * falls back together.
  */
 export function resolveReadBasicAuth(
   readUsername: string | undefined,

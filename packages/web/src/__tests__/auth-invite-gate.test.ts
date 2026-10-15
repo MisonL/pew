@@ -235,6 +235,25 @@ describe("handleInviteGate", () => {
     expect(vi.mocked(mockDbRead.getUserByOAuthAccount)).not.toHaveBeenCalled();
   });
 
+  it("should NOT skip check when RESOURCE_ENV is not test (no isolated runner environment)", async () => {
+    vi.stubEnv("E2E_SKIP_AUTH", "true");
+    // RESOURCE_ENV intentionally left unset — same guard as isE2EMode().
+
+    // New user (no existing account)
+    vi.mocked(mockDbRead.getUserByOAuthAccount).mockResolvedValueOnce(null);
+
+    const result = await handleInviteGate(
+      makeReq(), // no invite cookie
+      GOOGLE_ACCOUNT,
+      mockDbRead,
+      mockDbWrite
+    );
+    // Bypass should NOT trigger; full invite-gate logic runs and rejects
+    expect(typeof result).toBe("string");
+    expect(result).toContain("/login?error=InviteRequired");
+    expect(vi.mocked(mockDbRead.getUserByOAuthAccount)).toHaveBeenCalled();
+  });
+
   it("should NOT skip check when RAILWAY_ENVIRONMENT is set (production guard)", async () => {
     vi.stubEnv("E2E_SKIP_AUTH", "true");
     vi.stubEnv("RESOURCE_ENV", "test");

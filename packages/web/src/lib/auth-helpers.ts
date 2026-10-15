@@ -1,7 +1,8 @@
 /**
  * Shared auth helper for API routes.
  *
- * In E2E mode (E2E_SKIP_AUTH=true + NODE_ENV=development), returns the
+ * In E2E mode (E2E_SKIP_AUTH=true + RESOURCE_ENV=test, the runner's isolated
+ * per-run environment), returns the
  * test user configured via E2E_TEST_USER_ID / E2E_TEST_USER_EMAIL env vars
  * so that API tests can run without OAuth. Defaults to a fixed ID for
  * local dev; the E2E runner overrides these with a per-run unique ID to
@@ -26,7 +27,7 @@ export interface AuthResult {
  * Resolve the authenticated user for an API request.
  *
  * Priority:
- * 1. E2E bypass (E2E_SKIP_AUTH=true in development)
+ * 1. E2E bypass (E2E_SKIP_AUTH=true + RESOURCE_ENV=test)
  * 2. Auth.js session
  * 3. Bearer api_key
  *

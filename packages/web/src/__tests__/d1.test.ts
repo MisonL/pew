@@ -20,6 +20,7 @@ describe("local D1 transport safety", () => {
   });
   it.each([
     { RAILWAY_ENVIRONMENT: "production" },
+    { NODE_ENV: "development", RAILWAY_ENVIRONMENT: "production" },
     { RESOURCE_ENV: "production" }, { E2E_SKIP_AUTH: "false" },
     { PEW_LOCAL_D1_URL: "https://127.0.0.1:12345" },
     { PEW_LOCAL_D1_URL: "http://example.com:12345" },

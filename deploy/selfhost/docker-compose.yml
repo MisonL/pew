@@ -17,6 +17,10 @@ x-rqlite-common: &rqlite-common
   restart: unless-stopped
   # -fk is mandatory: foreign keys are off by default in SQLite and the schema
   # relies on 12 ON DELETE CASCADE clauses.
+  # NOTE: this anchor's `command` is a scalar key — every service below that
+  # defines its own `command` replaces it wholesale. The common command here
+  # is therefore documentation of the shared baseline; the effective flags
+  # (-fk, and the identity fixes described there) are re-stated per service.
   command: ["-fk", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002"]
   # The official image ENTRYPOINT is rqlited itself; the wrapper appends
   # -auth /auth/auth.json (only when the rendered file exists) and, for
@@ -51,7 +55,19 @@ services:
   rqlite:
     <<: *rqlite-common
     profiles: ["single"]
-    command: ["-fk", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-bootstrap-expect", "1"]
+    # -node-id/-adv-addr are FIXED: rqlited derives the node ID from the
+    # container hostname (= the container ID) and the entrypoint wrapper
+    # defaults the advertised addresses to the hostname too. Recreating the
+    # container — the documented sequence for enabling auth — then changes
+    # both, the persisted raft configuration no longer matches, and the node
+    # logs "not part of stable configuration, aborting election" forever:
+    # never ready, migrate fail-closed, whole stack down. The service alias
+    # "rqlite" is stable across recreates (compose network alias), so both
+    # the ID and the advertised addresses are pinned to it. Cluster nodes
+    # below pin 1/2/3 the same way. (Node IDs are immutable: a store created
+    # before this pin by an ID derived from a container ID needs one volume
+    # reset + backup restore to adopt it.)
+    command: ["-fk", "-node-id", "rqlite", "-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-http-adv-addr", "rqlite:4001", "-raft-adv-addr", "rqlite:4002", "-bootstrap-expect", "1"]
     volumes:
       - rqlite-data:/rqlite/file
       - ./rqlite-entrypoint.sh:/entrypoint.sh:ro
@@ -167,8 +183,9 @@ services:
       RQLITE_URL: http://rqlite:4001
       # Deprecated (pew-ro removed): rqlite 10.5.3 has no "select" permission
       # name and read/scheduler carry /db/request write paths, so no read-only
-      # user is reachable. Kept as a harmless fallback; read/scheduler use the
-      # full RQLITE_* credentials below.
+      # user exists in auth.json. NOT a harmless fallback: resolveReadBasicAuth
+      # PREFERS this pair, and a user set here does not exist in auth.json, so
+      # read/scheduler would 401 against rqlite. Leave both EMPTY (the default).
       RQLITE_READ_USERNAME: ${RQLITE_READ_USERNAME:-}
       RQLITE_READ_PASSWORD: ${RQLITE_READ_PASSWORD:-}
       RQLITE_USERNAME: ${RQLITE_USERNAME:-}
@@ -226,8 +243,9 @@ services:
     # comes back via `restart: unless-stopped` instead of a probe.
     environment:
       RQLITE_URL: http://rqlite:4001
-      # Deprecated (pew-ro removed): kept as a harmless fallback; the full
-      # RQLITE_* credentials below are what read/scheduler actually use.
+      # Deprecated (pew-ro removed): NOT a harmless fallback — resolveReadBasicAuth
+      # prefers this pair, and a value here does not exist in auth.json (401).
+      # Leave both EMPTY; the RQLITE_* pair below is what read/scheduler use.
       RQLITE_READ_USERNAME: ${RQLITE_READ_USERNAME:-}
       RQLITE_READ_PASSWORD: ${RQLITE_READ_PASSWORD:-}
       RQLITE_USERNAME: ${RQLITE_USERNAME:-}

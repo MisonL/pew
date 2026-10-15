@@ -5,7 +5,7 @@
  * Used by client-side components to conditionally show admin UI.
  *
  * In E2E mode with admin bypass (E2E_SKIP_AUTH=true + E2E_ADMIN_BYPASS=true
- * in development), always returns { isAdmin: true } so Playwright tests
+ * + RESOURCE_ENV=test), always returns { isAdmin: true } so Playwright tests
  * can exercise admin pages.
  */
 

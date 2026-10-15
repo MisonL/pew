@@ -70,6 +70,10 @@ describe("createWorkerServer", () => {
     try {
       const res = await fetch(`http://127.0.0.1:${handle.port}/api/live`);
       expect(res.status).toBe(500);
+      // The 500 path must close the connection: the request body of an
+      // aborted read would otherwise be re-parsed as the next keep-alive
+      // request (same trap the d1-http 413 path fixes, wire-asserted here).
+      expect(res.headers.get("connection")).toBe("close");
     } finally {
       await handle.close();
     }
@@ -177,7 +181,7 @@ describe("requireSecret", () => {
     expect(requireSecret("X", "s3cr3t")).toBe("s3cr3t");
   });
 
-  it.each(["", "replace-me"])("exits when the value is %j", (value) => {
+  it.each(["", "replace-me", "changeme", "secret"])("exits when the value is %j", (value) => {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
