@@ -77,7 +77,7 @@ describe("password reset", () => {
   });
 
   it("createPasswordReset returns an opaque token and stores it with an expiry", async () => {
-    dbWrite.batch.mockResolvedValueOnce([{ success: true }, { success: true }]);
+    dbWrite.batch.mockResolvedValueOnce([{ success: true, meta: { changes: 1, duration: 1 } }, { success: true, meta: { changes: 1, duration: 1 } }]);
     const token = await createPasswordReset("u1");
     expect(token).toMatch(/^[A-Za-z0-9_-]{40,}$/);
     const stmts = dbWrite.batch.mock.calls[0]![0] as Array<{ sql: string; params?: unknown[] }>;
@@ -109,7 +109,7 @@ describe("password reset", () => {
     mockQuery.mockResolvedValueOnce({
       results: [{ user_id: "u1", expires_at: new Date(Date.now() + 60_000).toISOString() }],
     });
-    dbWrite.batch.mockResolvedValueOnce([{ success: true }, { success: true }]);
+    dbWrite.batch.mockResolvedValueOnce([{ success: true, meta: { changes: 1, duration: 1 } }, { success: true, meta: { changes: 1, duration: 1 } }]);
 
     const result = await consumePasswordReset("tok", "newpassword");
     expect(result).toEqual({ userId: "u1" });
@@ -119,6 +119,19 @@ describe("password reset", () => {
     expect(stmts[0]!.sql).toMatch(/UPDATE password_resets SET used_at = \? WHERE token = \? AND used_at IS NULL/);
     expect(stmts[1]!.sql).toMatch(/UPDATE users SET password_hash/);
     expect(stmts[1]!.params![0]).toMatch(/^scrypt\$/);
+  });
+
+  it("consumePasswordReset returns null when a concurrent request won the claim", async () => {
+    mockQuery.mockResolvedValueOnce({
+      results: [{ user_id: "u1", expires_at: new Date(Date.now() + 60_000).toISOString() }],
+    });
+    // Lost the race: the claim UPDATE matched 0 rows, so the gated password
+    // write must not be treated as success.
+    dbWrite.batch.mockResolvedValueOnce([
+      { success: true, meta: { changes: 0, duration: 1 } },
+      { success: true, meta: { changes: 0, duration: 1 } },
+    ]);
+    expect(await consumePasswordReset("tok", "newpassword")).toBeNull();
   });
 });
 

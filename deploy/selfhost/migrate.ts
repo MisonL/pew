@@ -146,9 +146,12 @@ function isBenignReplayError(stmt: string, error: unknown): boolean {
     return /already exists/i.test(message) || /duplicate column name/i.test(message);
   }
   // DML: a crash between a seed INSERT and the ledger write replays the file;
-  // single-row seeds written with INSERT OR IGNORE tolerate the replay, and a
-  // UNIQUE hit on a re-applied seed row is the same idempotency story.
-  return /UNIQUE constraint failed/i.test(message);
+  // single-row seed INSERTs tolerate the UNIQUE hit on the replayed row. A
+  // UNIQUE failure in an INSERT ... SELECT backfill is NOT tolerated — that
+  // is a genuine data error and must abort (so it can never be silently
+  // recorded as applied).
+  return /^\s*INSERT\s+INTO\b/i.test(stmt) && !/\bSELECT\b/i.test(stmt)
+    && /UNIQUE constraint failed/i.test(message);
 }
 
 export async function applyMigrations(
@@ -218,7 +221,10 @@ export async function applyMigrations(
           await options.db.prepare(stmt).run();
         } catch (statementError) {
           // Crash-before-ledger replay: idempotent seeds re-apply cleanly.
-          if (isBenignReplayError(stmt, statementError)) continue;
+          if (isBenignReplayError(stmt, statementError)) {
+            log(`tolerated replay of seed statement in ${name}: ${statementError instanceof Error ? statementError.message : String(statementError)}`);
+            continue;
+          }
           throw statementError;
         }
       }

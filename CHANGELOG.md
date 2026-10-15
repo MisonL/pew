@@ -7,13 +7,25 @@
   worker handlers run on Node under compose, email+password auth with setup
   wizard and invite codes, rqlite Basic-auth hardening, externalized login
   rate limiting, proxy/TLS runbooks. See `deploy/selfhost/README.md` and docs 52–56.
+- Compile-time type checking of the selfhost adapter layer: worker packages
+  gain composite declaration builds (`tsconfig.build.json`) and
+  `deploy/selfhost/tsconfig.json` joins the strict typecheck via project
+  references (`scripts/parallel-typecheck.sh`).
+- kv-adapter get() uses a linearizable (strong) read so cache invalidation
+  is visible on lagging cluster followers.
 
 ### Fixed
 - Tighten session maxAge to 7 days and reject placeholder AUTH_SECRET values
-  at web startup (session-forgery hardening)
+  at first auth use (session-forgery hardening)
 - Parse password-reset expiry SQL-side (UTC) instead of local-time Date parsing
 - Make the leaderboard-revision seed idempotent and tolerate crash-before-ledger
   replay of seed DML in the selfhost migration runner
+- Gate the password-reset write on the token claim (a lost concurrent claim
+  no longer lets the second request set the password)
+- Read the client IP from the LAST X-Forwarded-For entry (the one our proxy
+  appended) so a client cannot mint fresh per-IP rate-limit buckets
+- Stop passing AUTH_SECRET/CF_D1_API_TOKEN/WORKER_SECRET as Docker build
+  args (real secrets no longer enter builder image layers)
 
 ## v3.3.2
 

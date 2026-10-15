@@ -32,18 +32,22 @@ RUN node --version | grep -Eq '^v22\.'
 
 # Railway injects service env vars as Docker build args.
 # Next.js needs these at build time for page data collection.
+# SECURITY: only the non-secret identifiers are passed through. AUTH_SECRET,
+# CF_D1_API_TOKEN and WORKER_SECRET must NOT become build args — an ARG/ENV in
+# the builder stage bakes the value into image layers and the build cache
+# (visible via docker history / cache inspection). The build gets a dummy
+# non-empty value; the runner stage receives the real secrets at runtime only.
 ARG CF_ACCOUNT_ID
 ARG CF_D1_DATABASE_ID
-ARG CF_D1_API_TOKEN
 ARG WORKER_INGEST_URL
-ARG WORKER_SECRET
-ARG AUTH_SECRET
 ENV CF_ACCOUNT_ID=$CF_ACCOUNT_ID
 ENV CF_D1_DATABASE_ID=$CF_D1_DATABASE_ID
-ENV CF_D1_API_TOKEN=$CF_D1_API_TOKEN
 ENV WORKER_INGEST_URL=$WORKER_INGEST_URL
-ENV WORKER_SECRET=$WORKER_SECRET
-ENV AUTH_SECRET=$AUTH_SECRET
+# Dummy build-time placeholders; runtime env (Railway service vars / compose
+# environment:) supplies the real values to the runner stage.
+ENV CF_D1_API_TOKEN=build-time-placeholder-not-a-secret
+ENV WORKER_SECRET=build-time-placeholder-not-a-secret
+ENV AUTH_SECRET=build-time-placeholder-not-a-secret
 
 COPY --from=deps /app ./
 COPY . .

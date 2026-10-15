@@ -85,10 +85,10 @@ libSQL 因维护主体缺失与数据正确性缺陷被否决。
 | **存储接缝** | `lib/d1.ts` | 新增可配置 base URL（现有 `PEW_LOCAL_D1_URL` 被生产守卫锁死，见 §4.1） |
 | **认证接缝** | `auth.ts`、`app/login/page.tsx`、`app/api/auth/register`（新增）、`app/setup/`（新增） | Credentials provider、密码表单、注册向导 |
 | **管理员判定** | `lib/admin.ts`、`app/api/admin/check/route.ts`、`app/api/users/[slug]/route.ts` | 判定并入库内 `is_admin`（首个用户即管理员，§4.4） |
-| **多节点确定性** | `lib/auth-adapter.ts`、`app/api/admin/invites/route.ts` 等 | 省略时间列的 INSERT 补 `datetime('now')`（§4.1 专项五） |
+| **多节点确定性** | （实现更正 2026-10-15：`lib/auth-adapter.ts`、`app/api/admin/invites/route.ts` 最终未改动——相关表均有 `DEFAULT datetime('now')`，专项五的 INSERT 场景无实际缺口） |
 | **路由与 CLI** | `proxy.ts`、`cli/src/commands/login.ts`、`cli/src/config/manager.ts` | `/setup` 公开可达、`--host` 支持、凭据按 host 隔离 |
 
-**不改动的上游文件**（刻意规避）：`Dockerfile`、`bun.lock`、根 `package.json`、`.dockerignore`、`biome.json`、`cli.ts`、`packages/worker/src/**`、`packages/worker-read/src/**`。规避方式见 §4.7。（实现更正 2026-10-14：为把 selfhost 适配层纳入编译期类型校验，两个 worker 包的 `tsconfig*.json`/`package.json` typecheck 脚本有 composite 声明构建改动——`src/` 业务代码与 SQL 仍零改动，见 `scripts/parallel-typecheck.sh`。）
+**不改动的上游文件**（刻意规避）：`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`packages/worker/src/**`、`packages/worker-read/src/**`。规避方式见 §4.7。（实现更正 2026-10-14：为把 selfhost 适配层纳入编译期类型校验，两个 worker 包的 `tsconfig*.json`/`package.json` typecheck 脚本有 composite 声明构建改动——`src/` 业务代码与 SQL 仍零改动，见 `scripts/parallel-typecheck.sh`。另一处名单外改动：`.dockerignore` 增加 `**/.env` 与 `**/.rqlite-auth.json` 深度排除，防凭据进镜像层——安全修复，非规避对象。）
 
 **差异全部收敛在适配层。** 新增代码只存在于新目录 `deploy/selfhost/`，且**不注册为 workspace package**（避免改 `bun.lock` 与 `Dockerfile`）。
 
@@ -359,7 +359,7 @@ CREATE TABLE instance_setup (
 );
 ```
 
-引导注册在**一个事务内**完成：`SELECT COUNT(*) FROM users` 必须为 0 → 插入用户（`is_admin = 1`）→ 插入 `instance_setup` 单行。第二次并发请求会因 `instance_setup` 主键冲突而失败。rqlite 写路径由单 leader 串行 + `?transaction=true` 原子（§4.1 专项一），因此该判定可靠。
+引导注册在**一个事务内**完成插入（`is_admin = 1` 用户 + `instance_setup` 单行），`users` 计数查询在批量外先读（实现更正 2026-10-15，见 docs/54 Global Constraints）。第二次并发请求会因 `instance_setup` 主键冲突在批量内失败并整体回滚。rqlite 写路径由单 leader 串行 + `?transaction=true` 原子（§4.1 专项一），因此该判定可靠。
 
 **注册向导流程（`/setup`）**：
 
@@ -369,6 +369,8 @@ CREATE TABLE instance_setup (
 | 2 | 管理员账号——邮箱、显示名、密码 + 确认；密码强度校验（长度/复杂度） |
 | 3 | 实例选项（可选）——是否要求邀请码（写 `app_settings.require_invite_code`）、站点显示名等 |
 | 4 | 完成——自动登录并进入仪表盘；此后 `/setup` 恒 302 到 `/login` |
+
+> **实现更正 2026-10-15**：向导最终为单步表单（邮箱/显示名/密码/确认），步骤 3 省略——`require_invite_code` 等实例选项由管理后台（`/api/admin/settings`）承担；`/setup` 完成后不是 302 而是注册 API 返回 400（同等防护，机制不同）。
 
 **向导路由必须对未登录用户开放**：`proxy.ts:48-58` 的 `isPublicRoute()` 不含 `/setup`，未登录访问会被 302 到 `/login` 而**永远进不了向导**。需把 `/setup` 加入公开路由（改动 `proxy.ts`，计入 §4.7 改动面）。登录页在「库内无用户」时也应显示「首次部署？前往初始化」入口。
 
@@ -491,7 +493,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | 1 | `packages/web/src/lib/d1.ts` | 新增生产可用的 D1 base URL 覆盖（约 3 行，见 §4.1 专项四） |
 | 2 | `packages/web/src/auth.ts` | providers 条件组装、`signIn` 对 credentials 放行、cookie 显式关闭分支、`session.maxAge` |
 | 3 | `packages/web/src/app/login/page.tsx` | 按 provider 条件渲染 + 邮箱/密码登录表单 + 「首次部署」入口 |
-| 4 | `packages/web/src/lib/auth-adapter.ts` | `INSERT INTO users` 补显式 `created_at`（§4.1 专项五）；约 1 行 |
+| 4 | `packages/web/src/lib/auth-adapter.ts` | （实现更正 2026-10-15：未改动——相关表 `001-init.sql` 已定义 `created_at DEFAULT datetime('now')`，确定性无缺口） |
 | 5 | `packages/web/src/lib/admin.ts` | `resolveAdmin`/`isAdminUser` 判定扩展为 `ADMIN_EMAILS` OR 库内 `is_admin`；保留同步 `isAdmin(email)` 的纯 env 语义 |
 | 6 | `packages/web/src/app/api/admin/check/route.ts`、`packages/web/src/app/api/users/[slug]/route.ts` | 直接调用同步 `isAdmin(email)` 的两处改为异步判定（否则库内管理员被误判） |
 | 7 | `packages/web/src/proxy.ts` | `isPublicRoute()` 增加 `/setup`（未登录必须能进向导） |
@@ -567,7 +569,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 2. **构建期变量是否被内联进构建产物**（§4.4）：Dockerfile 注释称 page data collection 需要 `CF_*`/`AUTH_SECRET`——哪些被 Next 内联需实测；确认前一律用占位值构建。
 3. **单→3 在线扩容**（§4.6）：**已实测支持，关闭**。向已运行的单节点 `-join` 是 rqlite 支持的路径：`-bootstrap-expect 1` 单节点写入数据后，起两个新节点 `-join s1:4002`（**不带** `-bootstrap-expect`）→ 集群 3 节点全部 voter/reachable，新节点上能查到单节点时期写入的行。故扩容路径为「cluster profile + `-join`」，无需「备份 → 恢复」。
 4. **手工 SQL 规约**（§4.1 专项五）：解冻后若有人手工 INSERT 省略时间列（多节点下有分叉风险），需写进开发规约——属实现阶段产物。
-5. **向导的实例选项范围**（§4.4）：步骤 3 具体开放哪些设置（`require_invite_code` 必开；站点名、注册开放度等）在实现阶段定稿。
+5. **向导的实例选项范围**（§4.4）：已决——向导省略步骤 3，实例选项走管理后台（见 §4.4 实现更正）。
 6. **密码重置的令牌形态**（§4.4）：一次性令牌存库表结构（`password_reset_tokens`）、有效期、单次使用语义在实现阶段定稿；邮件自助重置是否本期做需决策。
 7. **JWT 会话失效增强**（§4.4）：`pwd_v` 比对（改密后旧 token 立即失效）属增强项，本期是否随 `session.maxAge` 收紧一起做需决策。
 

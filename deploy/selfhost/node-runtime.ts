@@ -156,14 +156,15 @@ export function registerShutdownSignals(close: () => Promise<void>): void {
     }, 10_000);
     forced.unref();
     close()
+      .then(() => process.exit(0))
       .catch((error: unknown) => {
         // A failed drain (port still bound, in-flight write lost) must not
         // report success to the supervisor: restart policies key off the
-        // exit code.
+        // exit code. process.exit is immediate, so the success path above
+        // cannot run after this.
         console.error("shutdown error", error);
         process.exit(1);
-      })
-      .finally(() => process.exit(0));
+      });
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));

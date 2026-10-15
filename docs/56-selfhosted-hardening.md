@@ -1,7 +1,7 @@
 # pew 自建部署加固（Plan 3）Implementation Plan
 
 
-**状态：已交付（任务全部实现并验证）。**Goal:** 在不破坏现有部署的前提下交付三项独立强化：A rqlite 鉴权层（默认关闭）、B 登录限速外置到 rqlite（默认关闭）、C 反代/TLS 部署文档。
+**状态：已交付（任务全部实现并验证）。** Goal: 在不破坏现有部署的前提下交付三项独立强化：A rqlite 鉴权层（默认关闭）、B 登录限速外置到 rqlite（默认关闭）、C 反代/TLS 部署文档。
 
 **Architecture:** A 用「无条件 bind-mount + entrypoint 包装脚本按文件存在性追加 `-auth`」实现零破坏开关；客户端凭据经 `d1-adapter` → `d1-http` 双层透传为 Basic 头。B 用单条原子 `INSERT...SELECT`（SQL 侧窗口运算）以 `meta.changes` 分支判定放行/拒绝，执行异常 fail-open。C 是纯文档 + 两个 compose 扩展文件。
 
@@ -12,7 +12,6 @@
 ## Global Constraints
 
 - 分支 `feat/self-hosted-deployment`；**不推上游** nocoo/pew。
-
 - pre-commit 门禁 = 全量 L1（4580 测试 + 95% 覆盖率 ×4 + tsc + biome）。已知 flake：`scripts/__tests__/(e2e-utils|local-e2e-bindings)` 高负载下启动超时/EADDRINUSE；用 `.git/commit-retry.sh <attempts> <message-file>` 重试（只对这两个文件重试，其他失败中止）。提交前若 17020/27020 端口被占（残留 next-server），先 `lsof -ti tcp:<port> | xargs kill`。
 - 开关名全文唯一：`LOGIN_RATE_LIMIT_BACKEND`（不是 `RATE_LIMIT_BACKEND`）。
 - 迁移 DDL 带 `?norwtime&norwrandom`、DML 不带（副本一致性，既有约定）。
@@ -138,8 +137,8 @@ Expected: PASS（含原有用例，无回归）。
 
 ```bash
 git add deploy/selfhost/d1-adapter.ts deploy/selfhost/d1-adapter.test.ts
-git commit -m "feat: basic-auth support in d1-adapter (spec Plan 3 §3.1.3)"```
-
+git commit -m "feat: basic-auth support in d1-adapter (spec Plan 3 §3.1.3)"
+```
 （若门禁遇已知 e2e flake，用 `.git/commit-retry.sh 4 <msgfile>`；下同。）
 
 ---
@@ -240,8 +239,8 @@ const server = createD1HttpServer({ baseUrl: RQLITE_URL, token: TOKEN, ...(BASIC
 
 ```bash
 git add deploy/selfhost/d1-http.ts deploy/selfhost/d1-http.test.ts deploy/selfhost/server-d1-http.ts
-git commit -m "feat: d1-http basicAuth passthrough + credentialed health probe (spec §3.1.3/§3.1.4)"```
-
+git commit -m "feat: d1-http basicAuth passthrough + credentialed health probe (spec §3.1.3/§3.1.4)"
+```
 ---
 
 ## Task 3: rqlite-client 透传 + migrate 对账自检 + verify/reset 可选凭据
@@ -354,8 +353,8 @@ export async function assertAuthReconciled(
 
 ```bash
 git add deploy/selfhost/rqlite-client.ts deploy/selfhost/rqlite-client.test.ts deploy/selfhost/migrate-cli.ts deploy/selfhost/auth-reconcile.test.ts deploy/selfhost/verify-migrations.ts deploy/selfhost/reset-password.ts deploy/selfhost/reset-password.test.ts
-git commit -m "feat: auth reconciliation self-check + optional credentials in ops scripts (spec §3.1.3/§3.1.4)"```
-
+git commit -m "feat: auth reconciliation self-check + optional credentials in ops scripts (spec §3.1.3/§3.1.4)"
+```
 ---
 
 ## Task 4: 渲染脚本 + entrypoint 包装脚本
@@ -473,8 +472,8 @@ chmod 600 "$OUT"
 
 ```bash
 git add deploy/selfhost/render-rqlite-auth.sh deploy/selfhost/rqlite-entrypoint.sh deploy/selfhost/render-auth.test.ts
-git commit -m "feat: auth.json render script + rqlite entrypoint wrapper (spec §3.1.2)"```
-
+git commit -m "feat: auth.json render script + rqlite entrypoint wrapper (spec §3.1.2)"
+```
 ---
 
 ## Task 5: compose 接线（单节点 + cluster）与 ignore 规则
@@ -583,8 +582,8 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
 
 ```bash
 git add deploy/selfhost/docker-compose.yml deploy/selfhost/.env.example deploy/selfhost/server-read.ts deploy/selfhost/server-scheduler.ts deploy/selfhost/server-ingest.ts deploy/selfhost/selfhost-infrastructure.test.ts .gitignore .dockerignore
-git commit -m "feat: compose auth wiring for rqlite + service credentials (spec §3.1.1/§3.1.2/§3.1.6)"```
-
+git commit -m "feat: compose auth wiring for rqlite + service credentials (spec §3.1.1/§3.1.2/§3.1.6)"
+```
 ---
 
 ## Task 6: 段 1 真机验证（compose 单节点 + cluster）
@@ -634,8 +633,8 @@ CREATE INDEX IF NOT EXISTS idx_rate_limit_hits_at ON rate_limit_hits(hit_at);
 
 ```bash
 git add scripts/migrations/033-rate-limit-hits.sql deploy/selfhost/verify-migrations.ts
-git commit -m "feat: rate_limit_hits migration + expected schema 69 indexes (spec §3.2)"```
-
+git commit -m "feat: rate_limit_hits migration + expected schema 69 indexes (spec §3.2)"
+```
 ---
 
 ## Task 8: RqliteRateLimiter
@@ -794,8 +793,8 @@ export const rqliteRateLimiter = new RqliteRateLimiter();
 
 ```bash
 git add packages/web/src/lib/rate-limit.ts packages/web/src/lib/__tests__/rate-limit.test.ts
-git commit -m "feat: rqlite-backed login rate limiter (spec §3.2)"```
-
+git commit -m "feat: rqlite-backed login rate limiter (spec §3.2)"
+```
 ---
 
 ## Task 9: auth.ts 双键接线 + 后端开关
@@ -873,8 +872,8 @@ describe("login limiter backend switch", () => {
 
 ```bash
 git add packages/web/src/auth.ts packages/web/src/__tests__/auth.test.ts
-git commit -m "feat: dual-key login limiting via rqlite backend switch (spec §3.2)"```
-
+git commit -m "feat: dual-key login limiting via rqlite backend switch (spec §3.2)"
+```
 ---
 
 ## Task 10: 段 2 真机验证
@@ -941,8 +940,8 @@ example.intranet.corp {
 
 ```bash
 git add deploy/selfhost/docker-compose.proxy.yml deploy/selfhost/docker-compose.caddy.yml deploy/selfhost/Caddyfile deploy/selfhost/README.md
-git commit -m "docs: reverse-proxy deployment guide + compose overlays (spec §3.3)"```
-
+git commit -m "docs: reverse-proxy deployment guide + compose overlays (spec §3.3)"
+```
 ---
 
 ## Task 12: README 段 1/2 连带订正
@@ -961,8 +960,8 @@ git commit -m "docs: reverse-proxy deployment guide + compose overlays (spec §3
 
 ```bash
 git add deploy/selfhost/README.md
-git commit -m "docs: README auth runbooks, backup/break-glass fixes, upgrade section (spec §3.1.5)"```
-
+git commit -m "docs: README auth runbooks, backup/break-glass fixes, upgrade section (spec §3.1.5)"
+```
 ---
 
 ## Task 13: 全量回归

@@ -311,4 +311,58 @@ describe("applyMigrations", () => {
       })
     ).rejects.toThrow(/syntax error/);
   });
+
+  it("tolerates a UNIQUE hit on a replayed single-row seed INSERT (crash before ledger)", async () => {
+    const { db, applied, executed } = makeFakeDb();
+    const ddl = vi.fn().mockResolvedValue(undefined);
+    // Seed INSERT collides on the replayed run (the row exists from the
+    // crashed attempt); the ledger write must still happen.
+    const seedRun = vi.fn().mockRejectedValueOnce(
+      new Error("UNIQUE constraint failed: leaderboard_revision.id"),
+    );
+    const originalPrepare = db.prepare.bind(db);
+    db.prepare = (sql: string) => {
+      const stmt = originalPrepare(sql);
+      if (sql.startsWith("INSERT INTO leaderboard_revision ")) {
+        return { ...stmt, run: seedRun };
+      }
+      return stmt;
+    };
+    const result = await applyMigrations({
+      db,
+      dir: "/migrations",
+      ddlExecutor: ddl,
+      readDir: async () => ["029.sql"],
+      readFile: async () => "INSERT INTO leaderboard_revision VALUES (1, 'r');",
+    });
+    expect(result.applied).toContain("029.sql");
+    expect(applied).toContain("029.sql");
+    expect(executed.some((s) => s.startsWith("INSERT INTO _migrations"))).toBe(true);
+  });
+
+  it("aborts on a genuine DML failure (UNIQUE hit in an INSERT...SELECT backfill is not tolerated)", async () => {
+    const { db, applied } = makeFakeDb();
+    const ddl = vi.fn().mockResolvedValue(undefined);
+    const backfillRun = vi.fn().mockRejectedValue(
+      new Error("UNIQUE constraint failed: t.id"),
+    );
+    const originalPrepare = db.prepare.bind(db);
+    db.prepare = (sql: string) => {
+      const stmt = originalPrepare(sql);
+      if (sql.startsWith("INSERT INTO t ")) {
+        return { ...stmt, run: backfillRun };
+      }
+      return stmt;
+    };
+    await expect(
+      applyMigrations({
+        db,
+        dir: "/migrations",
+        ddlExecutor: ddl,
+        readDir: async () => ["010-backfill.sql"],
+        readFile: async () => "INSERT INTO t SELECT * FROM old_t;",
+      })
+    ).rejects.toThrow(/UNIQUE constraint failed/);
+    expect(applied).not.toContain("010-backfill.sql");
+  });
 });
