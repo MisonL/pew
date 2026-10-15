@@ -10,6 +10,8 @@
  *     Reflect.get, which does not see #private fields)
  */
 
+import { toAuthorizationHeader, type BasicAuth } from "./basic-auth";
+
 export interface D1Result<T = unknown> {
   success: true;
   results: T[];
@@ -41,7 +43,7 @@ export interface D1AdapterOptions {
   baseUrl: string;
   token: string;
   /** rqlite -auth credentials. When set, replaces the Bearer token header. */
-  basicAuth?: { username: string; password: string };
+  basicAuth?: BasicAuth;
   fetchImpl?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 }
 
@@ -92,9 +94,7 @@ export function createD1Adapter(options: D1AdapterOptions): D1Like {
   const base = options.baseUrl.replace(/\/+$/, "");
   const doFetch = options.fetchImpl ?? fetch;
   const authorization = options.basicAuth
-    ? `Basic ${Buffer.from(
-        `${options.basicAuth.username}:${options.basicAuth.password}`
-      ).toString("base64")}`
+    ? toAuthorizationHeader(options.basicAuth)
     : options.token
       ? `Bearer ${options.token}`
       : undefined;

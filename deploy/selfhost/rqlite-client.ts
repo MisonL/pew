@@ -10,11 +10,12 @@
  */
 
 import type { DdlExecutor } from "./migrate";
+import { toAuthorizationHeader, type BasicAuth } from "./basic-auth";
 
 export interface RqliteClientOptions {
   baseUrl: string;
   token?: string;
-  basicAuth?: { username: string; password: string };
+  basicAuth?: BasicAuth;
   fetchImpl?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 }
 
@@ -31,9 +32,7 @@ export function createRqliteDdlExecutor(options: RqliteClientOptions): DdlExecut
   // (rqlite ignores Authorization when started without -auth, and a literal
   // "Bearer " header on unauthenticated deployments is worse than none).
   if (options.basicAuth) {
-    headers.Authorization = `Basic ${Buffer.from(
-      `${options.basicAuth.username}:${options.basicAuth.password}`
-    ).toString("base64")}`;
+    headers.Authorization = toAuthorizationHeader(options.basicAuth);
   } else if (options.token) {
     headers.Authorization = `Bearer ${options.token}`;
   }

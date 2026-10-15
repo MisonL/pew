@@ -221,6 +221,12 @@ export async function consumePasswordReset(
   // EXISTS subquery inside the same statement — a lost claim makes it match
   // 0 rows too. The batch's transaction (d1-adapter /db/request) keeps both
   // statements all-or-nothing.
+  //
+  // The gate matches used_at = ? (the timestamp THIS transaction writes), not
+  // a mere EXISTS: a concurrent loser's claim hits 0 rows but its EXISTS would
+  // still see the winner's used_at, letting the loser overwrite the winner's
+  // password while reporting failure. Binding the gate to our own `now` closes
+  // that replay: only the transaction that performed the claim can pass.
   const claim = await dbWrite.batch([
     {
       sql: "UPDATE password_resets SET used_at = ? WHERE token = ? AND used_at IS NULL",
@@ -229,9 +235,10 @@ export async function consumePasswordReset(
     {
       sql: `UPDATE users SET password_hash = ?, updated_at = datetime('now')
             WHERE id = ? AND EXISTS (
-              SELECT 1 FROM password_resets WHERE token = ? AND used_at IS NOT NULL
+              SELECT 1 FROM password_resets
+              WHERE token = ? AND used_at = ?
             )`,
-      params: [hashPassword(newPassword), row.user_id, token],
+      params: [hashPassword(newPassword), row.user_id, token, now],
     },
   ]);
   const claimChanges = claim[0]?.meta?.changes ?? 0;

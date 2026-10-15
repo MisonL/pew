@@ -2688,6 +2688,11 @@ registerShutdownSignals(async () => nodeServer.close());
 
 创建 `deploy/selfhost/server-read.ts`：
 
+> **实现更正 2026-10-15：** 本小节及下文的内嵌代码快照是**计划时点**的草稿。交付实现在
+> `deploy/selfhost/node-runtime.ts` 里统一用 `requireSecret(name, value)` 校验密钥：除空值外，
+> 还拒绝 `replace-me`/`changeme`/`secret` 等占位符（与 web 侧 `requireAuthSecret` 的集合一致），
+> 不再是下面快照中的手写 `if (!env.X) console.error(...)`。以交付实现为准。
+
 ```typescript
 /**
  * Hosts packages/worker-read on node:http, wired to the rqlite-backed
@@ -2796,6 +2801,12 @@ const env = {
 
 console.log(`scheduler running every ${INTERVAL_MS}ms`);
 const stop = runScheduled(worker, env, INTERVAL_MS);
+```
+
+> **实现更正 2026-10-15：** 交付的 `server-scheduler.ts` 对 `WORKER_READ_SECRET` 用 `?? ""`
+> 兜底、**不**走 `requireSecret`，这是刻意的：scheduler 只调用 scheduled() 跑定时同步、不对外
+> 服务，不消费该密钥（其余适配层入口统一走 `requireSecret`）。
+
 registerShutdownSignals(async () => {
   stop();
 });
@@ -3295,6 +3306,15 @@ bun run deploy/selfhost/verify-migrations.ts --base-url http://127.0.0.1:14001
 ```
 
 ## 备份
+
+> **实现更正 2026-10-15：** 本小节为计划时点快照，与交付实现已有漂移，权威步骤以
+> `deploy/selfhost/README.md`「备份与恢复」小节为准。已知的漂移点：
+> ① 下面的备份命令没有 `-u <user>:<password>`——鉴权部署（`RQLITE_AUTH` 开启）下会 401，
+>   交付版通过 `.env` 导出 `RQLITE_USERNAME`/`RQLITE_PASSWORD` 并以数组传参 `RQLITE_ARGS` 解决；
+> ② 交付版加了非空校验（实测 `.backup` 失败仍会创建 0 字节假文件，`[ -s ] || exit 1` 必须）与
+>   `chmod 600`（备份含全部 `password_hash`/`api_key`，禁止 world-readable）；
+> ③ 下面的恢复步骤漏了停 `d1-http`——鉴权部署下恢复期间它仍可写 rqlite，交付版恢复第一步
+>   一并停掉。以下原文仅作历史记录保留。
 
 rqlite 的 CLI **没有** `backup` 子命令；备份是交互式 REPL 里的 `.backup` 点命令。
 直接 `cp` 活跃的数据库文件会拿到损坏的副本，不要那样做。

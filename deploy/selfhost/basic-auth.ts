@@ -13,6 +13,11 @@ export interface BasicAuth {
   password: string;
 }
 
+/** Encode credentials as an HTTP Basic Authorization header value. */
+export function toAuthorizationHeader(auth: BasicAuth): string {
+  return `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString("base64")}`;
+}
+
 /** Full credentials: both must be non-empty, else undefined (no auth). */
 export function resolveBasicAuth(
   username: string | undefined,

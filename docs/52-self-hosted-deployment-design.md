@@ -88,9 +88,9 @@ libSQL 因维护主体缺失与数据正确性缺陷被否决。
 | **多节点确定性** | （实现更正 2026-10-15：`lib/auth-adapter.ts`、`app/api/admin/invites/route.ts` 最终未改动——相关表均有 `DEFAULT datetime('now')`，专项五的 INSERT 场景无实际缺口） |
 | **路由与 CLI** | `proxy.ts`、`cli/src/commands/login.ts`、`cli/src/config/manager.ts` | `/setup` 公开可达、`--host` 支持、凭据按 host 隔离 |
 
-**不改动的上游文件**（刻意规避）：`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`packages/worker/src/**`、`packages/worker-read/src/**`。规避方式见 §4.7。（实现更正 2026-10-14：为把 selfhost 适配层纳入编译期类型校验，两个 worker 包的 `tsconfig*.json`/`package.json` typecheck 脚本有 composite 声明构建改动——`src/` 业务代码与 SQL 仍零改动，见 `scripts/parallel-typecheck.sh`。另一处名单外改动：`.dockerignore` 增加 `**/.env` 与 `**/.rqlite-auth.json` 深度排除，防凭据进镜像层——安全修复，非规避对象。）
+**不改动的上游文件**（刻意规避）：`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`packages/worker/src/**`、`packages/worker-read/src/**`。规避方式见 §4.7。（实现更正 2026-10-14：为把 selfhost 适配层纳入编译期类型校验，两个 worker 包的 `tsconfig*.json`/`package.json` typecheck 脚本有 composite 声明构建改动——`src/` 业务代码与 SQL 仍零改动，见 `scripts/parallel-typecheck.sh`。另一处名单外改动：`.dockerignore` 增加 `**/.env` 与 `**/.rqlite-auth.json` 深度排除，防凭据进镜像层——安全修复，非规避对象。实现更正 2026-10-15：**`Dockerfile` 与 `cli.ts` 均已不在规避名单内**——`deploy/selfhost/Dockerfile` 已新增（见 §4.7 末段），根 `Dockerfile` 与 `packages/cli/src/cli.ts` 已按 Plan 2 交付项改动（`--host` / `PEW_HOST` 支持），与 §3.2 「路由与 CLI」行及 README「合并上游」小节的口径一致。）
 
-**差异全部收敛在适配层。** 新增代码只存在于新目录 `deploy/selfhost/`，且**不注册为 workspace package**（避免改 `bun.lock` 与 `Dockerfile`）。
+**差异全部收敛在适配层。** 新增代码只存在于新目录 `deploy/selfhost/`，且**不注册为 workspace package**（避免改 `bun.lock` 与 `Dockerfile`）。（实现更正 2026-10-15：例外清单补一条——根 `Dockerfile` 也已按交付实现改动（builder 阶段改为 build-time 非密钥占位 ENV），不再属于零改动上游文件。）
 
 ## 4. 组件设计
 
@@ -211,7 +211,7 @@ rqlite 用 statement-based replication（语句复制到各副本各自执行）
 
 即当前唯一屏障是「rqlite 不发布宿主端口 + d1-http 的静态 Bearer 保护 web→d1-http 这一跳」。若要真正加第二道屏障，需给 rqlite 配 `-http-auth` 并让上述三个直连服务同步带 token——列为后续强化项，不计入 Plan 1。
 
-**token 投放范围据此收窄**：既然 `read`/`ingest`/`scheduler` 直连 rqlite、不经过 d1-http，compose 里这三个服务**不再注入 `CF_D1_API_TOKEN`**（原先照抄了 `web` 的 environment 块）。`CF_D1_API_TOKEN` 仅出现在 `migrate`（建表初始化）、`d1-http`（校验方）、`web`（客户端）三处。这同时缩小了密钥在容器内的暴露面。
+**token 投放范围据此收窄**：既然 `read`/`ingest`/`scheduler` 直连 rqlite、不经过 d1-http，compose 里这三个服务**不再注入 `CF_D1_API_TOKEN`**（原先照抄了 `web` 的 environment 块）。`CF_D1_API_TOKEN` 仅出现在 `d1-http`（校验方）、`web`（客户端）两处。（实现更正 2026-10-15：原文写三处、含 `migrate`——实际 migrate 已不消费该 token，只做 DDL，凭据走 `RQLITE_*`。）这同时缩小了密钥在容器内的暴露面。
 
 **专项四：Web 写路径的可配置 base URL（对应 §4.7 的 `d1.ts` 改动）**
 
@@ -407,6 +407,8 @@ Credentials 无内建限速。在 `authorize()` 内复用现有 `lib/rate-limit.
 
 Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfile:40,46`）；最终 **runner 阶段**（`59-72`）不含这些 ENV，故**最终镜像不带密钥**。但**构建期传入的真实密钥会留在构建层缓存/历史**。故：自建构建**不得**用真实密钥做 build arg，密钥一律运行期经 compose `env_file` 注入。另：Dockerfile 注释（`33-34`）称构建期需要这些变量做 page data collection——**哪些变量被内联进构建产物需实测确认**（列入验证项）。
 
+> **实现更正 2026-10-15：** 交付实现已改为 build-time **非密钥占位 ENV**（build-time-placeholder-not-a-secret）：builder 阶段不再以 `ARG/ENV` 注入真实 `AUTH_SECRET`，只用无意义的占位值满足 Next 构建期读取；真实密钥**只走运行期注入**（compose `env_file`）。构建层缓存/历史随之不再有真实密钥泄漏面，本段「不得用真实密钥做 build arg」的告诫在当前实现下自动成立。
+
 **HTTP 内网 cookie（必须处理）**
 
 `shouldUseSecureCookies()`（`auth.ts:21-27`）在 production 下返回 true，镜像硬编码 production（Next standalone 生成的 `server.js` 写入 `process.env.NODE_ENV='production'`）→ 内网 http 下浏览器丢弃 `__Secure-` cookie → 登录态丢失。`USE_SECURE_COOKIES` 目前只能往「开」覆盖，需增加 `USE_SECURE_COOKIES === "false"` → 返回 false 的显式关闭分支。
@@ -508,7 +510,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 - `packages/web/src/lib/credentials.ts`、`packages/web/src/app/api/auth/register/route.ts`、`packages/web/src/app/setup/`（注册向导）、`packages/web/src/app/api/admin/users/[...]/reset-password`（管理员发起重置，§4.4）
 - `deploy/selfhost/`：`d1-adapter`、`kv-adapter`、`node-runtime`、`d1-http`、`docker-compose.yml`、迁移执行器、`reset-password`（破窗脚本）
 
-**刻意不改的上游文件**：`packages/worker/src/**`、`packages/worker-read/src/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。（注意：`proxy.ts` 与 `lib/auth-adapter.ts` **不在**此列——两者已在改动清单内。worker 包的 `tsconfig*.json`/`package.json` 例外见 §3.2 实现更正。）
+**刻意不改的上游文件**：`packages/worker/src/**`、`packages/worker-read/src/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。（注意：`proxy.ts` 与 `lib/auth-adapter.ts` **不在**此列——两者已在改动清单内。worker 包的 `tsconfig*.json`/`package.json` 例外见 §3.2 实现更正。实现更正 2026-10-15：**`cli.ts` 已从本清单移出**——`packages/cli/src/cli.ts` 已按 Plan 2 交付项改动（`--host` / `PEW_HOST` 支持），根 `Dockerfile` 亦已改；正确口径见 README「合并上游」小节。）
 
 **适配层的运行方式**：`deploy/selfhost/*` 用 **bun 直接运行 TS 源码**，但**不能复用仓库根的 `Dockerfile`**——实测其 `runner` 阶段是 `FROM node:22-slim`，只 COPY `.next/standalone`/`.next/static`/`public`，`awk '/AS runner/,0' Dockerfile | grep -c bun` = **0**、含 `deploy|packages/worker` 的行数 = **0**：最终镜像内**既无 bun 也无适配层源码**。而 compose 的 migrate/d1-http/read/ingest/scheduler 全部 `image: pew-selfhost:local` + `bun run deploy/selfhost/*.ts`，会全部启动失败。因此**必须新建 `deploy/selfhost/Dockerfile`**（从 `oven/bun:1.4.0` 出发，COPY 根 `package.json`/锁文件/`tsconfig.json`/`packages/`/`deploy/`/`scripts/migrations/`，并 build `@pew/core` 的 `dist`）。这也是唯一新增的「非上游目录」文件，不计入 12 处上游改动。
 
@@ -589,7 +591,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
   printf '.restore /rqlite/file/restore.db\n.exit\n' | docker compose exec -T rqlite rqlite -H localhost
   ```
 
-  恢复后需验证 schema 对象数与迁移账本一致。
+  恢复后需验证 schema 对象数与迁移账本一致。（实现更正 2026-10-15：**恢复前必须一并停止 `d1-http`**——它是写后端，恢复期间继续接收写入会把备份数据混入 raft 日志；恢复完成后再启动。上例命令也缺 `-u` 鉴权参数，启用 `-http-auth` 后需带 `-u "user:password"`。**本小节以 `deploy/selfhost/README.md` 的备份/恢复步骤为准。**）
 - **恢复演练**：纳入端到端测试——用备份恢复到空实例，跑通「登录 → 仪表盘可见」。
 - **保留策略**：建议 7 天滚动 + 每月归档（待定，取决于数据量与合规要求）。
 - **KV 适配层数据**（`kv_cache` 表）**在同一个库里**，随 rqlite 一起备份，无额外备份点；缓存类数据可容忍丢失。

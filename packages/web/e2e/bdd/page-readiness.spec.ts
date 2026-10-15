@@ -229,21 +229,32 @@ test.describe("Seeded page and module readiness (real APIs)", () => {
   });
 
   test("missing dynamic resources are exact 404/403, never a tolerated 500", async ({ page }) => {
-    for (const [path, api, status, text] of [
-      ["/u/readiness-missing", "/api/users/readiness-missing", 404, "No public profile found"],
-      ["/leaderboard/seasons/readiness-missing", "/api/seasons/readiness-missing/leaderboard", 404, "Season not found"],
-      ["/teams/readiness-missing", "/api/teams/readiness-missing", 403, "Not a member"],
-    ] as const) {
-      const health = watchPageReadiness(page, { [api]: status });
-      expect((await page.goto(path))?.status()).toBe(200);
-      await health.ready([api]);
-      await expect(page.getByText(text, { exact: false })).toBeVisible();
+    // One watcher for the whole test with every expected error pre-registered:
+    // a slow error page can refetch its API after we have navigated on, and a
+    // disposed per-iteration watcher would leave the stale 404/403 to be
+    // charged to whichever watcher is armed at that moment (the final one
+    // expects 200, so it would report a false mismatch).
+    const health = watchPageReadiness(page, {
+      "/api/users/readiness-missing": 404,
+      "/api/seasons/readiness-missing/leaderboard": 404,
+      "/api/teams/readiness-missing": 403,
+    });
+    try {
+      for (const [path, api, _status, text] of [
+        ["/u/readiness-missing", "/api/users/readiness-missing", 404, "No public profile found"],
+        ["/leaderboard/seasons/readiness-missing", "/api/seasons/readiness-missing/leaderboard", 404, "Season not found"],
+        ["/teams/readiness-missing", "/api/teams/readiness-missing", 403, "Not a member"],
+      ] as const) {
+        expect((await page.goto(path))?.status()).toBe(200);
+        await health.ready([api]);
+        await expect(page.getByText(text, { exact: false })).toBeVisible();
+      }
+      expect((await page.goto("/readiness-missing-page"))?.status()).toBe(404);
+      await health.ready(["/api/auth/session"]);
+      await expect(page.getByText("This page could not be found.")).toBeVisible();
+    } finally {
       health.dispose();
     }
-    const health = watchPageReadiness(page);
-    expect((await page.goto("/readiness-missing-page"))?.status()).toBe(404);
-    await health.ready(["/api/auth/session"]);
-    await expect(page.getByText("This page could not be found.")).toBeVisible();
   });
 });
 

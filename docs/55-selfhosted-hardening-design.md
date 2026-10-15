@@ -284,6 +284,7 @@ README 新增「反向代理」小节，推荐形态：**Caddy 以 compose 服�
    - ★ web 的 7020 端口只绑 `127.0.0.1` 或不发布（直连可整体伪造 XFF 第一段，清洗形同虚设——`getClientIp` 取第一段）。**注意（红队 5.2）**：此约束防的是网络外直连；同宿主其他本地用户进程仍可达 127.0.0.1:7020（多租户宿主属部署者自担），compose 网络内攻击者本就绕过 web 直达数据层（7020 收紧不改变该模型）。
    - ★ `NEXTAUTH_URL` 必须与反代对外访问 URL **逐字符一致**（协议+域名+端口；`TRUSTED_ORIGIN` 永远 pinned 到它，不一致则重定向/回调指向错误主机）；CLI 侧 `PEW_HOST` 同步
    - ★ 反代覆写 `X-Forwarded-For`（pew 取第一段），同时覆写 `X-Real-IP`、清空 `CF-Connecting-IP`（`getClientIp` 依次信任三者）
+     > **实现更正 2026-10-15：** `packages/web/src/lib/rate-limit.ts` 的 `getClientIp` 交付时已改为取 XFF 的**最后一段**（自己代理追加的那一跳），客户端在 XFF 前段注入的伪造地址被无害化；X-Real-IP / CF-Connecting-IP 的信任顺序与「反代必须覆写 XFF」的结论不变。
    - cookie 四格矩阵：https+`USE_SECURE_COOKIES=true` ✓；**https+false → 可登录但无 `__Secure-` 前缀（降级可用，不是「浏览器丢弃」）**；**http+true（或未显式 false）→ `__Secure-` cookie 被 http origin 拒收 → 登录坏**（镜像 `NODE_ENV=production` 恒真，这是默认行为）；http+false ✓。强调 compose/`.env.example` 默认 false，https 部署必须显式改 true
    - `TRUSTED_ORIGIN` 由 `NEXTAUTH_URL` 推导，无需单独配置（proxy.ts 已实现）
 4. **`docker-compose.proxy.yml` 覆盖文件**：`ports: !override ["127.0.0.1:${WEB_PORT:-7020}:7020"]`——**普通追加合并下两条映射并存或端口冲突**（compose ports 唯一键含 ip，`!override` 需 Compose ≥ v2.24.4，评审 B1）；文档写明显式 `-f docker-compose.yml -f docker-compose.proxy.yml` 调用与 `docker compose config` 冒烟核对。

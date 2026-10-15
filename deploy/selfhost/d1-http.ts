@@ -48,14 +48,18 @@ export function createD1HttpServer(options: D1HttpOptions) {
   // Constant-time compare: `!==` short-circuits, so a leaked prefix could be
   // used to guess the token character by character. The upstream workers
   // already compare their shared secrets this way (packages/worker/src/index.ts
-  // secureCompare; worker-read/src/index.ts).
+  // secureCompare; worker-read/src/index.ts). Lengths are padded, not early-
+  // returned, so the comparison also does not leak the token length (same as
+  // worker-read's secureCompare).
   function secureEqual(a: string, b: string): boolean {
     const enc = new TextEncoder();
     const ba = enc.encode(a);
     const bb = enc.encode(b);
-    if (ba.length !== bb.length) return false;
-    let diff = 0;
-    for (let i = 0; i < ba.length; i++) diff |= (ba[i] ?? 0) ^ (bb[i] ?? 0);
+    const max = Math.max(ba.length, bb.length);
+    let diff = ba.length ^ bb.length;
+    for (let i = 0; i < max; i++) {
+      diff |= (ba[i] ?? 0) ^ (bb[i] ?? 0);
+    }
     return diff === 0;
   }
 
