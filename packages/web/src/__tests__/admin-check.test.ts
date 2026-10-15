@@ -106,14 +106,14 @@ describe("GET /api/admin/check", () => {
   });
 
   // -------------------------------------------------------------------------
-  // E2E admin bypass guard (E2E_SKIP_AUTH + E2E_ADMIN_BYPASS + dev + !railway)
+  // E2E admin bypass guard (E2E_SKIP_AUTH + E2E_ADMIN_BYPASS + RESOURCE_ENV=test + !railway)
   // -------------------------------------------------------------------------
 
   describe("E2E admin bypass", () => {
     async function callWithEnv(env: Record<string, string | undefined>) {
       vi.resetModules();
       const prev = { ...process.env };
-      process.env = { ...prev, ADMIN_EMAILS: "admin@example.com", ...env };
+      process.env = { ...prev, ADMIN_EMAILS: "admin@example.com", RESOURCE_ENV: "test", ...env };
       try {
         vi.doMock("@/lib/db", () => ({
           getDbRead: vi.fn().mockResolvedValue(mockDbRead),
@@ -137,7 +137,6 @@ describe("GET /api/admin/check", () => {
       const body = await callWithEnv({
         E2E_SKIP_AUTH: "true",
         E2E_ADMIN_BYPASS: "true",
-        NODE_ENV: "development",
         RAILWAY_ENVIRONMENT: undefined,
       });
       expect(body.isAdmin).toBe(true);
@@ -147,7 +146,6 @@ describe("GET /api/admin/check", () => {
       const body = await callWithEnv({
         E2E_SKIP_AUTH: undefined,
         E2E_ADMIN_BYPASS: "true",
-        NODE_ENV: "development",
         RAILWAY_ENVIRONMENT: undefined,
       });
       expect(body.isAdmin).toBe(false);
@@ -157,17 +155,16 @@ describe("GET /api/admin/check", () => {
       const body = await callWithEnv({
         E2E_SKIP_AUTH: "true",
         E2E_ADMIN_BYPASS: undefined,
-        NODE_ENV: "development",
         RAILWAY_ENVIRONMENT: undefined,
       });
       expect(body.isAdmin).toBe(false);
     });
 
-    it("should NOT bypass when NODE_ENV is not development", async () => {
+    it("should NOT bypass when RESOURCE_ENV is not test (e.g. production build outside the runner)", async () => {
       const body = await callWithEnv({
         E2E_SKIP_AUTH: "true",
         E2E_ADMIN_BYPASS: "true",
-        NODE_ENV: "production",
+        RESOURCE_ENV: undefined,
         RAILWAY_ENVIRONMENT: undefined,
       });
       expect(body.isAdmin).toBe(false);
@@ -177,7 +174,6 @@ describe("GET /api/admin/check", () => {
       const body = await callWithEnv({
         E2E_SKIP_AUTH: "true",
         E2E_ADMIN_BYPASS: "true",
-        NODE_ENV: "development",
         RAILWAY_ENVIRONMENT: "production",
       });
       expect(body.isAdmin).toBe(false);

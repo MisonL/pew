@@ -11,16 +11,14 @@
 
 import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
-import { isAdmin, isAdminInDb } from "@/lib/admin";
+import { isAdmin, isAdminInDb, isE2EMode } from "@/lib/admin";
 import { getDbRead } from "@/lib/db";
 
 /** Check if admin bypass is enabled (for L3 Playwright tests) */
 function isAdminBypass(): boolean {
   return (
-    process.env.E2E_SKIP_AUTH === "true" &&
-    process.env.E2E_ADMIN_BYPASS === "true" &&
-    process.env.NODE_ENV === "development" &&
-    !process.env.RAILWAY_ENVIRONMENT
+    isE2EMode() &&
+    process.env.E2E_ADMIN_BYPASS === "true"
   );
 }
 

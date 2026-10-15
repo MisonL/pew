@@ -66,7 +66,11 @@ export async function resolveUser(
 function isE2EMode(): boolean {
   return (
     process.env.E2E_SKIP_AUTH === "true" &&
-    process.env.NODE_ENV === "development" &&
+    // RESOURCE_ENV=test marks the runner's isolated per-run environment
+    // (scripts/local-e2e-bindings.ts); it also holds under a production
+    // build, so the E2E lane can run against `next start`. RAILWAY stays
+    // excluded as a belt-and-braces guard for the deployed path.
+    process.env.RESOURCE_ENV === "test" &&
     !process.env.RAILWAY_ENVIRONMENT
   );
 }

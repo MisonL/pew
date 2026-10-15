@@ -100,7 +100,10 @@ export async function handleInviteGate(
   // E2E test bypass
   if (
     process.env.E2E_SKIP_AUTH === "true" &&
-    process.env.NODE_ENV !== "production" &&
+    // RESOURCE_ENV=test marks the runner's isolated per-run environment; it
+    // also holds under a production build so the E2E lane can run against
+    // `next start`. RAILWAY stays excluded as a deployed-path guard.
+    process.env.RESOURCE_ENV === "test" &&
     !process.env.RAILWAY_ENVIRONMENT
   ) {
     return true;

@@ -219,9 +219,9 @@ describe("handleInviteGate", () => {
     vi.mocked(shouldUseSecureCookies).mockReturnValue(false);
   });
 
-  it("should skip check when E2E_SKIP_AUTH=true in non-production", async () => {
+  it("should skip check when E2E_SKIP_AUTH=true in the isolated test environment", async () => {
     vi.stubEnv("E2E_SKIP_AUTH", "true");
-    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("RESOURCE_ENV", "test");
 
     const result = await handleInviteGate(
       makeReq(),
@@ -237,7 +237,7 @@ describe("handleInviteGate", () => {
 
   it("should NOT skip check when RAILWAY_ENVIRONMENT is set (production guard)", async () => {
     vi.stubEnv("E2E_SKIP_AUTH", "true");
-    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("RESOURCE_ENV", "test");
     process.env.RAILWAY_ENVIRONMENT = "production";
 
     // New user (no existing account)

@@ -82,11 +82,16 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
   let tests: ReturnType<typeof Bun.spawn> | undefined;
   const killChildren = () => { server?.kill(); tests?.kill(); };
   abort.signal.addEventListener("abort", killChildren);
+  // Rejects when SIGINT/SIGTERM aborts the run, so deadline() races can lose
+  // to interruption.
+  const interrupted = new Promise<never>((_, reject) => {
+    abort.signal.addEventListener("abort", () => reject(abort.signal.reason), { once: true });
+  });
   const dist = tier === "api" ? ".next-e2e" : ".next-e2e-ui";
   try {
     local = await startLocalBindings(abort.signal, undefined, tier === "ui");
     abort.signal.throwIfAborted();
-    const env = {
+    const env: Record<string, string> = {
       ...local.env,
       NEXT_DIST_DIR: dist,
       E2E_TEST_USER_ID: `e2e-test-user-${local.env.PEW_TEST_RUN_ID}`,
@@ -96,10 +101,37 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
       E2E_UI_PORT: port,
       PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH ?? join(homedir(), process.platform === "darwin" ? "Library/Caches/ms-playwright" : ".cache/ms-playwright"),
     };
+    if (tier === "ui") {
+      // `next build` prerenders with React; a development NODE_ENV makes the
+      // static pass crash (`useContext` on null — React's dev branch needs a
+      // renderer during prerender). The E2E auth gates key off RESOURCE_ENV,
+      // not NODE_ENV, so production here costs the lane nothing and matches
+      // what `next start` serves.
+      env.NODE_ENV = "production";
+    }
     await verifyLocalMarker(env);
-    server = Bun.spawn(["node", resolve("packages/web/node_modules/next/dist/bin/next"), "dev", "--hostname", "127.0.0.1", "--port", port], {
-      cwd: "packages/web", env, stdout: "inherit", stderr: "inherit",
-    });
+    if (tier === "api") {
+      // L2 exercises route handlers in-process; a dev server gives the
+      // fastest iteration and full runtime diagnostics.
+      server = Bun.spawn(["node", resolve("packages/web/node_modules/next/dist/bin/next"), "dev", "--hostname", "127.0.0.1", "--port", port], {
+        cwd: "packages/web", env, stdout: "inherit", stderr: "inherit",
+      });
+    } else {
+      // L3 runs the production build: `next dev` compiles each page on first
+      // navigation, so under machine load the first goto of a page can blow
+      // past navigationTimeout (the recurring single-test timeout flakes).
+      // A prod server answers every navigation in milliseconds, and the
+      // journeys then exercise the deployed shape of the app. The build runs
+      // in the same isolated NEXT_DIST_DIR that `next start` reads below.
+      const build = Bun.spawn(["node", resolve("packages/web/node_modules/next/dist/bin/next"), "build"], {
+        cwd: "packages/web", env, stdout: "inherit", stderr: "inherit",
+      });
+      const buildCode = await deadline(Promise.race([build.exited, interrupted]), 600_000, "next build");
+      if (buildCode !== 0) throw new Error(`next build failed (${buildCode})`);
+      server = Bun.spawn(["node", resolve("packages/web/node_modules/next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", port], {
+        cwd: "packages/web", env, stdout: "inherit", stderr: "inherit",
+      });
+    }
     const started = Date.now();
     while (true) {
       abort.signal.throwIfAborted();
