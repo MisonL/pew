@@ -1,7 +1,7 @@
 # pew 私有化部署 — Plan 1：存储与运行时基础 Implementation Plan
 
 
-**状态：已交付（任务全部实现并验证）。**Goal:** 让 pew 脱离 Cloudflare 运行——用 rqlite 承载数据、用 Node 进程承载两个 Worker，Web 仍走原有逻辑，用一套 compose 在本机/内网跑起完整可用的 pew。
+**状态：已交付（任务全部实现并验证）。** Goal: 让 pew 脱离 Cloudflare 运行——用 rqlite 承载数据、用 Node 进程承载两个 Worker，Web 仍走原有逻辑，用一套 compose 在本机/内网跑起完整可用的 pew。
 
 **Architecture:** 不重写任何业务逻辑。新增 `deploy/selfhost/` 目录，内含三个适配层（D1 形状、KV 形状、node:http 宿主）与一个 d1-http 服务；`packages/worker` 与 `packages/worker-read` 的 `fetch` 处理器原样运行。Web 侧只改两处上游文件：`lib/d1.ts`（让写路径指向自建 d1-http）与 `vitest.config.ts`（让 vitest 收集 `deploy/**` 下的测试）。Web 容器用**仓库根 `Dockerfile`** 构建（Next standalone），适配层服务用新增的 `deploy/selfhost/Dockerfile` 构建——两套镜像，见 Task 10。
 
@@ -21,7 +21,7 @@
 - **适配层镜像必须自建**：compose 里跑 `deploy/selfhost/*.ts` 的服务**不能**复用仓库根 `Dockerfile` 的 runner 阶段——该阶段 `FROM node:22-slim`，只 COPY `.next/standalone`/`.next/static`/`public`，**既无 bun 也无 `deploy/`、`packages/*/src`、`scripts/migrations`**（实测 `awk '/AS runner/,0' Dockerfile | grep -c bun` = 0）。Task 10 新增 `deploy/selfhost/Dockerfile`，以 bun 为基镜像显式 COPY 源码并构建 `@pew/core` 的 `dist`（`@pew/core` 的 `main` 指向 `./dist/index.js`，容器内必须 build）。
 - **`deploy/selfhost/` 不注册为 workspace package**（避免改 `bun.lock` 与 `Dockerfile`），用 bun 直接运行 TS 源码。
 - **测试命令**：`bun run test`（vitest run）；单文件一律用 `./node_modules/.bin/vitest run <path>`——**不要用 `bunx vitest`**，`bunx` 在本地可执行缺失时会走网络解析，本机实测曾因此落到临时缓存、加载不到 workspace 依赖。测试文件与源码同目录、命名 `*.test.ts`（vitest include 为 `packages/*/src/**/*.test.{ts,tsx}`、`scripts/**/*.test.{ts,tsx}` 与 `deploy/**/*.test.ts`）。
-- **提交信息**用 `feat:` / `fix:` / `test:` 前缀；每个 commit 结尾附 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`。
+- **提交信息**用 `feat:` / `fix:` / `test:` 前缀。
 
 ## Review Focus
 
@@ -133,9 +133,7 @@ Expected: PASS（全部，含既有用例）
 
 ```bash
 git add packages/web/src/lib/d1.ts packages/web/src/__tests__/d1.test.ts
-git commit -m "feat: add D1_BASE_URL override for self-hosted deployments
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: add D1_BASE_URL override for self-hosted deployments"
 ```
 
 ---
@@ -543,9 +541,7 @@ Expected: PASS（全部 13 条）
 
 ```bash
 git add deploy/selfhost/d1-adapter.ts deploy/selfhost/d1-adapter.test.ts
-git commit -m "feat: add D1-shape adapter over rqlite HTTP API
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: add D1-shape adapter over rqlite HTTP API"
 ```
 
 ---
@@ -913,9 +909,7 @@ Expected: PASS（全部 12 条）
 
 ```bash
 git add deploy/selfhost/kv-adapter.ts deploy/selfhost/kv-adapter.test.ts
-git commit -m "feat: add KV-shape adapter with TTL and cursor pagination
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: add KV-shape adapter with TTL and cursor pagination"
 ```
 
 ---
@@ -1271,9 +1265,7 @@ Expected: PASS（全部 9 条）
 
 ```bash
 git add deploy/selfhost/node-runtime.ts deploy/selfhost/node-runtime.test.ts
-git commit -m "feat: host Worker fetch/scheduled handlers on node:http
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: host Worker fetch/scheduled handlers on node:http"
 ```
 
 ---
@@ -1736,9 +1728,7 @@ Expected: PASS（全部 13 条）
 
 ```bash
 git add deploy/selfhost/migrate.ts deploy/selfhost/migrate.test.ts
-git commit -m "feat: add migration runner with ledger and trigger-aware splitter
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: add migration runner with ledger and trigger-aware splitter"
 ```
 
 ---
@@ -1841,9 +1831,7 @@ Expected: PASS（全部 3 条）
 
 ```bash
 git add scripts/migrations/031-selfhost-infrastructure.sql deploy/selfhost/selfhost-infrastructure.test.ts
-git commit -m "feat: add kv_cache table for the self-hosted KV adapter
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: add kv_cache table for the self-hosted KV adapter"
 ```
 
 ---
@@ -2049,9 +2037,7 @@ Expected: PASS（全部 4 条）
 
 ```bash
 git add scripts/migrations/030-deterministic-leaderboard-revision.sql deploy/selfhost/deterministic-revision.test.ts
-git commit -m "feat: replace leaderboard triggers with deterministic counter
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: replace leaderboard triggers with deterministic counter"
 ```
 
 ---
@@ -2279,9 +2265,7 @@ Expected: 打印 `migration verification PASSED`。
 ```bash
 docker rm -f rq-verify
 git add deploy/selfhost/verify-migrations.ts deploy/selfhost/rqlite-client.ts
-git commit -m "feat: add migration verification script against live rqlite
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: add migration verification script against live rqlite"
 ```
 
 ---
@@ -2557,9 +2541,7 @@ Expected: PASS（全部 8 条）
 
 ```bash
 git add deploy/selfhost/d1-http.ts deploy/selfhost/d1-http.test.ts
-git commit -m "feat: add D1 REST-shape HTTP service over rqlite
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: add D1 REST-shape HTTP service over rqlite"
 ```
 
 ---
@@ -3429,9 +3411,7 @@ fetch('http://d1-http:8788/query', {
 
 ```bash
 git add deploy/selfhost/
-git commit -m "feat: add self-hosted compose stack and service entry points
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: add self-hosted compose stack and service entry points"
 ```
 
 ---
@@ -3462,7 +3442,9 @@ bun run typecheck
 bun run lint
 ```
 
-Expected: 通过。`deploy/selfhost/` 不在 workspace 内，若被 lint 扫到报错，在 `biome.json` 里排除——**但这是改上游文件，需先确认是否真的必要**（`biome.json` 在 spec 的「刻意不改」清单里）。若确需排除，记录到 spec §4.7 并说明原因。
+Expected: 通过。（Plan 1 时点的预判；最终实现中 `deploy/selfhost/` 已由
+`scripts/parallel-typecheck.sh` 的 `tsc -b deploy/selfhost/tsconfig.json` lane 纳入
+编译期校验——见 Plan 3 后的类型检查缺口修复与 `deploy/selfhost/tsconfig.json`。）
 
 - [ ] **Step 3: 合并上游并验证**
 
@@ -3488,8 +3470,9 @@ Expected: 合并无冲突（或仅 `lib/d1.ts`、`vitest.config.ts` 冲突且易
 ## 合并上游
 
 **本分支与上游的接触面只有两处**：`packages/web/src/lib/d1.ts`（新增 `D1_BASE_URL` 优先级）与
-`vitest.config.ts`（`test.include` 增加 `deploy/**/*.test.ts`）。`packages/worker/**` 与
-`packages/worker-read/**` 完全未改。
+`vitest.config.ts`（`test.include` 增加 `deploy/**/*.test.ts`）。`packages/worker/src/**` 与
+`packages/worker-read/src/**` 完全未改（Plan 1 时点；后续 Plan/实现的实际接触面与 tsconfig
+例外见 `deploy/selfhost/README.md` 的「合并上游」节，此处为 Plan 1 原文存档）。
 
 > 注意：这是 **Plan 1 的**接触面。Plan 2（认证子系统）还会改 `auth.ts`、`lib/admin.ts`、
 > `proxy.ts` 等（见 spec §4.7 的 12 处清单）；合并回归时按 Plan 2 的清单重新确认。
@@ -3513,9 +3496,7 @@ curl -s http://127.0.0.1:7020/api/live
 
 ```bash
 git add deploy/selfhost/README.md
-git commit -m "docs: document upstream merge regression procedure
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "docs: document upstream merge regression procedure"
 ```
 
 ---

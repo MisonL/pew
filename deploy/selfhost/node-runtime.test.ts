@@ -136,6 +136,27 @@ describe("registerShutdownSignals", () => {
       exitSpy.mockRestore();
     }
   });
+
+  it("exits non-zero when the drain fails so restart policies fire", async () => {
+    const close = vi.fn().mockRejectedValue(new Error("port still bound"));
+    const handlers: Record<string, () => void> = {};
+    const onSpy = vi
+      .spyOn(process, "on")
+      .mockImplementation(((signal: string | symbol, handler: (...args: unknown[]) => void) => {
+        handlers[String(signal)] = handler as () => void;
+        return process;
+      }) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    try {
+      registerShutdownSignals(close);
+      handlers.SIGINT!();
+      await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1));
+      expect(exitSpy).not.toHaveBeenCalledWith(0);
+    } finally {
+      onSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+  });
 });
 
 describe("createWorkerServer.listen", () => {

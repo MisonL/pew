@@ -172,8 +172,11 @@ export const INGEST_RATE_LIMIT: RateLimitConfig = {
  * Best-effort extraction of the client IP from a Request.
  *
  * Order of precedence:
- * 1. `x-forwarded-for` (first hop)
- * 2. `x-real-ip`
+ * 1. `x-forwarded-for` (LAST entry: the one our own proxy appended. First
+ *    entry is client-controlled and, behind a plain `reverse_proxy` front
+ *    that appends rather than overwrites, an attacker can inject arbitrary
+ *    first entries to get a fresh per-IP bucket per request)
+ * 2. `x-real-ip` (overwrite-style headers from the documented proxy config)
  * 3. `cf-connecting-ip` (Cloudflare)
  *
  * Falls back to "unknown" so rate limiting still applies as a global bucket
@@ -182,8 +185,8 @@ export const INGEST_RATE_LIMIT: RateLimitConfig = {
 export function getClientIp(request: Request): string {
   const xff = request.headers.get("x-forwarded-for");
   if (xff) {
-    const first = xff.split(",")[0]?.trim();
-    if (first) return first;
+    const last = xff.split(",").map((s) => s.trim()).filter(Boolean).pop();
+    if (last) return last;
   }
 
   const realIp = request.headers.get("x-real-ip");

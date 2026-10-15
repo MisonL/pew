@@ -128,16 +128,16 @@ describe("inMemoryRateLimiter", () => {
 // ---------------------------------------------------------------------------
 
 describe("getClientIp", () => {
-  it("returns first IP from x-forwarded-for", () => {
+  it("returns LAST IP from x-forwarded-for (the entry our own proxy appended; earlier entries are client-controlled)", () => {
     const req = new Request("http://localhost", {
       headers: { "x-forwarded-for": "1.2.3.4, 5.6.7.8" },
     });
-    expect(getClientIp(req)).toBe("1.2.3.4");
+    expect(getClientIp(req)).toBe("5.6.7.8");
   });
 
-  it("falls through when x-forwarded-for is present but first entry is empty", () => {
+  it("falls through when x-forwarded-for is present but has only empty entries", () => {
     const req = new Request("http://localhost", {
-      headers: { "x-forwarded-for": " , 5.6.7.8", "x-real-ip": "9.9.9.9" },
+      headers: { "x-forwarded-for": " ,  ", "x-real-ip": "9.9.9.9" },
     });
     expect(getClientIp(req)).toBe("9.9.9.9");
   });

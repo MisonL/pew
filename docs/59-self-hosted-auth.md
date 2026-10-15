@@ -1,7 +1,7 @@
 # pew 私有化部署 — Plan 2：认证子系统 Implementation Plan
 
 
-**状态：已交付（任务全部实现并验证）。**Goal:** 让自建部署（Plan 1 的数据层与运行时）具备**可用的浏览器登录**——邮箱 + 密码（Credentials）、首个用户即管理员的 `/setup` 引导、库内 `is_admin` 判定、密码重置路径、内网 http 的 cookie 关闭分支，以及 CLI 指向自建 host。Plan 1 交付「数据层可用」，Plan 2 交付「浏览器可登录的完整产品」。
+**状态：已交付（任务全部实现并验证）。** Goal: 让自建部署（Plan 1 的数据层与运行时）具备**可用的浏览器登录**——邮箱 + 密码（Credentials）、首个用户即管理员的 `/setup` 引导、库内 `is_admin` 判定、密码重置路径、内网 http 的 cookie 关闭分支，以及 CLI 指向自建 host。Plan 1 交付「数据层可用」，Plan 2 交付「浏览器可登录的完整产品」。
 
 **Architecture:** 仍是「不重写业务逻辑」。认证接缝集中在 `auth.ts` 一处组装：`providers` 按环境条件挂 Google/Credentials，`signIn` 对 credentials 直接放行，邀请闸门逻辑从 `lib/invite.ts`（不改）移到新的 `lib/credentials.ts`。密码哈希（scrypt）与注册都由新增文件承担；`password_hash` 的读取走 D1 REST 原始查询（`getD1Client().query`），从而**不改 worker-read、不改 `lib/db.ts`**。管理员判定从「纯 `ADMIN_EMAILS`」扩展为「`ADMIN_EMAILS` 命中 OR 库内 `is_admin=1`」。首个用户即管理员，用一次性单行表 `instance_setup` 做并发安全的认领，解开「无用户建不了邀请码、无邀请码建不了用户」的死锁。
 
@@ -18,11 +18,11 @@
 - **scrypt 必须显式传 `maxmem`**：实测 `scryptSync(pw, salt, 64, { N: 32768, r: 8, p: 1 })` 在默认 `maxmem = 32 MiB` 下抛 `Invalid scrypt params`（OpenSSL 需求 `128*N*r + 128*r*p = 33,555,456` > `33,554,432`）。统一用 `maxmem: 64 * 1024 * 1024`。
 - **密码最终不入 `accounts` 表**：Credentials 用户不写入 `accounts`（那是 OAuth `linkAccount` 的产物）。任何依赖 `accounts` 判断「老用户」的逻辑（`lib/invite.ts` 的 `getUserByOAuthAccount`）对 credentials 恒为 null——这正是邀请闸门必须改写、且 `signIn` 必须对 credentials 直接放行的原因。
 - **`password_hash` 只经 D1 REST 原始查询读取**：`getD1Client().query(...)`（`lib/d1.ts`），**不得**给 `lib/db.ts` / worker-read 的 RPC 方法集加方法（那要改三处上游文件）。
-- **引导并发安全**：`instance_setup` 单行表 + 事务内「`users` 计数为 0 → 插用户 + 插 `instance_setup`」；依赖 rqlite 单 leader 串行 + `?transaction=true` 原子（Plan 1 §4.1 专项一）。**不得**用「先查再插」的非原子写法。
+- **引导并发安全**：`instance_setup` 单行表 + 「插用户 + 插 `instance_setup`」两 INSERT 共享一个 `?transaction=true` 批量事务（Plan 1 §4.1 专项一）。（实现更正 2026-10-15：`users` 计数查询在批量**之外**先读——严格「事务内先查」未实现，但并发安全仍成立：第二次并发请求在批量内撞 `instance_setup` 主键、整个批量回滚，不会产生第二个管理员。原文「不得先查再插」按此更正。）
 - **限速是进程内**：`inMemoryRateLimiter` 仅单实例有效；多 web 副本需外部化，写进部署文档、接受弱化。`getClientIp` 信任 `X-Forwarded-For`，反代必须清洗/覆写该头。
 - **多节点确定性**：任何省略时间列的 `INSERT` 必须补显式 `datetime('now')`（表达式进语句文本 → leader 改写 → 各副本重放一致）。实现阶段全量 grep `INSERT INTO` 定位。
 - **测试命令**：`bun run test`；单文件 `./node_modules/.bin/vitest run <path>`（**不要 `bunx vitest`**）。测试与源码同目录、`*.test.ts`。
-- **提交信息**用 `feat:` / `fix:` / `test:` 前缀；结尾附 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`。
+- **提交信息**用 `feat:` / `fix:` / `test:` 前缀。
 
 ## Review Focus
 
@@ -144,9 +144,7 @@ Expected: PASS（4 条）
 
 ```bash
 git add scripts/migrations/032-auth-credentials.sql packages/web/src/__tests__/auth-migration.test.ts
-git commit -m "feat: add credentials auth migration (password_hash, is_admin, instance_setup)
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: add credentials auth migration (password_hash, is_admin, instance_setup)"
 ```
 
 ---
@@ -300,9 +298,7 @@ Expected: PASS（6 条）
 
 ```bash
 git add packages/web/src/lib/credentials.ts packages/web/src/__tests__/credentials.test.ts
-git commit -m "feat: add scrypt password hashing for credentials auth
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: add scrypt password hashing for credentials auth"
 ```
 
 ---
@@ -441,9 +437,7 @@ Expected: PASS
 
 ```bash
 git add packages/web/src/lib/credentials.ts packages/web/src/auth.ts packages/web/src/app/api/admin/invites/route.ts packages/web/src/__tests__/credentials-register.test.ts
-git commit -m "feat: add credentials provider and invite-gated registration
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: add credentials provider and invite-gated registration"
 ```
 
 ---
@@ -513,9 +507,7 @@ Expected: PASS（含既有用例）
 
 ```bash
 git add packages/web/src/auth.ts packages/web/src/__tests__/auth.test.ts
-git commit -m "fix: add explicit USE_SECURE_COOKIES=false opt-out for intranet http
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "fix: add explicit USE_SECURE_COOKIES=false opt-out for intranet http"
 ```
 
 ---
@@ -603,9 +595,7 @@ Expected: PASS（2 条）
 
 ```bash
 git add packages/web/src/lib/credentials.ts packages/web/src/app/api/auth/register/route.ts packages/web/src/app/setup/ packages/web/src/__tests__/bootstrap.test.ts
-git commit -m "feat: add first-user-is-admin setup wizard with instance_setup claim
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: add first-user-is-admin setup wizard with instance_setup claim"
 ```
 
 ---
@@ -659,9 +649,7 @@ Expected: PASS
 - [ ] **Step 5: 提交**
 
 ```bash
-git commit -m "feat: recognize in-database admins alongside ADMIN_EMAILS
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "feat: recognize in-database admins alongside ADMIN_EMAILS"
 ```
 
 ---
@@ -686,9 +674,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - [ ] **Step 5: 提交**
 
 ```bash
-git commit -m "fix: allow /setup through the auth proxy for first-run onboarding
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git commit -m "fix: allow /setup through the auth proxy for first-run onboarding"
 ```
 
 ---

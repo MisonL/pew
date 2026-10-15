@@ -155,6 +155,28 @@ describe("render-rqlite-auth.sh", () => {
     expect(stderr).toContain("refusing dangerous AUTH_OUT_FILE");
   });
 
+  it.each(["..", "foo/../../etc/passwd", "sub/..", "./"])(
+    "refuses a relative or self-referential AUTH_OUT_FILE (%s)", async (bad) => {
+      const dir = mkdtempSync(join(tmpdir(), "ra-")); dirs.push(dir);
+      const child = spawn("/bin/bash", [SCRIPT], {
+        env: {
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+          RQLITE_USERNAME: "pew", RQLITE_PASSWORD: "pw1", RQLITE_JOIN_PASSWORD: "pw2",
+          AUTH_OUT_FILE: bad,
+        },
+        stdio: "pipe",
+      });
+      let stderr = "";
+      child.stderr?.on("data", (chunk) => { stderr += chunk; });
+      const code = await new Promise<number>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("exit", (c) => resolve(c ?? -1));
+      });
+      expect(code).not.toBe(0);
+      expect(stderr).toContain("refusing relative or self-referential AUTH_OUT_FILE");
+    });
+
   it("errors and leaves no .tmp residue when jq is missing", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ra-")); dirs.push(dir);
     const file = join(dir, ".rqlite-auth.json");

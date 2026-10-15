@@ -14,8 +14,9 @@ docker compose up -d --build
 
 首次启动后访问 `http://<host>:7020`。
 
-> **重要**：web 容器启动时会校验 `AUTH_SECRET`——缺失或仍是 `replace-me` 占位符会拒绝启动
-> （会话 JWT 用公开已知密钥签名等于认证 bypass）。若第一次 `up` 在填好三个 rqlite 密钥之前执行，
+> **重要**：web 在**首次使用认证时**校验 `AUTH_SECRET`——缺失或仍是占位符（`replace-me`、
+> `changeme`、`secret`、空值）会抛错拒绝签发会话，登录/认证接口全部报错（容器本身可以启动、
+> `/setup` 页面可访问）。会话 JWT 用公开已知密钥签名等于认证 bypass。若第一次 `up` 在填好三个 rqlite 密钥之前执行，
 > 后续启用鉴权时必须 `docker compose up -d --build --force-recreate rqlite`（或整个栈）——
 > bind-mount 路径不变时 compose 不会重建容器，rqlite 会继续以无鉴权运行。
 
@@ -134,7 +135,7 @@ rqlite 后端写异常时 **fail-open 放行并告警**（不误判为超限拒�
 | `d1-http` | 把 D1 REST 形状翻译成 rqlite 调用 |
 | `read` | worker-read（读路径 + `/api/live`） |
 | `ingest` | worker（写入路径） |
-| `scheduler` | 定价同步定时器（固定 1 副本） |
+| `scheduler` | 定价同步定时器（固定 1 副本；默认每 24h，`DAILY_INTERVAL_MS` 可调。间隔从容器启动起算，重启会重置计时——flapping 主机可能反复顺延同步） |
 | `web` | Next.js 前端，唯一对外端口 |
 
 只有 `web` 发布宿主端口，其余仅在 compose 网络内可达。
@@ -230,7 +231,7 @@ server {
 ### ★ 硬约束清单
 
 - ★ **web 的 7020 端口只绑 `127.0.0.1` 或不发布**：任何能直连 7020 的客户端都可以整体伪造
-  `X-Forwarded-For` 第一段，反代清洗形同虚设（`getClientIp` 取第一段）。用 `docker-compose.proxy.yml`
+  `X-Forwarded-For`（无反代时它就是唯一的 IP 信任来源）。用 `docker-compose.proxy.yml`
   覆盖文件把端口改绑到回环：
 
   ```bash
@@ -243,7 +244,7 @@ server {
   属部署者自担），compose 网络内攻击者本就绕过 web 直达数据层，7020 收紧不改变该模型。
 - ★ **`NEXTAUTH_URL` 必须与反代对外访问 URL 逐字符一致**（协议+域名+端口；`TRUSTED_ORIGIN`
   永远 pinned 到它，不一致则重定向/回调指向错误主机）。CLI 侧 `PEW_HOST` 同步。
-- ★ **反代必须覆写 `X-Forwarded-For`**（pew 取第一段），同时覆写 `X-Real-IP`、清空
+- ★ **反代必须覆写 `X-Forwarded-For`**（`getClientIp` 取**最后一段**——自己代理追加的那个；客户端可注入前面的段，覆写型配置是硬要求而非建议），同时覆写 `X-Real-IP`、清空
   `CF-Connecting-IP`（`getClientIp` 依次信任三者）。Caddy ≥ 2.5 默认满足；Nginx 按上面
   `$remote_addr` 覆写。
 - **漏配 XFF 的后果**：`X-Forwarded-For` 缺失时所有登录请求都落到 `login:ip:unknown`
@@ -341,18 +342,21 @@ HTTP 方式需在容器内执行。
 ```bash
 set -a; . ./.env; set +a   # 备份小节命令读 $RQLITE_USERNAME/$RQLITE_PASSWORD，先导出
 
-# 单节点（REPL 点命令通道；鉴权开启时必须带 -u，匿名 .backup 会 401；无鉴权部署 RQLITE_AUTH 为空串、直接省略 -u）
-RQLITE_AUTH=$RQLITE_USERNAME:$RQLITE_PASSWORD
-[ -n "$RQLITE_USERNAME" ] || RQLITE_AUTH=""
+# 单节点（REPL 点命令通道；鉴权开启时必须带 -u，匿名 .backup 会 401；无鉴权部署 RQLITE_ARGS 为空数组、直接省略 -u）
+# 不要用 ${VAR:+-u "$VAR"} 内联展开——含空格的密码会被 shell 词分割截断，必须用数组。
+RQLITE_ARGS=()
+[ -n "$RQLITE_USERNAME" ] && RQLITE_ARGS=(-u "$RQLITE_USERNAME:$RQLITE_PASSWORD")
 printf '.backup /rqlite/file/backup.db\n.exit\n' | \
-  docker compose exec -T rqlite rqlite ${RQLITE_AUTH:+-u "$RQLITE_AUTH"} -H localhost
+  docker compose exec -T rqlite rqlite "${RQLITE_ARGS[@]}" -H localhost
 docker compose cp rqlite:/rqlite/file/backup.db "./backup-$(date +%F).db"
+chmod 600 "./backup-$(date +%F).db"   # 备份含全部 password_hash/api_key，禁止 world-readable
 [ -s "./backup-$(date +%F).db" ] || echo "备份为空，失败！" >&2
 
 # 集群模式（对 leader 节点执行即可，默认 rqlite-1；.backup 读本地文件但产物经 Raft 复制）
 printf '.backup /rqlite/file/backup.db\n.exit\n' | \
-  docker compose exec -T rqlite-1 rqlite ${RQLITE_AUTH:+-u "$RQLITE_AUTH"} -H localhost
+  docker compose exec -T rqlite-1 rqlite "${RQLITE_ARGS[@]}" -H localhost
 docker compose cp rqlite-1:/rqlite/file/backup.db "./backup-$(date +%F).db"
+chmod 600 "./backup-$(date +%F).db"
 [ -s "./backup-$(date +%F).db" ] || echo "备份为空，失败！" >&2
 ```
 
@@ -367,10 +371,12 @@ docker compose cp rqlite-1:/rqlite/file/backup.db "./backup-$(date +%F).db"
 `/rqlite/file/data/db.sqlite`（不是 `pew.db`），且 rqlite 启动时会用 `raft.db` 重放日志，
 备份后的写入会「复活」；清空整个卷再放文件则走 bootstrap 忽略预置文件。`.restore` 走 REPL、
 经 Raft 正常应用（已实测：恢复后备份后的写入行消失，只剩备份时点的数据）。鉴权开启时同样
-带 `-u "$RQLITE_AUTH"`（无鉴权部署省略，同上）。
+用上方定义的 `RQLITE_ARGS` 数组（无鉴权部署为空数组，直接省略 -u）。
 
 ```bash
 set -a; . ./.env; set +a   # 恢复命令带 -u，需先导出 .env 凭据
+RQLITE_ARGS=()
+[ -n "$RQLITE_USERNAME" ] && RQLITE_ARGS=(-u "$RQLITE_USERNAME:$RQLITE_PASSWORD")
 # 1. 停应用（读写都停，避免恢复期间写入；d1-http 是写后端，必须一起停）
 docker compose stop web read ingest scheduler d1-http
 # 2. 把备份放进 rqlite 容器（rqlite 保持运行，.restore 不需要停它）
@@ -378,7 +384,7 @@ docker compose cp "./backup-2026-10-11.db" rqlite:/rqlite/file/restore.db
 # 3. 用点命令恢复（经 Raft 应用，单节点/集群同一路径；鉴权开启时必须带 -u user:pass，
 #    集群对 leader（rqlite-1）执行即可，.restore 经 Raft 复制到其余节点）
 printf '.restore /rqlite/file/restore.db\n.exit\n' | \
-  docker compose exec -T rqlite rqlite ${RQLITE_AUTH:+-u "$RQLITE_AUTH"} -H localhost
+  docker compose exec -T rqlite rqlite "${RQLITE_ARGS[@]}" -H localhost
 # Expected: Database restored successfully
 # 4. 起应用并验证
 docker compose start d1-http read ingest scheduler web
@@ -465,6 +471,11 @@ docker compose logs --tail=100 <svc>   # svc = web / rqlite / migrate / read / .
 rqlite 容器反复 unhealthy 时优先怀疑 auth.json 问题（`*` 条目缺失、文件未渲染、
 半填凭据）——详见上文「auth.json 丢失恢复 runbook」的警告块。
 
+**宿主磁盘满**：rqlite 是唯一有状态组件，`rqlite-data` 卷写满后 Raft 无法提交日志，
+症状是**所有写路径 500**（无任何指向磁盘的报错）。恢复：清理宿主空间后
+`docker compose restart rqlite`；若 SQLite 卷已损坏则走备份恢复 runbook。
+建议对 `rqlite-data` 卷做容量告警（如 `docker system df -v` 纳入巡检）。
+
 **overlay 互斥注**：`docker-compose.proxy.yml` 与 `docker-compose.caddy.yml` 都对
 `web` 服务声明 `ports: !override`（前者改绑 127.0.0.1，后者清空发布端口），二者
 **不可同时叠加**（后者覆盖前者），三套文件两两组合时只叠一个。
@@ -499,7 +510,7 @@ selfhost 适配层纳入编译期类型校验，两个包的 `tsconfig.json`/`pa
 git fetch upstream main
 git merge upstream/main
 bun run test
-docker compose build web && docker compose up -d
+docker compose build && docker compose up -d   # 两个镜像（web + pew-selfhost）都要重建，只 build web 会带着旧的 worker/deploy 代码
 curl -s http://127.0.0.1:7020/api/live
 # 认证回归：/setup 可达、登录成功、改密后旧会话失效
 ```

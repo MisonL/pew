@@ -74,7 +74,7 @@ describe("POST /api/auth/reset-password", () => {
     mockQuery.mockResolvedValueOnce({
       results: [{ user_id: "u1", expires_at: new Date(Date.now() + 60_000).toISOString() }],
     });
-    dbWrite.batch.mockResolvedValueOnce([{ success: true }, { success: true }]);
+    dbWrite.batch.mockResolvedValueOnce([{ success: true, meta: { changes: 1, duration: 1 } }, { success: true, meta: { changes: 1, duration: 1 } }]);
 
     const res = await post({ token: "good-token", password: "newpassword" });
     expect(res.status).toBe(200);

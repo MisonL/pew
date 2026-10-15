@@ -23,7 +23,7 @@ done
 # default output is a repo-relative path anyway.)
 case "$OUT" in /|/etc|/etc/*|/usr|/usr/*|/bin|/bin/*|/sbin|/sbin/*|/boot|/boot/*|/dev|/dev/*|/proc|/proc/*|/sys|/sys/*)
   echo "render-rqlite-auth: refusing dangerous AUTH_OUT_FILE: $OUT" >&2; exit 1;; esac
-case "$OUT" in .|..|*/.|*/..|*/|/.|/..)
+case "$OUT" in .|..|*/|/.|/..|*/.|*/..|*/../*|*/./*)
   echo "render-rqlite-auth: refusing relative or self-referential AUTH_OUT_FILE: $OUT" >&2; exit 1;; esac
 
 if [ -z "${RQLITE_USERNAME:-}" ] || [ -z "${RQLITE_PASSWORD:-}" ] || [ -z "${RQLITE_JOIN_PASSWORD:-}" ]; then

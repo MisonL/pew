@@ -215,20 +215,27 @@ export async function consumePasswordReset(
 
   const dbWrite = await getDbWrite();
   const now = new Date().toISOString();
-  // Claim the token atomically first (same guard as the invite consume): if a
-  // concurrent request already used it, changes is 0 and we must not also set
-  // the password. The two statements share one transaction under the D1 batch
-  // path, so a claim that fails rolls the password write back with it.
-  await dbWrite.batch([
+  // Claim and write in one transaction. A 0-row UPDATE is NOT an error, so
+  // "claim then write" alone would let a concurrent consumer still set the
+  // password; the password write is therefore gated on the claim with an
+  // EXISTS subquery inside the same statement — a lost claim makes it match
+  // 0 rows too. The batch's transaction (d1-adapter /db/request) keeps both
+  // statements all-or-nothing.
+  const claim = await dbWrite.batch([
     {
       sql: "UPDATE password_resets SET used_at = ? WHERE token = ? AND used_at IS NULL",
       params: [now, token],
     },
     {
-      sql: `UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?`,
-      params: [hashPassword(newPassword), row.user_id],
+      sql: `UPDATE users SET password_hash = ?, updated_at = datetime('now')
+            WHERE id = ? AND EXISTS (
+              SELECT 1 FROM password_resets WHERE token = ? AND used_at IS NOT NULL
+            )`,
+      params: [hashPassword(newPassword), row.user_id, token],
     },
   ]);
+  const claimChanges = claim[0]?.meta?.changes ?? 0;
+  if (claimChanges === 0) return null;
 
   return { userId: row.user_id };
 }
