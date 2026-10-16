@@ -31,6 +31,11 @@
 - Stop passing AUTH_SECRET/CF_D1_API_TOKEN/WORKER_SECRET as Docker build
   args (real secrets no longer enter builder image layers)
 
+## v3.3.3
+
+### Changed
+- Bump minor/patch dependencies (AWS SDK, Cloudflare workers-types, wrangler, lucide-react, next, react, Playwright, vitest, oxc-parser)
+
 ## v3.3.2
 
 ### Changed
