@@ -530,6 +530,19 @@ docker compose up -d rqlite
 服务僵死（探针持续失败）时 Docker 不会重启容器。处置靠人工 `docker compose restart <svc>`；
 本栈无自动告警通道，长期部署建议把 `docker compose ps` 纳入外部巡检。
 
+若希望 unhealthy 自动处置，可在**宿主**加一个 compose 之外的看护（本仓库不交付，避免引入
+特权容器与额外攻击面）。cron 每 5 分钟重启 unhealthy 的容器：
+
+```bash
+# 宿主 cron：只匹配 health=unhealthy（starting/healthy 都不会命中）
+*/5 * * * * docker ps --filter health=unhealthy --format '{{.Names}}' | while read -r c; do docker restart "$c"; done
+```
+
+注意三点：① 该命令作用于宿主上**所有**容器；宿主还跑着别的 compose 栈时用
+`--filter "label=com.docker.compose.project=<项目名>"` 收窄（项目名默认是 compose 文件所在目录名）；
+② rqlite 重启后需重新选主，等于一次短暂写中断（read 走 follower 仍可用）；
+③ 反复 unhealthy 应先按上文排障（auth.json / 节点 ID / 磁盘），自动重启只会掩盖根因。
+
 **数据层故障不改变任何容器状态**：read/ingest/d1-http 的探针只探自身 `/api/live`，
 rqlite 宕机/磁盘满时它们仍显示 healthy，唯一信号是 web 的 5xx 与 rqlite 日志。
 
