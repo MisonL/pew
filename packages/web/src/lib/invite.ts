@@ -8,6 +8,7 @@
 
 import { getDbRead, getDbWrite } from "./db";
 import { shouldUseSecureCookies } from "@/auth";
+import { isE2EMode } from "./e2e-mode";
 import type { DbRead, DbWrite } from "./db";
 
 // ---------------------------------------------------------------------------
@@ -97,15 +98,8 @@ export async function handleInviteGate(
   dbReadOverride?: DbRead,
   dbWriteOverride?: DbWrite
 ): Promise<true | string> {
-  // E2E test bypass
-  if (
-    process.env.E2E_SKIP_AUTH === "true" &&
-    // RESOURCE_ENV=test marks the runner's isolated per-run environment; it
-    // also holds under a production build so the E2E lane can run against
-    // `next start`. RAILWAY stays excluded as a deployed-path guard.
-    process.env.RESOURCE_ENV === "test" &&
-    !process.env.RAILWAY_ENVIRONMENT
-  ) {
+  // E2E test bypass — the shared gate definition (lib/e2e-mode.ts).
+  if (isE2EMode()) {
     return true;
   }
 

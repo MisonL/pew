@@ -61,6 +61,34 @@ const PLAN_TABLES = new Set([
   "rate_limit_hits",
 ]);
 
+export type SchemaCounts = {
+  upstreamTables: number;
+  planTables: number;
+  indexes: number;
+  triggers: number;
+  views: number;
+};
+
+/** The leaderboard revision is 16 random bytes hex-encoded (migration 030). */
+export const REVISION_PATTERN = /^[a-f0-9]{32}$/;
+
+/**
+ * Compare measured schema counts against the expected shape. Pure, so the
+ * assertion logic is unit-tested without a live rqlite (the run itself needs
+ * a throwaway node).
+ */
+export function schemaMismatches(actual: SchemaCounts, expected: SchemaCounts): string[] {
+  return (Object.keys(expected) as (keyof SchemaCounts)[])
+    .filter((key) => actual[key] !== expected[key])
+    .map((key) => `${key}: got ${actual[key]}, expected ${expected[key]}`);
+}
+
+/** Split the raw table-name census into upstream vs plan tables. */
+export function partitionTables(names: string[]): { upstreamTables: number; planTables: number } {
+  const plan = names.filter((n) => PLAN_TABLES.has(n)).length;
+  return { upstreamTables: names.length - plan, planTables: plan };
+}
+
 function arg(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);
   return index >= 0 ? process.argv[index + 1] : undefined;
@@ -112,23 +140,20 @@ async function main(): Promise<void> {
     )
     .all<{ name: string }>();
   const names = tables.results.map((r) => r.name);
-  const planTables = names.filter((n) => PLAN_TABLES.has(n));
-  const upstreamTables = names.length - planTables.length;
+  const { upstreamTables, planTables } = partitionTables(names);
 
-  const actual = {
+  const actual: SchemaCounts = {
     upstreamTables,
-    planTables: planTables.length,
+    planTables,
     indexes: await count("index"),
     triggers: await count("trigger"),
     views: await count("view"),
   };
   console.log("schema:", actual, "expected:", EXPECTED);
 
-  for (const [key, expected] of Object.entries(EXPECTED)) {
-    const got = actual[key as keyof typeof actual];
-    if (got !== expected) {
-      throw new Error(`schema mismatch for ${key}: got ${got}, expected ${expected}`);
-    }
+  const mismatches = schemaMismatches(actual, EXPECTED);
+  if (mismatches.length > 0) {
+    throw new Error(`schema mismatch: ${mismatches.join("; ")}`);
   }
 
   // The KV adapter is useless without its backing table; a missing table only
@@ -142,7 +167,7 @@ async function main(): Promise<void> {
     .prepare("SELECT revision FROM leaderboard_revision WHERE id = 1")
     .all<{ revision: string }>();
   const revision = revisionRows[0]?.revision ?? "";
-  if (!/^[a-f0-9]{32}$/.test(revision)) {
+  if (!REVISION_PATTERN.test(revision)) {
     throw new Error(`leaderboard revision malformed: ${revision}`);
   }
   console.log(`leaderboard revision ok: ${revision}`);
@@ -150,7 +175,10 @@ async function main(): Promise<void> {
   console.log("migration verification PASSED");
 }
 
-main().catch((error: unknown) => {
-  console.error("migration verification FAILED:", error);
-  process.exit(1);
-});
+// Only run when invoked directly, so the module can be imported by tests.
+if (import.meta.main ?? process.argv[1]?.endsWith("verify-migrations.ts")) {
+  main().catch((error: unknown) => {
+    console.error("migration verification FAILED:", error);
+    process.exit(1);
+  });
+}

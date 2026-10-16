@@ -11,7 +11,8 @@
 
 import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
-import { isAdmin, isAdminInDb, isE2EMode } from "@/lib/admin";
+import { isAdmin, isAdminInDb } from "@/lib/admin";
+import { isE2EMode } from "@/lib/e2e-mode";
 import { getDbRead } from "@/lib/db";
 
 /** Check if admin bypass is enabled (for L3 Playwright tests) */
