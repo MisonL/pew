@@ -119,6 +119,19 @@ describe("kv-adapter", () => {
     expect(await kv.get("k", "json")).toBe("v");
   });
 
+  it("treats a non-positive expirationTtl as non-expiring", async () => {
+    // Cloudflare KV rejects expirationTtl <= 0; the adapter maps those to a
+    // NULL expires_at (never expires) rather than an already-expired row.
+    const { db } = makeFakeDb();
+    let clock = NOW;
+    const kv = createKvAdapter({ db, now: () => clock });
+    await kv.put("zero", '"v"', { expirationTtl: 0 });
+    await kv.put("neg", '"v"', { expirationTtl: -30 });
+    clock += 10_000_000;
+    expect(await kv.get("zero", "json")).toBe("v");
+    expect(await kv.get("neg", "json")).toBe("v");
+  });
+
   it("delete removes the key", async () => {
     const { db } = makeFakeDb();
     const kv = createKvAdapter({ db, now: () => NOW });
