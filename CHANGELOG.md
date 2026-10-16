@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v3.3.3
+
+### Changed
+- Bump minor/patch dependencies (AWS SDK, Cloudflare workers-types, wrangler, lucide-react, next, react, Playwright, vitest, oxc-parser)
+
 ## v3.3.2
 
 ### Changed
