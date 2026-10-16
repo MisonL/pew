@@ -342,6 +342,19 @@ HTTP 方式需在容器内执行。
 **备份后务必校验文件非空**：实测 `.backup` 失败仍会创建 0 字节假文件，`[ -s ]` 是必须的
 最后一道检查。
 
+**定时备份用 `backup.sh`**（仓库交付的可执行脚本，cron/systemd timer 友好：读 `.env`
+凭据、数组传参防密码空格截断、`umask 077` + `chmod 600`、空归档非零退出、自动按
+profile 选 `rqlite`/`rqlite-1`、清理容器内临时文件）：
+
+```bash
+# 手动一次
+bash deploy/selfhost/backup.sh                      # → ./backup-YYYY-MM-DD.db
+# cron（每天 03:17，失败退出码非零，可接告警）
+17 3 * * * cd /path/to/pew && bash deploy/selfhost/backup.sh /var/backups/pew/backup-$(date +\%F).db
+```
+
+以下为等效的手工片段（脚本即由它整理而来，保留供排查对照）：
+
 ```bash
 set -a; . ./.env; set +a   # 备份小节命令读 $RQLITE_USERNAME/$RQLITE_PASSWORD，先导出
 

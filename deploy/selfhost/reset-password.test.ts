@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { scryptSync, timingSafeEqual } from "node:crypto";
-import { hashPasswordForReset, parseArg } from "./reset-password";
+import { hashPasswordForReset, parseArg, resolvePassword } from "./reset-password";
 
 /**
  * Re-implements the web app's verifyPassword() against the storage format.
@@ -49,3 +49,28 @@ describe("parseArg", () => {
   });
 });
 
+
+describe("resolvePassword source priority", () => {
+  const noStdin = () => Promise.resolve("");
+
+  it("prefers RQLITE_RESET_PW over every other channel", async () => {
+    const pw = await resolvePassword(["--password", "argv-pw"], { RQLITE_RESET_PW: "env-pw" }, () => Promise.resolve("stdin-pw"));
+    expect(pw).toBe("env-pw");
+  });
+
+  it("reads --password-stdin and trims the trailing newline", async () => {
+    const pw = await resolvePassword(["--password-stdin"], {}, () => Promise.resolve("from-stdin\n"));
+    expect(pw).toBe("from-stdin");
+  });
+
+  it("falls back to the legacy --password argv channel", async () => {
+    expect(await resolvePassword(["--password", "argv-pw"], {}, noStdin)).toBe("argv-pw");
+    expect(await resolvePassword(["--password=argv-pw"], {}, noStdin)).toBe("argv-pw");
+  });
+
+  it("returns undefined when no channel provides a password", async () => {
+    expect(await resolvePassword([], {}, noStdin)).toBeUndefined();
+    // An empty env value must not shadow the remaining channels.
+    expect(await resolvePassword(["--password", "argv-pw"], { RQLITE_RESET_PW: "" }, noStdin)).toBe("argv-pw");
+  });
+});

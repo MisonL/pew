@@ -46,24 +46,39 @@ export function parseArg(argv: string[], flag: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Resolve the new password by source priority: env (safest — invisible to
+ * `ps` and shell history), then --password-stdin, then the legacy argv
+ * channel. Exported for tests; `readStdin` is injectable.
+ */
+export async function resolvePassword(
+  argv: string[],
+  env: Record<string, string | undefined>,
+  readStdin: () => Promise<string>
+): Promise<string | undefined> {
+  if (env.RQLITE_RESET_PW) return env.RQLITE_RESET_PW;
+  if (argv.includes("--password-stdin")) return (await readStdin()).trimEnd();
+  return parseArg(argv, "--password");
+}
+
+function readAllStdin(): Promise<string> {
+  return new Promise<string>((resolve) => {
+    let data = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => {
+      data += chunk;
+    });
+    process.stdin.on("end", () => resolve(data));
+  });
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const email = parseArg(argv, "--email");
   // Prefer the env/stdin channel over argv: a password on the command line
   // is visible in host `ps` output for the life of the process and lands in
   // shell history. --password stays accepted for backwards compatibility.
-  const password =
-    process.env.RQLITE_RESET_PW ??
-    (argv.includes("--password-stdin")
-      ? await new Promise<string>((resolve) => {
-          let data = "";
-          process.stdin.setEncoding("utf8");
-          process.stdin.on("data", (chunk) => {
-            data += chunk;
-          });
-          process.stdin.on("end", () => resolve(data.trimEnd()));
-        })
-      : parseArg(argv, "--password"));
+  const password = await resolvePassword(argv, process.env, readAllStdin);
   const baseUrl = process.env.RQLITE_URL ?? "http://rqlite:4001";
 
   if (!email || !password) {
