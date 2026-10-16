@@ -3316,7 +3316,8 @@ bun run deploy/selfhost/verify-migrations.ts --base-url http://127.0.0.1:14001
 > **实现更正 2026-10-15：** 本小节为计划时点快照，与交付实现已有漂移，权威步骤以
 > `deploy/selfhost/README.md`「备份与恢复」小节为准。已知的漂移点：
 > ① 下面的备份命令没有 `-u <user>:<password>`——鉴权部署（`RQLITE_AUTH` 开启）下会 401，
->   交付版通过 `.env` 导出 `RQLITE_USERNAME`/`RQLITE_PASSWORD` 并以数组传参 `RQLITE_ARGS` 解决；
+>   交付版通过 `.env` 导出 `RQLITE_USERNAME`/`RQLITE_PASSWORD`，再以 `-e` 名转发经容器环境变量
+>   传入（argv 世界可读，环境变量不可读；见 deploy/selfhost/README.md「备份」「恢复」小节）。
 > ② 交付版加了非空校验（实测 `.backup` 失败仍会创建 0 字节假文件，`[ -s ] || exit 1` 必须）与
 >   `chmod 600`（备份含全部 `password_hash`/`api_key`，禁止 world-readable）；
 > ③ 下面的恢复步骤漏了停 `d1-http`——鉴权部署下恢复期间它仍可写 rqlite，交付版恢复第一步
@@ -3516,6 +3517,9 @@ curl -s http://127.0.0.1:7020/api/live
 仍被收集。
 
 新增上游迁移后，重跑 `verify-migrations.ts` 并更新其 `EXPECTED` 计数。
+`verify-migrations.ts` 现已拆分出可测试的纯函数（`schemaMismatches`、`partitionTables`、
+`REVISION_PATTERN`）并由 `verify-migrations.test.ts` 覆盖；`EXPECTED` 快照本身仍手写，
+仍按上文流程人工核对并更新。
 ```
 
 - [ ] **Step 5: 提交**
