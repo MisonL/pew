@@ -19,6 +19,12 @@
 
 ### New System (Quality System)
 
+> **实现更正 2026-10-16**：下表为设计时点快照。L1 的 `<30s` 目标未达成——实测
+> （303 文件 / 4,674 用例）冷缓存覆盖步骤 184s、热缓存全门 79s；该数字写于套件
+> ~2,170 用例时。L2 实际为 pre-push 并联三闸之一（与 L3、G2 并行），非串行
+> `<3min`；触发（pre-commit / pre-push）仍然准确。现状与证据以根 `AGENTS.md` 的
+> 质量契约表为准。
+
 | Layer | Name | What it validates | Trigger |
 |-------|------|-------------------|---------|
 | **L1** | Unit/Component | Logic units, pure functions, hooks, ViewModels | pre-commit (<30s) |
