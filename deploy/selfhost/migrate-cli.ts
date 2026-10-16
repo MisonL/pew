@@ -81,7 +81,12 @@ async function main(): Promise<void> {
   console.log(`migrations done: applied ${result.applied.length}, skipped ${result.skipped.length}`);
 }
 
-main().catch((error: unknown) => {
-  console.error("migration failed:", error);
-  process.exit(1);
-});
+// Only run when invoked directly, so the module can be imported by tests
+// (auth-reconcile.test.ts imports assertAuthReconciled). Without this guard
+// an import starts the 60s waitForRqlite retry loop in the test process.
+if (import.meta.main ?? process.argv[1]?.endsWith("migrate-cli.ts")) {
+  main().catch((error: unknown) => {
+    console.error("migration failed:", error);
+    process.exit(1);
+  });
+}

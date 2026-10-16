@@ -325,7 +325,7 @@ docker compose exec -T \
 > `tsc -b deploy/selfhost/tsconfig.json` lane 编译期校验（project references 指向 core 与两个
 > worker 的 composite 声明构建 `tsconfig.build.json`），适配层与上游 `D1Database`/`KVNamespace`
 > 的类型兼容性由此获得保证；入口是 `bun run lint:typecheck`（`bun run typecheck` 本身只覆盖
-> `packages/*` 与 e2e 清单，不含 deploy/）。运行时另由 deploy/selfhost 的 12 个 vitest 测试文件覆盖（用例数随交付增长，以 `bunx vitest run deploy/selfhost` 实际输出为准）。
+> `packages/*` 与 e2e 清单，不含 deploy/）。运行时另由 deploy/selfhost 的 15 个 vitest 测试文件覆盖（用例数随交付增长，以 `bunx vitest run deploy/selfhost` 实际输出为准）。
 
 
 ## 备份
@@ -342,40 +342,56 @@ HTTP 方式需在容器内执行。
 **备份后务必校验文件非空**：实测 `.backup` 失败仍会创建 0 字节假文件，`[ -s ]` 是必须的
 最后一道检查。
 
-**定时备份用 `backup.sh`**（仓库交付的可执行脚本，cron/systemd timer 友好：读 `.env`
-凭据、数组传参防密码空格截断、`umask 077` + `chmod 600`、空归档非零退出、自动按
-profile 选 `rqlite`/`rqlite-1`、清理容器内临时文件）：
+**定时备份用 `backup.sh`**（仓库交付的可执行脚本，cron/systemd timer 友好）：读 `.env`
+凭据、按 profile 自动选 `rqlite`/`rqlite-1`、`umask 077` + `chmod 600`、先写临时文件校验
+通过后再原子 `mv` 覆盖目标、空归档或非 SQLite 产物一律非零退出、退出时清理容器内临时文件。
+脚本会 `cd` 到自身所在目录，所以默认产物落在 **`deploy/selfhost/backup-YYYY-MM-DD.db`**，
+不是当前工作目录。
 
 ```bash
-# 手动一次
-bash deploy/selfhost/backup.sh                      # → ./backup-YYYY-MM-DD.db
+# 手动一次（默认写到 deploy/selfhost/backup-YYYY-MM-DD.db）
+bash deploy/selfhost/backup.sh
+# 指定路径（父目录不存在会自动创建）
+bash deploy/selfhost/backup.sh /var/backups/pew/pew.db
 # cron（每天 03:17，失败退出码非零，可接告警）
 17 3 * * * cd /path/to/pew && bash deploy/selfhost/backup.sh /var/backups/pew/backup-$(date +\%F).db
 ```
 
-以下为等效的手工片段（脚本即由它整理而来，保留供排查对照）：
+注意事项：
+
+- **cron 的 `PATH` 通常不含 docker**。用 `docker: command not found` 报错时，请在 crontab
+  顶部显式设置 `PATH=/usr/local/bin:/usr/bin:/bin`（或 `command -v docker` 查到的目录）。
+- **不要在多个 timer 上并发跑同一个输出路径**：脚本内 `.backup` 写的是固定容器路径
+  `/rqlite/file/backup.db`，并发运行会互相覆盖。需要多份备份请错开时间或指向不同输出路径。
+- **凭据经环境变量传入容器**（`docker exec -e RQLITE_USERNAME -e RQLITE_PASSWORD`）：宿主
+  `ps` 里可见 argv，环境变量不可见，所以密码含空格也无需引号技巧。脚本不接受把
+  `-u user:pass` 放进 argv。
+- **校验是白名单式的**：不仅非空，还要求前 16 字节是 `SQLite format 3\0` 魔数，挡住
+  `.backup` 失败留下的非空错误页。
+
+灾难恢复 runbook 见下方「恢复」小节；备份产物只含数据，`.env` 与 `.rqlite-auth.json` 需另行
+保管（见下）。
+
+<details>
+<summary>等效的手工片段（保留供排查对照；脚本即由它演变而来）</summary>
 
 ```bash
 set -a; . ./.env; set +a   # 备份小节命令读 $RQLITE_USERNAME/$RQLITE_PASSWORD，先导出
 
-# 单节点（REPL 点命令通道；鉴权开启时必须带 -u，匿名 .backup 会 401；无鉴权部署 RQLITE_ARGS 为空数组、直接省略 -u）
-# 不要用 ${VAR:+-u "$VAR"} 内联展开——含空格的密码会被 shell 词分割截断，必须用数组。
-RQLITE_ARGS=()
-[ -n "$RQLITE_USERNAME" ] && RQLITE_ARGS=(-u "$RQLITE_USERNAME:$RQLITE_PASSWORD")
+# 单节点（REPL 点命令通道；鉴权开启时必须带 -u，匿名 .backup 会 401；无鉴权部署直接省略 -u）
+# 凭据走容器环境变量而非 argv：宿主 ps 里 argv 世界可读，环境变量不可读。
 printf '.backup /rqlite/file/backup.db\n.exit\n' | \
-  docker compose exec -T rqlite rqlite "${RQLITE_ARGS[@]}" -H localhost
+  docker compose exec -T -e RQLITE_USERNAME -e RQLITE_PASSWORD rqlite \
+    sh -c 'exec rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost'
 docker compose cp rqlite:/rqlite/file/backup.db "./backup-$(date +%F).db"
 chmod 600 "./backup-$(date +%F).db"   # 备份含全部 password_hash/api_key，禁止 world-readable
 # 非空校验必须退出非零：包进 cron/systemd timer 时，0 字节假文件否则只会留一条 stderr、退出码仍为 0，无人告警。
 [ -s "./backup-$(date +%F).db" ] || { echo "备份为空，失败！" >&2; exit 1; }
 
 # 集群模式（对 leader 节点执行即可，默认 rqlite-1；.backup 读本地文件但产物经 Raft 复制）
-printf '.backup /rqlite/file/backup.db\n.exit\n' | \
-  docker compose exec -T rqlite-1 rqlite "${RQLITE_ARGS[@]}" -H localhost
-docker compose cp rqlite-1:/rqlite/file/backup.db "./backup-$(date +%F).db"
-chmod 600 "./backup-$(date +%F).db"
-[ -s "./backup-$(date +%F).db" ] || { echo "备份为空，失败！" >&2; exit 1; }
+# 把上面的 rqlite 换成 rqlite-1 即可。
 ```
+</details>
 
 产物是标准 SQLite 文件（已实测：`SQLite format 3` 魔数、含全部表与 `kv_cache`）。
 
@@ -387,13 +403,11 @@ chmod 600 "./backup-$(date +%F).db"
 **恢复（必须用 `.restore` 点命令，不能换文件）**：实测直接替换数据文件无效——实际数据文件在
 `/rqlite/file/data/db.sqlite`（不是 `pew.db`），且 rqlite 启动时会用 `raft.db` 重放日志，
 备份后的写入会「复活」；清空整个卷再放文件则走 bootstrap 忽略预置文件。`.restore` 走 REPL、
-经 Raft 正常应用（已实测：恢复后备份后的写入行消失，只剩备份时点的数据）。鉴权开启时同样
-用上方定义的 `RQLITE_ARGS` 数组（无鉴权部署为空数组，直接省略 -u）。
+经 Raft 正常应用（已实测：恢复后备份后的写入行消失，只剩备份时点的数据）。鉴权开启时凭据
+同样经容器环境变量传入（`-e VAR`），不要把 `-u user:pass` 放进 argv（宿主 `ps` 可见）。
 
 ```bash
 set -a; . ./.env; set +a   # 恢复命令带 -u，需先导出 .env 凭据
-RQLITE_ARGS=()
-[ -n "$RQLITE_USERNAME" ] && RQLITE_ARGS=(-u "$RQLITE_USERNAME:$RQLITE_PASSWORD")
 # 1. 停应用（读写都停，避免恢复期间写入；d1-http 是写后端，必须一起停）
 docker compose stop web read ingest scheduler d1-http
 # 2. 把备份放进 rqlite 容器（rqlite 保持运行，.restore 不需要停它）
@@ -401,8 +415,10 @@ docker compose cp "./backup-2026-10-11.db" rqlite:/rqlite/file/restore.db
 # 3. 用点命令恢复（经 Raft 应用，单节点/集群同一路径；鉴权开启时必须带 -u user:pass，
 #    集群对 leader（rqlite-1）执行即可，.restore 经 Raft 复制到其余节点）
 printf '.restore /rqlite/file/restore.db\n.exit\n' | \
-  docker compose exec -T rqlite rqlite "${RQLITE_ARGS[@]}" -H localhost
+  docker compose exec -T -e RQLITE_USERNAME -e RQLITE_PASSWORD rqlite \
+    sh -c 'exec rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost'
 # Expected: Database restored successfully
+# 无鉴权部署把上面整条 exec 换成：docker compose exec -T rqlite rqlite -H localhost
 # 4. 起应用并验证（存活 + 迁移账本对账，后者用「验证」小节的 exec 形态）
 docker compose start d1-http read ingest scheduler web
 docker compose exec web node -e "fetch('http://127.0.0.1:7020/api/live').then(r=>r.json()).then(console.log)"
