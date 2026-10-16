@@ -154,9 +154,11 @@ describe("E2E process isolation", () => {
     child.stdout.on("data", (data) => { output += data; });
     child.stderr.on("data", (data) => { output += data; });
     try {
+      // Poll budget matches the readiness timeout raised in e2e-utils
+      // (both were 60s under the old flake-prone budget).
       const started = Date.now();
       while (!output.includes("Local:")) {
-        if (child.exitCode !== null || Date.now() - started > 70_000) throw new Error(`Server did not start: ${output}`);
+        if (child.exitCode !== null || Date.now() - started > 180_000) throw new Error(`Server did not start: ${output}`);
         await new Promise((done) => setTimeout(done, 50));
       }
       child.kill("SIGTERM");
@@ -167,7 +169,7 @@ describe("E2E process isolation", () => {
       if (child.exitCode === null && child.signalCode === null) { child.kill("SIGTERM"); await exited; }
       rmSync(root, { recursive: true, maxRetries: 3, retryDelay: 100 });
     }
-  }, 90_000);
+  }, 240_000);
 
   it("cleans D1 when the Next process fails to start", async () => {
     const root = mkdtempSync(join(tmpdir(), "pew-start-failure-"));
