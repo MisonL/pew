@@ -11,6 +11,7 @@
 
 import { auth } from "@/auth";
 import { getDbRead } from "@/lib/db";
+import { isE2EMode } from "@/lib/e2e-mode";
 
 /** The user ID used when E2E auth is bypassed (overridable via env) */
 export const E2E_TEST_USER_ID =
@@ -61,17 +62,4 @@ export async function resolveUser(
   }
 
   return null;
-}
-
-/** Check if we're running in E2E skip-auth mode */
-function isE2EMode(): boolean {
-  return (
-    process.env.E2E_SKIP_AUTH === "true" &&
-    // RESOURCE_ENV=test marks the runner's isolated per-run environment
-    // (scripts/local-e2e-bindings.ts); it also holds under a production
-    // build, so the E2E lane can run against `next start`. RAILWAY stays
-    // excluded as a belt-and-braces guard for the deployed path.
-    process.env.RESOURCE_ENV === "test" &&
-    !process.env.RAILWAY_ENVIRONMENT
-  );
 }

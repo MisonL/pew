@@ -13,23 +13,11 @@
 import { resolveUser, type AuthResult, E2E_TEST_USER_ID, E2E_TEST_USER_EMAIL } from "./auth-helpers";
 import { getDbRead } from "./db";
 import { getD1Client } from "./d1";
+import { isE2EMode } from "./e2e-mode";
 
 // ---------------------------------------------------------------------------
 // E2E mode checks
 // ---------------------------------------------------------------------------
-
-/** Check if we're running in E2E skip-auth mode */
-export function isE2EMode(): boolean {
-  return (
-    process.env.E2E_SKIP_AUTH === "true" &&
-    // RESOURCE_ENV=test marks the runner's isolated per-run environment
-    // (scripts/local-e2e-bindings.ts); it also holds under a production
-    // build, so the E2E lane can run against `next start`. RAILWAY stays
-    // excluded as a belt-and-braces guard for the deployed path.
-    process.env.RESOURCE_ENV === "test" &&
-    !process.env.RAILWAY_ENVIRONMENT
-  );
-}
 
 /** Check if admin bypass is enabled (for L3 Playwright tests) */
 function isAdminBypass(): boolean {
