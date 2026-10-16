@@ -47,9 +47,12 @@ describe("real D1 lifecycle", () => {
   });
 
   it("preserves full fresh schema, native Worker RPC and failure cleanup", () => {
-    const result = spawnSync("bun", ["--no-env-file", "scripts/test-local-e2e.ts"], { encoding: "utf8", timeout: 120_000, env: { ...process.env, CI: "true", PEW_SYNTHETIC_PARENT_SECRET: "must-not-forward" } });
+    // Beneath the coverage suite this spawn can take well over 100s; the
+    // timeout budget is deliberately generous (the old 120s ceiling failed
+    // for reasons unrelated to the migration itself).
+    const result = spawnSync("bun", ["--no-env-file", "scripts/test-local-e2e.ts"], { encoding: "utf8", timeout: 240_000, env: { ...process.env, CI: "true", PEW_SYNTHETIC_PARENT_SECRET: "must-not-forward" } });
     expect(result.status, result.stdout + result.stderr).toBe(0);
-  }, 125_000);
+  }, 300_000);
   it.each(["THIS IS NOT SQL;", "CREATE TABLE duplicate(id TEXT); CREATE TABLE duplicate(id TEXT);"])("fails invalid or duplicate SQL and cleans only fresh state: %s", (sql) => {
     const migrations = mkdtempSync(join(tmpdir(), "pew-invalid-migration-"));
     const before = new Set(readdirSync(tmpdir()).filter((name) => name.startsWith("pew-e2e-")));

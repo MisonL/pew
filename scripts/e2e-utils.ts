@@ -13,7 +13,14 @@ async function deadline<Result>(promise: Promise<Result>, milliseconds: number, 
   } finally { clearTimeout(timer); }
 }
 
-export async function startLocalBindings(signal: AbortSignal, timeoutMs = 60_000, readiness = false) {
+// timeoutMs bounds local-bindings startup AND disposal. The default is
+// deliberately well above observed cold-start time: the deadline exists to
+// catch a wedged child, not to enforce a performance budget. Pre-push runs
+// this lane in parallel with the browser E2E's production build and the
+// security scan, and a 60s budget produced false "startup timed out"
+// failures under that load (timing is explicitly not part of the gate
+// contract).
+export async function startLocalBindings(signal: AbortSignal, timeoutMs = 180_000, readiness = false) {
   signal.throwIfAborted();
   let receive: (value: { env: Record<string, string>; state: string }) => void;
   const ready = new Promise<{ env: Record<string, string>; state: string }>((done) => { receive = done; });
@@ -156,7 +163,11 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
       } catch {
         abort.signal.throwIfAborted();
       }
-      if (Date.now() - started > 60_000) throw new Error("E2E server readiness timed out");
+      // Same rationale as startLocalBindings' timeout: this guards against a
+      // wedged server, not slow load. The api tier boots `next dev`, whose
+      // first compile can exceed a minute when the gate runs beside the
+      // browser lane's production build.
+      if (Date.now() - started > 180_000) throw new Error("E2E server readiness timed out");
       await Bun.sleep(200);
     }
     await verifyLocalMarker(env);
