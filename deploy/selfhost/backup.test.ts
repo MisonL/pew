@@ -18,12 +18,16 @@ afterAll(() => {
  * script's guarantees meaningful:
  *  - argv is logged ONE ARGUMENT PER LINE, so the absence of a credential in
  *    argv and the exact shape of a forwarded call are both assertable.
+ *  - `compose exec` records the REPL transcript AND the environment the
+ *    container would actually see (it echoes -e NAME values), so a regression
+ *    that stops exporting the credential (dropping `set -a`) is caught even
+ *    though argv still looks right.
+ *  - `compose exec` on an unknown service fails, as compose does, so a
+ *    wrong-service regression trips `set -e` — for the backup exec as well as
+ *    cleanup and cp.
  *  - `compose cp` mimics docker's tar-mode semantics by chmod 644 on the
  *    destination: a plain host `cp` would inherit umask 077 and make the
  *    script's own `chmod 600` untestable.
- *  - `compose exec` records the REPL transcript the script pipes in.
- *  - an unknown service (rqlite under the cluster profile) fails, as compose
- *    does, so a wrong-service regression trips `set -e`.
  */
 function run(opts: {
   archiveBytes?: number;
@@ -45,6 +49,7 @@ function run(opts: {
 
   const log = join(dir, "docker.log");
   const transcript = join(dir, "transcript");
+  const containerEnv = join(dir, "container-env");
   const archive = join(dir, "archive.db");
   writeFileSync(
     archive,
@@ -54,20 +59,28 @@ function run(opts: {
   const fakeDocker = `#!/bin/sh
 # Log argv one per line so argument boundaries are observable.
 { printf 'ARGV\\n'; for a in "$@"; do printf '[%s]\\n' "$a"; done; } >> ${JSON.stringify(log)}
+# Service existence: the cluster profile has no 'rqlite' service. Match only
+# the service ARGUMENT position (right after exec -T or cp), never the
+# literal 'rqlite' inside the sh -c payload that runs the rqlite REPL.
+case " $* " in
+  *" exec -T rqlite "*|*" cp rqlite:"*)
+    if [ "${opts.profile ?? "single"}" = "cluster" ]; then echo "no such service: rqlite" >&2; exit 1; fi;;
+esac
 case " $* " in
   *" exec "*" rm -f "*)
     exit 0;;
   *" exec "*)
-    # Capture the REPL transcript the script pipes in.
+    # Capture the REPL transcript the script pipes in, and the environment the
+    # container would receive: -e NAME forwards NAME's value from the caller.
     cat > ${JSON.stringify(transcript)}
+    { printf 'RQLITE_USERNAME=%s\\n' "\${RQLITE_USERNAME-<UNSET>}"; printf 'RQLITE_PASSWORD=%s\\n' "\${RQLITE_PASSWORD-<UNSET>}"; } > ${JSON.stringify(containerEnv)}
     exit 0;;
   *" cp "*)
-    # Service existence: the cluster profile has no 'rqlite' service.
-    case " $* " in
-      *" cp rqlite:"*) [ "${opts.profile ?? "single"}" = "cluster" ] && { echo "no such service: rqlite" >&2; exit 1; };;
-    esac
-    # Destination is the last argument.
+    # The script must stage inside a 0700 directory: docker cp lands 0644
+    # (tar mode), so between the cp and the script's chmod — and permanently
+    # after a SIGKILL — the parent mode is the only protection.
     for last in "$@"; do :; done
+    stat -f '%Lp' "$(dirname "$last")" > ${JSON.stringify(join(dir, "stage-mode"))}
     cp ${JSON.stringify(archive)} "$last"
     # docker cp preserves the container-side mode (0644) and ignores umask.
     chmod 644 "$last"
@@ -91,7 +104,7 @@ exit 0
     env: { PATH: `${bin}:${process.env.PATH}`, HOME: dir, TMPDIR: dir },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  return new Promise<{ code: number; stderr: string; log: string; transcript: string; out: string }>((resolve, reject) => {
+  return new Promise<{ code: number; stderr: string; log: string; transcript: string; containerEnv: string; dir: string; out: string }>((resolve, reject) => {
     let stderr = "";
     child.stderr?.on("data", (c) => { stderr += c; });
     child.on("error", reject);
@@ -100,6 +113,8 @@ exit 0
       stderr,
       log: existsSync(log) ? readFileSync(log, "utf8") : "",
       transcript: existsSync(transcript) ? readFileSync(transcript, "utf8") : "",
+      containerEnv: existsSync(containerEnv) ? readFileSync(containerEnv, "utf8") : "",
+      dir,
       out,
     }));
   });
@@ -117,25 +132,60 @@ describe("backup.sh", () => {
       "sh", "-c", 'exec rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost',
     ])).toBe(true);
     expect(argLines(r.log).some((line) => line.includes("pw with spaces"))).toBe(false);
+    // The forwarded VALUES actually arrive in the container environment —
+    // dropping `set -a` before sourcing .env leaves argv intact but forwards
+    // unset variables (mutation-tested regression).
+    expect(r.containerEnv).toContain("RQLITE_USERNAME=pew");
+    expect(r.containerEnv).toContain(`RQLITE_PASSWORD=${"pw with spaces"}`);
     // The REPL transcript names the path the later cp reads.
     expect(r.transcript).toContain(".backup /rqlite/file/backup.db");
     expect(r.transcript).toContain(".exit");
-    // cp copies exactly that path, into a temp sibling of the destination.
+    // cp copies exactly that path, into the 0700 staging dir beside OUT.
     expect(hasSequence(r.log, ["cp", "rqlite:/rqlite/file/backup.db"])).toBe(true);
-    expect(argLines(r.log).some((line) => line.startsWith(`[${r.out}.tmp.`))).toBe(true);
     // The fake chmods the copy to 644 (docker's tar-mode behavior), so 0600
     // here can only come from the script's own chmod.
     expect(existsSync(r.out)).toBe(true);
     expect(statSync(r.out).mode & 0o777).toBe(0o600);
+    // The staging dir that held the archive mid-run is gone on success.
+    expect(readdirSync(dirname(r.out)).filter((n) => n.startsWith(".pew-backup."))).toEqual([]);
+  });
+
+  it("stages the archive in a 0700 directory (SIGKILL-safety)", async () => {
+    // The window between `docker compose cp` (lands 0644, tar mode) and the
+    // script's chmod can only be closed by the parent directory when the run
+    // is SIGKILLed — no trap fires then. The fake records the staging dir's
+    // mode at cp time; it must be 0700.
+    const r = await run({});
+    expect(r.code, r.stderr).toBe(0);
+    expect(readFileSync(join(r.dir, "stage-mode"), "utf8").trim()).toBe("700");
+    // No staging dir survives a successful run.
+    expect(readdirSync(dirname(r.out)).filter((n) => n.startsWith(".pew-backup."))).toEqual([]);
+  });
+
+  it("refuses a directory as the output path", async () => {
+    // `mv TMP OUT` onto an existing directory silently relocates the archive
+    // INTO it and still prints success (mutation-tested).
+    const dir = mkdtempSync(join(tmpdir(), "bk-dirout-")); dirs.push(dir);
+    const target = join(dir, "adir");
+    mkdirSync(target);
+    const r = await run({ args: [target] });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("is a directory");
   });
 
   it("targets rqlite-1 under the cluster profile and never touches the rqlite service", async () => {
     const r = await run({ profile: "cluster" });
     expect(r.code, r.stderr).toBe(0);
-    // The fake fails on `cp rqlite:` under the cluster profile, so a wrong
-    // service would abort the run; assert it never appears at all.
+    // The fake fails on any `rqlite` service under the cluster profile, so a
+    // wrong service would abort the run; assert it never appears at all.
     expect(hasSequence(r.log, ["cp", "rqlite:/rqlite/file/backup.db"])).toBe(false);
     expect(hasSequence(r.log, ["cp", "rqlite-1:/rqlite/file/backup.db"])).toBe(true);
+    // The BACKUP exec (not just cleanup/cp) must use rqlite-1: a regression
+    // that hardcodes the service in the exec line alone would otherwise pass.
+    expect(hasSequence(r.log, [
+      "exec", "-T", "-e", "RQLITE_USERNAME", "-e", "RQLITE_PASSWORD", "rqlite-1",
+      "sh", "-c", 'exec rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost',
+    ])).toBe(true);
     expect(hasSequence(r.log, ["exec", "-T", "rqlite-1", "rm", "-f", "/rqlite/file/backup.db"])).toBe(true);
   });
 
@@ -223,15 +273,20 @@ describe("backup.sh", () => {
 
 /**
  * The fake logs one argument per line as `[arg]`, so a call can be matched by
- * its exact argv sequence.
+ * its exact argv sequence. The log starts each docker invocation with a bare
+ * `ARGV` line; `hasSequence` splits on it so a pattern can never match across
+ * two invocations (F7: adjacency inside one call is what's asserted).
  */
 function argLines(log: string): string[] {
   return log.split("\n").filter((line) => line.startsWith("["));
 }
 
-/** True when `seq` appears as a contiguous run of logged arguments. */
+/** True when `seq` appears as a contiguous run of args within ONE docker call. */
 function hasSequence(log: string, seq: string[]): boolean {
-  const lines = argLines(log);
   const want = seq.map((a) => `[${a}]`);
-  return lines.some((_, i) => want.every((w, j) => lines[i + j] === w));
+  // Split on the bare `ARGV` marker: each chunk is one invocation's argv.
+  return log.split("\nARGV\n").some((chunk) => {
+    const lines = argLines(chunk);
+    return lines.some((_, i) => want.every((w, j) => lines[i + j] === w));
+  });
 }

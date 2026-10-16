@@ -337,16 +337,26 @@ rqlite 的 CLI **没有** `backup` 子命令；备份是交互式 REPL 里的 `.
 替代通道是 HTTP 端点 **`GET /db/backup` 带 `-u user:pass`**（10.5.3 实测 200，返回全库
 SQLite 文件；`POST /db/backup` 是 405；`GET /backup`（少 `/db` 前缀）是 404）。
 鉴权开启时凭据即 `.env` 的 `RQLITE_USERNAME`/`RQLITE_PASSWORD`；rqlite 未发布宿主端口，
-HTTP 方式需在容器内执行。
+HTTP 方式需在容器内执行。注意：HTTP 通道的 `-u` 凭据**在宿主 argv 可见**，是排障用的一次性
+通道，不要用于定时任务——定时备份用下文的 `backup.sh`（环境变量转发）。
 
 **备份后务必校验文件非空**：实测 `.backup` 失败仍会创建 0 字节假文件，`[ -s ]` 是必须的
 最后一道检查。
 
 **定时备份用 `backup.sh`**（仓库交付的可执行脚本，cron/systemd timer 友好）：读 `.env`
-凭据、按 profile 自动选 `rqlite`/`rqlite-1`、`umask 077` + `chmod 600`、先写临时文件校验
-通过后再原子 `mv` 覆盖目标、空归档或非 SQLite 产物一律非零退出、退出时清理容器内临时文件。
+凭据、按 profile 自动选 `rqlite`/`rqlite-1`、在**目标旁一个 0700 的暂存目录**里接收副本并
+`chmod 600`（`docker compose cp` 按容器侧 0644 落地、无视 umask；暂存目录保证哪怕脚本被
+SIGKILL——此时 trap 无法执行——归档也不可被其他用户读取）、校验通过后再原子 `mv` 覆盖目标、
+空归档或非 SQLite 产物一律非零退出、退出时清理暂存目录与容器内临时文件。
 脚本会 `cd` 到自身所在目录，所以默认产物落在 **`deploy/selfhost/backup-YYYY-MM-DD.db`**，
-不是当前工作目录。
+不是当前工作目录（该路径已被 `.gitignore` 覆盖，归档不会误入 git 历史； cron 生产部署
+建议直接指定 `/var/backups/` 下的路径）。
+
+**`.env` 会被当作 shell 脚本执行**（脚本 `set -a; . ./.env`）：密码值必须用**单引号**包裹
+（不加引号时 `$` 会展开——实测 `pa$$word` 变成 `pa<PID>word`——反斜杠会被吞）；`.env` 里
+不能出现裸 `exit`（会让备份静默跳过且退出码为 0）。`.env` 本身请 `chmod 600`：它含明文
+`AUTH_SECRET`/`CF_D1_API_TOKEN`/`WORKER_SECRET`/`RQLITE_PASSWORD`，且可写它=可劫持以你
+身份运行的备份 cron。不要把任何不可信来源的文件放进这个路径。
 
 ```bash
 # 手动一次（默认写到 deploy/selfhost/backup-YYYY-MM-DD.db）
@@ -369,8 +379,8 @@ bash deploy/selfhost/backup.sh /var/backups/pew/pew.db
 - **校验是白名单式的**：不仅非空，还要求前 16 字节是 `SQLite format 3\0` 魔数，挡住
   `.backup` 失败留下的非空错误页。
 
-灾难恢复 runbook 见下方「恢复」小节；备份产物只含数据，`.env` 与 `.rqlite-auth.json` 需另行
-保管（见下）。
+灾难恢复 runbook 见下文「**恢复**」部分（本节内的恢复步骤）；备份产物只含数据，`.env` 与
+`.rqlite-auth.json` 需另行保管（见下）。
 
 <details>
 <summary>等效的手工片段（保留供排查对照；脚本即由它演变而来）</summary>
@@ -405,13 +415,16 @@ chmod 600 "./backup-$(date +%F).db"   # 备份含全部 password_hash/api_key，
 备份后的写入会「复活」；清空整个卷再放文件则走 bootstrap 忽略预置文件。`.restore` 走 REPL、
 经 Raft 正常应用（已实测：恢复后备份后的写入行消失，只剩备份时点的数据）。鉴权开启时凭据
 同样经容器环境变量传入（`-e VAR`），不要把 `-u user:pass` 放进 argv（宿主 `ps` 可见）。
+备份文件路径按 backup.sh 的实际产物位置写：默认在 `deploy/selfhost/` 下，或你 cron 指定的
+目录——下例假设 `/var/backups/pew/`。
 
 ```bash
 set -a; . ./.env; set +a   # 恢复命令带 -u，需先导出 .env 凭据
+cd /path/to/pew            # docker compose 需要 compose 文件所在目录（或用 -f 指定）
 # 1. 停应用（读写都停，避免恢复期间写入；d1-http 是写后端，必须一起停）
 docker compose stop web read ingest scheduler d1-http
 # 2. 把备份放进 rqlite 容器（rqlite 保持运行，.restore 不需要停它）
-docker compose cp "./backup-2026-10-11.db" rqlite:/rqlite/file/restore.db
+docker compose cp /var/backups/pew/backup-2026-10-11.db rqlite:/rqlite/file/restore.db
 # 3. 用点命令恢复（经 Raft 应用，单节点/集群同一路径；鉴权开启时必须带 -u user:pass，
 #    集群对 leader（rqlite-1）执行即可，.restore 经 Raft 复制到其余节点）
 printf '.restore /rqlite/file/restore.db\n.exit\n' | \
@@ -541,10 +554,16 @@ docker compose up -d rqlite
 注意三点：① 该命令作用于宿主上**所有**容器；宿主还跑着别的 compose 栈时用
 `--filter "label=com.docker.compose.project=<项目名>"` 收窄（项目名默认是 compose 文件所在目录名）；
 ② rqlite 重启后需重新选主，等于一次短暂写中断（read 走 follower 仍可用）；
-③ 反复 unhealthy 应先按上文排障（auth.json / 节点 ID / 磁盘），自动重启只会掩盖根因。
+③ 反复 unhealthy 应先按上文排障（auth.json / 节点 ID / 磁盘），自动重启只会掩盖根因——
+   看护必须同时接**告警**（把 restart 的输出写入日志/通知），否则持续的 unhealthy 会被
+   静默地每 5 分钟重启一次，掩盖正在进行的篡改或磁盘故障。
 
-**数据层故障不改变任何容器状态**：read/ingest/d1-http 的探针只探自身 `/api/live`，
-rqlite 宕机/磁盘满时它们仍显示 healthy，唯一信号是 web 的 5xx 与 rqlite 日志。
+**数据层故障的健康面（已按实测探针行为更正）**：d1-http 的探针（`/health`）与
+read/ingest 的探针（`/api/live`）都会对 rqlite 执行真实 `SELECT 1`，rqlite 宕机/磁盘满时
+这三个服务会转 **unhealthy**（`restart: unless-stopped` 只在进程退出时重启，探针失败不触发，
+见上文）。唯一在数据层故障时仍显示 healthy 的是 **web**：它的 `/api/live` 探的是
+web→d1-http 客户端连通性，错误响应也被计为 connected。因此「web 仍 200 但页面报错」+
+「read/ingest/d1-http unhealthy」是数据层故障的标准签名；排查先看 `docker compose logs rqlite`。
 
 **宿主磁盘满**：rqlite 是唯一有状态组件，`rqlite-data` 卷写满后 Raft 无法提交日志，
 症状是**所有写路径 500**（无任何指向磁盘的报错）。恢复：清理宿主空间后

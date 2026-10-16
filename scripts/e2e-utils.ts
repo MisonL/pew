@@ -35,15 +35,21 @@ export async function startLocalBindings(signal: AbortSignal, timeoutMs = 180_00
     stop = () => reject(signal.reason);
     signal.addEventListener("abort", stop, { once: true });
   });
+  // Dispose deadlines are capped independently of the (load-tolerant) startup
+  // budget: a child that ignores IPC will not start responding sooner just
+  // because startup was given 180s. The cap keeps the failure path short while
+  // still honoring a caller that passes a smaller explicit budget (the no-IPC
+  // regression passes 20ms and expects disposal bounded by it).
+  const disposeTimeoutMs = Math.min(timeoutMs, 30_000);
   const dispose = async () => {
     let code: number;
     try {
       if (child.exitCode === null) child.send("dispose");
-      code = await deadline(child.exited, timeoutMs, "Local bindings disposal");
+      code = await deadline(child.exited, disposeTimeoutMs, "Local bindings disposal");
     } catch (error) {
       if (child.exitCode === null) {
         process.kill(-child.pid, "SIGKILL");
-        await deadline(child.exited, timeoutMs, "Local bindings forced exit");
+        await deadline(child.exited, disposeTimeoutMs, "Local bindings forced exit");
       }
       throw error;
     }
