@@ -86,7 +86,7 @@ describe("E2E process isolation", () => {
       for (const [event, original] of listeners) {
         for (const listener of process.listeners(event)) if (!original.has(listener)) process.removeListener(event, listener);
       }
-      remove.mockRestore(); list.mockRestore(); vi.unstubAllGlobals();
+      remove.mockRestore(); list.mockRestore(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
       removePath(root, { recursive: true });
     }
   });
@@ -189,6 +189,59 @@ describe("E2E process isolation", () => {
       expect(cleanup.message).toContain("disposal failed and forced exit also failed");
       expect((cleanup.errors[0] as Error).message).toContain("ERR_IPC_CHANNEL_CLOSED");
       expect((cleanup.errors[1] as Error).message).toContain("ESRCH");
+    } finally {
+      remove.mockRestore(); list.mockRestore(); kill.mockRestore(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces a cleanup failure alone when the run itself succeeded", async () => {
+    // Cleanup-only path: the tests pass, but dispose throws (bindings child's
+    // IPC channel died). The dispose error must be the rejection — not
+    // swallowed, and not wrapped in the both-failed AggregateError.
+    const root = mkdtempSync(join(tmpdir(), "pew-cleanup-only-"));
+    const remove = vi.mocked((await import("node:fs")).rmSync).mockImplementation(() => {});
+    const list = vi.mocked((await import("node:fs")).readdirSync).mockReturnValue([]);
+    vi.stubEnv("E2E_PORT", await freePort());
+    const env = {
+      NODE_ENV: "development", RESOURCE_ENV: "test", E2E_SKIP_AUTH: "true",
+      CF_ACCOUNT_ID: "pew-local-test", CF_D1_DATABASE_ID: "pew-local-test", CF_D1_API_TOKEN: "synthetic",
+      PEW_LOCAL_D1_URL: "http://127.0.0.1:12345", WORKER_INGEST_URL: "http://127.0.0.1:12345/ingest",
+      WORKER_READ_URL: "http://127.0.0.1:12345", PEW_TEST_RUN_ID: "owned-run",
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      success: true, result: [{ results: [{ key: "env", value: "test" }, { key: "run", value: "owned-run" }] }],
+    })));
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => { throw Object.assign(new Error("kill() failed: ESRCH"), { code: "ESRCH" }); });
+    vi.stubGlobal("Bun", {
+      spawn: vi.fn((command: string[], options: { ipc?: (message: unknown) => void }) => {
+        if (options.ipc) {
+          const exit = Promise.withResolvers<number>();
+          const child = {
+            pid: 123456, exitCode: null as number | null, exited: exit.promise,
+            kill() {},
+            send() { throw Object.assign(new Error("ERR_IPC_CHANNEL_CLOSED"), { code: "ERR_IPC_CHANNEL_CLOSED" }); },
+          };
+          queueMicrotask(() => options.ipc?.({ env, state: root }));
+          return child;
+        }
+        // Tests pass (exit 0); the server stays alive until the finally kills
+        // it — its kill() resolves exited so the SIGKILL fallback can finish.
+        if (command.includes("test")) return { pid: 123458, exitCode: 0, exited: Promise.resolve(0), kill() {}, send() {} };
+        const serverExit = Promise.withResolvers<number>();
+        return {
+          pid: 123457, exitCode: null as number | null, exited: serverExit.promise,
+          kill() { this.exitCode = 0; serverExit.resolve(0); }, send() {},
+        };
+      }),
+      sleep: vi.fn(async () => {}),
+    });
+    try {
+      const error = await runLocalE2e("api").then(() => undefined, (rejection: unknown) => rejection);
+      expect(error).toBeInstanceOf(AggregateError);
+      const cleanup = error as AggregateError;
+      expect(cleanup.message).toBe("Local bindings disposal failed and forced exit also failed");
+      expect((cleanup.errors[0] as Error).message).toContain("ERR_IPC_CHANNEL_CLOSED");
     } finally {
       remove.mockRestore(); list.mockRestore(); kill.mockRestore(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
       rmSync(root, { recursive: true, force: true });

@@ -63,9 +63,6 @@ OUT="${1:-backup-$(date +%F).db}"
 case "$OUT" in
   -*) echo "backup.sh: output path may not start with '-': $OUT" >&2; exit 1;;
 esac
-# A path starting with '-' would be parsed as an OPTION by GNU dirname/mv
-# (verified on debian:12-slim: `bash backup.sh --help` printed help, exited 0
-# and silently discarded the archive). Reject it instead of trying to escape.
 # A cron target directory (/var/backups/pew) usually does not exist yet;
 # `docker compose cp` refuses a missing parent, so create it up front.
 if [ -d "$OUT" ]; then

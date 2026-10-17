@@ -2,12 +2,15 @@
 #
 # Profiles:
 #   single   default profile (set via COMPOSE_PROFILES in .env) — one rqlite node
-#   cluster  three rqlite nodes joined over Raft — run with --profile cluster
+#   cluster  three rqlite nodes joined over Raft
 #
 # Usage:
 #   cp .env.example .env   # COMPOSE_PROFILES=single by default
 #   docker compose up -d
-#   docker compose --profile cluster up -d
+# To run the cluster profile, set COMPOSE_PROFILES=cluster IN .env and run
+# `docker compose up -d`: --profile only applies to that one invocation, so a
+# later bare `up` would follow .env and start the single-node `rqlite` service
+# alongside the cluster (it shares the `rqlite` network alias).
 #
 # Only `web` publishes a host port. Everything else is reachable solely on
 # the compose network.

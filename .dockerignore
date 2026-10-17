@@ -24,6 +24,12 @@
 # the pew-selfhost:local image — leaking real secrets into an image layer.
 # `cp .env .env.bak` must not reopen the hole.
 **/.env*
+# The one .env-family file that is meant to ship (documentation only, no
+# secrets). Re-included here because the rule above runs after `!deploy/**`;
+# this `!` is the last rule touching .env names, so the exclusions above it
+# still win for every real secret file.
+!**/.env.example
+!**/.env.*.example
 **/.dev.vars*
 **/.rqlite-auth.json
 **/.rqlite-auth.json.*
