@@ -118,26 +118,28 @@ assert.equal(existsSync(local.state), false);
 await assert.rejects(fetch(`${local.env.PEW_LOCAL_D1_URL}/api/live`));
 await local.dispose();
 const corrupted = await localIsolatedEnv();
-const mutation = await fetch(`${corrupted.env.PEW_LOCAL_D1_URL}/query`, {
-  method: "POST", headers: { Authorization: `Bearer ${corrupted.env.CF_D1_API_TOKEN}`, "Content-Type": "application/json" },
-  body: JSON.stringify({ sql: "UPDATE _test_marker SET value='another-run' WHERE key='run'" }),
-});
-assert.equal(mutation.status, 200);
-await assert.rejects(corrupted.dispose(), /cleanup failed/);
-assert.equal(existsSync(corrupted.state), true);
-await assert.rejects(fetch(`${corrupted.env.PEW_LOCAL_D1_URL}/api/live`));
-const { getPlatformProxy } = await import("../packages/worker/node_modules/wrangler");
-const repair = await getPlatformProxy<{ DB: D1Database }>({ configPath: join(corrupted.state, "wrangler.json"), envFiles: [], persist: { path: join(corrupted.state, "v3") }, remoteBindings: false });
 try {
-  await repair.env.DB.prepare("UPDATE _test_marker SET value=? WHERE key='run'").bind(corrupted.env.PEW_TEST_RUN_ID).run();
-  const marker = await repair.env.DB.prepare("SELECT value FROM _test_marker WHERE key='run'").first<{ value: string }>();
-  assert.equal(marker?.value, corrupted.env.PEW_TEST_RUN_ID);
-} finally { await repair.dispose(); }
-rmSync(corrupted.state, { recursive: true });
-// wrangler caches its debug-log path at module load, so the second cycle's
-// logger writes into the FIRST cycle's already-removed state dir and recreates
-// it (the production runner uses one cycle per process, so this only bites
-// this two-cycle fixture). Remove the first state dir again after the last
-// cycle has settled.
-rmSync(local.state, { recursive: true, force: true });
+  const mutation = await fetch(`${corrupted.env.PEW_LOCAL_D1_URL}/query`, {
+    method: "POST", headers: { Authorization: `Bearer ${corrupted.env.CF_D1_API_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ sql: "UPDATE _test_marker SET value='another-run' WHERE key='run'" }),
+  });
+  assert.equal(mutation.status, 200);
+  await assert.rejects(corrupted.dispose(), /cleanup failed/);
+  assert.equal(existsSync(corrupted.state), true);
+  await assert.rejects(fetch(`${corrupted.env.PEW_LOCAL_D1_URL}/api/live`));
+  const { getPlatformProxy } = await import("../packages/worker/node_modules/wrangler");
+  const repair = await getPlatformProxy<{ DB: D1Database }>({ configPath: join(corrupted.state, "wrangler.json"), envFiles: [], persist: { path: join(corrupted.state, "v3") }, remoteBindings: false });
+  try {
+    await repair.env.DB.prepare("UPDATE _test_marker SET value=? WHERE key='run'").bind(corrupted.env.PEW_TEST_RUN_ID).run();
+    const marker = await repair.env.DB.prepare("SELECT value FROM _test_marker WHERE key='run'").first<{ value: string }>();
+    assert.equal(marker?.value, corrupted.env.PEW_TEST_RUN_ID);
+  } finally { await repair.dispose(); }
+} finally {
+  // Both cycles' state must be removed on failure too: wrangler caches its
+  // debug-log path at module load, so the second cycle's logger recreates the
+  // FIRST cycle's already-removed dir (the production runner uses one cycle
+  // per process; only this two-cycle fixture sees it).
+  rmSync(corrupted.state, { recursive: true, force: true });
+  rmSync(local.state, { recursive: true, force: true });
+}
 console.log("Real D1 schema, marker, Worker RPC and failure cleanup verified");

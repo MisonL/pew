@@ -168,7 +168,7 @@ exec rqlited "$@"
 | `deploy/selfhost/rqlite-client.ts` | 同上扩展 |
 | `deploy/selfhost/d1-http.ts` | **`D1HttpOptions` 增加 `basicAuth` 并透传给内部 `createD1Adapter`**（评审 B3：此处缺失则 web 全部写路径 401） |
 | `server-d1-http.ts` / `server-ingest.ts` / `migrate-cli.ts` | 从 env 构造 `{username, password}`（全权凭据）传入（注意 `d1-http` 的 adapter 建在 `d1-http.ts` 内部，须双层透传） |
-| `server-read.ts` / `server-scheduler.ts` | 用**只读**凭据（auth.json 的 `pew-ro`，经 `RQLITE_READ_USERNAME/PASSWORD` 或渲染脚本固定约定传入；二者无写路径，§3.1.1 红队 High 缓解） |
+| `server-read.ts` / `server-scheduler.ts` | 用**只读**凭据（auth.json 的 `pew-ro`，经 `RQLITE_READ_USERNAME/PASSWORD` 或渲染脚本固定约定传入；二者无写路径，§3.1.1 红队 High 缓解）。（实现更正 2026-10-14，见 §2.1：**pew-ro 已移除**——rqlite 10.5.3 无 "select" 权限名，read/scheduler 也带 /db/request 写路径，只读用户不可达；交付实现统一用 `RQLITE_USERNAME/PASSWORD` 全权凭据，`READ_*` 为 deprecated 且必须留空，填了会 401。2026-10-17 补记：本行长期未跟随 §2.1 更正，以本条为准。） |
 | `verify-migrations.ts`、`reset-password.ts` | 凭据**可选**（设了发 Basic，未设**不发任何 Authorization 头**——现有 Bearer 兜底逻辑对这两个脚本必须移除；对无鉴权节点行为与现状完全一致，本地验证流程不被硬失败卡住） |
 
 `web` 不变：只经 `d1-http`，其入站校验仍是 `CF_D1_API_TOKEN`（Bearer）——与 rqlite 鉴权是叠加的两层，互不替代（评审确认互斥设计无冲突，冲突点只在透传缺失，已修）。

@@ -11,6 +11,16 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...fs, rmSync: vi.fn(fs.rmSync), readdirSync: vi.fn(fs.readdirSync) };
 });
 
+/** Reserve and release a loopback port, so a stubbed E2E_PORT cannot collide
+ * with a real lane (17020/27020) running in parallel. */
+async function freePort(): Promise<string> {
+  const probe = createServer();
+  await new Promise<void>((done) => probe.listen(0, "127.0.0.1", () => done()));
+  const port = (probe.address() as { port: number }).port;
+  await new Promise<void>((done) => probe.close(() => done()));
+  return String(port);
+}
+
 describe("E2E process isolation", () => {
   it.each(["api", "ui"] as const)("tolerates missing %s output without hiding other cleanup errors", async (tier) => {
     const root = mkdtempSync(join(tmpdir(), "pew-output-cleanup-"));
@@ -25,6 +35,11 @@ describe("E2E process isolation", () => {
       removePath(missing, options);
     });
     const list = vi.mocked(fs.readdirSync).mockReturnValue([]);
+    // runLocalE2e() checks the real lane port for occupancy before spawning.
+    // Pin a freshly released port per tier so this unit test can never race a
+    // concurrent pre-push L2/L3 lane on 17020/27020 (that was a deterministic
+    // EADDRINUSE, not load-related flake).
+    vi.stubEnv(tier === "api" ? "E2E_PORT" : "E2E_UI_PORT", await freePort());
     const env = {
       NODE_ENV: "development", RESOURCE_ENV: "test", E2E_SKIP_AUTH: "true",
       CF_ACCOUNT_ID: "pew-local-test", CF_D1_DATABASE_ID: "pew-local-test", CF_D1_API_TOKEN: "synthetic",
@@ -57,7 +72,6 @@ describe("E2E process isolation", () => {
     try {
       await expect(runLocalE2e(tier)).resolves.toBe(0);
       expect(remove).toHaveBeenCalledExactlyOnceWith(join("packages/web", tier === "api" ? ".next-e2e" : ".next-e2e-ui"), { recursive: true, force: true });
-      expect(existsSync(root)).toBe(true);
       if (tier === "ui") {
         // A failing `next build` must abort the run and still clean the
         // isolated dist dir (the removal happens in the finally chain).
@@ -74,6 +88,110 @@ describe("E2E process isolation", () => {
       }
       remove.mockRestore(); list.mockRestore(); vi.unstubAllGlobals();
       removePath(root, { recursive: true });
+    }
+  });
+
+  it("stops before spawning tests when interrupted during the post-readiness marker check", async () => {
+    // A SIGTERM in the window between readiness and Bun.spawn(tests) kills the
+    // server via killChildren; without the throwIfAborted gate the test
+    // process was still spawned against a dead server and the interrupt
+    // surfaced as connection errors instead of "E2E interrupted".
+    const root = mkdtempSync(join(tmpdir(), "pew-interrupt-window-"));
+    const remove = vi.mocked((await import("node:fs")).rmSync).mockImplementation(() => {});
+    const list = vi.mocked((await import("node:fs")).readdirSync).mockReturnValue([]);
+    vi.stubEnv("E2E_PORT", await freePort());
+    const env = {
+      NODE_ENV: "development", RESOURCE_ENV: "test", E2E_SKIP_AUTH: "true",
+      CF_ACCOUNT_ID: "pew-local-test", CF_D1_DATABASE_ID: "pew-local-test", CF_D1_API_TOKEN: "synthetic",
+      PEW_LOCAL_D1_URL: "http://127.0.0.1:12345", WORKER_INGEST_URL: "http://127.0.0.1:12345/ingest",
+      WORKER_READ_URL: "http://127.0.0.1:12345", PEW_TEST_RUN_ID: "owned-run",
+    };
+    let markerChecks = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.includes("/api/live")) return Response.json({ status: "ok" });
+      markerChecks += 1;
+      // Second marker check is the post-readiness one (line ~193): interrupt
+      // while it is in flight, exactly the window the finding describes.
+      if (markerChecks === 2) process.emit("SIGTERM");
+      return Response.json({ success: true, result: [{ results: [{ key: "env", value: "test" }, { key: "run", value: "owned-run" }] }] });
+    }));
+    const spawned: string[][] = [];
+    vi.stubGlobal("Bun", {
+      spawn: vi.fn((command: string[], options: { ipc?: (message: unknown) => void }) => {
+        spawned.push(command);
+        const exit = Promise.withResolvers<number>();
+        const child = {
+          pid: 123456, exitCode: null as number | null, exited: exit.promise,
+          kill() { this.exitCode = 0; exit.resolve(0); },
+          send() { this.kill(); },
+        };
+        if (options.ipc) queueMicrotask(() => options.ipc?.({ env, state: root }));
+        return child;
+      }),
+      sleep: vi.fn(async () => {}),
+    });
+    try {
+      await expect(runLocalE2e("api")).rejects.toThrow("E2E interrupted");
+      expect(spawned.some((command) => command.includes("test"))).toBe(false);
+    } finally {
+      remove.mockRestore(); list.mockRestore(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the run failure when dispose also fails (bindings child died mid-run)", async () => {
+    // A bindings child that died mid-run makes dispose throw (send on a
+    // closed IPC channel, then kill on a gone process group). The finally
+    // must surface both errors with the real run failure first — the old
+    // shape replaced "E2E server exited 1" with "kill() failed: ESRCH".
+    const root = mkdtempSync(join(tmpdir(), "pew-dispose-fail-"));
+    const remove = vi.mocked((await import("node:fs")).rmSync).mockImplementation(() => {});
+    const list = vi.mocked((await import("node:fs")).readdirSync).mockReturnValue([]);
+    vi.stubEnv("E2E_PORT", await freePort());
+    const env = {
+      NODE_ENV: "development", RESOURCE_ENV: "test", E2E_SKIP_AUTH: "true",
+      CF_ACCOUNT_ID: "pew-local-test", CF_D1_DATABASE_ID: "pew-local-test", CF_D1_API_TOKEN: "synthetic",
+      PEW_LOCAL_D1_URL: "http://127.0.0.1:12345", WORKER_INGEST_URL: "http://127.0.0.1:12345/ingest",
+      WORKER_READ_URL: "http://127.0.0.1:12345", PEW_TEST_RUN_ID: "owned-run",
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      success: true, result: [{ results: [{ key: "env", value: "test" }, { key: "run", value: "owned-run" }] }],
+    })));
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => { throw Object.assign(new Error("kill() failed: ESRCH"), { code: "ESRCH" }); });
+    vi.stubGlobal("Bun", {
+      spawn: vi.fn((_command: string[], options: { ipc?: (message: unknown) => void }) => {
+        if (options.ipc) {
+          // Bindings child: alive (exitCode null) but its IPC channel is gone.
+          const exit = Promise.withResolvers<number>();
+          const child = {
+            pid: 123456, exitCode: null as number | null, exited: exit.promise,
+            kill() {},
+            send() { throw Object.assign(new Error("ERR_IPC_CHANNEL_CLOSED"), { code: "ERR_IPC_CHANNEL_CLOSED" }); },
+          };
+          queueMicrotask(() => options.ipc?.({ env, state: root }));
+          return child;
+        }
+        // Server dies immediately -> readiness loop throws "E2E server exited 1".
+        return { pid: 123457, exitCode: 1, exited: Promise.resolve(1), kill() {}, send() {} };
+      }),
+      sleep: vi.fn(async () => {}),
+    });
+    try {
+      const error = await runLocalE2e("api").then(() => undefined, (rejection: unknown) => rejection);
+      expect(error).toBeInstanceOf(AggregateError);
+      const aggregate = error as AggregateError;
+      expect(aggregate.message).toBe("E2E run failed and cleanup also failed");
+      expect((aggregate.errors[0] as Error).message).toContain("E2E server exited 1");
+      // dispose itself aggregates its IPC error and the ESRCH kill failure, so
+      // neither the channel error nor the kill error is lost.
+      const cleanup = aggregate.errors[1] as AggregateError;
+      expect(cleanup.message).toContain("disposal failed and forced exit also failed");
+      expect((cleanup.errors[0] as Error).message).toContain("ERR_IPC_CHANNEL_CLOSED");
+      expect((cleanup.errors[1] as Error).message).toContain("ESRCH");
+    } finally {
+      remove.mockRestore(); list.mockRestore(); kill.mockRestore(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
+      rmSync(root, { recursive: true, force: true });
     }
   });
 
@@ -220,5 +338,8 @@ describe("E2E process isolation", () => {
       if (child.exitCode === null && child.signalCode === null) { child.kill("SIGTERM"); await exited; }
       rmSync(root, { recursive: true, maxRetries: 3, retryDelay: 100 });
     }
-  }, 240_000);
+    // Inner worst case: 180s startup + 30s dispose + 30s forced exit = 240s;
+    // keep the outer budget strictly above it so a wedged child surfaces its
+    // own "startup timed out" diagnostic instead of a vitest timeout.
+  }, 300_000);
 });

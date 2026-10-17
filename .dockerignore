@@ -1,23 +1,37 @@
-node_modules
-.next
-.next-e2e
-.next-e2e-ui
+# Build artifacts and dependencies at ANY depth: a bare pattern only matches
+# the context root, so packages/web/.next, packages/core/dist and every
+# packages/*/node_modules would otherwise enter the image layers. Both
+# Dockerfiles run `bun install` inside the image, so host copies are never
+# needed (and could shadow the linux-native install).
+**/node_modules
+**/.next
+**/.next-e2e
+**/.next-e2e-ui
+**/coverage
+**/coverage-tmp
+**/dist
+**/*.tsbuildinfo
 .git
-coverage
-dist
-*.tsbuildinfo
 .DS_Store
-# Match .env at ANY depth. A bare `.env` only excludes the context root, so
-# deploy/selfhost/.env (created by the quickstart) would still be COPYed into
-# the pew-selfhost:local image — leaking real secrets into an image layer.
+# Editor/agent worktrees and caches (.claude/worktrees holds full checkouts of
+# other branches — ~1GB of context the images must not carry).
+.claude
+# Match .env-family secrets at ANY depth. A bare `.env` only excludes the
+# context root, so deploy/selfhost/.env (created by the quickstart) would
+# still be COPYed into the pew-selfhost:local image — leaking real secrets
+# into an image layer. `cp .env .env.bak` must not reopen the hole.
 **/.env
-**/.env.local
-**/.env.*.local
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+**/.dev.vars
 **/.rqlite-auth.json
-# Backup archives and their staging dirs (backup.sh default output lands in
-# deploy/selfhost/). Same rationale as **/.env: the archive holds every
-# password_hash/api_key, and build contexts are the repo root, so a build
-# running while an archive exists would bake it into an image layer.
+# Local wrangler/miniflare state (D1 emulation caches; git ignores them, the
+# images must too — deploy/selfhost/Dockerfile copies packages/worker whole).
+**/.wrangler/
+# Backup archives and their staging dirs (backup.sh output; the archive holds
+# every password_hash/api_key, and build contexts are the repo root, so a
+# build running while an archive exists would bake it into an image layer).
 **/backup-*.db
 **/.pew-backup.*/
 logo.png

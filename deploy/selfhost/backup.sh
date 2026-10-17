@@ -47,7 +47,9 @@ if [ -f .env ]; then
   set -a; . ./.env; set +a
 fi
 
-# Cluster profile has no `rqlite` service; the leader is rqlite-1 (README).
+# Cluster profile has no `rqlite` service. rqlite-1 is used as the exec
+# target: `.backup` works from any node (the REPL request is forwarded to the
+# leader; verified), so the choice only needs to be a live cluster member.
 # Comma-form lists (COMPOSE_PROFILES=single,test) must still match.
 SERVICE=rqlite
 case ",${COMPOSE_PROFILES:-single}," in
@@ -55,6 +57,15 @@ case ",${COMPOSE_PROFILES:-single}," in
 esac
 
 OUT="${1:-backup-$(date +%F).db}"
+# A path starting with '-' would be parsed as an OPTION by GNU dirname/mv
+# (verified on debian:12-slim: `bash backup.sh --help` printed help, exited 0
+# and silently discarded the archive). Reject it instead of trying to escape.
+case "$OUT" in
+  -*) echo "backup.sh: output path may not start with '-': $OUT" >&2; exit 1;;
+esac
+# A path starting with '-' would be parsed as an OPTION by GNU dirname/mv
+# (verified on debian:12-slim: `bash backup.sh --help` printed help, exited 0
+# and silently discarded the archive). Reject it instead of trying to escape.
 # A cron target directory (/var/backups/pew) usually does not exist yet;
 # `docker compose cp` refuses a missing parent, so create it up front.
 if [ -d "$OUT" ]; then

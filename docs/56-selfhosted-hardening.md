@@ -95,7 +95,7 @@ describe("basic auth", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd /Volumes/Work/orca/pew && bun test deploy/selfhost/d1-adapter.test.ts`
+Run: `cd /path/to/pew && bun test deploy/selfhost/d1-adapter.test.ts`
 Expected: FAIL — `basicAuth` 不在类型里（TS 报错）或 Authorization 值不符。
 
 - [ ] **Step 3: 最小实现**（`d1-adapter.ts`）

@@ -17,7 +17,7 @@
 - **业务读显式 `?level=weak`**（rqlite 会把 weak 读转发给 leader，等价强一致）。**禁止用 `none`**。KV 缓存 `get()` 与迁移账本两处走 `?level=strong`（read-after-write 契约与迁移幂等，见交付代码注释）。
 - **DDL 一律带 `?norwtime&norwrandom`**；**业务 DML 与迁移里的 DML 一律不带**（走默认改写，保证跨副本确定）。关键：**迁移文件里的 DDL 与 DML 绝不能放进同一个 `?norw*` 请求**——否则 DML 的各副本独立求值会分叉（实测 029 种子 `INSERT ... randomblob(16)` 在两副本得到不同值）。Task 5 的 `applyMigrations` 用 `isDdlStatement` 按语句分流。
 - **rqlite 必须带 `-fk`**（外键默认关闭，schema 有 12 处 `ON DELETE CASCADE`）。
-- **不改上游文件**：`packages/worker/**`、`packages/worker-read/**`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。本计划只改两个上游文件：`lib/d1.ts` 与 `vitest.config.ts`。
+- **不改上游文件**：`packages/worker/**`、`packages/worker-read/**`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`bun.lock`、根 `package.json`、`biome.json`、`lib/rate-limit.ts`。本计划只改两个上游文件：`lib/d1.ts` 与 `vitest.config.ts`。（实现更正 2026-10-17：原清单还列了 `Dockerfile` 与 `cli.ts`——两者已被 Plan 1/Plan 2 实际改动，见 docs 52 §3.2；本句的"只改两个"仅指**本计划（Plan 1）**范围内的 Web 侧改动，不含后续计划的 `auth.ts`/`proxy.ts` 等。）
 - **适配层镜像必须自建**：compose 里跑 `deploy/selfhost/*.ts` 的服务**不能**复用仓库根 `Dockerfile` 的 runner 阶段——该阶段 `FROM node:22-slim`，只 COPY `.next/standalone`/`.next/static`/`public`，**既无 bun 也无 `deploy/`、`packages/*/src`、`scripts/migrations`**（实测 `awk '/AS runner/,0' Dockerfile | grep -c bun` = 0）。Task 10 新增 `deploy/selfhost/Dockerfile`，以 bun 为基镜像显式 COPY 源码并构建 `@pew/core` 的 `dist`（`@pew/core` 的 `main` 指向 `./dist/index.js`，容器内必须 build）。
 - **`deploy/selfhost/` 不注册为 workspace package**（避免改 `bun.lock` 与 `Dockerfile`），用 bun 直接运行 TS 源码。
 - **测试命令**：`bun run test`（vitest run）；单文件一律用 `./node_modules/.bin/vitest run <path>`——**不要用 `bunx vitest`**，`bunx` 在本地可执行缺失时会走网络解析，本机实测曾因此落到临时缓存、加载不到 workspace 依赖。测试文件与源码同目录、命名 `*.test.ts`（vitest include 为 `packages/*/src/**/*.test.{ts,tsx}`、`scripts/**/*.test.{ts,tsx}` 与 `deploy/**/*.test.ts`）。
@@ -2570,9 +2570,10 @@ git commit -m "feat: add D1 REST-shape HTTP service over rqlite"
 > 为准**。已知快照过时点（均已按交付文件更正或以交付为准）：`USE_SECURE_COOKIES` 交付
 > 默认为**空值**（auth.ts 推导，production 下 true；不是快照里的 `false`/`true` 默认）；
 > `CF_D1_API_TOKEN` 只下发 `d1-http`/`web` 两个服务（快照写 migrate 也持有）；`.dockerignore`
-> 规则是 `**/.env`（裸 `.env` 不够，见交付 README 的说明）；`verify-migrations.ts` 不能在
-> 宿主对 `127.0.0.1:14001` 跑（该端口从未发布，用容器内形态）；迁移计数快照 `[[32]]`
-> 过时（磁盘已 37 个 `.sql`，扣除 squash 后 34 个）。
+> 规则是 `**/.env`（裸 `.env` 不够，见交付 README 的说明）；`verify-migrations.ts` 的
+> `127.0.0.1:14001` 是**一次性 throwaway 容器**（`docker run -d -p 14001:4001`）的用法，
+> 不是 compose 栈——栈内 rqlite 不发布宿主端口，对栈验证要走容器内形态；迁移计数快照
+> `[[32]]` 过时（磁盘已 37 个 `.sql`，扣除 squash 后 34 个）。
 
 > **两套镜像，别混**：跑 bun 的适配层服务（migrate/d1-http/read/ingest/scheduler）用本任务的 `deploy/selfhost/Dockerfile` 构建的 `pew-selfhost:local`；**web 用仓库根 `Dockerfile` 构建的 `pew:standalone`**（Next standalone，根 `Dockerfile:72` 的 `CMD ["node","packages/web/server.js"]`）。把 web 指到 `pew-selfhost:local` 会因无 Next 产物、无 CMD 而退出。
 
@@ -2627,7 +2628,7 @@ ENV NODE_ENV=production
 **自检**（写完立刻跑，防止又造出一个「没有 bun 的镜像」）：
 
 ```bash
-# Context is the repo root, so `COPY package.json ...` resolves. Run from /Volumes/Work/orca/pew.
+# Context is the repo root, so `COPY package.json ...` resolves. Run from /path/to/pew.
 docker build -f deploy/selfhost/Dockerfile -t pew-selfhost:local .
 docker run --rm --entrypoint bun pew-selfhost:local --version
 docker run --rm --entrypoint sh pew-selfhost:local   -c 'test -f deploy/selfhost/d1-http.ts && test -f scripts/migrations/001-init.sql && test -d packages/core/dist'

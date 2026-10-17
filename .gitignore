@@ -11,23 +11,25 @@ coverage-tmp/
 .next-e2e/
 .next-e2e-ui/
 
-# Environment
+# Environment (covers .env.local/.test/.production/.bak/...; examples stay tracked)
 .env
-.env.local
-.env.*.local
-.env.test
+.env.*
+!.env.example
+!.env.*.example
+.dev.vars
 
-# Rendered rqlite credentials (deploy/selfhost, Plan 3)
+# Rendered rqlite credentials (deploy/selfhost, Plan 3; *.auth.json covers a
+# custom AUTH_OUT_FILE name in the same directory)
 deploy/selfhost/.rqlite-auth.json
+deploy/selfhost/*.auth.json
 
 # Local wrangler/miniflare state (d1 emulation caches; never meaningful)
 .wrangler/
 
-# rqlite backup archives and staging dirs (backup.sh default output lands in
-# deploy/selfhost/; the archives contain every password_hash/api_key and must
-# never enter git history)
-deploy/selfhost/backup-*.db
-.pew-backup.*/
+# rqlite backup archives and staging dirs at any depth (the archives contain
+# every password_hash/api_key and must never enter git history)
+**/backup-*.db
+**/.pew-backup.*/
 
 # Playwright
 playwright-report/

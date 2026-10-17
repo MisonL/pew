@@ -47,9 +47,18 @@ export async function startLocalBindings(signal: AbortSignal, timeoutMs = 180_00
       if (child.exitCode === null) child.send("dispose");
       code = await deadline(child.exited, disposeTimeoutMs, "Local bindings disposal");
     } catch (error) {
-      if (child.exitCode === null) {
-        process.kill(-child.pid, "SIGKILL");
-        await deadline(child.exited, disposeTimeoutMs, "Local bindings forced exit");
+      // exitCode stays null when the child was killed by a signal, so a dead
+      // child must be recognized by signalCode too — otherwise this sends
+      // SIGKILL to a gone process group and throws ESRCH, replacing the IPC
+      // error that explains what actually happened.
+      const dead = child.exitCode !== null || (child.signalCode ?? null) !== null;
+      if (!dead) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+          await deadline(child.exited, disposeTimeoutMs, "Local bindings forced exit");
+        } catch (killError) {
+          throw new AggregateError([error, killError], "Local bindings disposal failed and forced exit also failed");
+        }
       }
       throw error;
     }
@@ -124,6 +133,15 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
     // path is already handled through killChildren and the finally block.
   });
   const dist = tier === "api" ? ".next-e2e" : ".next-e2e-ui";
+  // Captured so a cleanup failure in the finally cannot replace the error
+  // that actually failed the run (same rule as startLocalBindings): without
+  // this, a crashed bindings child turns "test failed" into "kill() failed:
+  // ESRCH" from dispose.
+  let failure: unknown;
+  let failed = false;
+  let cleanupFailure: unknown;
+  let cleanupFailed = false;
+  let exitCode: number | undefined;
   try {
     local = await startLocalBindings(abort.signal, undefined, tier === "ui");
     abort.signal.throwIfAborted();
@@ -191,11 +209,19 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
       await Bun.sleep(200);
     }
     await verifyLocalMarker(env);
+    // A signal in the readiness window has already killed the server via
+    // killChildren; without this check the test process would still be
+    // spawned against a dead server and the interrupt would surface as
+    // connection errors instead of "E2E interrupted".
+    abort.signal.throwIfAborted();
     tests = Bun.spawn(tier === "api"
       ? [process.execPath, "--no-env-file", "test", "packages/web/src/__tests__/e2e", "--timeout", "30000"]
       : ["node", resolve("node_modules/@playwright/test/cli.js"), "test", "--config", "packages/web/e2e/playwright.config.ts", ...args],
     { env, stdout: "inherit", stderr: "inherit" });
-    return await tests.exited;
+    exitCode = await tests.exited;
+  } catch (error) {
+    failure = error;
+    failed = true;
   } finally {
     // build is included deliberately: if the 600s build deadline (or any
     // error after spawn) fires, build is still running here, and letting it
@@ -209,11 +235,26 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
         if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; }
       }
     }
-    try { await local?.dispose(); } finally {
+    try {
+      await local?.dispose();
+    } catch (error) {
+      // Record, don't throw here: a throw inside finally would overwrite the
+      // in-flight failure (Biome noUnsafeFinally, and the masking this very
+      // block exists to prevent). Surfaced after the finally below.
+      cleanupFailure = error;
+      cleanupFailed = true;
+    } finally {
       if (local) rmSync(join("packages/web", dist), { recursive: true, force: true });
       process.removeListener("SIGINT", stop);
       process.removeListener("SIGTERM", stop);
       abort.signal.removeEventListener("abort", killChildren);
     }
   }
+  // Keep the original failure visible: a bindings child that died mid-run
+  // makes dispose throw (send on a closed IPC channel, kill on a gone process
+  // group), and that must not replace the real cause.
+  if (cleanupFailed && failed) throw new AggregateError([failure, cleanupFailure], "E2E run failed and cleanup also failed");
+  if (cleanupFailed) throw cleanupFailure;
+  if (failed) throw failure;
+  return exitCode ?? 1;
 }

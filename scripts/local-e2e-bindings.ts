@@ -151,7 +151,14 @@ export async function localIsolatedEnv(migrations = resolve("scripts/migrations"
     signal?.throwIfAborted();
     return { env, state, dispose };
   } catch (error) {
-    await dispose();
+    // Same rule as startLocalBindings: cleanup must never replace the real
+    // startup error. A marker check or proxy.dispose() failure here would
+    // otherwise surface as "Local D1 cleanup failed" and hide the cause.
+    try {
+      await dispose();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Local D1 startup failed and cleanup also failed");
+    }
     throw error;
   }
 }
