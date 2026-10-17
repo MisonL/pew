@@ -35,6 +35,10 @@ function run(opts: {
   containerStale?: string;
   /** Simulate the real REPL's behavior on a failed .backup: prints ERR! to stderr, still exits 0, writes nothing. */
   replFails?: boolean;
+  /** Fail the pre-.backup rm (e.g. daemon error); set -e must abort the run. */
+  rmFails?: boolean;
+  /** Have cp land an empty host file despite a non-empty container file (defense-in-depth path). */
+  cpProducesEmpty?: boolean;
   profile?: string;
   username?: string | null;
   password?: string | null;
@@ -80,11 +84,24 @@ case " $* " in
   *" exec "*" rm -f "*)
     # The pre-.backup rm must clear a stale archive (SIGKILL residue); track
     # the container file's existence so the later test -s gate sees it.
+    # A wrong path here would leave the stale file in place, so the fake
+    # refuses anything but the script's fixed container path.
+    case " $* " in
+      *" rm -f /rqlite/file/backup.db ") ;;
+      *) echo "unexpected rm path: $*" >&2; exit 99;;
+    esac
+    if [ "${opts.rmFails ? "1" : "0"}" = "1" ]; then echo "Error response from daemon: rm failed" >&2; exit 1; fi
     rm -f ${JSON.stringify(containerFile)}
     exit 0;;
   *" exec "*" test -s "*)
     # The .backup success gate: succeeds only when the archive exists
     # non-empty — i.e. when some earlier .backup call actually produced it.
+    # The path argument is asserted too: a wrong path here would silently
+    # check the wrong file, so the fake refuses anything else.
+    case " $* " in
+      *" test -s /rqlite/file/backup.db ") ;;
+      *) echo "unexpected test path: $*" >&2; exit 99;;
+    esac
     if [ -s ${JSON.stringify(containerFile)} ]; then exit 0; fi
     echo "test -s: /rqlite/file/backup.db: No such file" >&2
     exit 1;;
@@ -122,7 +139,11 @@ case " $* " in
       echo "Error response from daemon: Could not find the file /rqlite/file/backup.db" >&2
       exit 1
     fi
-    cp ${JSON.stringify(containerFile)} "$last"
+    if [ "${opts.cpProducesEmpty ? "1" : "0"}" = "1" ]; then
+      : > "$last"
+    else
+      cp ${JSON.stringify(containerFile)} "$last"
+    fi
     # docker cp preserves the container-side mode (0644) and ignores umask.
     chmod 644 "$last"
     exit 0;;
@@ -296,6 +317,25 @@ describe("backup.sh", () => {
     // The .backup gate fires before the copy: the empty archive never reaches
     // the host staging file.
     expect(r.stderr).toContain("no archive");
+    expect(existsSync(r.out)).toBe(false);
+  });
+
+  it("aborts when the pre-.backup rm fails (set -e, cron-visible)", async () => {
+    // The rm has no `|| true`: a daemon error there must abort before any
+    // .backup/cp runs, otherwise the run could proceed against a stale file.
+    const r = await run({ rmFails: true });
+    expect(r.code).toBe(1);
+    expect(r.transcript).toBe("");
+    expect(existsSync(r.out)).toBe(false);
+  });
+
+  it("rejects an empty host copy even when the container file passed the gate", async () => {
+    // Defense-in-depth branch: the container-side test -s passed, but the copy
+    // itself lands zero bytes (e.g. a truncated transfer). The host-side
+    // non-empty check is the last line before the atomic mv.
+    const r = await run({ cpProducesEmpty: true });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("backup is empty");
     expect(existsSync(r.out)).toBe(false);
   });
 

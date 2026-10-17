@@ -512,7 +512,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 **刻意不改的上游文件**：`packages/worker/src/**`、`packages/worker-read/src/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`bun.lock`、根 `package.json`、`biome.json`、`lib/rate-limit.ts`。（注意：`proxy.ts` 与 `lib/auth-adapter.ts` **不在**此列——两者已在改动清单内。worker 包的 `tsconfig*.json`/`package.json` 例外见 §3.2 实现更正。实现更正 2026-10-15：**`cli.ts` 与根 `Dockerfile` 均已从本清单移出**——`packages/cli/src/cli.ts` 已按 Plan 2 交付项改动（`--host` / `PEW_HOST` 支持），根 `Dockerfile` 亦已改（builder 阶段 build-time 占位 ENV）；正确口径见 README「合并上游」小节。）
 
-**适配层的运行方式**：`deploy/selfhost/*` 用 **bun 直接运行 TS 源码**，但**不能复用仓库根的 `Dockerfile`**——实测其 `runner` 阶段是 `FROM node:22-slim`，只 COPY `.next/standalone`/`.next/static`/`public`，`awk '/AS runner/,0' Dockerfile | grep -c bun` = **0**、含 `deploy|packages/worker` 的行数 = **0**：最终镜像内**既无 bun 也无适配层源码**。而 compose 的 migrate/d1-http/read/ingest/scheduler 全部 `image: pew-selfhost:local` + `bun run deploy/selfhost/*.ts`，会全部启动失败。因此**必须新建 `deploy/selfhost/Dockerfile`**（从 `oven/bun:1.4.0` 出发，COPY 根 `package.json`/锁文件/`tsconfig.json`/`packages/`/`deploy/`/`scripts/migrations/`，并 build `@pew/core` 的 `dist`）。这也是**唯一新增的顶层目录**（`deploy/selfhost/`，含本目录全部文件——它整体不计入 12 处上游改动）里的专用镜像入口；仓内没有第二处新建目录。
+**适配层的运行方式**：`deploy/selfhost/*` 用 **bun 直接运行 TS 源码**，但**不能复用仓库根的 `Dockerfile`**——实测其 `runner` 阶段是 `FROM node:22-slim`，只 COPY `.next/standalone`/`.next/static`/`public`，`awk '/AS runner/,0' Dockerfile | grep -c bun` = **0**、含 `deploy|packages/worker` 的行数 = **0**：最终镜像内**既无 bun 也无适配层源码**。而 compose 的 migrate/d1-http/read/ingest/scheduler 全部 `image: pew-selfhost:local` + `bun run deploy/selfhost/*.ts`，会全部启动失败。因此**必须新建 `deploy/selfhost/Dockerfile`**（从 `oven/bun:1.4.0` 出发，COPY 根 `package.json`/锁文件/`tsconfig.json`/`packages/`/`deploy/`/`scripts/migrations/`，并 build `@pew/core` 的 `dist`）。这也是**唯一新增的顶层目录 `deploy`**（其下 `selfhost/` 含本目录全部文件——整体不计入 12 处上游改动）里的专用镜像入口；仓内没有第二处新建顶层目录。
 
 ## 5. 数据流
 
@@ -645,7 +645,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | `D1_BASE_URL` | 指向 `d1-http` 的地址（新增的写路径覆盖） |
 | `WORKER_READ_URL` / `WORKER_READ_SECRET` | 读路径（`read` 容器服务名 + 密钥） |
 | `WORKER_INGEST_URL` / `WORKER_SECRET` | 写路径（`ingest` 容器服务名 + 密钥） |
-| `ADMIN_EMAILS` | 管理员邮箱列表（`lib/admin.ts`）。**可选**：库内 `is_admin` 与它取或——首个 `/setup` 用户即管理员（`lib/admin.ts:97-101,133-134`）；无 `/setup` 的旧部署才依赖它 |
+| `ADMIN_EMAILS` | 管理员邮箱列表（`lib/admin.ts`）。**可选**：库内 `is_admin` 与它取或——首个 `/setup` 用户即管理员（`lib/admin.ts:67-74,113-115,136`）；无 `/setup` 的旧部署才依赖它 |
 | `PEW_HOST` | （CLI 侧）指向自建服务。**已生效**（Plan 2 交付：`cli/src/commands/login.ts` 的 `--host` / `PEW_HOST` 支持） |
 | `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | 可选；不配置则隐藏 Google 登录按钮。**内网 http 下 Google OAuth 不可用**（回调须 https） |
 | `CF_R2_ENDPOINT` / `CF_R2_ACCESS_KEY_ID` / `CF_R2_SECRET_ACCESS_KEY` / `CF_R2_BUCKET` | 团队/组织 logo 上传；缺则 `lib/r2.ts` throw（logo API 500）。可用 MinIO |
