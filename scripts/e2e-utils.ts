@@ -13,13 +13,13 @@ async function deadline<Result>(promise: Promise<Result>, milliseconds: number, 
   } finally { clearTimeout(timer); }
 }
 
-// timeoutMs bounds local-bindings startup AND disposal. The default is
-// deliberately well above observed cold-start time: the deadline exists to
-// catch a wedged child, not to enforce a performance budget. Pre-push runs
-// this lane in parallel with the browser E2E's production build and the
-// security scan, and a 60s budget produced false "startup timed out"
-// failures under that load (timing is explicitly not part of the gate
-// contract).
+// timeoutMs is the local-bindings STARTUP budget. The default is deliberately
+// well above observed cold-start time: the deadline exists to catch a wedged
+// child, not to enforce a performance budget. Pre-push runs this lane in
+// parallel with the browser E2E's production build and the security scan, and
+// a 60s budget produced false "startup timed out" failures under that load
+// (timing is explicitly not part of the gate contract). Disposal is instead
+// capped at 30s (see disposeTimeoutMs below).
 export async function startLocalBindings(signal: AbortSignal, timeoutMs = 180_000, readiness = false) {
   signal.throwIfAborted();
   let receive: (value: { env: Record<string, string>; state: string }) => void;
