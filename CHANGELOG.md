@@ -14,9 +14,12 @@
 - kv-adapter get() uses a linearizable (strong) read so cache invalidation
   is visible on lagging cluster followers.
 - `deploy/selfhost/backup.sh`: cron/systemd-timer-safe rqlite backup that
-  forwards credentials through the container environment (not argv), writes a
-  temp file and renames it only after a non-empty SQLite-magic check, and exits
-  non-zero on failure so a bad archive alerts instead of being kept silently.
+  forwards credentials through the container environment (not argv), stages the
+  copy in a 0700 directory beside the target (so a SIGKILLed run cannot leave a
+  world-readable archive), renames it into place only after a non-empty
+  SQLite-magic check, and exits non-zero on failure so a bad archive alerts
+  instead of being kept silently. Backup archives and staging dirs are
+  gitignored.
 
 ### Fixed
 - Tighten session maxAge to 7 days and reject placeholder AUTH_SECRET values

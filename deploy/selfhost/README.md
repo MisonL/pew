@@ -419,8 +419,9 @@ chmod 600 "./backup-$(date +%F).db"   # 备份含全部 password_hash/api_key，
 目录——下例假设 `/var/backups/pew/`。
 
 ```bash
+# compose 文件与 .env 都在 deploy/selfhost/；compose 不会向下搜索，先 cd 到这里。
+cd /path/to/pew/deploy/selfhost
 set -a; . ./.env; set +a   # 恢复命令带 -u，需先导出 .env 凭据
-cd /path/to/pew            # docker compose 需要 compose 文件所在目录（或用 -f 指定）
 # 1. 停应用（读写都停，避免恢复期间写入；d1-http 是写后端，必须一起停）
 docker compose stop web read ingest scheduler d1-http
 # 2. 把备份放进 rqlite 容器（rqlite 保持运行，.restore 不需要停它）
@@ -559,11 +560,15 @@ docker compose up -d rqlite
    静默地每 5 分钟重启一次，掩盖正在进行的篡改或磁盘故障。
 
 **数据层故障的健康面（已按实测探针行为更正）**：d1-http 的探针（`/health`）与
-read/ingest 的探针（`/api/live`）都会对 rqlite 执行真实 `SELECT 1`，rqlite 宕机/磁盘满时
+read/ingest 的探针（`/api/live`）都会对 rqlite 执行真实 `SELECT 1`，rqlite 宕机时
 这三个服务会转 **unhealthy**（`restart: unless-stopped` 只在进程退出时重启，探针失败不触发，
-见上文）。唯一在数据层故障时仍显示 healthy 的是 **web**：它的 `/api/live` 探的是
-web→d1-http 客户端连通性，错误响应也被计为 connected。因此「web 仍 200 但页面报错」+
-「read/ingest/d1-http unhealthy」是数据层故障的标准签名；排查先看 `docker compose logs rqlite`。
+见上文）。**web 的探针同样依赖数据层**：它的 `/api/live` 经 read 服务（`WORKER_READ_URL`）
+发 `live.ping`（对 rqlite 执行 `SELECT 1`），失败时返回 503 → web 也转 unhealthy。因此
+rqlite 宕机时**四个应用服务全部 unhealthy**；`web` 保持 healthy 的例外场景只有
+**d1-http（写后端）单独故障**——读路径（read 服务）不经它，rqlite 正常时 web 页面读仍可用，
+唯一症状是所有写操作失败。排查先看 `docker compose logs rqlite`。
+注：宿主磁盘满时读探针通常仍能应答（SQLite 读不需新空间），健康门可能全绿——磁盘满的标准
+症状是**所有写路径 500**，见下一段。
 
 **宿主磁盘满**：rqlite 是唯一有状态组件，`rqlite-data` 卷写满后 Raft 无法提交日志，
 症状是**所有写路径 500**（无任何指向磁盘的报错）。恢复：清理宿主空间后
