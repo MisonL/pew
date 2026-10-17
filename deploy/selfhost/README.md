@@ -467,7 +467,7 @@ set -a; . ./.env; set +a   # 恢复命令带 -u，需先导出 .env 凭据
 # rqlite-N（请求会转发给 leader，.restore 经 Raft 应用到全部节点）；backup.sh 是按
 # COMPOSE_PROFILES 自动选的，本 runbook 是人手执行，不会自动换。
 # 0. 恢复前先给当前库做一次备份：恢复会覆盖现有数据，这一步是唯一回退点。
-bash deploy/selfhost/backup.sh /var/backups/pew/pre-restore-$(date +%F-%H%M).db
+bash ./backup.sh /var/backups/pew/pre-restore-$(date +%F-%H%M).db
 # 1. 停应用（读写都停，避免恢复期间写入；d1-http 是写后端，必须一起停）
 docker compose stop web read ingest scheduler d1-http
 # 2. 把备份放进 rqlite 容器（rqlite 保持运行，.restore 不需要停它）。

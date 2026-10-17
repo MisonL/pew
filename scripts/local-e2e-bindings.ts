@@ -80,7 +80,9 @@ export async function localIsolatedEnv(migrations = resolve("scripts/migrations"
     } catch (error) { errors.push(error); }
     server?.stop(true);
     try { await proxy?.dispose(); } catch (error) { errors.push(error); }
-    if (!errors.length) rmSync(state, { recursive: true });
+    try {
+      if (!errors.length) rmSync(state, { recursive: true });
+    } catch (error) { errors.push(error); }
     if (errors.length) throw new AggregateError(errors, "Local D1 cleanup failed");
   })();
   try {

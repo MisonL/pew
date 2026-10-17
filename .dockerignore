@@ -26,6 +26,7 @@
 !**/.env.*.example
 **/.dev.vars
 **/.rqlite-auth.json
+deploy/selfhost/*.auth.json
 # Local wrangler/miniflare state (D1 emulation caches; git ignores them, the
 # images must too — deploy/selfhost/Dockerfile copies packages/worker whole).
 **/.wrangler/

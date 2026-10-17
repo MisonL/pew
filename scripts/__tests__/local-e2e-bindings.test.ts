@@ -5,6 +5,13 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { localIsolatedEnv, verifyLocalMarker } from "../local-e2e-bindings";
 
+// rmSync is wrapped so one test can force a cleanup failure; every other
+// caller keeps the real implementation.
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return { ...fs, rmSync: vi.fn(fs.rmSync) };
+});
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe("local D1 marker", () => {
@@ -44,6 +51,29 @@ describe("real D1 lifecycle", () => {
         env: expect.objectContaining({ WRANGLER_HIDE_BANNER: "true", WRANGLER_SEND_METRICS: "false" }),
       }));
     } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+  });
+
+  it("keeps the startup error when cleanup also fails", async () => {
+    // Migration spawn fails (startup error) AND dispose's rmSync fails
+    // (cleanup error): the startup error must stay errors[0], never replaced
+    // by "Local D1 cleanup failed" (same rule as startLocalBindings).
+    for (const key of ["HOME", "XDG_CONFIG_HOME", "WRANGLER_SEND_METRICS"]) vi.stubEnv(key, process.env[key]);
+    const rm = vi.mocked((await import("node:fs")).rmSync).mockImplementation(() => {
+      throw new Error("synthetic rm failure");
+    });
+    vi.stubGlobal("Bun", {
+      spawn: vi.fn(() => ({ stdout: new Response("").body, stderr: new Response("synthetic migration failure").body, exited: Promise.resolve(1) })),
+    });
+    try {
+      const error = await localIsolatedEnv().then(() => undefined, (rejection: unknown) => rejection);
+      expect(error).toBeInstanceOf(AggregateError);
+      const aggregate = error as AggregateError;
+      expect(aggregate.message).toBe("Local D1 startup failed and cleanup also failed");
+      expect((aggregate.errors[0] as Error).message).toContain("synthetic migration failure");
+      expect((aggregate.errors[1] as Error).message).toContain("Local D1 cleanup failed");
+    } finally {
+      rm.mockRestore(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
+    }
   });
 
   it("preserves full fresh schema, native Worker RPC and failure cleanup", () => {
