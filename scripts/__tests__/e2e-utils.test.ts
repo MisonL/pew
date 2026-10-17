@@ -90,12 +90,36 @@ describe("E2E process isolation", () => {
       const abort = new AbortController();
       const pending = startLocalBindings(abort.signal, 20);
       if (interrupt) abort.abort(new Error("synthetic interruption"));
-      await expect(pending).rejects.toThrow("disposal timed out");
+      // Cleanup also times out here, so both errors must surface: the original
+      // startup/interruption error first, the disposal failure second. The
+      // original must never be replaced by "disposal timed out" (that was the
+      // pre-fix behavior and sent debugging after the wrong problem).
+      const error = await pending.then(() => undefined, (rejection: unknown) => rejection);
+      expect(error).toBeInstanceOf(AggregateError);
+      const aggregate = error as AggregateError;
+      expect(aggregate.message).toBe("Local bindings startup failed and cleanup also failed");
+      expect((aggregate.errors[0] as Error).message).toContain(interrupt ? "synthetic interruption" : "startup timed out");
+      expect((aggregate.errors[1] as Error).message).toContain("disposal timed out");
       expect(child.send).toHaveBeenCalledWith("dispose");
       expect(kill).toHaveBeenCalledExactlyOnceWith(-123456, "SIGKILL");
       expect(spawnChild).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ env: expect.objectContaining({ CI: "true" }) }));
       expect(spawnChild).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ env: expect.not.objectContaining({ PEW_SYNTHETIC_PARENT_SECRET: "must-not-forward" }) }));
     } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); kill.mockRestore(); }
+  });
+
+  it("preserves the startup error when cleanup succeeds", async () => {
+    // A child that exits cleanly before readiness: the startup race rejects
+    // with "failed before ready", and dispose() completes without throwing
+    // (exit code 0), so the original error must be thrown as-is — no
+    // AggregateError wrapper.
+    const child = { pid: 123456, exitCode: null as number | null, exited: Promise.resolve(0), send: vi.fn() };
+    vi.stubGlobal("Bun", { spawn: vi.fn(() => child) });
+    try {
+      const error = await startLocalBindings(new AbortController().signal, 5_000).then(() => undefined, (rejection: unknown) => rejection);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(AggregateError);
+      expect((error as Error).message).toContain("failed before ready (0)");
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it("refuses an occupied port without killing its owner", async () => {
@@ -144,7 +168,11 @@ describe("E2E process isolation", () => {
       if (child.exitCode === null && child.signalCode === null) { child.kill("SIGTERM"); await exited; }
       rmSync(root, { recursive: true, maxRetries: 3, retryDelay: 100 });
     }
-  }, 30_000);
+    // Outer budget must exceed the inner legal worst case: 10s state poll +
+    // SIGTERM cleanup (5s server kill wait + 30s dispose + 30s forced exit).
+    // A wedged child would otherwise fail this test on vitest's timeout
+    // instead of producing its own diagnostic.
+  }, 90_000);
 
   it("cleans D1 and the listener after a started server is interrupted", async () => {
     const root = mkdtempSync(join(tmpdir(), "pew-started-test-"));
@@ -169,7 +197,9 @@ describe("E2E process isolation", () => {
       if (child.exitCode === null && child.signalCode === null) { child.kill("SIGTERM"); await exited; }
       rmSync(root, { recursive: true, maxRetries: 3, retryDelay: 100 });
     }
-  }, 240_000);
+    // Outer budget above the inner legal worst case: 180s readiness poll +
+    // SIGTERM cleanup (5s kill wait + 30s dispose + 30s forced exit) = 245s.
+  }, 300_000);
 
   it("cleans D1 when the Next process fails to start", async () => {
     const root = mkdtempSync(join(tmpdir(), "pew-start-failure-"));

@@ -134,4 +134,10 @@ try {
   assert.equal(marker?.value, corrupted.env.PEW_TEST_RUN_ID);
 } finally { await repair.dispose(); }
 rmSync(corrupted.state, { recursive: true });
+// wrangler caches its debug-log path at module load, so the second cycle's
+// logger writes into the FIRST cycle's already-removed state dir and recreates
+// it (the production runner uses one cycle per process, so this only bites
+// this two-cycle fixture). Remove the first state dir again after the last
+// cycle has settled.
+rmSync(local.state, { recursive: true, force: true });
 console.log("Real D1 schema, marker, Worker RPC and failure cleanup verified");

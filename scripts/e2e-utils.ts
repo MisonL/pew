@@ -60,7 +60,15 @@ export async function startLocalBindings(signal: AbortSignal, timeoutMs = 180_00
     signal.throwIfAborted();
     return { ...result, dispose };
   } catch (error) {
-    await dispose();
+    // Cleanup must never mask the original failure: a "disposal timed out"
+    // surface here used to replace the real startup error, sending the next
+    // debugging round after the wrong problem. Surface both when cleanup also
+    // fails, and the original alone otherwise.
+    try {
+      await dispose();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Local bindings startup failed and cleanup also failed");
+    }
     throw error;
   } finally { if (stop) signal.removeEventListener("abort", stop); }
 }
@@ -105,9 +113,15 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
   };
   abort.signal.addEventListener("abort", killChildren);
   // Rejects when SIGINT/SIGTERM aborts the run, so deadline() races can lose
-  // to interruption.
+  // to interruption. Only the ui tier races it (the build deadline); without a
+  // consumer here the rejection would surface as an unhandled rejection on
+  // SIGINT/SIGTERM in the api tier and flip a clean exit code to 1.
   const interrupted = new Promise<never>((_, reject) => {
     abort.signal.addEventListener("abort", () => reject(abort.signal.reason), { once: true });
+  });
+  void interrupted.catch(() => {
+    // Consumed by the ui-tier build race when applicable; otherwise the abort
+    // path is already handled through killChildren and the finally block.
   });
   const dist = tier === "api" ? ".next-e2e" : ".next-e2e-ui";
   try {
@@ -183,7 +197,12 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
     { env, stdout: "inherit", stderr: "inherit" });
     return await tests.exited;
   } finally {
-    for (const child of [tests, server]) {
+    // build is included deliberately: if the 600s build deadline (or any
+    // error after spawn) fires, build is still running here, and letting it
+    // outlive the run would race the dist-dir rmSync below and leave an
+    // orphan. The abort path kills it earlier via killChildren; killing a
+    // dead child again is harmless.
+    for (const child of [tests, server, build]) {
       if (child && child.exitCode === null) {
         child.kill();
         await Promise.race([child.exited, Bun.sleep(5000)]);
