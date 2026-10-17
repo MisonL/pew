@@ -59,11 +59,12 @@ function run(opts: {
   const fakeDocker = `#!/bin/sh
 # Log argv one per line so argument boundaries are observable.
 { printf 'ARGV\\n'; for a in "$@"; do printf '[%s]\\n' "$a"; done; } >> ${JSON.stringify(log)}
-# Service existence: the cluster profile has no 'rqlite' service. Match only
-# the service ARGUMENT position (right after exec -T or cp), never the
-# literal 'rqlite' inside the sh -c payload that runs the rqlite REPL.
+# Service existence: the cluster profile has no 'rqlite' service. Match the
+# service ARGUMENT position for every call shape the script emits — plain
+# exec, authenticated exec (-e flags before the service), cleanup, cp — but
+# never the literal 'rqlite' inside the sh -c payload that runs the REPL.
 case " $* " in
-  *" exec -T rqlite "*|*" cp rqlite:"*)
+  *" exec -T rqlite "*|*" exec -T -e RQLITE_USERNAME -e RQLITE_PASSWORD rqlite "*|*" cp rqlite:"*)
     if [ "${opts.profile ?? "single"}" = "cluster" ]; then echo "no such service: rqlite" >&2; exit 1; fi;;
 esac
 case " $* " in
@@ -80,7 +81,13 @@ case " $* " in
     # (tar mode), so between the cp and the script's chmod — and permanently
     # after a SIGKILL — the parent mode is the only protection.
     for last in "$@"; do :; done
-    stat -f '%Lp' "$(dirname "$last")" > ${JSON.stringify(join(dir, "stage-mode"))}
+    # GNU stat (-c %a) and BSD stat (-f %Lp) disagree on flag spelling; the
+    # fake must run on both Linux CI and macOS dev machines.
+    if stat -c '%a' "$(dirname "$last")" > ${JSON.stringify(join(dir, "stage-mode"))} 2>/dev/null; then
+      :
+    else
+      stat -f '%Lp' "$(dirname "$last")" > ${JSON.stringify(join(dir, "stage-mode"))}
+    fi
     cp ${JSON.stringify(archive)} "$last"
     # docker cp preserves the container-side mode (0644) and ignores umask.
     chmod 644 "$last"
