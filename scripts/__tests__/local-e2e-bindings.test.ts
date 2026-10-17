@@ -58,7 +58,7 @@ describe("real D1 lifecycle", () => {
     const before = new Set(readdirSync(tmpdir()).filter((name) => name.startsWith("pew-e2e-")));
     try {
       writeFileSync(join(migrations, "0001.sql"), sql);
-      const result = spawnSync("bun", ["--no-env-file", "-e", 'import {localIsolatedEnv} from "./scripts/local-e2e-bindings.ts"; await localIsolatedEnv(process.argv[1]);', migrations], { encoding: "utf8", timeout: 30_000 });
+      const result = spawnSync("bun", ["--no-env-file", "-e", 'import {localIsolatedEnv} from "./scripts/local-e2e-bindings.ts"; await localIsolatedEnv(process.argv[1]);', migrations], { encoding: "utf8", timeout: 20_000 });
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("migrations failed");
       expect(new Set(readdirSync(tmpdir()).filter((name) => name.startsWith("pew-e2e-")))).toEqual(before);

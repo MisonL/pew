@@ -223,7 +223,7 @@ rqlite 用 statement-based replication（语句复制到各副本各自执行）
 
 **读一致性（实测修正）**：原以为 rqlite 默认 `weak` 可能读到陈旧数据，**实测不成立**——`weak`/`strong` 在 follower 上都**转发给 leader** 应答（`X-Rqlite-Served-By` 实证），只有 `level=none` 才是本地读。因此规定：
 
-- 适配层统一显式 `?level=weak`（读始终来自 leader，一致性等价 strong；写从 follower 也自动转发 leader，d1-http 可连地址池中任一节点）。
+- 适配层统一显式 `?level=weak`（读始终来自 leader，一致性等价 strong；写从 follower 也自动转发 leader，d1-http 可连地址池中任一节点）。（实现更正 2026-10-17：**两处例外走 strong**——KV 缓存 `get()`（`kv-adapter.ts:53-57`，read-after-write 契约）与迁移账本（`migrate.ts:171-172`，读陈旧账本会重跑不幂等迁移）。）
 - **不使用 `none`**：排行榜「读 revision → 构建 → 再读 revision」（`leaderboard-snapshot.ts:123/143`）与 web 授权比对（`route.ts:145,185`）都依赖 revision 相等判断，本地陈旧读会反复触发 "Leaderboard changed during read"。
 - 代价：任何节点都是「转发器」，读延迟 = 本地读 + 转发；无本地读横向扩展。未来若需读扩展，须先改造 revision 一致性逻辑——列为远期方向，不在本设计内。
 - 副作用（正面）：follower 上的写与读都自动转发，**地址池轮换无需区分读写端点**；故障切换沿用已实测的 1.85s 自动切换。
@@ -276,7 +276,7 @@ CREATE TABLE kv_cache (
 - **读服务要能水平扩**：多个 read 实例必须共享同一份缓存，否则同一 key 在多实例间各存一份、缓存失效把它们一起清空时行为不一致；放主库后 read 容器完全无状态，随便加副本。
 - **备份单点**：缓存随 rqlite 一起进出快照，无第二个备份面。
 - 代价：缓存写走 Raft 共识。但 KV 写只在**刷新时**发生（定价同步、seasons 列表刷新、快照重建），不是每请求，量级低；`cache.clear` 最多 10000 条删除需**压测**（可整批一个事务提交，减少 Raft 轮次）。
-- 缓存读（`get`）默认走 `weak`（读 leader），与 §4.1 读一致性规定一致。
+- 缓存读（`get`）默认走 `weak`（读 leader），与 §4.1 读一致性规定一致。（实现更正 2026-10-17：交付实现为 **strong**——`kv-adapter.ts:53-57` 为 read-after-write 契约显式 `.strong()`，与 §4.1 的例外说明一致。）
 
 **读侧过期过滤**：`kv_cache.expires_at` 必须在 `get` 时过滤，否则 TTL 形同虚设。写入时把 `expirationTtl`（秒）换算为绝对时间戳。
 
@@ -499,7 +499,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | 5 | `packages/web/src/lib/admin.ts` | `resolveAdmin`/`isAdminUser` 判定扩展为 `ADMIN_EMAILS` OR 库内 `is_admin`；保留同步 `isAdmin(email)` 的纯 env 语义 |
 | 6 | `packages/web/src/app/api/admin/check/route.ts`、`packages/web/src/app/api/users/[slug]/route.ts` | 直接调用同步 `isAdmin(email)` 的两处改为异步判定（否则库内管理员被误判） |
 | 7 | `packages/web/src/proxy.ts` | `isPublicRoute()` 增加 `/setup`（未登录必须能进向导） |
-| 8 | `packages/web/src/app/api/admin/invites/route.ts` 等 | 省略时间列的 INSERT 补 `datetime('now')`（全量 grep 定位，实测已知 2 处起） |
+| 8 | `packages/web/src/app/api/admin/invites/route.ts` 等 | 省略时间列的 INSERT 补 `datetime('now')`（全量 grep 定位，实测已知 2 处起）。（实现更正 2026-10-17：`invites/route.ts` 最终**未改动**——该表 INSERT 均有 `DEFAULT datetime('now')`，与 §3.2 更正一致。） |
 | 9 | `packages/cli/src/commands/login.ts` | `resolveHost` 支持 `--host` / `PEW_HOST` |
 | 10 | `packages/cli/src/config/manager.ts` | 自建 host 使用独立配置文件（见 §4.5） |
 | 11 | `scripts/migrations/` | **新增**：① `password_hash` + `is_admin` 列；② 确定性触发器后置迁移（专项二）；③ `kv_cache` 基础设施表（实测：无任何上游迁移创建它，缺表只在运行时暴露）——均为**新增文件**，不改既有迁移 |
@@ -533,7 +533,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 **CLI 登录**：CLI 打开浏览器 → `web:/api/auth/cli?callback=...`（需已有会话）→ 下发 `pk_` api_key → CLI 存本地
 
-**定时任务**：`read 容器` 内定时触发动态定价同步（替代 CF cron trigger）；需出网访问 OpenRouter / models.dev，否则降级到 bundled baseline
+**定时任务**：`scheduler 容器` 内定时触发动态定价同步（替代 CF cron trigger）；需出网访问 OpenRouter / models.dev，否则降级到 bundled baseline（实现更正 2026-10-17：交付为独立 `scheduler` 服务，非 read 容器内定时器，与 §4.3/§4.6 一致）
 
 ## 6. 测试策略
 
@@ -641,7 +641,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 |---|---|
 | `AUTH_SECRET` | 会话加密密钥，**运行期注入**，不入版本库 |
 | `NEXTAUTH_URL` | 外部访问基址（`http://` 或 `https://`，决定 cookie 前缀；`TRUSTED_ORIGIN` 由它推导，无需单独配置） |
-| `USE_SECURE_COOKIES` | 内网 http 部署设 `false`。**注意**：读取该值 `==="false"` 的分支属 Plan 2，Plan 1 下此变量暂不生效 |
+| `USE_SECURE_COOKIES` | 内网 http 部署设 `false`。**注意**：读取该值 `==="false"` 的分支属 Plan 2，Plan 1 下此变量暂不生效（实现更正 2026-10-17：Plan 2 已交付，`auth.ts:45-55` 已实现显式 false 分支；`.env.example`/compose 默认**空值**，由 auth.ts 推导——production 下即 true，**http 部署必须显式填 `false`**） |
 | `D1_BASE_URL` | 指向 `d1-http` 的地址（新增的写路径覆盖） |
 | `WORKER_READ_URL` / `WORKER_READ_SECRET` | 读路径（`read` 容器服务名 + 密钥） |
 | `WORKER_INGEST_URL` / `WORKER_SECRET` | 写路径（`ingest` 容器服务名 + 密钥） |

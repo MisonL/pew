@@ -370,6 +370,16 @@ describe("backup.sh", () => {
     expect(existsSync(nested)).toBe(true);
   });
 
+  it("rejects an output path starting with '-' (GNU option parsing)", async () => {
+    // On GNU userland `dirname --help`/`mv --help` treat the path as an
+    // option: the run printed help, exited 0 and discarded the archive
+    // (verified on debian:12-slim). BSD userland fails instead, so only a
+    // Linux CI would have seen the silent success.
+    const r = await run({ args: ["--help"] });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("may not start with");
+  });
+
   it("defaults to a dated archive next to the script", async () => {
     // Compared as a shape, not against a computed date: `date +%F` is local
     // time, so an exact-name assertion would be wrong near midnight.
@@ -382,7 +392,11 @@ describe("backup.sh", () => {
 
   it("cleans the in-container archive on a successful run", async () => {
     const r = await run({});
-    expect(hasSequence(r.log, ["exec", "-T", "rqlite", "rm", "-f", "/rqlite/file/backup.db"])).toBe(true);
+    // Two rm calls: the pre-.backup clear and the EXIT-trap cleanup. A single
+    // occurrence would be satisfied by the pre-rm alone (mutation-verified:
+    // removing the cleanup rm from the trap passed a count-1 assertion).
+    const rmCalls = r.log.split("\nARGV\n").filter((c) => argLines(c).join(" ") === "[compose] [exec] [-T] [rqlite] [rm] [-f] [/rqlite/file/backup.db]");
+    expect(rmCalls.length).toBe(2);
   });
 });
 
