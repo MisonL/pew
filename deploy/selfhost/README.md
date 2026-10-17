@@ -7,6 +7,7 @@
 ```bash
 cd deploy/selfhost
 cp .env.example .env
+chmod 600 .env        # 含明文密钥；同宿主其他用户不应能读（目录是 755 时 644 的 .env 谁都能读）
 # 编辑 .env：至少填 AUTH_SECRET、NEXTAUTH_URL、三个密钥
 # .env 里 COMPOSE_PROFILES=single（默认），等价于 --profile single
 docker compose up -d --build
@@ -16,9 +17,12 @@ docker compose up -d --build
 
 > **重要**：web 在**首次使用认证时**校验 `AUTH_SECRET`——缺失或仍是占位符（`replace-me`、
 > `changeme`、`secret`、空值）会抛错拒绝签发会话，登录/认证接口全部报错（容器本身可以启动、
-> `/setup` 页面可访问）。会话 JWT 用公开已知密钥签名等于认证 bypass。若第一次 `up` 在填好三个 rqlite 密钥之前执行，
-> 后续启用鉴权时必须 `docker compose up -d --build --force-recreate rqlite`（或整个栈）——
-> bind-mount 路径不变时 compose 不会重建容器，rqlite 会继续以无鉴权运行。
+> `/setup` 页面可访问）。会话 JWT 用公开已知密钥签名等于认证 bypass。若第一次 `up` 在填好三个 rqlite 密码之前执行，
+> 后续启用鉴权时必须 `docker compose up -d --build --force-recreate` **整栈**——
+> bind-mount 路径不变时 compose 不会重建容器，rqlite 会继续以无鉴权运行；
+> 而且只 `--force-recreate rqlite` 不够：`RQLITE_USERNAME/PASSWORD` 是**容器创建时**注入
+> read/ingest/scheduler/d1-http/migrate 的，只重建 rqlite 会让这些容器继续持有旧（空）
+> 凭据，鉴权一开全部 401，栈起不来。
 
 ### 启用 rqlite 鉴权（可选，固定序列）
 
@@ -101,9 +105,9 @@ migrate 启动时的对账自检会显式报错（「credentials configured but 
    改密后旧会话自动失效（JWT 携带密码版本号，不匹配即判无效）。
 
 **限速**：登录限速默认**进程内**（`inMemoryRateLimiter`），多 `web` 副本时退化为按副本
-计；且它信任 `X-Forwarded-For`，反代必须清洗/覆写该头。默认路径按**邮箱单键**
-限流（`login:<email>`，无 IP 维度）；只有 `LOGIN_RATE_LIMIT_BACKEND=rqlite` 时才
-启用邮箱 + IP 双键。
+计。默认路径按**邮箱单键**限流（`login:<email>`，无 IP 维度）；只有
+`LOGIN_RATE_LIMIT_BACKEND=rqlite` 时才启用邮箱 + IP 双键——登录侧的 `X-Forwarded-For`
+信任也只在该后端下存在（上文"反代必须覆写 XFF"的硬约束针对的正是这条 rqlite 双键路径）。
 
 **登录限速后端开关 `LOGIN_RATE_LIMIT_BACKEND`**（`.env`/compose，默认 `memory`）：
 设为 `rqlite` 时登录失败计数外置到 rqlite 的 `rate_limit_hits` 表（单条原子
@@ -163,10 +167,12 @@ docker compose --profile cluster up -d --build
 - **单节点 down** → 集群仍有多数派（2/3 可写，可读），**不是只读**；但冗余已减一。
   信号：该节点容器退出/重启、`/status` 的 `leader` 字段仍非空（多数派正常）、web 读写
   均正常。恢复该节点即回到 3/3，无需人工干预。
-- **两节点 down** → 集群只读不可写（多数派丢失，raft 拒写；weak 读同样打向 leader，
-  也 fail）。恢复时**两台同时恢复**，不要逐台改配置——auth.json 不一致会导致
-  recreate 后 join 失败。
-- read 副本 down 不影响写路径，故障信号仅在容器日志。
+- **两节点 down** → 集群**读写都不可用**（多数派丢失，raft 拒写；读也不能幸免——业务读
+  是 weak，但 rqlite 把 weak 读转发给 leader，无 leader 时同样失败）。恢复时**两台同时
+  恢复**，不要逐台改配置——auth.json 不一致会导致 recreate 后 join 失败。
+- read 副本 down 不影响写路径，但**不是只在日志里可见**：read 有 healthcheck，
+  `docker compose ps` 直接显示它 unhealthy（且 web 的 `/api/live` 探针经 read 查库，
+  read 挂掉时 web 也会 unhealthy）。
 
 **单节点在线扩容为 3 节点已验证可行**：向已运行的单节点 `-bootstrap-expect 1` 直接
 `-join <单节点>:4002`（join 节点**不要**带 `-bootstrap-expect`）即可，实测 3 节点全部
@@ -256,15 +262,20 @@ server {
 
 ### Cookie 与 USE_SECURE_COOKIES
 
-镜像以 `NODE_ENV=production` 运行，secure cookie 默认开启；`.env.example`/compose 默认
-`USE_SECURE_COOKIES=false` 显式覆盖。**https 部署必须显式改 `USE_SECURE_COOKIES=true`**。
+镜像以 `NODE_ENV=production` 运行，secure cookie **默认开启**：`.env.example` 与 compose 的
+`USE_SECURE_COOKIES` 默认都是**空值**，空值交给 `packages/web/src/auth.ts` 推导，production
+下结果为 true（`auth.ts:45-55` 只在显式 `false` 时才关闭）。因此：
+
+- **纯 http 内网部署必须显式填 `USE_SECURE_COOKIES=false`**，否则 `__Secure-` cookie 被
+  http origin 拒收，登录全线失效。
+- **https 部署留空即可**（默认已安全）；显式填 `true` 与留空等价。
 
 | 部署协议 | USE_SECURE_COOKIES | 结果 |
 |---|---|---|
-| https | true | ✓ 正常（`__Secure-` 前缀 cookie） |
+| https | 留空（默认）或 true | ✓ 正常（`__Secure-` 前缀 cookie） |
 | https | false | 可登录，但无 `__Secure-` 前缀（**降级可用**，不是浏览器丢弃） |
-| http | true（或未显式 false） | **登录坏**——`__Secure-` cookie 被 http origin 拒收（镜像 `NODE_ENV=production` 下这是默认行为） |
-| http | false | ✓ 正常 |
+| http | 留空（默认）或 true | **登录坏**——`__Secure-` cookie 被 http origin 拒收（空值在 production 下的推导结果就是 true） |
+| http | false | ✓ 正常（**http 部署必须显式填 false**） |
 
 `TRUSTED_ORIGIN` 由 `NEXTAUTH_URL` 推导，无需单独配置。
 
@@ -305,13 +316,17 @@ server {
   DML（如 029 的种子 `INSERT`）必须**不带** norw——带 norw 时各副本独立求值会**分叉**（实测两副本得到
   不同 randomblob），不带时 rqlite 把它改写成字面量再复制，各副本一致。详见 Task 5 的 `isDdlStatement`。
 - 排行榜 revision 用计数器（`leaderboard_revision_seq`）而非随机数，保证副本间收敛。
-- 读一律 `?level=weak`。rqlite 会把 weak 读转发给 leader，因此读一致性等价强一致；`none` 会读到陈旧数据，禁止使用。
+- 读的默认一致性是 `?level=weak`（业务读路径）。rqlite 会把 weak 读转发给 leader，因此读
+  一致性等价强一致；`none` 会读到陈旧数据，禁止使用。**两处例外走强读**：KV 缓存的
+  `get()`（`kv-adapter.ts` 的 read-after-write 契约）与迁移账本（`migrate.ts`——读到
+  陈旧账本会重跑不幂等迁移），各自注释里写了理由。
 
 ## 验证
 
 ```bash
 bun run test                                    # 单元测试（含 deploy/selfhost 的适配层用例）
 # verify-migrations 对账真实实例（rqlite 未发布宿主端口，在容器内跑；鉴权开启时凭据经 -e 传入）：
+# 注意它会**先应用缺失迁移再做对账**（不是只读检查）——恢复旧备份后跑它会顺带补齐迁移。
 set -a; . ./.env; set +a
 docker compose exec -T \
   -e RQLITE_URL=http://rqlite:4001 \
@@ -377,7 +392,13 @@ bash deploy/selfhost/backup.sh /var/backups/pew/pew.db
   `ps` 里可见 argv，环境变量不可见，所以密码含空格也无需引号技巧。脚本不接受把
   `-u user:pass` 放进 argv。
 - **校验是白名单式的**：不仅非空，还要求前 16 字节是 `SQLite format 3\0` 魔数，挡住
-  `.backup` 失败留下的非空错误页。
+  `.backup` 失败留下的非空错误页。**这是格式门，不是完整性门**：截断/仅含头部的文件同样
+  通过；恢复演练时建议在可信宿主上补 `sqlite3 <archive> 'PRAGMA integrity_check'`。
+- **`.backup` 本身的退出状态不可信**：REPL 打出 `ERR!`（如凭据错误）后仍以 0 退出
+  （rqlite 10.5.3 实测），所以脚本不依赖 REPL 的退出码——`.backup` 前先清掉容器内可能
+  残留的旧归档（SIGKILL 会跳过清理 trap），完成后用 `test -s` 断言容器内归档真实存在，
+  两道门都过才继续 cp。没有这两道门时，一次失败的备份会安静地复制上一轮的陈旧归档并以
+  退出码 0 "成功"。
 
 灾难恢复 runbook 见下文「**恢复**」部分（本节内的恢复步骤）；备份产物只含数据，`.env` 与
 `.rqlite-auth.json` 需另行保管（见下）。
@@ -398,8 +419,12 @@ chmod 600 "./backup-$(date +%F).db"   # 备份含全部 password_hash/api_key，
 # 非空校验必须退出非零：包进 cron/systemd timer 时，0 字节假文件否则只会留一条 stderr、退出码仍为 0，无人告警。
 [ -s "./backup-$(date +%F).db" ] || { echo "备份为空，失败！" >&2; exit 1; }
 
-# 集群模式（对 leader 节点执行即可，默认 rqlite-1；.backup 读本地文件但产物经 Raft 复制）
-# 把上面的 rqlite 换成 rqlite-1 即可。
+# 集群模式（对 leader 节点执行即可，默认 rqlite-1；.backup 在执行节点本地卷上产出文件，
+# Raft 复制的是 SQL 日志而非文件——所以必须在同一个节点上先 .backup 再 cp，不能在 A 节点
+# .backup 后到 B 节点 cp。把上面的 rqlite 换成 rqlite-1 即可。）
+# ⚠ 本片段是排障对照，不是 backup.sh 的等价物：它没有 0700 暂存目录，cp 与 chmod 600
+# 之间被 SIGKILL 会留下 world-readable 的归档（cp 落地 0644、无视 umask），不要把它
+# 放进 cron。
 ```
 </details>
 
@@ -419,20 +444,31 @@ chmod 600 "./backup-$(date +%F).db"   # 备份含全部 password_hash/api_key，
 目录——下例假设 `/var/backups/pew/`。
 
 ```bash
-# compose 文件与 .env 都在 deploy/selfhost/；compose 不会向下搜索，先 cd 到这里。
+# compose 文件与 .env 都在 deploy/selfhost/；compose 不会向下搜索，先 cd 过来。
 cd /path/to/pew/deploy/selfhost
 set -a; . ./.env; set +a   # 恢复命令带 -u，需先导出 .env 凭据
+# cluster profile 下没有 rqlite 服务：下文所有 rqlite 服务名（第 2 步 cp、第 3 步两条
+# exec、第 5 步清理）全部换成 rqlite-1，对 leader 执行即可（.restore 经 Raft 复制到其余
+# 节点）；backup.sh 是按 COMPOSE_PROFILES 自动选的，本 runbook 是人手执行，不会自动换。
 # 1. 停应用（读写都停，避免恢复期间写入；d1-http 是写后端，必须一起停）
 docker compose stop web read ingest scheduler d1-http
-# 2. 把备份放进 rqlite 容器（rqlite 保持运行，.restore 不需要停它）
+# 2. 把备份放进 rqlite 容器（rqlite 保持运行，.restore 不需要停它）。
+#    a) 容器内目标可能被上次尝试占用——compose cp 拒绝覆盖已存在的目标文件，先清掉；
+#    b) cp 按 tar 语义保留宿主归档的 0600 与宿主 uid，而容器内 rqlite 是 uid 1000：
+#       不 chown 直接 .restore 必然 permission denied（宿主 uid 恰为 1000 才侥幸可读，
+#       实测 rqlite:10.5.3 + compose cp 复现）。0600 归档对 uid 1000 连读都不允许。
+docker compose exec -T rqlite rm -f /rqlite/file/restore.db
 docker compose cp /var/backups/pew/backup-2026-10-11.db rqlite:/rqlite/file/restore.db
-# 3. 用点命令恢复（经 Raft 应用，单节点/集群同一路径；鉴权开启时必须带 -u user:pass，
-#    集群对 leader（rqlite-1）执行即可，.restore 经 Raft 复制到其余节点）
-printf '.restore /rqlite/file/restore.db\n.exit\n' | \
+docker compose exec -T -u root rqlite chown rqlite:rqlite /rqlite/file/restore.db
+# 3. 用点命令恢复（鉴权开启时必须带 -u user:pass）。REPL 失败也返回 0（与 backup 同款：
+#    ERR! 后仍 exit 0），必须断言输出含成功字样，否则下面的"起应用"会在未恢复的库上运行。
+restore_out=$(printf '.restore /rqlite/file/restore.db\n.exit\n' | \
   docker compose exec -T -e RQLITE_USERNAME -e RQLITE_PASSWORD rqlite \
-    sh -c 'exec rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost'
-# Expected: Database restored successfully
-# 无鉴权部署把上面整条 exec 换成：docker compose exec -T rqlite rqlite -H localhost
+    sh -c 'exec rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost')
+printf '%s\n' "$restore_out"
+echo "$restore_out" | grep -q "Database restored successfully" || { echo "restore FAILED" >&2; exit 1; }
+# 无鉴权部署把第 3 步整条 exec 换成：docker compose exec -T rqlite rqlite -H localhost
+#    （同样要对 $restore_out 断言成功字样）
 # 4. 起应用并验证（存活 + 迁移账本对账，后者用「验证」小节的 exec 形态）
 docker compose start d1-http read ingest scheduler web
 docker compose exec web node -e "fetch('http://127.0.0.1:7020/api/live').then(r=>r.json()).then(console.log)"
@@ -443,12 +479,15 @@ docker compose exec rqlite rm -f /rqlite/file/restore.db
 ## 升级
 
 ```bash
+cd /path/to/pew                                    # git 操作在仓库根
 git fetch upstream main && git merge upstream/main   # 或拉取自有 fork 的对应分支
+cd deploy/selfhost                                 # compose 只读 ./.env，不向下搜索；以下都在这里执行
 # 鉴权部署下先确认 .rqlite-auth.json 在磁盘（升级不删卷，但若宿主目录被清理，
 # rqlite 容器 recreate 后 entrypoint 找不到 /auth/auth.json 会以无鉴权启动）。
-# cluster profile 下没有 rqlite 服务，命令中的服务名换成 rqlite-1：
-ls -l deploy/selfhost/.rqlite-auth.json || docker compose run --rm --entrypoint sh rqlite \
-  -c 'echo "auth file missing — re-render before up:"; exit 1'
+# cluster profile 下没有 rqlite 服务，下文的 rqlite 服务名换成 rqlite-1。
+# 用 test -f 而不是 docker compose run 检测：bind-mount 源缺失时 compose 会创建同名
+# 目录，检测命令本身会写出 .rqlite-auth.json/ 目录，让下一次检查误报"存在"。
+test -f .rqlite-auth.json || { echo "auth file missing — re-render before up:"; exit 1; }
 # 缺失则先重新渲染（见「Quickstart」固定序列），再 up。
 docker compose build                                 # 镜像本地构建，无远端可 pull
 docker compose up -d
@@ -457,7 +496,9 @@ docker compose up -d
 - 迁移在 `migrate` 服务启动时自动跑（`_migrations` 账本按文件名幂等，已跑过的不会重跑）。
 - **migrate 失败的排障入口**：migrate 非零退出时 `read`/`ingest`/`scheduler`/`web` 都不会启动
   （`service_completed_successfully` 门），这是刻意的 fail-closed。修好原因后重跑
-  `docker compose up -d --build migrate` 即可——依赖方在 migrate 退出 0 之前保持停止。
+  `docker compose up -d --build migrate`，**成功后再补一次 `docker compose up -d`**
+  （只 up migrate 不会拉起依赖它的 read/ingest/web——那些门只在整栈 up 时按依赖顺序展开；
+  跳过这步会把栈留在"migrate 成功但应用层全停"的假象里）。
   瞬态错误（如慢启动的 60s 就绪超时）直接重跑即可，已应用的迁移会被账本跳过。
 - **rqlite 版本升级前**先做一次备份（见上），并确认新版本的 auth.json 格式兼容
   （凭据条目数组格式自 8.x 起稳定，跨大版本升级后先在测试实例验证一遍
@@ -523,8 +564,13 @@ docker compose ps          # 哪个容器在 restarting / unhealthy / exited
 docker compose logs --tail=100 <svc>   # svc = web / rqlite / migrate / read / ...
 ```
 
-rqlite 容器反复 unhealthy 时优先怀疑 auth.json 问题（`*` 条目缺失、文件未渲染、
-半填凭据）——详见上文「auth.json 丢失恢复 runbook」的警告块。若日志出现的是
+rqlite 容器反复 unhealthy 时优先怀疑 auth.json **损坏**（`*` 条目缺失、文件被改坏——
+匿名探针拿 401 才会让 unhealthy）。注意两类**不会**让 rqlite unhealthy 的 auth.json
+问题：文件未渲染、半填凭据——这两种情况下 entrypoint 根本不加 `-auth`，rqlite 以无鉴权
+启动且匿名 `/readyz` 返回 200，容器 healthy；卡住的是 `migrate` 的对账自检
+（"credentials configured but auth is disabled"，exit 1），进而 read/ingest/web 全部不
+启动。详见上文「auth.json 丢失恢复 runbook」的警告块，按"rqlite unhealthy"还是
+"migrate 失败"分流排查。若日志出现的是
 `not part of stable configuration, aborting election` 循环则不是 auth 问题：节点 ID
 不在持久化的 raft 配置里。当前 compose 已为 rqlite 固定 `-node-id`/`-adv-addr`
 （recreate 安全）；只有**旧版本 compose 部署过、且 recreate 过 rqlite 容器**的实例

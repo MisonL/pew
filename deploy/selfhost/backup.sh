@@ -21,8 +21,12 @@
 #   into place only after validation: a failed same-day re-run must never
 #   overwrite (or delete) an intact earlier archive, and a SIGKILLed run
 #   cannot leave the archive world-readable (see the staging comment below).
-# - Exits non-zero when the archive is empty or not SQLite, so a cron/systemd
-#   timer actually alerts instead of keeping a silent bad file.
+# - Exits non-zero when .backup produced nothing, an empty file, or a
+#   non-SQLite artifact, so a cron/systemd timer actually alerts instead of
+#   keeping a silent bad file. The REPL cannot be trusted for this: it exits
+#   0 even after printing `ERR! unauthorized`, so success is judged by the
+#   archive on disk, and any stale archive from an interrupted earlier run is
+#   removed before .backup starts.
 #
 # .env is sourced as shell: a password must be single-quoted there (an
 # unquoted `$` expands, `$$` becomes the PID) and the file must not contain a
@@ -89,6 +93,13 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 
+# Clear any archive left behind by an interrupted earlier run: SIGKILL skips
+# the cleanup trap, and the rqlite REPL exits 0 even when .backup fails (it
+# prints `ERR! unauthorized` and still returns 0 — verified against rqlite
+# 10.5.3). Without this, a failed run could copy and validate a STALE archive
+# from a previous attempt and report success.
+docker compose exec -T "$SERVICE" rm -f /rqlite/file/backup.db
+
 if [ -n "${RQLITE_USERNAME:-}" ] && [ -n "${RQLITE_PASSWORD:-}" ]; then
   printf '.backup /rqlite/file/backup.db\n.exit\n' | \
     docker compose exec -T -e RQLITE_USERNAME -e RQLITE_PASSWORD "$SERVICE" \
@@ -96,6 +107,14 @@ if [ -n "${RQLITE_USERNAME:-}" ] && [ -n "${RQLITE_PASSWORD:-}" ]; then
 else
   printf '.backup /rqlite/file/backup.db\n.exit\n' | \
     docker compose exec -T "$SERVICE" rqlite -H localhost
+fi
+
+# Success gate: the REPL's exit status cannot distinguish success from ERR!
+# (see above), so the archive itself is the only trustworthy signal. A failed
+# .backup leaves no file or a zero-byte one.
+if ! docker compose exec -T "$SERVICE" sh -c 'test -s /rqlite/file/backup.db'; then
+  echo "backup.sh: .backup produced no archive — check credentials and rqlite logs above" >&2
+  exit 1
 fi
 
 docker compose cp "$SERVICE:/rqlite/file/backup.db" "$TMP"
@@ -108,9 +127,11 @@ if [ ! -s "$TMP" ]; then
   echo "backup.sh: backup is empty — .backup failed (see output above)" >&2
   exit 1
 fi
-# Second check: a non-empty but corrupt artifact (partial write, error page)
-# has no SQLite header. The README establishes 'SQLite format 3' as the
-# acceptance property of a valid backup.
+# Second check: a non-empty but corrupt artifact (error page, zero-filled
+# stub) has no SQLite header. This is a FORMAT gate, not an integrity check —
+# a truncated or header-only file still passes it; full verification is
+# `sqlite3 <archive> 'PRAGMA integrity_check'` on a trusted host, recommended
+# after any restore drill.
 if ! printf 'SQLite format 3\000' | cmp -s -n 16 - "$TMP"; then
   echo "backup.sh: backup is not a SQLite database — refusing to keep it" >&2
   exit 1
