@@ -32,6 +32,9 @@ afterAll(() => {
 function run(opts: {
   archiveBytes?: number;
   archiveContents?: string;
+  containerStale?: string;
+  /** Simulate the real REPL's behavior on a failed .backup: prints ERR! to stderr, still exits 0, writes nothing. */
+  replFails?: boolean;
   profile?: string;
   username?: string | null;
   password?: string | null;
@@ -50,6 +53,12 @@ function run(opts: {
   const log = join(dir, "docker.log");
   const transcript = join(dir, "transcript");
   const containerEnv = join(dir, "container-env");
+  const containerFile = join(dir, "container-backup.db");
+  if (opts.containerStale !== undefined) {
+    // Simulates an archive left in the container by an interrupted earlier
+    // run (SIGKILL skips the cleanup trap).
+    writeFileSync(containerFile, opts.containerStale);
+  }
   const archive = join(dir, "archive.db");
   writeFileSync(
     archive,
@@ -69,12 +78,30 @@ case " $* " in
 esac
 case " $* " in
   *" exec "*" rm -f "*)
+    # The pre-.backup rm must clear a stale archive (SIGKILL residue); track
+    # the container file's existence so the later test -s gate sees it.
+    rm -f ${JSON.stringify(containerFile)}
     exit 0;;
+  *" exec "*" test -s "*)
+    # The .backup success gate: succeeds only when the archive exists
+    # non-empty — i.e. when some earlier .backup call actually produced it.
+    if [ -s ${JSON.stringify(containerFile)} ]; then exit 0; fi
+    echo "test -s: /rqlite/file/backup.db: No such file" >&2
+    exit 1;;
   *" exec "*)
     # Capture the REPL transcript the script pipes in, and the environment the
     # container would receive: -e NAME forwards NAME's value from the caller.
     cat > ${JSON.stringify(transcript)}
     { printf 'RQLITE_USERNAME=%s\\n' "\${RQLITE_USERNAME-<UNSET>}"; printf 'RQLITE_PASSWORD=%s\\n' "\${RQLITE_PASSWORD-<UNSET>}"; } > ${JSON.stringify(containerEnv)}
+    # Faithful to the real REPL: a failed .backup prints ERR! and STILL exits
+    # 0 (verified against rqlite 10.5.3). It also writes NOTHING to the
+    # container path — any file already there is left untouched, which is
+    # exactly the stale-archive hazard the pre-rm guards against.
+    if [ "${opts.replFails ? "1" : "0"}" = "1" ]; then
+      printf 'ERR! unauthorized\\n' >&2
+    else
+      cp ${JSON.stringify(archive)} ${JSON.stringify(containerFile)}
+    fi
     exit 0;;
   *" cp "*)
     # The script must stage inside a 0700 directory: docker cp lands 0644
@@ -88,7 +115,14 @@ case " $* " in
     else
       stat -f '%Lp' "$(dirname "$last")" > ${JSON.stringify(join(dir, "stage-mode"))}
     fi
-    cp ${JSON.stringify(archive)} "$last"
+    # docker cp copies the CONTAINER-side file: if a failed .backup left a
+    # stale archive behind, that is what reaches the host; a missing file is
+    # an error, exactly as real compose cp behaves.
+    if [ ! -f ${JSON.stringify(containerFile)} ]; then
+      echo "Error response from daemon: Could not find the file /rqlite/file/backup.db" >&2
+      exit 1
+    fi
+    cp ${JSON.stringify(containerFile)} "$last"
     # docker cp preserves the container-side mode (0644) and ignores umask.
     chmod 644 "$last"
     exit 0;;
@@ -224,10 +258,44 @@ describe("backup.sh", () => {
     expect(hasSequence(r.log, ["exec", "-T", "rqlite", "rqlite", "-H", "localhost"])).toBe(true);
   });
 
-  it("exits non-zero and keeps no file when the archive is empty (cron-visible)", async () => {
+  it("clears a stale in-container archive before .backup runs", async () => {
+    // SIGKILL skips the cleanup trap, so a previous run can leave the
+    // container path occupied. The script must rm it first with a checked
+    // status — never best-effort — or a failed .backup would then copy and
+    // validate that stale file and report success.
+    const stale = `SQLite format 3\0${"stale".repeat(4)}`;
+    const r = await run({ containerStale: stale });
+    expect(r.code, r.stderr).toBe(0);
+    // The rm must precede the .backup REPL call. .backup itself is REPL
+    // stdin, not argv, so the second call is identified by its forwarded
+    // credentials.
+    const calls = r.log.split("\nARGV\n").filter(Boolean);
+    const rmCall = calls.findIndex((c) => argLines(c).join(" ") === "[compose] [exec] [-T] [rqlite] [rm] [-f] [/rqlite/file/backup.db]");
+    const backupCall = calls.findIndex((c) => c.includes("[RQLITE_PASSWORD]"));
+    expect(rmCall).toBeGreaterThanOrEqual(0);
+    expect(backupCall).toBeGreaterThan(rmCall);
+    expect(r.transcript).toContain(".backup /rqlite/file/backup.db");
+  });
+
+  it("exits non-zero when .backup produced no archive (stale file present)", async () => {
+    // Full real-world failure path: the container still holds a stale archive
+    // from an interrupted run, the REPL fails (ERR! unauthorized, exit 0),
+    // and the fake cp faithfully copies the stale container file. The script
+    // must still fail: the pre-rm empties the container path and the test -s
+    // gate stops the run before the stale bytes could reach the host.
+    const stale = `SQLite format 3\0${"stale".repeat(4)}`;
+    const r = await run({ containerStale: stale, replFails: true });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("no archive");
+    expect(existsSync(r.out)).toBe(false);
+  });
+
+  it("exits non-zero when the archive is empty (cron-visible)", async () => {
     const r = await run({ archiveBytes: 0 });
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain("backup is empty");
+    // The .backup gate fires before the copy: the empty archive never reaches
+    // the host staging file.
+    expect(r.stderr).toContain("no archive");
     expect(existsSync(r.out)).toBe(false);
   });
 
@@ -248,8 +316,8 @@ describe("backup.sh", () => {
     const again = await run({ archiveBytes: 0, args: [existing] });
     expect(again.code).toBe(1);
     expect(readFileSync(existing, "utf8")).toBe("SQLite format 3\0previous");
-    // No stray temp files remain next to it.
-    expect(readdirSync(dir).filter((n) => n.includes(".tmp."))).toEqual([]);
+    // No staging directory survives next to it either.
+    expect(readdirSync(dir).filter((n) => n.startsWith(".pew-backup."))).toEqual([]);
   });
 
   it("creates the output directory when it does not exist", async () => {

@@ -14,5 +14,11 @@ dist
 **/.env.local
 **/.env.*.local
 **/.rqlite-auth.json
+# Backup archives and their staging dirs (backup.sh default output lands in
+# deploy/selfhost/). Same rationale as **/.env: the archive holds every
+# password_hash/api_key, and build contexts are the repo root, so a build
+# running while an archive exists would bake it into an image layer.
+**/backup-*.db
+**/.pew-backup.*/
 logo.png
 scripts/resize-logos.py

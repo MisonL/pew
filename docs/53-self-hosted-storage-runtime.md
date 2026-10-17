@@ -14,7 +14,7 @@
 - **rqlite 版本 ≥ v10.3.3**。v10.3.3 才修复「事务请求中某条语句 **prepare** 失败时不回滚」（CHANGELOG PR #2792，2026-09-13）。实测 10.3.2 下两条 INSERT 夹一条缺表语句，前两条仍提交；10.3.3 正确回滚为 0 行。compose 固定 `rqlite/rqlite:10.5.3`（≥ 下限）。
 - **参数编码必须是扁平数组** `[sql, p1, p2]`，不是嵌套 `[sql, [p1,p2]]`。嵌套形式在 `/db/query` 下静默返回空结果。
 - **batch 必须走 `/db/request?transaction=true&associative&timings`**，不能用 `/db/execute`（普通 SELECT 的行会静默丢失）。
-- **读一律显式 `?level=weak`**（rqlite 会把 weak 读转发给 leader，等价强一致）。**禁止用 `none`**。
+- **业务读显式 `?level=weak`**（rqlite 会把 weak 读转发给 leader，等价强一致）。**禁止用 `none`**。KV 缓存 `get()` 与迁移账本两处走 `?level=strong`（read-after-write 契约与迁移幂等，见交付代码注释）。
 - **DDL 一律带 `?norwtime&norwrandom`**；**业务 DML 与迁移里的 DML 一律不带**（走默认改写，保证跨副本确定）。关键：**迁移文件里的 DDL 与 DML 绝不能放进同一个 `?norw*` 请求**——否则 DML 的各副本独立求值会分叉（实测 029 种子 `INSERT ... randomblob(16)` 在两副本得到不同值）。Task 5 的 `applyMigrations` 用 `isDdlStatement` 按语句分流。
 - **rqlite 必须带 `-fk`**（外键默认关闭，schema 有 12 处 `ON DELETE CASCADE`）。
 - **不改上游文件**：`packages/worker/**`、`packages/worker-read/**`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。本计划只改两个上游文件：`lib/d1.ts` 与 `vitest.config.ts`。
@@ -2565,6 +2565,15 @@ git commit -m "feat: add D1 REST-shape HTTP service over rqlite"
 
 **注意**：本任务无单元测试——它的交付物是「容器起来且互相能通」，由 Step 5 的手工端到端验证覆盖。
 
+> **快照漂移声明 2026-10-17**：本任务（及后续 Task）内嵌的 compose / `.env.example` /
+> README 全文是**计划时点快照**，与 `deploy/selfhost/` 交付文件已有漂移，**一律以交付文件
+> 为准**。已知快照过时点（均已按交付文件更正或以交付为准）：`USE_SECURE_COOKIES` 交付
+> 默认为**空值**（auth.ts 推导，production 下 true；不是快照里的 `false`/`true` 默认）；
+> `CF_D1_API_TOKEN` 只下发 `d1-http`/`web` 两个服务（快照写 migrate 也持有）；`.dockerignore`
+> 规则是 `**/.env`（裸 `.env` 不够，见交付 README 的说明）；`verify-migrations.ts` 不能在
+> 宿主对 `127.0.0.1:14001` 跑（该端口从未发布，用容器内形态）；迁移计数快照 `[[32]]`
+> 过时（磁盘已 37 个 `.sql`，扣除 squash 后 34 个）。
+
 > **两套镜像，别混**：跑 bun 的适配层服务（migrate/d1-http/read/ingest/scheduler）用本任务的 `deploy/selfhost/Dockerfile` 构建的 `pew-selfhost:local`；**web 用仓库根 `Dockerfile` 构建的 `pew:standalone`**（Next standalone，根 `Dockerfile:72` 的 `CMD ["node","packages/web/server.js"]`）。把 web 指到 `pew-selfhost:local` 会因无 Next 产物、无 CMD 而退出。
 
 - [ ] **Step 1: 写自建镜像 Dockerfile**
@@ -3288,12 +3297,12 @@ voter/reachable，且新节点能读到扩容前写入的数据。若要走 comp
   read/ingest/scheduler 三个容器是**直连 rqlite** 的（不走 d1-http），一旦给 rqlite 加鉴权，
   这三个服务也要同步带 token。若生产要求该层，需一并改造，列为后续强化项。
 - **`CF_D1_API_TOKEN` 只保护 web → d1-http 这一跳**。read/ingest/scheduler 直连 rqlite，不需要
-  这个 token，因此 compose **只把它下发给 `migrate`、`d1-http`、`web`**（`d1-http` 是校验方、
-  `web` 是客户端、`migrate` 建表初始化）；`read`/`ingest`/`scheduler` 的 `environment` 不含它，
-  收窄了密钥在容器内的暴露面。
+  这个 token，因此 compose **只把它下发给 `d1-http`、`web`**（`d1-http` 是校验方、
+  `web` 是客户端；`migrate` 只做 DDL、凭据走 `RQLITE_*`，不持有该 token）；`read`/`ingest`/
+  `scheduler` 的 `environment` 不含它，收窄了密钥在容器内的暴露面。
 - 真实密钥只写在 `deploy/selfhost/.env`（被 `.gitignore` 的 `.env` 规则覆盖，不入库、不进镜像：
-  `.dockerignore` 也含 `.env`）；构建与 compose 里出现的 `CF_ACCOUNT_ID`/`CF_D1_DATABASE_ID`
-  是占位串，不是凭据。
+  `.dockerignore` 含 `**/.env`——裸 `.env` 只排除构建上下文根，不够）；构建与 compose 里出现的
+  `CF_ACCOUNT_ID`/`CF_D1_DATABASE_ID` 是占位串，不是凭据。
 
 ## 数据库行为（重要）
 
@@ -3302,7 +3311,7 @@ voter/reachable，且新节点能读到扩容前写入的数据。若要走 comp
   DML（如 029 的种子 `INSERT`）必须**不带** norw——带 norw 时各副本独立求值会**分叉**（实测两副本得到
   不同 randomblob），不带时 rqlite 把它改写成字面量再复制，各副本一致。详见 Task 5 的 `isDdlStatement`。
 - 排行榜 revision 用计数器（`leaderboard_revision_seq`）而非随机数，保证副本间收敛。
-- 读一律 `?level=weak`。rqlite 会把 weak 读转发给 leader，因此读一致性等价强一致；`none` 会读到陈旧数据，禁止使用。
+- 读的默认一致性是 `?level=weak`（业务读路径）。rqlite 会把 weak 读转发给 leader，因此读一致性等价强一致；`none` 会读到陈旧数据，禁止使用。KV 缓存 `get()` 与迁移账本走 `?level=strong`（read-after-write 契约 / 迁移幂等，见交付代码注释）。
 
 ## 验证
 

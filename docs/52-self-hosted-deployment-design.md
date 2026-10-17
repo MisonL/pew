@@ -88,7 +88,7 @@ libSQL 因维护主体缺失与数据正确性缺陷被否决。
 | **多节点确定性** | （实现更正 2026-10-15：`lib/auth-adapter.ts`、`app/api/admin/invites/route.ts` 最终未改动——相关表均有 `DEFAULT datetime('now')`，专项五的 INSERT 场景无实际缺口） |
 | **路由与 CLI** | `proxy.ts`、`cli/src/commands/login.ts`、`cli/src/config/manager.ts` | `/setup` 公开可达、`--host` 支持、凭据按 host 隔离 |
 
-**不改动的上游文件**（刻意规避）：`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`packages/worker/src/**`、`packages/worker-read/src/**`。规避方式见 §4.7。（实现更正 2026-10-14：为把 selfhost 适配层纳入编译期类型校验，两个 worker 包的 `tsconfig*.json`/`package.json` typecheck 脚本有 composite 声明构建改动——`src/` 业务代码与 SQL 仍零改动，见 `scripts/parallel-typecheck.sh`。另一处名单外改动：`.dockerignore` 增加 `**/.env` 与 `**/.rqlite-auth.json` 深度排除，防凭据进镜像层——安全修复，非规避对象。实现更正 2026-10-15：**`Dockerfile` 与 `cli.ts` 均已不在规避名单内**——`deploy/selfhost/Dockerfile` 已新增（见 §4.7 末段），根 `Dockerfile` 与 `packages/cli/src/cli.ts` 已按 Plan 2 交付项改动（`--host` / `PEW_HOST` 支持），与 §3.2 「路由与 CLI」行及 README「合并上游」小节的口径一致。）
+**不改动的上游文件**（刻意规避）：`bun.lock`、根 `package.json`、`biome.json`、`packages/worker/src/**`、`packages/worker-read/src/**`。规避方式见 §4.7。（实现更正 2026-10-14：为把 selfhost 适配层纳入编译期类型校验，两个 worker 包的 `tsconfig*.json`/`package.json` typecheck 脚本有 composite 声明构建改动——`src/` 业务代码与 SQL 仍零改动，见 `scripts/parallel-typecheck.sh`。另一处名单外改动：`.dockerignore` 增加 `**/.env` 与 `**/.rqlite-auth.json` 深度排除，防凭据进镜像层——安全修复，非规避对象。实现更正 2026-10-15：**`Dockerfile` 与 `cli.ts` 均已不在规避名单内**——`deploy/selfhost/Dockerfile` 已新增（见 §4.7 末段），根 `Dockerfile` 与 `packages/cli/src/cli.ts` 已按 Plan 2 交付项改动（`--host` / `PEW_HOST` 支持），与 §3.2 「路由与 CLI」行及 README「合并上游」小节的口径一致。）
 
 **差异全部收敛在适配层。** 新增代码只存在于新目录 `deploy/selfhost/`，且**不注册为 workspace package**（避免改 `bun.lock` 与 `Dockerfile`）。（实现更正 2026-10-15：例外清单补一条——根 `Dockerfile` 也已按交付实现改动（builder 阶段改为 build-time 非密钥占位 ENV），不再属于零改动上游文件。）
 
@@ -510,15 +510,20 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 - `packages/web/src/lib/credentials.ts`、`packages/web/src/app/api/auth/register/route.ts`、`packages/web/src/app/setup/`（注册向导）、`packages/web/src/app/api/admin/users/[...]/reset-password`（管理员发起重置，§4.4）
 - `deploy/selfhost/`：`d1-adapter`、`kv-adapter`、`node-runtime`、`d1-http`、`docker-compose.yml`、迁移执行器、`reset-password`（破窗脚本）
 
-**刻意不改的上游文件**：`packages/worker/src/**`、`packages/worker-read/src/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。（注意：`proxy.ts` 与 `lib/auth-adapter.ts` **不在**此列——两者已在改动清单内。worker 包的 `tsconfig*.json`/`package.json` 例外见 §3.2 实现更正。实现更正 2026-10-15：**`cli.ts` 已从本清单移出**——`packages/cli/src/cli.ts` 已按 Plan 2 交付项改动（`--host` / `PEW_HOST` 支持），根 `Dockerfile` 亦已改；正确口径见 README「合并上游」小节。）
+**刻意不改的上游文件**：`packages/worker/src/**`、`packages/worker-read/src/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`bun.lock`、根 `package.json`、`biome.json`、`lib/rate-limit.ts`。（注意：`proxy.ts` 与 `lib/auth-adapter.ts` **不在**此列——两者已在改动清单内。worker 包的 `tsconfig*.json`/`package.json` 例外见 §3.2 实现更正。实现更正 2026-10-15：**`cli.ts` 与根 `Dockerfile` 均已从本清单移出**——`packages/cli/src/cli.ts` 已按 Plan 2 交付项改动（`--host` / `PEW_HOST` 支持），根 `Dockerfile` 亦已改（builder 阶段 build-time 占位 ENV）；正确口径见 README「合并上游」小节。）
 
-**适配层的运行方式**：`deploy/selfhost/*` 用 **bun 直接运行 TS 源码**，但**不能复用仓库根的 `Dockerfile`**——实测其 `runner` 阶段是 `FROM node:22-slim`，只 COPY `.next/standalone`/`.next/static`/`public`，`awk '/AS runner/,0' Dockerfile | grep -c bun` = **0**、含 `deploy|packages/worker` 的行数 = **0**：最终镜像内**既无 bun 也无适配层源码**。而 compose 的 migrate/d1-http/read/ingest/scheduler 全部 `image: pew-selfhost:local` + `bun run deploy/selfhost/*.ts`，会全部启动失败。因此**必须新建 `deploy/selfhost/Dockerfile`**（从 `oven/bun:1.4.0` 出发，COPY 根 `package.json`/锁文件/`tsconfig.json`/`packages/`/`deploy/`/`scripts/migrations/`，并 build `@pew/core` 的 `dist`）。这也是唯一新增的「非上游目录」文件，不计入 12 处上游改动。
+**适配层的运行方式**：`deploy/selfhost/*` 用 **bun 直接运行 TS 源码**，但**不能复用仓库根的 `Dockerfile`**——实测其 `runner` 阶段是 `FROM node:22-slim`，只 COPY `.next/standalone`/`.next/static`/`public`，`awk '/AS runner/,0' Dockerfile | grep -c bun` = **0**、含 `deploy|packages/worker` 的行数 = **0**：最终镜像内**既无 bun 也无适配层源码**。而 compose 的 migrate/d1-http/read/ingest/scheduler 全部 `image: pew-selfhost:local` + `bun run deploy/selfhost/*.ts`，会全部启动失败。因此**必须新建 `deploy/selfhost/Dockerfile`**（从 `oven/bun:1.4.0` 出发，COPY 根 `package.json`/锁文件/`tsconfig.json`/`packages/`/`deploy/`/`scripts/migrations/`，并 build `@pew/core` 的 `dist`）。这也是**唯一新增的顶层目录**（`deploy/selfhost/`，含本目录全部文件——它整体不计入 12 处上游改动）里的专用镜像入口；仓内没有第二处新建目录。
 
 ## 5. 数据流
 
-**写入（CLI 上传）**：CLI → `web:/api/ingest` → `ingest 容器` → `d1-http` → rqlite（批量 upsert，事务原子）
+**写入（CLI 上传）**：CLI → `web:/api/ingest` → `ingest 容器` → rqlite（批量 upsert，事务原子）
 
-**读取（仪表盘）**：`web` → `read 容器` → `d1-http` → rqlite
+**读取（仪表盘）**：`web` → `read 容器` → rqlite
+
+> 实现更正 2026-10-17：本节初稿把这两跳写成经 `d1-http`——实际只有 **web 的写路径**经
+> d1-http（`D1_BASE_URL` 指向它）；`ingest`/`read`（以及 `scheduler`）都经 `RQLITE_URL`
+> **直连 rqlite**，compose 不给这三个服务注入 `CF_D1_API_TOKEN`（见 §4.1 专项三的实现
+> 更正，与本节原稿同源的过时表述）。
 
 **注册（首次引导）**：浏览器 → `web:/setup` 向导 → `web:/api/auth/register` → 事务内认领（`users` 为空 + 写 `instance_setup`）→ `INSERT users`（`is_admin=1` + `password_hash`）→ 自动登录
 
@@ -640,12 +645,12 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | `D1_BASE_URL` | 指向 `d1-http` 的地址（新增的写路径覆盖） |
 | `WORKER_READ_URL` / `WORKER_READ_SECRET` | 读路径（`read` 容器服务名 + 密钥） |
 | `WORKER_INGEST_URL` / `WORKER_SECRET` | 写路径（`ingest` 容器服务名 + 密钥） |
-| `ADMIN_EMAILS` | 管理员邮箱列表（`lib/admin.ts`）。Plan 1 无 `/setup`，这是唯一的管理员来源，**必须填真实地址** |
-| `PEW_HOST` | （CLI 侧）指向自建服务。Plan 1 的 CLI 改动未落地，暂不生效 |
+| `ADMIN_EMAILS` | 管理员邮箱列表（`lib/admin.ts`）。**可选**：库内 `is_admin` 与它取或——首个 `/setup` 用户即管理员（`lib/admin.ts:97-101,133-134`）；无 `/setup` 的旧部署才依赖它 |
+| `PEW_HOST` | （CLI 侧）指向自建服务。**已生效**（Plan 2 交付：`cli/src/commands/login.ts` 的 `--host` / `PEW_HOST` 支持） |
 | `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | 可选；不配置则隐藏 Google 登录按钮。**内网 http 下 Google OAuth 不可用**（回调须 https） |
 | `CF_R2_ENDPOINT` / `CF_R2_ACCESS_KEY_ID` / `CF_R2_SECRET_ACCESS_KEY` / `CF_R2_BUCKET` | 团队/组织 logo 上传；缺则 `lib/r2.ts` throw（logo API 500）。可用 MinIO |
 | `CF_ACCOUNT_ID` / `CF_D1_DATABASE_ID` | 自建下仅需非空占位（写路径已切 `D1_BASE_URL`）；构建用占位值 |
-| `CF_D1_API_TOKEN` | **真实密钥**（d1-http 的 Bearer 校验，见 §4.1 专项三）；**仅 `migrate`/`d1-http`/`web` 三个服务持有**——`read`/`ingest`/`scheduler` 直连 rqlite、不经 d1-http，不需要也不应拿到它；构建期用占位值 |
+| `CF_D1_API_TOKEN` | **真实密钥**（d1-http 的 Bearer 校验，见 §4.1 专项三）；**仅 `d1-http`/`web` 两个服务持有**——`read`/`ingest`/`scheduler` 直连 rqlite、不经 d1-http，不需要也不应拿到它；构建期用占位值。（实现更正 2026-10-17：原文写"`migrate`/`d1-http`/`web` 三个"——交付 compose 的 `migrate` 只注入 `RQLITE_*`，不持有该 token，与 §4.1 的实现更正一致。） |
 | `COMPOSE_PROFILES` | compose profile 默认值：`single`（单节点，默认）或 `cluster`（3 节点）。放 compose 目录 `.env`，使裸 `docker compose up -d` 起单节点 |
 | `DAILY_INTERVAL_MS` | scheduler 定价同步间隔（ms），默认 86400000（24h）；由 compose 透传给 `scheduler` 容器 |
 

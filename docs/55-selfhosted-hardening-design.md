@@ -156,9 +156,9 @@ exec rqlited "$@"
 
   cluster profile 三节点各自同样包装，且**全部**带 `-join-as`（评审实测：部分节点缺失时未加者 boot timeout 崩溃循环）。joiner 是专用用户（`[join]` 权限），应用凭据不参与集群互连。
 - **首次启用 = 固定序列**（v3 Blocker：部署者按旧 README「cp .env → up」操作时 auth.json 不存在 → up 前若文件缺失仍会以无鉴权静默启动，恰是 §2.3 最危险场景；且旧 README 的 Quickstart 必须改写）。README Quickstart 鉴权路径写死为三步：
-  1. `docker compose run --rm render-auth`（把渲染脚本做成一次性 compose 服务，或直接 `bash deploy/selfhost/render-rqlite-auth.sh`）——**必须先于 up 执行**
+  1. 渲染 auth.json（**必须先于 up 执行**）——原文写 `docker compose run --rm render-auth`，**交付 compose 没有 `render-auth` 服务**，实际执行方式是直接 `bash deploy/selfhost/render-rqlite-auth.sh`（README Quickstart 的固定序列）
   2. `docker compose --profile ... up -d`
-  3. **自检**：`curl -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" http://127.0.0.1:<rqlite>/status` 得 200 且其中 `http.auth` 显示已启用；**匿名** `curl .../status` 若返回 200 且 `auth == disabled` → 显式报「凭据已配置但服务端未启用鉴权」（与 migrate 的对账自检 §3.1.4 同一判据，双保险）
+  3. **自检**：在**容器内**查询 `/status`（rqlite 不发布宿主端口，原文的宿主 `curl http://127.0.0.1:<rqlite>/status` 必然连接失败）——按 README 的 `docker compose exec` 形态带凭据查 200 且 `http.auth` 显示已启用；**匿名**查若 200 且 `auth == disabled` → 显式报「凭据已配置但服务端未启用鉴权」（与 migrate 的对账自检 §3.1.4 同一判据，双保险）。实现更正 2026-10-17：步骤 1/3 以交付形态为准（无 `render-auth` 服务、无宿主端口）。
 
 #### 3.1.3 客户端改造（完整清单）
 
@@ -285,7 +285,7 @@ README 新增「反向代理」小节，推荐形态：**Caddy 以 compose 服�
    - ★ `NEXTAUTH_URL` 必须与反代对外访问 URL **逐字符一致**（协议+域名+端口；`TRUSTED_ORIGIN` 永远 pinned 到它，不一致则重定向/回调指向错误主机）；CLI 侧 `PEW_HOST` 同步
    - ★ 反代覆写 `X-Forwarded-For`（pew 取第一段），同时覆写 `X-Real-IP`、清空 `CF-Connecting-IP`（`getClientIp` 依次信任三者）
      > **实现更正 2026-10-15：** `packages/web/src/lib/rate-limit.ts` 的 `getClientIp` 交付时已改为取 XFF 的**最后一段**（自己代理追加的那一跳），客户端在 XFF 前段注入的伪造地址被无害化；X-Real-IP / CF-Connecting-IP 的信任顺序与「反代必须覆写 XFF」的结论不变。
-   - cookie 四格矩阵：https+`USE_SECURE_COOKIES=true` ✓；**https+false → 可登录但无 `__Secure-` 前缀（降级可用，不是「浏览器丢弃」）**；**http+true（或未显式 false）→ `__Secure-` cookie 被 http origin 拒收 → 登录坏**（镜像 `NODE_ENV=production` 恒真，这是默认行为）；http+false ✓。强调 compose/`.env.example` 默认 false，https 部署必须显式改 true
+   - cookie 四格矩阵：https+`USE_SECURE_COOKIES=true` ✓；**https+false → 可登录但无 `__Secure-` 前缀（降级可用，不是「浏览器丢弃」）**；**http+true → `__Secure-` cookie 被 http origin 拒收 → 登录坏**；http+false ✓。（实现更正 2026-10-17：交付的 `.env.example`/compose 默认为**空值**而非 false——空值由 `auth.ts:45-55` 推导，production 下结果为 true；故 **http 部署必须显式填 `false`**，https 部署留空即可，勿按本行旧的"默认 false"理解。）
    - `TRUSTED_ORIGIN` 由 `NEXTAUTH_URL` 推导，无需单独配置（proxy.ts 已实现）
 4. **`docker-compose.proxy.yml` 覆盖文件**：`ports: !override ["127.0.0.1:${WEB_PORT:-7020}:7020"]`——**普通追加合并下两条映射并存或端口冲突**（compose ports 唯一键含 ip，`!override` 需 Compose ≥ v2.24.4，评审 B1）；文档写明显式 `-f docker-compose.yml -f docker-compose.proxy.yml` 调用与 `docker compose config` 冒烟核对。
 
@@ -308,4 +308,4 @@ README 新增「反向代理」小节，推荐形态：**Caddy 以 compose 服�
 - 三项均**默认关闭**（A：不设凭据；B：不设 `LOGIN_RATE_LIMIT_BACKEND`；C：纯文档），已有部署升级无需任何动作。
 - 回滚 = revert 对应提交；迁移 033 是纯新增表，回滚无副作用（账本只增不删，表与旧行冻结无害——revert 后无人读写且有界）。
 - **注意**：`_migrations` 账本按文件名跳过——revert 后若以**同名文件**重做 033 且内容变更会被静默跳过，重做必须换文件名；`EXPECTED` 计数更新须与迁移同提交，避免部分回滚时计数错配。回滚后按 §3.1.5 清理 checklist 处理 `.env` 残留变量与磁盘明文 auth.json。
-- **三节点降级信号与升级判据**（运维演练 Low，写进 README 集群小节）：单节点 down → 集群**仍有多数派，可写**（3 节点 down 1 后 2/3 多数派存活，raft 正常选主）——事实更正：本节原稿「单节点 down → 集群只读（无多数派）」错误，单节点 down 不影响写可用性；真正的只读/不可用阈值是两节点 down（无多数派）→ 全不可用；只允许**同时**恢复，不要逐台改配置（auth.json 不一致会导致 recreate 后 join 失败）。read 副本 down 不影响写路径（weak 读自动重试其他节点），信号仅在日志。
+- **三节点降级信号与升级判据**（运维演练 Low，写进 README 集群小节）：单节点 down → 集群**仍有多数派，可写**（3 节点 down 1 后 2/3 多数派存活，raft 正常选主）——事实更正：本节原稿「单节点 down → 集群只读（无多数派）」错误，单节点 down 不影响写可用性；真正的只读/不可用阈值是两节点 down（无多数派）→ 全不可用（weak 读转发 leader，读同样失败，2026-10-17 更正原稿"只读"口径）；只允许**同时**恢复，不要逐台改配置（auth.json 不一致会导致 recreate 后 join 失败）。read 副本 down 不影响写路径（weak 读自动重试其他节点），信号在 `docker compose ps` 的 unhealthy 状态与 web `/api/live` 探针，不止日志。

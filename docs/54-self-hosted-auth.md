@@ -13,7 +13,7 @@
 
 ## Global Constraints
 
-- **不改动 Plan 1 的「刻意不改」清单**：`packages/worker/**`、`packages/worker-read/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`Dockerfile`、`bun.lock`、根 `package.json`、`biome.json`、`cli.ts`、`lib/rate-limit.ts`。
+- **不改动 Plan 1 的「刻意不改」清单**：`packages/worker/**`、`packages/worker-read/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`bun.lock`、根 `package.json`、`biome.json`、`lib/rate-limit.ts`。（实现更正 2026-10-17：原文还列 `Dockerfile` 与 `cli.ts`——两者已被 Plan 1/Plan 2 实际改动（根 Dockerfile、`cli.ts` 的 `--host` 支持），见 docs 52 §4 与 README「合并上游」。）
 - **本计划改动的上游文件（相对 Plan 1 新增 10 处；Plan 1 已改 `lib/d1.ts`、`vitest.config.ts`）**：`auth.ts`、`app/login/page.tsx`、`lib/auth-adapter.ts`、`lib/admin.ts`、`app/api/admin/check/route.ts`、`app/api/users/[slug]/route.ts`、`proxy.ts`、`app/api/admin/invites/route.ts`（及全量 grep 出的同类省略时间列 INSERT）、`cli/src/commands/login.ts`、`cli/src/config/manager.ts`。每处改动尽量小，逐条在任务里给出。
 - **scrypt 必须显式传 `maxmem`**：实测 `scryptSync(pw, salt, 64, { N: 32768, r: 8, p: 1 })` 在默认 `maxmem = 32 MiB` 下抛 `Invalid scrypt params`（OpenSSL 需求 `128*N*r + 128*r*p = 33,555,456` > `33,554,432`）。统一用 `maxmem: 64 * 1024 * 1024`。
 - **密码最终不入 `accounts` 表**：Credentials 用户不写入 `accounts`（那是 OAuth `linkAccount` 的产物）。任何依赖 `accounts` 判断「老用户」的逻辑（`lib/invite.ts` 的 `getUserByOAuthAccount`）对 credentials 恒为 null——这正是邀请闸门必须改写、且 `signIn` 必须对 credentials 直接放行的原因。
@@ -574,7 +574,7 @@ Expected: FAIL —— `bootstrapAdmin` 不存在
 
 - [ ] **Step 3: 实现**
 
-`lib/credentials.ts` 追加 `bootstrapAdmin`（事务批）；创建 `app/api/auth/register/route.ts`（判断库是否为空决定走 bootstrap 还是 invite 路径）；创建 `app/setup/page.tsx`（4 步向导，服务端检查 `users` 为空否则 302 `/login`）。
+`lib/credentials.ts` 追加 `bootstrapAdmin`（事务批）；创建 `app/api/auth/register/route.ts`（判断库是否为空决定走 bootstrap 还是 invite 路径）；创建 `app/setup/page.tsx`（4 步向导）。实现更正 2026-10-17：向导页是纯客户端组件（`"use client"`），**没有服务端 302 门**——库非空时访问 `/setup` 仍渲染向导，拒绝发生在 `POST /api/auth/register`（`registerWithInvite` 失败返回 400），与 docs 52 §4.4 的实现更正同源。
 
 关键 SQL（批内）：
 
@@ -725,7 +725,7 @@ cd deploy/selfhost && cp .env.example .env  # 替换密钥，AUTH_SECRET 等
 docker compose up -d --build
 # 1. /setup 可达（未登录 200，非 302）
 curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:7020/setup
-# 2. 完成向导后 /setup 302 到 /login
+# 2. 完成向导后用新凭据访问 /login；库非空时再次 POST /api/auth/register 返回 400（无 302 门，见 Task 3 实现更正）
 # 3. 用管理员登录，验证 __Secure- 在 USE_SECURE_COOKIES=false 下不出现
 # 4. 生成邀请码 -> 第二个用户注册 -> 登录
 ```
