@@ -20,6 +20,9 @@ coverage-tmp/
 # Rendered rqlite credentials (deploy/selfhost, Plan 3)
 deploy/selfhost/.rqlite-auth.json
 
+# Local wrangler/miniflare state (d1 emulation caches; never meaningful)
+.wrangler/
+
 # rqlite backup archives and staging dirs (backup.sh default output lands in
 # deploy/selfhost/; the archives contain every password_hash/api_key and must
 # never enter git history)
