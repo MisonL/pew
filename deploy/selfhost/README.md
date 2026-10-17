@@ -106,8 +106,9 @@ migrate 启动时的对账自检会显式报错（「credentials configured but 
 
 **限速**：登录限速默认**进程内**（`inMemoryRateLimiter`），多 `web` 副本时退化为按副本
 计。默认路径按**邮箱单键**限流（`login:<email>`，无 IP 维度）；只有
-`LOGIN_RATE_LIMIT_BACKEND=rqlite` 时才启用邮箱 + IP 双键——登录侧的 `X-Forwarded-For`
-信任也只在该后端下存在（上文"反代必须覆写 XFF"的硬约束针对的正是这条 rqlite 双键路径）。
+`LOGIN_RATE_LIMIT_BACKEND=rqlite` 时才启用邮箱 + IP 双键。**登录侧**的 `X-Forwarded-For`
+信任只在该后端下存在；但 auth-code 生成/校验、CLI 登录与 ingest 的 IP 限速桶**无条件**
+使用 `getClientIp`——上文"反代必须覆写 XFF"的硬约束对这些桶同样必要，不限于登录。
 
 **登录限速后端开关 `LOGIN_RATE_LIMIT_BACKEND`**（`.env`/compose，默认 `memory`）：
 设为 `rqlite` 时登录失败计数外置到 rqlite 的 `rate_limit_hits` 表（单条原子
@@ -447,16 +448,18 @@ chmod 600 "./backup-$(date +%F).db"   # 备份含全部 password_hash/api_key，
 # compose 文件与 .env 都在 deploy/selfhost/；compose 不会向下搜索，先 cd 过来。
 cd /path/to/pew/deploy/selfhost
 set -a; . ./.env; set +a   # 恢复命令带 -u，需先导出 .env 凭据
-# cluster profile 下没有 rqlite 服务：下文所有 rqlite 服务名（第 2 步 cp、第 3 步两条
-# exec、第 5 步清理）全部换成 rqlite-1，对 leader 执行即可（.restore 经 Raft 复制到其余
-# 节点）；backup.sh 是按 COMPOSE_PROFILES 自动选的，本 runbook 是人手执行，不会自动换。
+# cluster profile 下没有 rqlite 服务：下文所有 rqlite 服务名（第 2 步的 rm exec、cp、
+# chown exec，第 3 步的 restore exec，第 5 步的清理 exec，共 5 处）全部换成 rqlite-1，
+# 对 leader 执行即可（.restore 经 Raft 复制到其余节点）；backup.sh 是按 COMPOSE_PROFILES
+# 自动选的，本 runbook 是人手执行，不会自动换。
 # 1. 停应用（读写都停，避免恢复期间写入；d1-http 是写后端，必须一起停）
 docker compose stop web read ingest scheduler d1-http
 # 2. 把备份放进 rqlite 容器（rqlite 保持运行，.restore 不需要停它）。
-#    a) 容器内目标可能被上次尝试占用——compose cp 拒绝覆盖已存在的目标文件，先清掉；
-#    b) cp 按 tar 语义保留宿主归档的 0600 与宿主 uid，而容器内 rqlite 是 uid 1000：
-#       不 chown 直接 .restore 必然 permission denied（宿主 uid 恰为 1000 才侥幸可读，
-#       实测 rqlite:10.5.3 + compose cp 复现）。0600 归档对 uid 1000 连读都不允许。
+#    a) 先清掉容器内目标：cp 会覆盖文件内容，但 cp 失败时清理先行可确保不会沿用
+#       上次失败尝试留下的陈旧 restore.db；
+#    b) docker cp 把文件复制进容器时落地为 root:root（并保留源文件的 0600），容器内
+#       rqlite 以 uid 1000(rqlite) 运行，读不了 0600 的 root 文件——不 chown 直接
+#       .restore 必然 permission denied（实测 rqlite:10.5.3 + compose cp 复现）。
 docker compose exec -T rqlite rm -f /rqlite/file/restore.db
 docker compose cp /var/backups/pew/backup-2026-10-11.db rqlite:/rqlite/file/restore.db
 docker compose exec -T -u root rqlite chown rqlite:rqlite /rqlite/file/restore.db
