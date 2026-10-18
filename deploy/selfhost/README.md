@@ -92,18 +92,20 @@ migrate 启动时的对账自检会显式报错（「credentials configured but 
 
    ```bash
    cd /path/to/pew/deploy/selfhost   # compose 只读 ./.env，必须在 compose 文件所在目录执行
-   set -a; . ./.env; set +a   # 把 .env 凭据导出到当前 shell，供下方 $(...) 读取
+   set -a; . ./.env; set +a   # 把 .env 凭据导出到当前 shell，供下方 -e 按名转发
+   export RQLITE_RESET_PW='new-secret-123'   # export 后 -e 只写变量名：值不进 argv，也就不进宿主 ps 与 shell history
    docker compose exec -T \
      -e RQLITE_URL=http://rqlite:4001 \
-     -e RQLITE_USERNAME="$RQLITE_USERNAME" \
-     -e RQLITE_PASSWORD="$RQLITE_PASSWORD" \
-     -e RQLITE_RESET_PW='new-secret-123' \
+     -e RQLITE_USERNAME -e RQLITE_PASSWORD -e RQLITE_RESET_PW \
      d1-http \
      bun /app/deploy/selfhost/reset-password.ts --email admin@corp.local
    ```
 
    新密码经 `RQLITE_RESET_PW` 环境变量传入（也支持 `--password-stdin` 管道输入）；
-   **不要**用 `--password` 命令行参数——它会留在宿主 `ps`/shell history 里。
+   **不要**用 `--password` 命令行参数——它会留在宿主 `ps`/shell history 里。同理，
+   `-e VAR=值` 的**带值形式**会把值放进 `docker compose exec` 进程的 argv（宿主 `ps`
+   在 exec 期间全程可见），所以凭据一律先 export 再用**只写变量名**的 `-e VAR` 形式
+   （与 backup.sh 的凭据转发同款）。
 
    （脚本在 `pew-selfhost:local` 镜像内的路径是 `/app/deploy/selfhost/reset-password.ts`，
    `d1-http` 与 rqlite 同网络且 `RQLITE_URL` 默认就指 `http://rqlite:4001`。）
@@ -115,7 +117,7 @@ migrate 启动时的对账自检会显式报错（「credentials configured but 
 `LOGIN_RATE_LIMIT_BACKEND=rqlite` 时才启用邮箱 + IP 双键。**登录侧**的 `X-Forwarded-For`
 信任只在该后端下存在；auth-code 生成/校验与 CLI 登录的 IP 限速桶**无条件**使用
 `getClientIp`（ingest 的 300/min 桶按 userId 计，仅在 userId 为空时回退到 IP——正常
-路径不可达）——上文"反代必须覆写 XFF"的硬约束对这些桶同样必要，不限于登录。
+路径不可达）——下文反代小节的"反代必须覆写 XFF"硬约束对这些桶同样必要，不限于登录。
 
 **登录限速后端开关 `LOGIN_RATE_LIMIT_BACKEND`**（`.env`/compose，默认 `memory`）：
 设为 `rqlite` 时登录失败计数外置到 rqlite 的 `rate_limit_hits` 表（单条原子
@@ -167,6 +169,10 @@ rqlite 后端写异常时 **fail-open 放行并告警**（不误判为超限拒�
 > 自动带过去。**
 
 ```bash
+# 0) 先备份：第 4 步的恢复路径以这份归档为前提。第 1 步的 rm 不带 -v，卷会保留，
+#    但没有备份就得多绕一圈临时起回单节点。
+bash ./backup.sh /var/backups/pew/pre-cluster-$(date +%F).db
+
 # 1) 下线并删除旧的单节点容器（不带 -v，保留 rqlite-data 卷以便回退）
 docker compose --profile single stop rqlite
 docker compose --profile single rm -f rqlite
@@ -177,13 +183,19 @@ docker compose --profile single rm -f rqlite
 # 3) 起集群
 docker compose up -d --build
 
-# 4) 迁移数据（二选一）：从单节点时代备份恢复，或用 -join 把数据带进集群（见下）
+# 4) 迁移数据：按下方「恢复」runbook 把第 0 步的备份 .restore 进集群
+#    （compose 的 cluster profile 建的是空集群，数据不会自动带过去）
 ```
 
+> 不要在这里改用 `-join` 在线扩容：compose 的 cluster 节点固定带
+> `-bootstrap-expect 3` 与互相 `-join` 的参数，没有位置表达「join 进旧单节点」。
+> `-join` 是另一条**互斥路线**（见下方「单节点在线扩容」），需要手工 `docker run`
+> 或临时改 compose，与本节的三步切换不能混用。
+
 **从单节点迁到集群的数据路径**：compose 的 cluster profile 建的是**空集群**。要保留数据，
-在切换前用 `backup.sh` 备份，切到集群并让 migrate 跑通后，按「恢复」runbook 把归档
-`.restore` 进集群；或走下面的 `-join` 在线扩容路径（把新节点 join 进**已有数据**的单节点，
-而不是另起一套空集群）。
+必须先在切换前用 `backup.sh` 备份（见上方第 0 步），切到集群并让 migrate 跑通后，按「恢复」
+runbook 把归档 `.restore` 进集群。`-join` 在线扩容则是另一条互斥路径（把新节点 join 进
+**已有数据**的单节点，而不是另起一套空集群），见下方。
 
 三个 rqlite 节点通过 Raft 复制。**同机三容器只防进程故障，不防磁盘/主机故障**；跨机部署请把 compose 分发到三台机器并调整 `-join` 地址。
 
@@ -209,6 +221,11 @@ docker compose up -d --build
 voter/reachable，且新节点能读到扩容前写入的数据。这条路把新节点加进**已有数据**的单节点，
 数据随 Raft 复制过去；而直接切 compose 的 cluster profile 是另起一套空集群，两者不能
 混为一谈（切换前务必按上一节先下线旧单节点容器）。
+
+> 这条路**不走** compose 的 cluster profile：那三个服务写死了
+> `-bootstrap-expect 3` 与互相 `-join`，没有「join 进旧单节点」的位置。要在线扩容得手工
+> `docker run` 起节点（或用临时 compose 覆盖文件改 `-join`/`-bootstrap-expect`），
+> 本文不提供现成命令——请据上述参数自行构造，并在动手前备份单节点卷。
 
 ## 扩展（scale）
 
@@ -290,8 +307,10 @@ server {
 - ★ **反代必须覆写 `X-Forwarded-For`**（`getClientIp` 取**最后一段**——自己代理追加的那个；客户端可注入前面的段，覆写型配置是硬要求而非建议），同时覆写 `X-Real-IP`、清空
   `CF-Connecting-IP`（`getClientIp` 依次信任三者）。Caddy ≥ 2.5 默认满足；Nginx 按上面
   `$remote_addr` 覆写。
-- **漏配 XFF 的后果**：`X-Forwarded-For` 缺失时所有登录请求都落到 `login:ip:unknown`
-  **共享限速桶**，攻击者打满该桶即造成**全员登录 DoS**（fail-closed 方向）——这是上面
+- **漏配 XFF 的后果**（`LOGIN_RATE_LIMIT_BACKEND=rqlite` 时）：`X-Forwarded-For` 缺失时所有
+  登录请求都落到 `login:ip:unknown` **共享限速桶**，攻击者打满该桶即造成**全员登录 DoS**
+  （fail-closed 方向）。默认的 `memory` 后端登录只按邮箱单键（`login:<email>`，无 IP 桶），
+  但 auth-code 生成/校验与 CLI 登录的 IP 桶**无条件**存在，同样依赖这一覆写——这是上面
   XFF 覆写为硬约束的直接原因。
 
 ### Cookie 与 USE_SECURE_COOKIES
@@ -332,7 +351,7 @@ server {
   这个 token，因此 compose **只把它下发给 `d1-http`、`web`**（`d1-http` 是校验方、`web` 是
   客户端；migrate 只做 DDL，凭据走 `RQLITE_USERNAME`/`RQLITE_PASSWORD`）；`read`/`ingest`/
   `scheduler`/`migrate` 的 `environment` 不含它，收窄了密钥在容器内的暴露面。
-- **web 启动时校验 `AUTH_SECRET`**：缺失或仍是 `.env.example` 的 `replace-me` 占位符会在首次
+- **web 在首次使用认证时校验 `AUTH_SECRET`**（NextAuth 惰性初始化，非进程启动期）：缺失或仍是 `.env.example` 的 `replace-me` 占位符会在首次
   使用认证时抛错拒绝签发会话——用仓库公开的密钥签 JWT 等于允许任何访问者伪造会话。
 - **rqlite 的 SQL 错误文本会透传到 web 客户端**（如 `no such table: ...`），可能泄漏表名/列名。
   这是已接受的信息泄漏面：d1-http 只在 compose 网络内可达、调用方只有 web 自身的参数化查询，
@@ -646,12 +665,15 @@ rqlite 容器反复 unhealthy 时优先怀疑 auth.json **损坏**（`*` 条目�
 
 ```bash
 docker compose stop rqlite
-docker volume ls --format '{{.Name}}' | grep rqlite-data   # 确认实际卷名
-# rqlite 读的是数据目录下的 raft/peers.json（DATA_DIR 默认 /rqlite/file/data，
+docker volume ls --format '{{.Name}}' | grep rqlite-data   # 确认承载数据的卷名（供备份/核对）
+# rqlite 读的是**数据目录**下的 raft/peers.json（DATA_DIR 默认 /rqlite/file/data，
 # 见 rqlite 源码 store.go 的 peersPath 与官方 entrypoint 的 DATA_DIR 默认值），
-# 不是 /rqlite/file/raft/。--rm 的 run 容器需自行挂载同一卷到数据目录。
-docker compose run --rm --entrypoint sh -v <卷名>:/rqlite/file/data rqlite \
-  -c 'printf "[{\"id\":\"rqlite\",\"address\":\"rqlite:4002\",\"non_voter\":false}]\n" > /rqlite/file/data/raft/peers.json'
+# 不是 /rqlite/file/raft/。compose 把卷挂在 /rqlite/file，因此落点是
+# <卷>/data/raft/peers.json。`run` 已继承服务的卷挂载：**不要**再加
+# `-v <卷名>:/rqlite/file/data`——那会把卷根当成数据目录，peers.json 落到
+# <卷>/raft/peers.json，rqlite 永远读不到，节点照旧卡在选举循环。
+docker compose run --rm --entrypoint sh rqlite \
+  -c 'mkdir -p /rqlite/file/data/raft && printf "[{\"id\":\"rqlite\",\"address\":\"rqlite:4002\",\"non_voter\":false}]\n" > /rqlite/file/data/raft/peers.json'
 docker compose up -d rqlite
 # Expected: 日志出现 "attempting node recovery using ..."，随后 healthy
 ```
@@ -726,8 +748,11 @@ login-options`、`api/admin/users/[userId]/reset-password` 等）不与上游冲
 XFF 最后一段、IPv6 前缀归并）、`lib/invite.ts` 与 `lib/auth-helpers.ts`（E2E 门改为调用
 新增的共享 `lib/e2e-mode.ts`，三处手写副本收敛为单一 `isE2EMode`）。
 
-`packages/worker` 与 `packages/worker-read` 的 **`src/` 业务代码与 SQL 零改动**（仅
-`WORKER_VERSION` 常量随版本 bump）；为把
+`packages/worker-read` 的 **`src/` 业务代码与 SQL 零改动**（仅 `WORKER_VERSION` 常量随版本
+bump）。`packages/worker` 另有 `secureCompare` 一处改动：长度不等时不再提前 return，而是把
+两边零填充到等长再比较（行为等价，纯时序侧信道加固——`worker-read` 与 selfhost 的 d1-http
+早就是这种形状）。该改动没有任何黑盒测试能区分，合并冲突时**不能**按「worker 零改动」的
+直觉取上游版本，否则会静默丢掉填充。为把
 selfhost 适配层纳入编译期类型校验，两个包的 `tsconfig.json`/`package.json` 与新增的
 `tsconfig.build.json` 有 composite 声明构建配置（不影响 Cloudflare 部署路径，见
 `scripts/parallel-typecheck.sh` 的 selfhost lane）。
@@ -745,6 +770,7 @@ curl -s http://127.0.0.1:7020/api/live
 若上游改动触及 `lib/d1.ts` 的构造函数，重新确认 `D1_BASE_URL` 的优先级仍在 `localD1BaseUrl`
 之前；若上游改到 `vitest.config.ts` 的 `include`，确认 `deploy/**/*.test.ts` 仍被收集；
 若上游改到 `auth.ts` 的 `signIn` 回调或 `admin.ts` 的 `isAdmin`/`resolveAdmin`，重新确认
-Credentials 放行分支与库内管理员判定仍在。新增上游迁移后，重跑 `verify-migrations.ts` 并
-更新其 `EXPECTED` 计数。
+Credentials 放行分支与库内管理员判定仍在；若上游改到 `packages/worker/src/index.ts` 的
+`secureCompare`，重新确认零填充定长比较仍在（测试无法覆盖，见该函数注释）。新增上游迁移后，
+重跑 `verify-migrations.ts` 并更新其 `EXPECTED` 计数。
 
