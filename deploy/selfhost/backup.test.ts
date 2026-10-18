@@ -38,6 +38,10 @@ function run(opts: {
   /** Simulate ENOSPC: the REPL writes a truncated archive that passes size and
    * magic gates, prints ERR! (stdout) and no success line, exits 0. */
   replTruncated?: boolean;
+  /** Simulate `docker compose exec` itself failing (daemon down, service not
+   * running): the command substitution is empty and its status is non-zero, so
+   * `set -e` aborts and the script must say which step failed. */
+  replCommandFails?: boolean;
   /** Fail the pre-.backup rm (e.g. daemon error); set -e must abort the run. */
   rmFails?: boolean;
   /** Have cp land an empty host file despite a non-empty container file (defense-in-depth path). */
@@ -117,6 +121,13 @@ case " $* " in
     echo "test -s: /rqlite/file/backup.db: No such file" >&2
     exit 1;;
   *" exec "*)
+    if [ "${opts.replCommandFails ? "1" : "0"}" = "1" ]; then
+      # docker itself failed before the REPL could run (daemon down, service
+      # not running): no transcript, non-zero status, no archive. Only the
+      # REPL invocations reach this branch — rm and test match earlier cases.
+      echo "Error response from daemon: exec failed" >&2
+      exit 1
+    fi
     # Capture the REPL transcript the script pipes in, and the environment the
     # container would receive: -e NAME forwards NAME's value from the caller.
     cat > ${JSON.stringify(transcript)}
@@ -432,6 +443,20 @@ describe("backup.sh", () => {
     // The intact earlier archive is untouched and no staging dir survives.
     expect(readFileSync(existing, "utf8")).toBe("SQLite format 3\0previous-intact");
     expect(readdirSync(dir).filter((n) => n.startsWith(".pew-backup."))).toEqual([]);
+  });
+
+  it("names the failing step when docker cannot even run the .backup command", async () => {
+    // daemon down / service not running: `docker compose exec` exits non-zero
+    // with no REPL transcript. `set -e` aborts the command substitution; the
+    // `|| { ...; }` guard must add a script-owned line so the cron/systemd log
+    // says which step died, without swallowing docker's own message or the
+    // non-zero status. No archive may be written and no staging residue kept.
+    const r = await run({ replCommandFails: true });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("the .backup command could not run");
+    expect(r.stderr).toContain("Error response from daemon");
+    expect(existsSync(r.out)).toBe(false);
+    expect(readdirSync(r.dir).filter((n) => n.startsWith(".pew-backup."))).toEqual([]);
   });
 
   it("rejects an output path with . or .. components", async () => {

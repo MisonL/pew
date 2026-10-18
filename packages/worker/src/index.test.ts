@@ -134,6 +134,35 @@ describe("Worker ingest endpoint", () => {
 
       expect(res.status).toBe(200);
     });
+
+    it.each([
+      ["a shorter prefix of the secret", SECRET.slice(0, SECRET.length - 2)],
+      ["the secret with a trailing char", `${SECRET}x`],
+      ["a different-length wrong value", "x"],
+    ])("rejects %s with 401 (a wrong length is never a pass)", async (_label, secret) => {
+      // secureCompare pads both inputs to the longer length, so a wrong
+      // length must not short-circuit into anything but a rejection.
+      const req = makeRequest({ userId: "u1", records: [VALID_RECORD] }, { secret });
+
+      const res = await worker.fetch(req, env);
+
+      expect(res.status).toBe(401);
+      expect(env.DB.batch).not.toHaveBeenCalled();
+    });
+
+    it("rejects the raw secret without the Bearer prefix", async () => {
+      // makeRequest always adds "Bearer ", so build the header by hand: the
+      // comparison is against the full "Bearer <secret>" string.
+      const req = new Request("https://pew-ingest.workers.dev/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: SECRET },
+        body: JSON.stringify({ userId: "u1", records: [VALID_RECORD] }),
+      });
+
+      const res = await worker.fetch(req, env);
+
+      expect(res.status).toBe(401);
+    });
   });
 
   // -----------------------------------------------------------------------

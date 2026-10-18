@@ -173,6 +173,13 @@ function validateRequest<T>(
  * comparison time does not reveal the secret's length. worker-read and the
  * selfhost d1-http use the same padded shape; the earlier early-return on a
  * length mismatch leaked one bit of length information.
+ *
+ * NOTE (honest scope): this is a timing-side-channel change, not a behaviour
+ * change. Padded and non-padded implementations both return false for unequal
+ * lengths, so no black-box test can distinguish them — reverting this function
+ * to its old early-return form leaves every test green. Do not read the
+ * passing suite as evidence that the padding is still here; the guard is the
+ * comment and review, not coverage. (Verified by mutation.)
  */
 async function secureCompare(a: string, b: string): Promise<boolean> {
   const encoder = new TextEncoder();

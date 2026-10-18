@@ -123,13 +123,19 @@ trap 'exit 129' HUP
 # from a previous attempt and report success.
 docker compose exec -T "$SERVICE" rm -f /rqlite/file/backup.db
 
+# `set -e` turns a failing `docker compose exec` (daemon error, service not
+# running) into an immediate exit here — fail-closed, but the only output would
+# be docker's own message. Give the cron/systemd log a line that says which
+# step failed, without swallowing the exit status.
 if [ -n "${RQLITE_USERNAME:-}" ] && [ -n "${RQLITE_PASSWORD:-}" ]; then
   REPL_OUT=$(printf '.backup /rqlite/file/backup.db\n.exit\n' | \
     docker compose exec -T -e RQLITE_USERNAME -e RQLITE_PASSWORD "$SERVICE" \
-      sh -c 'exec rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost')
+      sh -c 'exec rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost') \
+    || { echo "backup.sh: the .backup command could not run (see docker error above)" >&2; exit 1; }
 else
   REPL_OUT=$(printf '.backup /rqlite/file/backup.db\n.exit\n' | \
-    docker compose exec -T "$SERVICE" rqlite -H localhost)
+    docker compose exec -T "$SERVICE" rqlite -H localhost) \
+    || { echo "backup.sh: the .backup command could not run (see docker error above)" >&2; exit 1; }
 fi
 # The REPL writes its diagnostics to STDOUT (verified: `ERR! open ...` and
 # `ERR! write ... no space left on device` both go to stdout, stderr stays
