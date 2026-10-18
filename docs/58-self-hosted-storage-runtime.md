@@ -2058,6 +2058,8 @@ git commit -m "feat: replace leaderboard triggers with deterministic counter"
 
 **实测基线（rqlite 10.5.3，2026-10-11，全部迁移应用后）**：上游表 22 张，本方案新增 3 张（`_migrations`、`kv_cache`、`leaderboard_revision_seq`）；索引 65 个（**含** SQLite 为 PRIMARY KEY / UNIQUE 自动创建的 39 个 `sqlite_autoindex_*`）；触发器 12 个；视图 2 个（`usage_bases`、`usage_totals`）。
 
+> **实现更正 2026-10-17**：以上是 Plan 1 时点的基线。Plan 2 的迁移 032 与 Plan 3 的 033 之后，交付值为**本方案新增 6 张表**（另加 `instance_setup`、`password_resets`、`rate_limit_hits`）与**索引 69 个**（032 新增 `idx_password_resets_user` 与其 TEXT PRIMARY KEY 的自动索引，033 新增两个显式索引），权威值见 `deploy/selfhost/verify-migrations.ts` 的 `EXPECTED`。
+
 spec §6 原写的「23 表 / 62 索引」是估计值，**实测不成立**，已按实测更正：显式索引只有 26 个，因为 `023-retire-features`、`024-retire-badges`、`025-retire-budgets` 三个迁移把 `projects`、`project_tags`、`showcases`、`badges`、`budgets` 五张表 DROP 了，其索引随之消失。
 
 - [ ] **Step 1: 实现 DDL 执行器**

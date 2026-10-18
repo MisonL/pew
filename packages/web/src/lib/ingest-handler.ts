@@ -22,6 +22,27 @@ import {
 } from "@/lib/rate-limit";
 
 // ---------------------------------------------------------------------------
+// Worker URL resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the Worker URL for an ingest route from WORKER_INGEST_URL.
+ *
+ * The variable is configured in two shapes: with the `/ingest` route suffix
+ * (Cloudflare workers.dev deployments, and the E2E runner, which injects
+ * `${base}/ingest`) and without it (the selfhost compose default
+ * `http://ingest:8786`). A trailing slash must also be tolerated. All four
+ * ingest routes derive from this one normalization: the token route used to
+ * take the raw value, so the selfhost default fetched the Worker root and
+ * 404'd every token upload — masked in tests only because the E2E runner
+ * injects the suffixed form.
+ */
+export function resolveIngestUrl(kind: "tokens" | "sessions" | "evidence" | "details"): string {
+  const base = (process.env.WORKER_INGEST_URL ?? "").replace(/\/+$/, "").replace(/\/ingest(?:\/tokens)?$/, "");
+  return kind === "tokens" ? `${base}/ingest` : `${base}/ingest/${kind}`;
+}
+
+// ---------------------------------------------------------------------------
 // Factory config
 // ---------------------------------------------------------------------------
 
@@ -34,8 +55,8 @@ export interface IngestHandlerConfig<T> {
 
   /**
    * Resolve the Worker URL at call time (reads env lazily).
-   * Token route: () => process.env.WORKER_INGEST_URL
-   * Session route: () => `${process.env.WORKER_INGEST_URL}/sessions`
+   * Routes use resolveIngestUrl() above so all four agree on the
+   * WORKER_INGEST_URL shapes (with/without `/ingest`, trailing slash).
    */
   getWorkerUrl: () => string;
 

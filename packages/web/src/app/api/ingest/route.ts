@@ -8,10 +8,10 @@
  */
 
 import { validateIngestRecord } from "@pew/core";
-import { createIngestHandler } from "@/lib/ingest-handler";
+import { createIngestHandler, resolveIngestUrl } from "@/lib/ingest-handler";
 
 export const POST = createIngestHandler({
   validateRecord: validateIngestRecord,
-  getWorkerUrl: () => process.env.WORKER_INGEST_URL ?? "",
+  getWorkerUrl: () => resolveIngestUrl("tokens"),
   entityName: "records",
 });

@@ -490,6 +490,8 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 **修改的上游文件（12 处，改动尽量小）**
 
+> **实现更正 2026-10-17（改动面口径）：** 上表是计划时点的清单，交付时又增加了 Plan 3 的接触面：`packages/web/src/lib/rate-limit.ts`（`RqliteRateLimiter`、`getClientIp` 取 XFF 最后一段、IPv6 前缀归并）与 `packages/web/src/lib/invite.ts` + `lib/auth-helpers.ts` + 新增 `lib/e2e-mode.ts`（三处手写 E2E 门收敛为单一 `isE2EMode`）。因此「12 处」只应理解为**计划时点的估算**，实际合并上游的权威清单是 README「合并上游」小节（Plan 1 / Plan 2 / Plan 3 三批）。下文与 §7 中出现的「12 个上游文件」均按此口径阅读。
+
 | # | 文件 | 改动 |
 |---|---|---|
 | 1 | `packages/web/src/lib/d1.ts` | 新增生产可用的 D1 base URL 覆盖（约 3 行，见 §4.1 专项四） |
@@ -510,7 +512,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 - `packages/web/src/lib/credentials.ts`、`packages/web/src/app/api/auth/register/route.ts`、`packages/web/src/app/setup/`（注册向导）、`packages/web/src/app/api/admin/users/[...]/reset-password`（管理员发起重置，§4.4）
 - `deploy/selfhost/`：`d1-adapter`、`kv-adapter`、`node-runtime`、`d1-http`、`docker-compose.yml`、迁移执行器、`reset-password`（破窗脚本）
 
-**刻意不改的上游文件**：`packages/worker/src/**`、`packages/worker-read/src/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`bun.lock`、根 `package.json`、`biome.json`、`lib/rate-limit.ts`。（注意：`proxy.ts` 与 `lib/auth-adapter.ts` **不在**此列——两者已在改动清单内。worker 包的 `tsconfig*.json`/`package.json` 例外见 §3.2 实现更正。实现更正 2026-10-15：**`cli.ts` 与根 `Dockerfile` 均已从本清单移出**——`packages/cli/src/cli.ts` 已按 Plan 2 交付项改动（`--host` / `PEW_HOST` 支持），根 `Dockerfile` 亦已改（builder 阶段 build-time 占位 ENV）；正确口径见 README「合并上游」小节。）
+**刻意不改的上游文件**：`packages/worker/src/**`、`packages/worker-read/src/**`、`lib/db.ts`、`lib/db-worker.ts`、`lib/db-rest.ts`、`lib/r2.ts`、`next.config.ts`、`bun.lock`、根 `package.json`、`biome.json`。（注意：`proxy.ts` 与 `lib/auth-adapter.ts` **不在**此列——前者已在改动清单内、后者最终未改动；`lib/invite.ts` 与 `lib/rate-limit.ts` **已从本清单移出**——实现更正 2026-10-17：`invite.ts` 的 E2E 门改为调用共享 `lib/e2e-mode.ts`，`rate-limit.ts` 承载 Plan 3 的 `RqliteRateLimiter` 与 XFF 最后一段逻辑，两者均已改动；worker 包的 `tsconfig*.json`/`package.json` 例外见 §3.2 实现更正。实现更正 2026-10-15：**`cli.ts` 与根 `Dockerfile` 均已从本清单移出**——`packages/cli/src/cli.ts` 已按 Plan 2 交付项改动（`--host` / `PEW_HOST` 支持），根 `Dockerfile` 亦已改（builder 阶段 build-time 占位 ENV）；正确口径见 README「合并上游」小节。）
 
 **适配层的运行方式**：`deploy/selfhost/*` 用 **bun 直接运行 TS 源码**，但**不能复用仓库根的 `Dockerfile`**——实测其 `runner` 阶段是 `FROM node:22-slim`，只 COPY `.next/standalone`/`.next/static`/`public`，`awk '/AS runner/,0' Dockerfile | grep -c bun` = **0**、含 `deploy|packages/worker` 的行数 = **0**：最终镜像内**既无 bun 也无适配层源码**。而 compose 的 migrate/d1-http/read/ingest/scheduler 全部 `image: pew-selfhost:local` + `bun run deploy/selfhost/*.ts`，会全部启动失败。因此**必须新建 `deploy/selfhost/Dockerfile`**（从 `oven/bun:1.4.0` 出发，COPY 根 `package.json`/锁文件/`tsconfig.json`/`packages/`/`deploy/`/`scripts/migrations/`，并 build `@pew/core` 的 `dist`）。这也是**唯一新增的顶层目录 `deploy`**（其下 `selfhost/` 含本目录全部文件——整体不计入 12 处上游改动）里的专用镜像入口；仓内没有第二处新建顶层目录。
 
@@ -540,14 +542,14 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | 层级 | 内容 |
 |---|---|
 | 适配层单元测试 | D1 形状映射（`rows_affected` 缺失兜底、错误在 HTTP 200 内、`duration` 换算、空批返回 `[]`）；KV `get(key,"text")`、`put` 带 TTL、`list` 分页 |
-| 迁移兼容测试 | 全部 32 个迁移（磁盘 `scripts/migrations/` 实测 **35 个 .sql**：33 个上游文件 + 本方案新增的 030/031；其中 3 个上游文件被 squash 跳过，故**应用 32 个**）apply 到 rqlite。**实测基线（rqlite 10.5.3，2026-10-11）**：上游表 22 张 + 本方案 3 张（`_migrations`、`kv_cache`、`leaderboard_revision_seq`）；索引 65 个（含 SQLite 自动创建的 39 个 `sqlite_autoindex_*`；显式索引仅 26 个，因 023/024/025 三个迁移 DROP 了 projects/showcases/badges/budgets 等表并带走其索引）；触发器 12 个；视图 2 个。断言 12 触发器已替换为确定性版本，且 `kv_cache` 存在（缺表只在运行时暴露，单元测试用内存假库测不出）。原写「23 表 / 62 索引」为估计值，实测不成立，已更正 |
+| 迁移兼容测试 | 全部迁移（磁盘 `scripts/migrations/` 实测 **37 个 .sql**：33 个上游文件 + 本方案新增的 030–033；其中 3 个上游文件被 squash 跳过，故**应用 34 个**）apply 到 rqlite。**基线以 `deploy/selfhost/verify-migrations.ts` 的 `EXPECTED` 为准**（实现更正 2026-10-17：本节原写的「35 个 .sql / 应用 32 个 / 本方案 3 表 / 索引 65」是 2026-10-11 的快照，Plan 2 的 032 与 Plan 3 的 033 之后已变为 **上游表 22 张 + 本方案 6 张**（`_migrations`、`kv_cache`、`leaderboard_revision_seq`、`instance_setup`、`password_resets`、`rate_limit_hits`）、**索引 69 个**、触发器 12 个、视图 2 个）。索引中 40 个是 SQLite 自动创建的 `sqlite_autoindex_*`（含 password_resets 的 TEXT PRIMARY KEY），显式索引 29 个——023/024/025 三个迁移 DROP 了 projects/showcases/badges/budgets 等表并带走其索引，032 新增 `idx_password_resets_user`，033 新增两个 rate-limit 索引。断言 12 触发器已替换为确定性版本，且 `kv_cache` 存在（缺表只在运行时暴露，单元测试用内存假库测不出）。原写「23 表 / 62 索引」为估计值，实测不成立，已更正 |
 | 多节点确定性测试 | **三节点集群 + `docker pause` follower 制造重放**，用 `level=none` 直读各副本本地状态断言收敛：触发器 revision 三副本一致、应用层写入的 `created_at` 一致（这是配置①②与配置③的判别实验，见 §4.1 专项二） |
 | 迁移确定性测试 | 断言 DDL 执行后 `sqlite_master` 中 `datetime('now')` / `randomblob()` **未被冻结**（用 `?norwtime&norwrandom`）。**注意 `norw*` 只能用于 DDL**：迁移文件里的 DML（如 029 的种子 `INSERT ... randomblob(16)`、008b 的 `UPDATE ... datetime('now')`）必须走不带 norw 的默认改写路径，否则各副本独立求值会**分叉**（实测两副本得到不同 randomblob）。执行器按 `isDdlStatement` 分流 |
 | 原子性测试 | batch 中夹坏语句，断言零残留 |
 | 端到端 | compose 起全栈，跑通「注册 → 登录 → CLI 登录 → 同步 → 仪表盘可见」 |
 | 上游同步回归 | 合并上游 main 后，上述测试全部通过 |
 
-**迁移执行方式变更**：从 `wrangler d1 execute --file` 改为「读文件 → 按语句切分（正确处理 `CREATE TRIGGER ... BEGIN ... END`，含内联写法 `BEGIN ...; END;`）→ **按语句类别分流**：DDL 批带 `?transaction=true&norwtime&norwrandom`（原子且保持文本原样，见 §4.1 专项二），DML 走默认改写（不带 norw，避免副本分叉）」。切分器的正确性已用两法核验：单元测试 + 把全部 30 个上游迁移文件切成 133 条语句并在真实 SQLite 中逐条执行（0 错误，产出 22 表 / 12 触发器）。**断点恢复**：文件级无法用单次请求做到 DDL+DML 原子（二者 norw 语义互斥），故 `applyMigrations` 在账本记账前逐条执行；若某 DDL 批失败，改为逐条重试并**跳过「已存在 / 重复列」这类幂等错误**（保护 029 等含裸 `CREATE TABLE`/`CREATE TRIGGER` 的上游文件），真正的错误（缺表、语法、约束）仍中止。
+**迁移执行方式变更**：从 `wrangler d1 execute --file` 改为「读文件 → 按语句切分（正确处理 `CREATE TRIGGER ... BEGIN ... END`，含内联写法 `BEGIN ...; END;`）→ **按语句类别分流**：DDL 批带 `?transaction=true&norwtime&norwrandom`（原子且保持文本原样，见 §4.1 专项二），DML 走默认改写（不带 norw，避免副本分叉）」。切分器的正确性已用两法核验：单元测试 + 把当时全部 30 个上游迁移文件切成 133 条语句并在真实 SQLite 中逐条执行（0 错误，产出 22 表 / 12 触发器；上游文件现已 33 个，该方法未变）。**断点恢复**：文件级无法用单次请求做到 DDL+DML 原子（二者 norw 语义互斥），故 `applyMigrations` 在账本记账前逐条执行；若某 DDL 批失败，改为逐条重试并**跳过「已存在 / 重复列」这类幂等错误**（保护 029 等含裸 `CREATE TABLE`/`CREATE TRIGGER` 的上游文件），真正的错误（缺表、语法、约束）仍中止。
 
 **迁移账本（复核新发现：上游无账本、无 down 迁移）**：上游没有迁移记录表，靠 `wrangler d1 migrations` 的本地状态文件跟踪。自建执行器必须自建 `_migrations(id TEXT PRIMARY KEY, applied_at TEXT)`，按文件名排序、跳过已应用项，保证**可重复执行**。注意多数迁移用 `CREATE TABLE IF NOT EXISTS` 幂等，但 `ALTER TABLE ADD COLUMN`（如本方案新增的 `password_hash`）**不幂等**，重复执行会报 `duplicate column`——账本正是为它而设。
 
@@ -563,7 +565,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | **RBAC 粗粒度** | 仅按端点的权限位 | 多租户隔离在应用层做 |
 | **bus factor = 1** | 单人维护，无商业支持 | 接受；MIT 许可下可自行 fork |
 | **写不水平扩展** | Raft 单 leader 串行 | 批量路径实测数万行/秒，量级足够 |
-| **Web 需小幅改动** | 认证与 cookie 开关需改上游文件 | 改动面收敛为 §4.7 的 12 个上游文件（另加 1 个新增 `deploy/selfhost/Dockerfile`），便于后续合并 |
+| **Web 需小幅改动** | 认证与 cookie 开关需改上游文件 | 改动面以 README「合并上游」的 Plan 1/2/3 清单为准（计划时点估算为 §4.7 的 12 处，见该节实现更正），另加 1 个新增 `deploy/selfhost/Dockerfile`，便于后续合并 |
 | **多节点分叉**（§4.1 专项二） | 解冻后触发器体/DEFAULT 在各副本各自求值 | **已解决**：确定性触发器（seq）+ 应用层写时间列，实测三副本收敛。残余风险见下条 |
 | **限速不跨实例**（§4.4） | `inMemoryRateLimiter` 是进程内状态 | 多 web 副本时限速弱化；需外部化（如 rqlite 表驱动）或保持单 web 实例 |
 | **`X-Forwarded-For` 可伪造**（§4.4） | 信任代理头取 IP | 反向代理必须清洗/覆写该头，写入部署文档 |
@@ -572,7 +574,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 ### 待决项
 
-1. **上游合并策略**：本分支改动集中在 `deploy/selfhost/` + 12 处上游文件小改动——需定期 rebase 验证；§4.7 的「不改文件」清单随上游更新需复核。
+1. **上游合并策略**：本分支改动集中在 `deploy/selfhost/` + 上游文件小改动（清单见 README「合并上游」的 Plan 1/2/3）——需定期 rebase 验证；§4.7 的「不改文件」清单随上游更新需复核。
 2. **构建期变量是否被内联进构建产物**（§4.4）：Dockerfile 注释称 page data collection 需要 `CF_*`/`AUTH_SECRET`——哪些被 Next 内联需实测；确认前一律用占位值构建。
 3. **单→3 在线扩容**（§4.6）：**已实测支持，关闭**。向已运行的单节点 `-join` 是 rqlite 支持的路径：`-bootstrap-expect 1` 单节点写入数据后，起两个新节点 `-join s1:4002`（**不带** `-bootstrap-expect`）→ 集群 3 节点全部 voter/reachable，新节点上能查到单节点时期写入的行。故扩容路径为「cluster profile + `-join`」，无需「备份 → 恢复」。
 4. **手工 SQL 规约**（§4.1 专项五）：解冻后若有人手工 INSERT 省略时间列（多节点下有分叉风险），需写进开发规约——属实现阶段产物。
@@ -644,7 +646,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | `USE_SECURE_COOKIES` | 内网 http 部署设 `false`。**注意**：读取该值 `==="false"` 的分支属 Plan 2，Plan 1 下此变量暂不生效（实现更正 2026-10-17：Plan 2 已交付，`auth.ts:45-55` 已实现显式 false 分支；`.env.example`/compose 默认**空值**，由 auth.ts 推导——production 下即 true，**http 部署必须显式填 `false`**） |
 | `D1_BASE_URL` | 指向 `d1-http` 的地址（新增的写路径覆盖） |
 | `WORKER_READ_URL` / `WORKER_READ_SECRET` | 读路径（`read` 容器服务名 + 密钥） |
-| `WORKER_INGEST_URL` / `WORKER_SECRET` | 写路径（`ingest` 容器服务名 + 密钥） |
+| `WORKER_INGEST_URL` / `WORKER_SECRET` | 写路径（`ingest` 容器服务名 + 密钥）。**实现更正 2026-10-18**：四条 ingest 路由统一经 `resolveIngestUrl()` 推导——变量带不带 `/ingest` 后缀、带不带尾斜杠都可；此前 token 路由直接使用原值，自托管默认值（无后缀）会让每次 token 上传打到 worker 根路径并 404（E2E 注入的是带后缀形态，掩盖了该缺陷） |
 | `ADMIN_EMAILS` | 管理员邮箱列表（`lib/admin.ts`）。**可选**：库内 `is_admin` 与它取或——首个 `/setup` 用户即管理员（`lib/admin.ts:67-74,113-115,136`）；无 `/setup` 的旧部署才依赖它 |
 | `PEW_HOST` | （CLI 侧）指向自建服务。**已生效**（Plan 2 交付：`cli/src/commands/login.ts` 的 `--host` / `PEW_HOST` 支持） |
 | `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | 可选；不配置则隐藏 Google 登录按钮。**内网 http 下 Google OAuth 不可用**（回调须 https） |

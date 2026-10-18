@@ -20,6 +20,11 @@
   SQLite-magic check, and exits non-zero on failure so a bad archive alerts
   instead of being kept silently. Backup archives and staging dirs are
   gitignored.
+- `.dockerignore` now excludes nested `node_modules`, `.next*`, `coverage*`,
+  `dist`, `*.tsbuildinfo`, `**/.claude`, `**/.superpowers`, `.wrangler/`, the
+  `.env` family (with example exceptions), rendered rqlite auth files (and
+  their `.tmp` staging file) and backup archives at any depth, so they no
+  longer enter image layers.
 
 ### Fixed
 - Tighten session maxAge to 7 days and reject placeholder AUTH_SECRET values
@@ -33,6 +38,42 @@
   appended) so a client cannot mint fresh per-IP rate-limit buckets
 - Stop passing AUTH_SECRET/CF_D1_API_TOKEN/WORKER_SECRET as Docker build
   args (real secrets no longer enter builder image layers)
+- `backup.sh` rejects an output path starting with `-`: GNU `dirname`/`mv`
+  parsed `--help` as an option, printed help, exited 0 and discarded the
+  archive; a run now fails loudly instead of reporting a silent success.
+- `backup.sh` clears any stale `/rqlite/file/backup.db` in the container before
+  `.backup` and requires the produced archive to be non-empty, so a failed
+  backup can no longer copy the previous run's archive and report success.
+- E2E harness: cleanup failures no longer mask the run failure (the finally
+  block records every cleanup error and aggregates it after the failure), and
+  the isolated lanes stub their own ports instead of racing a concurrent
+  pre-push lane on 17020/27020.
+- Token ingest no longer 404s on the selfhost default: all four ingest routes
+  derive the Worker URL through one `resolveIngestUrl()`, so
+  `WORKER_INGEST_URL` may be given with or without the `/ingest` suffix and
+  with a trailing slash (the token route previously used the raw value).
+- `backup.sh` requires the REPL's success line before accepting an archive:
+  on a full disk `.backup` leaves a truncated file that passes both the
+  non-empty and SQLite-magic gates, and the old run replaced an intact
+  archive with it while exiting 0.
+- `backup.sh` rejects `.`/`..` path components: with a missing intermediate
+  directory (`nodir/..`) the old guard let `mv` resolve to the parent and
+  silently overwrite an unrelated file.
+- `render-rqlite-auth.sh` rejects an `AUTH_OUT_FILE` starting with `-`: `jq`
+  wrote the plaintext staging file, then `mv`/`rm` parsed it as an option and
+  left the file behind under a name no ignore rule covers.
+- Selfhost: the scheduler now sweeps expired `kv_cache` rows on its daily tick
+  (Cloudflare KV expires them itself; rqlite kept them forever, and
+  leaderboard keys embed the revision), and shutdown drains an in-flight
+  scheduled run instead of exiting mid-write.
+- Selfhost migration splitter is quote- and comment-aware: a `BEGIN` inside a
+  string literal and the `END` of a `CASE` expression inside a trigger body no
+  longer corrupt statement boundaries; block comments are handled.
+- Concurrent `/setup` requests: the loser of the bootstrap race now gets 400
+  "Instance is already set up" instead of a 500 from the UNIQUE collision.
+- Worker bearer comparison pads both inputs before comparing, matching
+  worker-read (the old early return on a length mismatch leaked the secret's
+  length).
 
 ## v3.4.1
 

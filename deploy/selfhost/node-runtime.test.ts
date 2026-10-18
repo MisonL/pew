@@ -85,11 +85,11 @@ describe("runScheduled", () => {
     vi.useFakeTimers();
     try {
       const scheduled = vi.fn().mockResolvedValue(undefined);
-      const stop = runScheduled({ scheduled }, { A: 1 }, 1000);
+      const scheduledHandle = runScheduled({ scheduled }, { A: 1 }, 1000);
       await vi.advanceTimersByTimeAsync(3500);
       expect(scheduled).toHaveBeenCalledTimes(3);
       expect(scheduled.mock.calls[0][1]).toEqual({ A: 1 });
-      stop();
+      scheduledHandle.stop();
       await vi.advanceTimersByTimeAsync(3000);
       expect(scheduled).toHaveBeenCalledTimes(3);
     } finally {
@@ -101,19 +101,44 @@ describe("runScheduled", () => {
     vi.useFakeTimers();
     try {
       const scheduled = vi.fn().mockRejectedValue(new Error("upstream down"));
-      const stop = runScheduled({ scheduled }, {}, 1000);
+      const scheduledHandle = runScheduled({ scheduled }, {}, 1000);
       await vi.advanceTimersByTimeAsync(2500);
       expect(scheduled).toHaveBeenCalledTimes(2);
-      stop();
+      scheduledHandle.stop();
     } finally {
       vi.useRealTimers();
     }
   });
 
   it("is a no-op when the worker has no scheduled handler", () => {
-    const stop = runScheduled({}, {}, 1000);
-    expect(typeof stop).toBe("function");
-    stop();
+    const handle = runScheduled({}, {}, 1000);
+    expect(typeof handle.stop).toBe("function");
+    handle.stop();
+    return expect(handle.drain()).resolves.toBeUndefined();
+  });
+
+  it("drain waits for an in-flight run instead of letting shutdown cut it off", async () => {
+    // A pricing sync writes D1 and KV in sequence; process.exit during it
+    // would leave the cache half-updated. drain() must resolve only after the
+    // running tick finishes.
+    vi.useFakeTimers();
+    try {
+      let finish!: () => void;
+      const scheduled = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+      const handle = runScheduled({ scheduled }, {}, 1000);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(scheduled).toHaveBeenCalledTimes(1);
+      let drained = false;
+      const drain = handle.drain().then(() => { drained = true; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(drained).toBe(false);
+      finish();
+      await drain;
+      expect(drained).toBe(true);
+      handle.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

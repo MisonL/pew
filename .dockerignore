@@ -17,20 +17,22 @@
 !deploy/**
 #
 # Everything below must stay AFTER every `!` negation: Docker applies the LAST
-# matching rule, and a `!` after an exclusion would re-open it.
+# matching rule, so a directory excluded before a `!` has its matching files
+# re-included (verified: .claude/worktrees/*/packages/web/.env.example entered
+# the context, and BuildKit still walked the whole tree to evaluate the
+# negation).
 #
 # Secrets at ANY depth. A bare `.env` only excludes the context root, so
 # deploy/selfhost/.env (created by the quickstart) would still be COPYed into
 # the pew-selfhost:local image — leaking real secrets into an image layer.
 # `cp .env .env.bak` must not reopen the hole.
-**/.env*
+**/.env
+**/.env.*
 # The one .env-family file that is meant to ship (documentation only, no
-# secrets). Re-included here because the rule above runs after `!deploy/**`;
-# this `!` is the last rule touching .env names, so the exclusions above it
-# still win for every real secret file.
+# secrets).
 !**/.env.example
 !**/.env.*.example
-**/.dev.vars*
+**/.dev.vars
 **/.rqlite-auth.json
 **/.rqlite-auth.json.*
 # The render script's staging file holds every plaintext password until the
@@ -51,10 +53,16 @@ deploy/selfhost/*.auth.json.*
 **/coverage-tmp
 **/dist
 **/*.tsbuildinfo
-**/.DS_Store
+.git
+.DS_Store
+# Agent/editor worktrees and scratch state at any depth: a root-anchored
+# `.claude` only excludes the top-level directory (verified: a nested
+# packages/web/.claude/worktrees copy entered the context).
+**/.claude
+**/.superpowers
 # Local wrangler/miniflare state (D1 emulation caches; git ignores them, the
 # images must too — deploy/selfhost/Dockerfile copies packages/worker whole).
-**/.wrangler
+**/.wrangler/
 # Playwright output: gitignored, but Docker does not read nested .gitignore
 # files, so it would otherwise reach the image layers.
 **/test-results
@@ -71,4 +79,5 @@ deploy/selfhost/*.auth.json.*
 **/*.db
 **/*.db-*
 **/.pew-backup.*/
-.git
+logo.png
+scripts/resize-logos.py

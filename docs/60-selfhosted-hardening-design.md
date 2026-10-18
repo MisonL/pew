@@ -110,7 +110,7 @@ Plan 1/2 交付后，规格（`docs/57-self-hosted-deployment-design.md`）§7 �
 | `RQLITE_JOIN_PASSWORD` | 渲染脚本（写入 joiner 用户条目）、rqlite 节点（`-join-as joiner` 的密码） | joiner 是**专用**集群互连用户，不复用应用凭据（最小权限）；**join 成功 = 拿到全库只读副本，密码强度要求与 `RQLITE_PASSWORD` 相同**（红队 Low13）；未设时渲染脚本报错退出（凭据模式下三要素缺一不可） |
 | `LOGIN_RATE_LIMIT_BACKEND` | 仅 web（`memory` 默认 / `rqlite`，见 §3.2） | 全文唯一开关名（v2 中 §3.1.1/§4 曾误写 `RATE_LIMIT_BACKEND`，已统一） |
 
-**凭据暴露面的结构性弱点（红队 High，接受并注明）**：同一 `RQLITE_PASSWORD` 注入六个容器 environment，单容器 RCE（`/proc/1/environ`、`docker inspect` 可读）= 全库写凭据。**缓解**：auth.json 增加第二个具名只读用户（`perms: ["select"]`，实测 perms 缺失 = 全拒、fail-closed），`read` 与 `scheduler` 用只读凭据（二者无写路径），缩小写凭据暴露面至 migrate/d1-http/ingest 三个必需容器；进一步拆分（每容器独立用户）属 YAGNI。
+**凭据暴露面的结构性弱点（红队 High，接受并注明）**：同一 `RQLITE_PASSWORD` 注入五个容器 environment（migrate、d1-http、read、ingest、scheduler；rqlite 节点自身走 auth.json，不注入），单容器 RCE（`/proc/1/environ`、`docker inspect` 可读）= 全库写凭据。**缓解**：auth.json 增加第二个具名只读用户（`perms: ["select"]`，实测 perms 缺失 = 全拒、fail-closed），`read` 与 `scheduler` 用只读凭据（二者无写路径），缩小写凭据暴露面至 migrate/d1-http/ingest 三个必需容器；进一步拆分（每容器独立用户）属 YAGNI。
 > **实现更正**：rqlite 10.5.3 实测无 `select` 权限名（`query` 有效但仅限 /db/query，/db/request 拒绝），且 read/scheduler 均有 `/db/request` 写路径——只读用户在此架构不可达，pew-ro 已移除，所有服务统一用全权凭据（Ruling 2026-10-14 多维审查）。
 
 #### 3.1.2 服务端（compose）与「默认关闭」的实现机制
@@ -157,7 +157,7 @@ exec rqlited "$@"
   cluster profile 三节点各自同样包装，且**全部**带 `-join-as`（评审实测：部分节点缺失时未加者 boot timeout 崩溃循环）。joiner 是专用用户（`[join]` 权限），应用凭据不参与集群互连。
 - **首次启用 = 固定序列**（v3 Blocker：部署者按旧 README「cp .env → up」操作时 auth.json 不存在 → up 前若文件缺失仍会以无鉴权静默启动，恰是 §2.3 最危险场景；且旧 README 的 Quickstart 必须改写）。README Quickstart 鉴权路径写死为三步：
   1. 渲染 auth.json（**必须先于 up 执行**）——原文写 `docker compose run --rm render-auth`，**交付 compose 没有 `render-auth` 服务**，实际执行方式是直接 `bash deploy/selfhost/render-rqlite-auth.sh`（README Quickstart 的固定序列）
-  2. `docker compose --profile ... up -d`
+  2. `docker compose up -d`（profile 由 `.env` 的 `COMPOSE_PROFILES` 决定，不用 `--profile`——单次 `--profile` 只作用于该次调用，之后裸 `up` 会按 `.env` 另起单节点 rqlite）
   3. **自检**：在**容器内**查询 `/status`（rqlite 不发布宿主端口，原文的宿主 `curl http://127.0.0.1:<rqlite>/status` 必然连接失败）——按 README 的 `docker compose exec` 形态带凭据查 200 且 `http.auth` 显示已启用；**匿名**查若 200 且 `auth == disabled` → 显式报「凭据已配置但服务端未启用鉴权」（与 migrate 的对账自检 §3.1.4 同一判据，双保险）。实现更正 2026-10-17：步骤 1/3 以交付形态为准（无 `render-auth` 服务、无宿主端口）。
 
 #### 3.1.3 客户端改造（完整清单）
@@ -183,7 +183,7 @@ exec rqlited "$@"
 | auth 文件误删 `*` 条目 | healthcheck 401 → rqlite 永不 healthy → migrate 永不跑 | 启动门卡死（可发现但难定位，文档明示） |
 | scheduler 凭据错误 | 首次触库在 24h 后 | **静默潜伏一天**（无 healthcheck） |
 
-**对账自检**（把最危险的静默场景变成显式失败）：`migrate` 启动时（鉴权模式下）除正常迁移外，额外执行两个匿名探测——①`GET /status`：返回 200 且 `http.auth == "disabled"` → 判定「配置了凭据但服务端未启用鉴权」，报错退出；②`GET /db/query?q=SELECT 1`：**必须 401**，若 200 同样报错退出（双判据，防 `*` 条目放权或 auth 文件异常；红队 4.1 指出该探测可被 compose 网络内 DNS/ARP 欺骗出假阴性——**文档明示：自检只防配置错误，不做安全边界**，「攻击者已在 compose 网络内」是更大的前提失守）。d1-http 的 `/health` 探针（`server-d1-http.ts:47`）从匿名 `/readyz` 改为**带凭据的 `SELECT 1`**（当前假阴性：`*` 有 ready 时凭据错也 200，web 照常启动直到首次写失败）；探针走与写同路径的线性一致读，不用弱读（红队 4.2①）。**凭据不得进应用 error message / 日志**（红队 2.5）——d1-adapter 报错时不得附带 Authorization 头内容，列入段 1 单测。
+**对账自检**（把最危险的静默场景变成显式失败）：`migrate` 启动时（鉴权模式下）除正常迁移外，额外执行两个匿名探测——①`GET /status`：返回 200 且 `http.auth == "disabled"` → 判定「配置了凭据但服务端未启用鉴权」，报错退出；②`GET /db/query?q=SELECT 1`：**必须 401**，若 200 同样报错退出（双判据，防 `*` 条目放权或 auth 文件异常；红队 4.1 指出该探测可被 compose 网络内 DNS/ARP 欺骗出假阴性——**文档明示：自检只防配置错误，不做安全边界**，「攻击者已在 compose 网络内」是更大的前提失守）。d1-http 的 `/health` 探针（`server-d1-http.ts:55`）从匿名 `/readyz` 改为**带凭据的 `SELECT 1`**（当前假阴性：`*` 有 ready 时凭据错也 200，web 照常启动直到首次写失败）；探针走与写同路径的线性一致读，不用弱读（红队 4.2①）。**凭据不得进应用 error message / 日志**（红队 2.5）——d1-adapter 报错时不得附带 Authorization 头内容，列入段 1 单测。
 
 #### 3.1.5 连带文档订正（评审 M4/H4 + 运维演练报告）
 
@@ -228,7 +228,7 @@ CREATE INDEX IF NOT EXISTS idx_rate_limit_hits_key_at ON rate_limit_hits(key, hi
 CREATE INDEX IF NOT EXISTS idx_rate_limit_hits_at ON rate_limit_hits(hit_at);
 ```
 
-**同步**：`verify-migrations.ts` 的 `EXPECTED` 改 `planTables: 6, indexes: 69`（v2 误写 68；现值 67 见 `deploy/selfhost/verify-migrations.ts:44`，+2 个新索引 = 69），`PLAN_TABLES` 集合加 `rate_limit_hits`（不加入则被算进 upstreamTables 同样报错）——与迁移**同一提交**。
+**同步**：`verify-migrations.ts` 的 `EXPECTED` 为 `planTables: 6, indexes: 69`（交付值见 `deploy/selfhost/verify-migrations.ts:48`），`PLAN_TABLES` 集合加 `rate_limit_hits`（不加入则被算进 upstreamTables 同样报错）——与迁移**同一提交**。
 
 #### 实现层
 
@@ -253,7 +253,7 @@ CREATE INDEX IF NOT EXISTS idx_rate_limit_hits_at ON rate_limit_hits(hit_at);
 - 单测（mock D1）：单语句 INSERT...SELECT 的 changes 分支（超限拒绝）、执行异常分支（fail-open + warn 日志）、SQL 侧窗口参数、双键（含 IPv6 /64 归并）、超限时 `current === maxRequests`、清理阈值。
 - **真机验证项（必须做，非可选）**：
   1. `LOGIN_RATE_LIMIT_BACKEND=rqlite` 下连续登录失败 6 次 → 第 6 次被拒、`retryAfter` 合理、另一 IP 正常登录（双键互不误伤）
-  2. `meta.changes` 经 `/db/request` 的实际返回值（§3.2 上述疑问）——若解析路径不对，回退方案落地后重测
+  2. `meta.changes` 经 `/db/request` 的实际返回值（§3.2 上述疑问）——**2026-10-18 已实测**：真实 rqlite 10.5.3 下插入 1 行返回 `rows_affected: 1`，插入 0 行时该字段省略（adapter 的 `?? 0` 兜底 → 拒绝）。字段路径与映射一致，回退方案无需启用。
   3. 清理概率触发时旧行确实被删（可用极短窗口 + 手动插老行验证）
 
 ### 3.3 C：反代/TLS 部署文档
@@ -281,10 +281,10 @@ README 新增「反向代理」小节，推荐形态：**Caddy 以 compose 服�
    `Caddyfile` 骨架：`<内网域名> { reverse_proxy web:7020 }`（单行正文 + `tls internal` 注释示例）。
 2. **Nginx**：除 XFF 覆写外**必须**——`proxy_set_header Host $host;`（默认 `$proxy_host` 会让 Auth.js 的 trustHost origin 校验失败、登录全挂，评审 B2）、`client_max_body_size 25m;`（worker 允许 `/ingest/details` 至 24MB，默认 1m 直接 413，评审 H1）、`X-Forwarded-Proto https`。**XFF 给出确切指令防误配（红队 5.1）**：`proxy_set_header X-Forwarded-For $remote_addr;`（覆写）——不是 `$proxy_add_x_forwarded_for`（追加，保留攻击者伪造段）。
 3. **硬约束清单**（升级为硬约束的标 ★）：
-   - ★ web 的 7020 端口只绑 `127.0.0.1` 或不发布（直连可整体伪造 XFF 第一段，清洗形同虚设——`getClientIp` 取第一段）。**注意（红队 5.2）**：此约束防的是网络外直连；同宿主其他本地用户进程仍可达 127.0.0.1:7020（多租户宿主属部署者自担），compose 网络内攻击者本就绕过 web 直达数据层（7020 收紧不改变该模型）。
+   - ★ web 的 7020 端口只绑 `127.0.0.1` 或不发布（直连可整体伪造 XFF 段，清洗形同虚设——`getClientIp` 取最后一段，但直连时最后一段就是攻击者自己写的）。**注意（红队 5.2）**：此约束防的是网络外直连；同宿主其他本地用户进程仍可达 127.0.0.1:7020（多租户宿主属部署者自担），compose 网络内攻击者本就绕过 web 直达数据层（7020 收紧不改变该模型）。
    - ★ `NEXTAUTH_URL` 必须与反代对外访问 URL **逐字符一致**（协议+域名+端口；`TRUSTED_ORIGIN` 永远 pinned 到它，不一致则重定向/回调指向错误主机）；CLI 侧 `PEW_HOST` 同步
-   - ★ 反代覆写 `X-Forwarded-For`（pew 取第一段），同时覆写 `X-Real-IP`、清空 `CF-Connecting-IP`（`getClientIp` 依次信任三者）
-     > **实现更正 2026-10-15：** `packages/web/src/lib/rate-limit.ts` 的 `getClientIp` 交付时已改为取 XFF 的**最后一段**（自己代理追加的那一跳），客户端在 XFF 前段注入的伪造地址被无害化；X-Real-IP / CF-Connecting-IP 的信任顺序与「反代必须覆写 XFF」的结论不变。
+   - ★ 反代覆写 `X-Forwarded-For`（pew 取**最后一段**，即自己代理追加的那一跳），同时覆写 `X-Real-IP`、清空 `CF-Connecting-IP`（`getClientIp` 依次信任三者，见 `lib/rate-limit.ts:186-198`）
+     > **实现更正 2026-10-15：** `getClientIp` 交付时取 XFF 的**最后一段**，客户端在 XFF 前段注入的伪造地址被无害化；X-Real-IP / CF-Connecting-IP 的信任顺序与「反代必须覆写 XFF」的结论不变。
    - cookie 四格矩阵：https+`USE_SECURE_COOKIES=true` ✓；**https+false → 可登录但无 `__Secure-` 前缀（降级可用，不是「浏览器丢弃」）**；**http+true → `__Secure-` cookie 被 http origin 拒收 → 登录坏**；http+false ✓。（实现更正 2026-10-17：交付的 `.env.example`/compose 默认为**空值**而非 false——空值由 `auth.ts:45-55` 推导，production 下结果为 true；故 **http 部署必须显式填 `false`**，https 部署留空即可，勿按本行旧的"默认 false"理解。）
    - `TRUSTED_ORIGIN` 由 `NEXTAUTH_URL` 推导，无需单独配置（proxy.ts 已实现）
 4. **`docker-compose.proxy.yml` 覆盖文件**：`ports: !override ["127.0.0.1:${WEB_PORT:-7020}:7020"]`——**普通追加合并下两条映射并存或端口冲突**（compose ports 唯一键含 ip，`!override` 需 Compose ≥ v2.24.4，评审 B1）；文档写明显式 `-f docker-compose.yml -f docker-compose.proxy.yml` 调用与 `docker compose config` 冒烟核对。
@@ -308,4 +308,4 @@ README 新增「反向代理」小节，推荐形态：**Caddy 以 compose 服�
 - 三项均**默认关闭**（A：不设凭据；B：不设 `LOGIN_RATE_LIMIT_BACKEND`；C：纯文档），已有部署升级无需任何动作。
 - 回滚 = revert 对应提交；迁移 033 是纯新增表，回滚无副作用（账本只增不删，表与旧行冻结无害——revert 后无人读写且有界）。
 - **注意**：`_migrations` 账本按文件名跳过——revert 后若以**同名文件**重做 033 且内容变更会被静默跳过，重做必须换文件名；`EXPECTED` 计数更新须与迁移同提交，避免部分回滚时计数错配。回滚后按 §3.1.5 清理 checklist 处理 `.env` 残留变量与磁盘明文 auth.json。
-- **三节点降级信号与升级判据**（运维演练 Low，写进 README 集群小节）：单节点 down → 集群**仍有多数派，可写**（3 节点 down 1 后 2/3 多数派存活，raft 正常选主）——事实更正：本节原稿「单节点 down → 集群只读（无多数派）」错误，单节点 down 不影响写可用性；真正的只读/不可用阈值是两节点 down（无多数派）→ 全不可用（weak 读转发 leader，读同样失败，2026-10-17 更正原稿"只读"口径）；只允许**同时**恢复，不要逐台改配置（auth.json 不一致会导致 recreate 后 join 失败）。read 副本 down 不影响写路径（weak 读自动重试其他节点），信号在 `docker compose ps` 的 unhealthy 状态与 web `/api/live` 探针，不止日志。
+- **三节点降级信号与升级判据**（运维演练 Low，写进 README 集群小节）：单节点 down → 集群**仍有多数派，可写**（3 节点 down 1 后 2/3 多数派存活，raft 正常选主）——事实更正：本节原稿「单节点 down → 集群只读（无多数派）」错误，单节点 down 不影响写可用性；真正的只读/不可用阈值是两节点 down（无多数派）→ 全不可用（weak 读转发 leader，读同样失败，2026-10-17 更正原稿"只读"口径）；只允许**同时**恢复，不要逐台改配置（auth.json 不一致会导致 recreate 后 join 失败）。read 副本 down 不影响写路径（weak 读由 rqlite 转发给 leader，不是客户端重试其他节点），信号在 `docker compose ps` 的 unhealthy 状态与 web `/api/live` 探针，不止日志。

@@ -25,6 +25,12 @@ export interface KVLike {
   list(options?: { prefix?: string; limit?: number; cursor?: string }): Promise<KVListResult>;
 }
 
+/** Selfhost-only extension: Cloudflare KV expires rows itself, rqlite does not. */
+export interface KvAdapter extends KVLike {
+  /** Delete rows whose expiry has passed. Returns the number removed. */
+  sweepExpired(): Promise<number>;
+}
+
 export interface KvAdapterOptions {
   db: D1Like;
   now?: () => number;
@@ -36,8 +42,15 @@ const UPSERT_SQL =
   "INSERT INTO kv_cache (key, value, expires_at) VALUES (?, ?, ?) " +
   "ON CONFLICT (key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at";
 const DELETE_SQL = "DELETE FROM kv_cache WHERE key = ?";
+// Cloudflare KV drops expired entries on its own; rqlite keeps them forever.
+// leaderboard snapshot keys embed the revision (`lb:v1:<revision>:<key>`), so
+// every data change mints a fresh key and the old ones become permanent dead
+// rows — storage, raft log and backup growth with no upper bound. The
+// scheduler calls sweepExpired() daily; idx_kv_cache_expires (migration 031)
+// makes it a range scan.
+const SWEEP_SQL = "DELETE FROM kv_cache WHERE expires_at IS NOT NULL AND expires_at <= ?";
 
-export function createKvAdapter(options: KvAdapterOptions): KVLike {
+export function createKvAdapter(options: KvAdapterOptions): KvAdapter {
   const { db } = options;
   const now = options.now ?? (() => Date.now());
 
@@ -81,6 +94,12 @@ export function createKvAdapter(options: KvAdapterOptions): KVLike {
 
     async delete(key: string): Promise<void> {
       await db.prepare(DELETE_SQL).bind(key).run();
+    },
+
+    async sweepExpired(): Promise<number> {
+      const stamp = new Date(now()).toISOString();
+      const { meta } = await db.prepare(SWEEP_SQL).bind(stamp).run();
+      return meta.changes ?? 0;
     },
 
     async list(listOptions?: {

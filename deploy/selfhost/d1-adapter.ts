@@ -78,6 +78,10 @@ function toD1Result(raw: RqliteStatementResult): D1Result {
       // returned rows instead).
       changes: raw.rows_affected ?? 0,
       duration: toMillis(raw.time),
+      // rqlite reports last_insert_id on SELECTs too (it carries over from the
+      // previous write on that connection), while D1 only provides it after an
+      // insert. No consumer reads meta.last_row_id today; a future one must not
+      // trust it for read statements.
       ...(typeof raw.last_insert_id === "number"
         ? { last_row_id: raw.last_insert_id }
         : {}),

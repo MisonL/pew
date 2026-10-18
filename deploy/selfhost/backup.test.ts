@@ -33,12 +33,20 @@ function run(opts: {
   archiveBytes?: number;
   archiveContents?: string;
   containerStale?: string;
-  /** Simulate the real REPL's behavior on a failed .backup: prints ERR! to stderr, still exits 0, writes nothing. */
+  /** Simulate the real REPL's behavior on a failed .backup: prints ERR! to stdout, still exits 0, writes nothing. */
   replFails?: boolean;
+  /** Simulate ENOSPC: the REPL writes a truncated archive that passes size and
+   * magic gates, prints ERR! (stdout) and no success line, exits 0. */
+  replTruncated?: boolean;
   /** Fail the pre-.backup rm (e.g. daemon error); set -e must abort the run. */
   rmFails?: boolean;
   /** Have cp land an empty host file despite a non-empty container file (defense-in-depth path). */
   cpProducesEmpty?: boolean;
+  /** Sleep in the REPL / cp branch so a test can deliver a signal mid-run. */
+  delayAt?: "repl" | "cp";
+  delaySeconds?: number;
+  /** Deliver this signal to the script after the given delay. */
+  signal?: { name: NodeJS.Signals; afterMs: number };
   profile?: string;
   username?: string | null;
   password?: string | null;
@@ -46,6 +54,9 @@ function run(opts: {
   args?: string[];
 }) {
   const dir = mkdtempSync(join(tmpdir(), "bk-")); dirs.push(dir);
+  // A world-traversable root makes the staging-directory assertion meaningful:
+  // if the script staged in OUT_DIR itself, dirname would be 0755, not 0700.
+  chmodSync(dir, 0o755);
   const bin = join(dir, "bin");
   mkdirSync(bin);
   // backup.sh cd's to its own directory (production layout: script next to
@@ -110,14 +121,22 @@ case " $* " in
     # container would receive: -e NAME forwards NAME's value from the caller.
     cat > ${JSON.stringify(transcript)}
     { printf 'RQLITE_USERNAME=%s\\n' "\${RQLITE_USERNAME-<UNSET>}"; printf 'RQLITE_PASSWORD=%s\\n' "\${RQLITE_PASSWORD-<UNSET>}"; } > ${JSON.stringify(containerEnv)}
-    # Faithful to the real REPL: a failed .backup prints ERR! and STILL exits
-    # 0 (verified against rqlite 10.5.3). It also writes NOTHING to the
-    # container path — any file already there is left untouched, which is
-    # exactly the stale-archive hazard the pre-rm guards against.
+    if [ "${opts.delayAt ?? ""}" = "repl" ]; then sleep ${opts.delaySeconds ?? 0}; fi
+    # Faithful to the real REPL: a failed .backup prints ERR! to STDOUT (not
+    # stderr — verified against 10.5.3) and STILL exits 0. It also writes
+    # NOTHING to the container path — any file already there is left untouched,
+    # which is exactly the stale-archive hazard the pre-rm guards against.
+    # A success prints "backup file written successfully" (also stdout); the
+    # script requires that line, so a truncated-on-ENOSPC archive cannot pass.
     if [ "${opts.replFails ? "1" : "0"}" = "1" ]; then
-      printf 'ERR! unauthorized\\n' >&2
+      printf 'ERR! unauthorized\\n'
+    elif [ "${opts.replTruncated ? "1" : "0"}" = "1" ]; then
+      # ENOSPC shape: a half-written file that still passes size + magic.
+      head -c 64 ${JSON.stringify(archive)} > ${JSON.stringify(containerFile)}
+      printf 'ERR! write /rqlite/file/backup.db: no space left on device\\n'
     else
       cp ${JSON.stringify(archive)} ${JSON.stringify(containerFile)}
+      printf 'backup file written successfully\\n'
     fi
     exit 0;;
   *" cp "*)
@@ -125,13 +144,18 @@ case " $* " in
     # (tar mode), so between the cp and the script's chmod — and permanently
     # after a SIGKILL — the parent mode is the only protection.
     for last in "$@"; do :; done
-    # GNU stat (-c %a) and BSD stat (-f %Lp) disagree on flag spelling; the
-    # fake must run on both Linux CI and macOS dev machines.
+    # Record the staging dir's mode AND its basename, plus the file's own mode
+    # at cp time. The basename check is what catches a regression that stages
+    # directly in OUT_DIR: the root here is 0755, so "700" can only come from
+    # a fresh mktemp -d directory. GNU stat (-c %a) and BSD stat (-f %Lp)
+    # disagree on flag spelling; the fake must run on both Linux CI and macOS.
     if stat -c '%a' "$(dirname "$last")" > ${JSON.stringify(join(dir, "stage-mode"))} 2>/dev/null; then
       :
     else
       stat -f '%Lp' "$(dirname "$last")" > ${JSON.stringify(join(dir, "stage-mode"))}
     fi
+    printf '%s\\n' "$(basename "$(dirname "$last")")" > ${JSON.stringify(join(dir, "stage-name"))}
+    if [ "${opts.delayAt ?? ""}" = "cp" ]; then sleep ${opts.delaySeconds ?? 0}; fi
     # docker cp copies the CONTAINER-side file: if a failed .backup left a
     # stale archive behind, that is what reaches the host; a missing file is
     # an error, exactly as real compose cp behaves.
@@ -146,6 +170,11 @@ case " $* " in
     fi
     # docker cp preserves the container-side mode (0644) and ignores umask.
     chmod 644 "$last"
+    if stat -c '%a' "$last" > ${JSON.stringify(join(dir, "stage-file-mode"))} 2>/dev/null; then
+      :
+    else
+      stat -f '%Lp' "$last" > ${JSON.stringify(join(dir, "stage-file-mode"))}
+    fi
     exit 0;;
 esac
 exit 0
@@ -166,12 +195,20 @@ exit 0
     env: { PATH: `${bin}:${process.env.PATH}`, HOME: dir, TMPDIR: dir },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  return new Promise<{ code: number; stderr: string; log: string; transcript: string; containerEnv: string; dir: string; out: string }>((resolve, reject) => {
+  if (opts.signal) {
+    const { name, afterMs } = opts.signal;
+    setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill(name); }, afterMs).unref();
+  }
+  return new Promise<{
+    code: number; signal: NodeJS.Signals | null; stderr: string; log: string;
+    transcript: string; containerEnv: string; dir: string; out: string;
+  }>((resolve, reject) => {
     let stderr = "";
     child.stderr?.on("data", (c) => { stderr += c; });
     child.on("error", reject);
-    child.on("exit", (code) => resolve({
+    child.on("exit", (code, signal) => resolve({
       code: code ?? -1,
+      signal,
       stderr,
       log: existsSync(log) ? readFileSync(log, "utf8") : "",
       transcript: existsSync(transcript) ? readFileSync(transcript, "utf8") : "",
@@ -212,14 +249,21 @@ describe("backup.sh", () => {
     expect(readdirSync(dirname(r.out)).filter((n) => n.startsWith(".pew-backup."))).toEqual([]);
   });
 
-  it("stages the archive in a 0700 directory (SIGKILL-safety)", async () => {
+  it("stages the archive in a fresh 0700 directory (SIGKILL-safety)", async () => {
     // The window between `docker compose cp` (lands 0644, tar mode) and the
     // script's chmod can only be closed by the parent directory when the run
-    // is SIGKILLed — no trap fires then. The fake records the staging dir's
-    // mode at cp time; it must be 0700.
+    // is SIGKILLed — no trap fires then. The temp root is 0755, so a 700
+    // parent can only come from the script's own mktemp -d, never from the
+    // test fixture. The basename must be the .pew-backup.* staging dir, not
+    // OUT_DIR itself (mutation: staging in OUT_DIR used to pass this test
+    // because mkdtemp roots are already 0700).
     const r = await run({});
     expect(r.code, r.stderr).toBe(0);
     expect(readFileSync(join(r.dir, "stage-mode"), "utf8").trim()).toBe("700");
+    expect(readFileSync(join(r.dir, "stage-name"), "utf8").trim()).toMatch(/^\.pew-backup\.[A-Za-z0-9]{6}$/);
+    // The file itself arrives 0644 from docker cp — protection comes from the
+    // parent, which is exactly what the test above pins down.
+    expect(readFileSync(join(r.dir, "stage-file-mode"), "utf8").trim()).toBe("644");
     // No staging dir survives a successful run.
     expect(readdirSync(dirname(r.out)).filter((n) => n.startsWith(".pew-backup."))).toEqual([]);
   });
@@ -307,7 +351,9 @@ describe("backup.sh", () => {
     const stale = `SQLite format 3\0${"stale".repeat(4)}`;
     const r = await run({ containerStale: stale, replFails: true });
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain("no archive");
+    // The REPL success-line gate fires first now; the archive gates below it
+    // remain as defense in depth.
+    expect(r.stderr).toContain("did not report success");
     expect(existsSync(r.out)).toBe(false);
   });
 
@@ -369,6 +415,61 @@ describe("backup.sh", () => {
     expect(res.code, res.stderr).toBe(0);
     expect(existsSync(nested)).toBe(true);
   });
+
+  it("rejects a truncated archive that passes the size and magic gates (ENOSPC)", async () => {
+    // Verified against rqlite 10.5.3: on a full filesystem .backup prints
+    // `ERR! write ... no space left on device` to STDOUT, exits 0, and leaves
+    // a truncated file that passes `test -s` and the SQLite magic check. Only
+    // the missing success line distinguishes it — without this gate the run
+    // replaces an intact earlier archive with a malformed one and exits 0.
+    const dir = mkdtempSync(join(tmpdir(), "bk-enospc-")); dirs.push(dir);
+    chmodSync(dir, 0o755);
+    const existing = join(dir, "backup.db");
+    writeFileSync(existing, "SQLite format 3\0previous-intact");
+    const r = await run({ replTruncated: true, args: [existing] });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("did not report success");
+    // The intact earlier archive is untouched and no staging dir survives.
+    expect(readFileSync(existing, "utf8")).toBe("SQLite format 3\0previous-intact");
+    expect(readdirSync(dir).filter((n) => n.startsWith(".pew-backup."))).toEqual([]);
+  });
+
+  it("rejects an output path with . or .. components", async () => {
+    // With a missing intermediate directory (`nodir/..`), `[ -d ]` is false,
+    // mkdir -p creates it, and mv resolves to the PARENT — silently writing
+    // elsewhere and possibly replacing an unrelated file (verified on macOS
+    // and debian:12-slim).
+    const dir = mkdtempSync(join(tmpdir(), "bk-dotdot-")); dirs.push(dir);
+    chmodSync(dir, 0o755);
+    // Build the paths by hand: node's join() normalizes "nodir/.." to the
+    // parent, which would hide the very shape under test.
+    for (const bad of [`${dir}/nodir/..`, `${dir}/nodir/.`]) {
+      const r = await run({ args: [bad] });
+      expect(r.code, `path ${bad}`).toBe(1);
+      expect(r.stderr).toContain("refusing relative or self-referential");
+    }
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("cleans the staging dir and exits 130 on SIGINT during the REPL", async () => {
+    // SIGKILL is uncatchable, but INT/TERM/HUP must converge on the EXIT trap:
+    // the staging directory (which may already hold a 0644 copy) and the
+    // in-container archive both have to be removed. bash defers the trap
+    // until the foreground `compose exec` child exits, hence the wait.
+    const r = await run({ delayAt: "repl", delaySeconds: 1, signal: { name: "SIGINT", afterMs: 300 } });
+    expect(r.code, r.stderr).toBe(130);
+    expect(readdirSync(r.dir).filter((n) => n.startsWith(".pew-backup."))).toEqual([]);
+    expect(r.log).toContain("[rm]");
+  }, 30_000);
+
+  it("cleans the staging dir and exits 143 on SIGTERM during the copy", async () => {
+    // TERM during `compose cp`: the trap runs after the child finishes (a
+    // shell cannot interrupt a running child), so the wait is deliberate.
+    const r = await run({ delayAt: "cp", delaySeconds: 1, signal: { name: "SIGTERM", afterMs: 300 } });
+    expect(r.code, r.stderr).toBe(143);
+    expect(readdirSync(r.dir).filter((n) => n.startsWith(".pew-backup."))).toEqual([]);
+    expect(existsSync(r.out)).toBe(false);
+  }, 30_000);
 
   it("rejects an output path starting with '-' (GNU option parsing)", async () => {
     // On GNU userland `dirname --help`/`mv --help` treat the path as an

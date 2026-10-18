@@ -121,29 +121,45 @@ export function createWorkerServer<E>(options: WorkerServerOptions<E>) {
  * Drives `scheduled` on a fixed interval, standing in for Cloudflare cron
  * triggers. Run this in exactly one container so replicas do not all sync.
  */
+export interface ScheduledHandle {
+  stop: () => void;
+  /** Resolves when the currently running tick (if any) finishes. */
+  drain: () => Promise<void>;
+}
+
 export function runScheduled<E>(
   worker: { scheduled?: (event: unknown, env: E) => Promise<void> },
   env: E,
   intervalMs: number
-): () => void {
+): ScheduledHandle {
   if (!worker.scheduled) {
-    // Workers without scheduled (worker) still get a usable stop function.
-    return () => {
-      /* nothing to stop */
-    };
+    // Workers without scheduled (worker) still get a usable handle.
+    return { stop: () => { /* nothing to stop */ }, drain: async () => { /* nothing to drain */ } };
   }
   const handler = worker.scheduled.bind(worker);
+  // Track the in-flight tick so shutdown can wait for it: a pricing sync killed
+  // between its D1 and KV writes would leave the cache half-updated.
+  let inFlight: Promise<void> | null = null;
   const timer = setInterval(() => {
-    void handler({ scheduledTime: Date.now() }, env).catch((error: unknown) => {
-      console.error("scheduled run failed", error);
-    });
+    inFlight = handler({ scheduledTime: Date.now() }, env)
+      .catch((error: unknown) => {
+        console.error("scheduled run failed", error);
+      })
+      .finally(() => {
+        inFlight = null;
+      });
   }, intervalMs);
   // Deliberately NOT unref'd: the scheduler container's only work is this
   // timer, and an unref'd timer does not hold the event loop — a Node process
   // whose only handle is unref'd exits immediately with code 0 before the
   // first tick (verified), so pricing sync would silently never run. The
   // stop() function is the way to release the loop.
-  return () => clearInterval(timer);
+  return {
+    stop: () => clearInterval(timer),
+    drain: async () => {
+      await inFlight;
+    },
+  };
 }
 
 /**

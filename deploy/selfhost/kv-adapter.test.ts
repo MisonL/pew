@@ -63,6 +63,15 @@ function makeFakeDb() {
             rows.set(key, { key, value, expires_at: expiresAt });
             return { success: true, results: [], meta: { changes: 1, duration: 0 } };
           }
+          if (sql.includes("expires_at IS NOT NULL AND expires_at <=")) {
+            // sweepExpired: delete every row whose expiry has passed.
+            const stamp = params[0] as string;
+            let removed = 0;
+            for (const [key, row] of rows) {
+              if (row.expires_at !== null && row.expires_at <= stamp) { rows.delete(key); removed += 1; }
+            }
+            return { success: true, results: [], meta: { changes: removed, duration: 0 } };
+          }
           if (sql.startsWith("DELETE FROM kv_cache")) {
             const existed = rows.delete(params[0] as string);
             return { success: true, results: [], meta: { changes: existed ? 1 : 0, duration: 0 } };
@@ -205,6 +214,19 @@ describe("kv-adapter", () => {
     const kv = createKvAdapter({ db, now: () => NOW });
     await kv.put("k", "not json{");
     expect(await kv.get("k", "json")).toBeNull();
+  });
+
+  it("sweepExpired deletes only rows whose TTL has passed", async () => {
+    // Cloudflare KV expires entries itself; rqlite does not. Without this the
+    // table grows without bound (leaderboard keys embed the revision).
+    const { db, rows } = makeFakeDb();
+    const kv = createKvAdapter({ db, now: () => NOW });
+    await kv.put("live", "v", { expirationTtl: 3600 });
+    await kv.put("dead", "v", { expirationTtl: 1 });
+    await kv.put("forever", "v");
+    const later = createKvAdapter({ db, now: () => NOW + 10_000 });
+    expect(await later.sweepExpired()).toBe(1);
+    expect([...rows.keys()].sort()).toEqual(["forever", "live"]);
   });
 
   it("list with limit 0 terminates instead of looping forever", async () => {

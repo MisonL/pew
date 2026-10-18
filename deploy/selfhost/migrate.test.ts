@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { splitStatements, applyMigrations } from "./migrate";
 import type { D1Like, D1Result, D1StatementLike } from "./d1-adapter";
 
@@ -67,6 +70,75 @@ describe("splitStatements", () => {
     expect(out).toHaveLength(2);
     expect(out[0]).toContain("UPDATE r SET x = 1; END");
     expect(out[1]).toBe("CREATE INDEX i ON u(id)");
+  });
+
+  it("does not treat a BEGIN inside a string literal as a trigger body", () => {
+    // A naive keyword regex latched inTrigger on the literal and swallowed the
+    // rest of the file into one "statement" (verified before the fix).
+    const out = splitStatements("INSERT INTO t VALUES ('BEGIN');\nCREATE INDEX i ON t(x);");
+    expect(out).toEqual(["INSERT INTO t VALUES ('BEGIN')", "CREATE INDEX i ON t(x)"]);
+  });
+
+  it("does not close a trigger body at the END of a CASE expression", () => {
+    // The CASE's END used to close the trigger early, producing a truncated
+    // CREATE TRIGGER plus a stray "END" statement.
+    const sql = "CREATE TRIGGER tr AFTER INSERT ON t BEGIN UPDATE r SET x = CASE WHEN 1 THEN 2 END; END;\nCREATE INDEX i ON t(x);";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toContain("CASE WHEN 1 THEN 2 END;");
+    expect(out[0].trimEnd().endsWith("END")).toBe(true);
+    expect(out[1]).toBe("CREATE INDEX i ON t(x)");
+  });
+
+  it("splits every shipped migration into statements a real SQLite accepts", () => {
+    // The unit cases above cover the shapes we know about; this one is the
+    // end-to-end guard: a splitter regression that only trips on a real file
+    // (a string literal, a CASE inside a trigger, a comment) still surfaces
+    // here. Executes in-process against node:sqlite, so no rqlite is needed.
+    const dir = join(import.meta.dirname, "../../scripts/migrations");
+    const squashed = new Set(["004-is-public.sql", "006-device-id.sql", "006c-team-logo-url.sql"]);
+    const db = new DatabaseSync(":memory:");
+    try {
+      for (const name of readdirSync(dir).filter((n) => n.endsWith(".sql") && !squashed.has(n)).sort()) {
+        for (const statement of splitStatements(readFileSync(join(dir, name), "utf8"))) {
+          expect(() => db.exec(statement), `${name}: ${statement.slice(0, 80)}`).not.toThrow();
+        }
+      }
+      const tables = db.prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type = 'table'").get() as { c: number };
+      const triggers = db.prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type = 'trigger'").get() as { c: number };
+      expect(tables.c).toBe(28);
+      expect(triggers.c).toBe(12);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("keeps a string literal that spans lines intact", () => {
+    // Quote state must persist across lines: a multi-line literal holds a `;`
+    // and can contain BEGIN/END words.
+    const out = splitStatements("INSERT INTO t VALUES ('BEGIN\nEND;a');\nCREATE INDEX i ON t(x);");
+    expect(out).toHaveLength(2);
+    expect(out[0]).toBe("INSERT INTO t VALUES ('BEGIN\nEND;a')");
+    expect(out[1]).toBe("CREATE INDEX i ON t(x)");
+  });
+
+  it("handles a CASE nested inside a trigger body", () => {
+    // depth must be counted, not just toggled: two CASEs need two ENDs.
+    const out = splitStatements("CREATE TRIGGER t AFTER INSERT ON u BEGIN UPDATE r SET x = CASE WHEN 1 THEN CASE WHEN 2 THEN 3 END ELSE 4 END; END;\nCREATE INDEX i ON u(x);");
+    expect(out).toHaveLength(2);
+    expect(out[0]).toContain("CASE WHEN 1 THEN CASE WHEN 2 THEN 3 END ELSE 4 END;");
+    expect(out[0].trimEnd().endsWith("END")).toBe(true);
+    expect(out[1]).toBe("CREATE INDEX i ON u(x)");
+  });
+
+  it("ignores semicolons inside block comments", () => {
+    // The comment text may stay attached to the following statement (SQL
+    // accepts leading comments); what must not happen is a split at the `;`
+    // inside it.
+    const out = splitStatements("CREATE TABLE a(x);\n/* split; me */\nCREATE INDEX i ON a(x);");
+    expect(out).toHaveLength(2);
+    expect(out[0]).toBe("CREATE TABLE a(x)");
+    expect(out[1]).toContain("CREATE INDEX i ON a(x)");
   });
 });
 

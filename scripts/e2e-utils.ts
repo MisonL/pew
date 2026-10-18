@@ -13,6 +13,17 @@ async function deadline<Result>(promise: Promise<Result>, milliseconds: number, 
   } finally { clearTimeout(timer); }
 }
 
+// Like deadline(), but resolves instead of rejecting and always clears its
+// timer: Bun keeps the event loop alive for a pending Bun.sleep(), so racing
+// one against a child that exits immediately delayed every lane's exit by the
+// full 5s.
+async function settleWithin(promise: Promise<unknown>, milliseconds: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([promise, new Promise<void>((done) => { timer = setTimeout(done, milliseconds); })]);
+  } finally { clearTimeout(timer); }
+}
+
 // timeoutMs is the local-bindings STARTUP budget. The default is deliberately
 // well above observed cold-start time: the deadline exists to catch a wedged
 // child, not to enforce a performance budget. Pre-push runs this lane in
@@ -164,6 +175,10 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
       env.NODE_ENV = "production";
     }
     await verifyLocalMarker(env);
+    // Same window as the post-readiness check below: a signal that arrives
+    // while the marker query is in flight must not let the lane spawn a
+    // `next dev` / `next build` that the interrupt then has to kill.
+    abort.signal.throwIfAborted();
     if (tier === "api") {
       // L2 exercises route handlers in-process; a dev server gives the
       // fastest iteration and full runtime diagnostics.
@@ -223,6 +238,10 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
     failure = error;
     failed = true;
   } finally {
+    // Every cleanup step records instead of throwing: a throw inside finally
+    // would replace the in-flight failure (Biome noUnsafeFinally, and the
+    // masking this block exists to prevent). Surfaced after the finally.
+    const cleanupErrors: unknown[] = [];
     // build is included deliberately: if the 600s build deadline (or any
     // error after spawn) fires, build is still running here, and letting it
     // outlive the run would race the dist-dir rmSync below and leave an
@@ -230,29 +249,58 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
     // dead child again is harmless.
     for (const child of [tests, server, build]) {
       if (child && child.exitCode === null) {
-        child.kill();
-        await Promise.race([child.exited, Bun.sleep(5000)]);
-        if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; }
+        try {
+          child.kill();
+          await settleWithin(child.exited, 5000);
+          // A child killed by a signal keeps exitCode === null and reports it
+          // through signalCode (Bun: SIGTERM → exited resolves 143). Without
+          // this check every signal-killed child looked alive and took a
+          // redundant SIGKILL — harmless on Bun, an ESRCH throw elsewhere,
+          // which would now turn a clean run into "cleanup failed".
+          const dead = child.exitCode !== null || (child.signalCode ?? null) !== null;
+          if (!dead) { child.kill("SIGKILL"); await child.exited; }
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
       }
     }
     try {
       await local?.dispose();
     } catch (error) {
-      // Record, don't throw here: a throw inside finally would overwrite the
-      // in-flight failure (Biome noUnsafeFinally, and the masking this very
-      // block exists to prevent). Surfaced after the finally below.
-      cleanupFailure = error;
-      cleanupFailed = true;
-    } finally {
+      cleanupErrors.push(error);
+    }
+    try {
       if (local) rmSync(join("packages/web", dist), { recursive: true, force: true });
-      process.removeListener("SIGINT", stop);
-      process.removeListener("SIGTERM", stop);
-      abort.signal.removeEventListener("abort", killChildren);
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    process.removeListener("SIGINT", stop);
+    process.removeListener("SIGTERM", stop);
+    abort.signal.removeEventListener("abort", killChildren);
+    if (cleanupErrors.length === 1) {
+      cleanupFailure = cleanupErrors[0];
+      cleanupFailed = true;
+    } else if (cleanupErrors.length > 1) {
+      cleanupFailure = new AggregateError(cleanupErrors, "E2E cleanup failed");
+      cleanupFailed = true;
     }
   }
   // Keep the original failure visible: a bindings child that died mid-run
   // makes dispose throw (send on a closed IPC channel, kill on a gone process
   // group), and that must not replace the real cause.
+  if (abort.signal.aborted) {
+    // An interrupt outranks every other failure cause: it is the reason the
+    // run was cut short, and it must not be reported as a cleanup fault (a
+    // SIGTERM during cleanup with a slow dispose used to surface as
+    // "Local bindings disposal failed", hiding the interruption).
+    const reason = abort.signal.reason;
+    const errors = [reason];
+    // throwIfAborted() throws the signal reason itself; do not list it twice.
+    if (failed && failure !== reason) errors.push(failure);
+    if (cleanupFailed) errors.push(cleanupFailure);
+    if (errors.length === 1) throw reason;
+    throw new AggregateError(errors, "E2E interrupted and the run did not finish cleanly");
+  }
   if (cleanupFailed && failed) throw new AggregateError([failure, cleanupFailure], "E2E run failed and cleanup also failed");
   if (cleanupFailed) throw cleanupFailure;
   if (failed) throw failure;

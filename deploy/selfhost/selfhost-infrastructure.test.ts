@@ -82,9 +82,19 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
   });
 
   it("ignores the rendered auth file in git and docker contexts", () => {
-    expect(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../.gitignore"), "utf8"))
-      .toContain("deploy/selfhost/.rqlite-auth.json");
-    expect(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../.dockerignore"), "utf8"))
-      .toContain("**/.rqlite-auth.json");
+    const gitignore = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../.gitignore"), "utf8");
+    expect(gitignore).toContain("deploy/selfhost/.rqlite-auth.json");
+    // The render script's staging file holds every plaintext password until
+    // the atomic rename; `.auth.json` alone does not match a `.tmp` suffix.
+    expect(gitignore).toContain("deploy/selfhost/.rqlite-auth.json.*");
+    const dockerignore = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../.dockerignore"), "utf8");
+    expect(dockerignore).toContain("**/.rqlite-auth.json");
+    // Two spellings: the default name has a HYPHEN before `auth`, so
+    // `*.auth.json*` can never match `.rqlite-auth.json.tmp`.
+    expect(dockerignore).toContain("**/.rqlite-auth.json.*");
+    expect(dockerignore).toContain("deploy/selfhost/*.auth.json.*");
+    // Root-anchored patterns miss nested worktrees (verified with buildx).
+    expect(dockerignore).toContain("**/.claude");
+    expect(dockerignore).toContain("**/.superpowers");
   });
 });

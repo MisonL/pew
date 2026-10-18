@@ -58,6 +58,13 @@ describe("real D1 lifecycle", () => {
     // (cleanup error): the startup error must stay errors[0], never replaced
     // by "Local D1 cleanup failed" (same rule as startLocalBindings).
     for (const key of ["HOME", "XDG_CONFIG_HOME", "WRANGLER_SEND_METRICS"]) vi.stubEnv(key, process.env[key]);
+    // A failed removal deliberately leaves the state dir behind. Point TMPDIR
+    // at a private root so cleanup deletes only this test's directory: the
+    // real lanes and other vitest workers create `pew-e2e-*` siblings in the
+    // shared tmpdir, and a prefix-based sweep would delete a live lane's
+    // state.
+    const root = mkdtempSync(join(tmpdir(), "pew-bindings-leak-"));
+    vi.stubEnv("TMPDIR", root);
     const rm = vi.mocked((await import("node:fs")).rmSync).mockImplementation(() => {
       throw new Error("synthetic rm failure");
     });
@@ -71,8 +78,12 @@ describe("real D1 lifecycle", () => {
       expect(aggregate.message).toBe("Local D1 startup failed and cleanup also failed");
       expect((aggregate.errors[0] as Error).message).toContain("synthetic migration failure");
       expect((aggregate.errors[1] as Error).message).toContain("Local D1 cleanup failed");
+      // The leaked state dir really was created under the private root (the
+      // assertion would otherwise pass vacuously if the stub were ignored).
+      expect(readdirSync(root).filter((name) => name.startsWith("pew-e2e-"))).toHaveLength(1);
     } finally {
       rm.mockRestore(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

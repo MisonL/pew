@@ -574,7 +574,7 @@ Expected: FAIL —— `bootstrapAdmin` 不存在
 
 - [ ] **Step 3: 实现**
 
-`lib/credentials.ts` 追加 `bootstrapAdmin`（事务批）；创建 `app/api/auth/register/route.ts`（判断库是否为空决定走 bootstrap 还是 invite 路径）；创建 `app/setup/page.tsx`（4 步向导）。实现更正 2026-10-17：向导页是纯客户端组件（`"use client"`），**没有服务端 302 门**——库非空时访问 `/setup` 仍渲染向导，拒绝发生在 `POST /api/auth/register`（`registerWithInvite` 失败返回 400），与 docs 52 §4.4 的实现更正同源。
+`lib/credentials.ts` 追加 `bootstrapAdmin`（事务批）；创建 `app/api/auth/register/route.ts`（判断库是否为空决定走 bootstrap 还是 invite 路径）；创建 `app/setup/page.tsx`（单步表单——实现更正 2026-10-17：原写「4 步向导」，交付为单个 `<form>` 的单步页面，步骤 3 的实例选项已省略，见 docs 52 §4.4）。实现更正 2026-10-17：向导页是纯客户端组件（`"use client"`），**没有服务端 302 门**——库非空时访问 `/setup` 仍渲染向导，拒绝发生在 `POST /api/auth/register`（`registerWithInvite` 失败返回 400），与 docs 52 §4.4 的实现更正同源。
 
 关键 SQL（批内）：
 
@@ -639,7 +639,7 @@ Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
-`resolveAdmin`/`isAdminUser` 增加一次 D1 查询（`SELECT is_admin FROM users WHERE email = ?`）；命中 `ADMIN_EMAILS` 时短路（不查库，保留破窗语义）。两处调用点改 `await`。
+`resolveAdmin`/`isAdminUser` 增加一次 D1 查询（`SELECT is_admin FROM users WHERE id = ?`，按用户 id 查询——实现更正 2026-10-17：原文写 `WHERE email = ?`，与交付的 `lib/admin.ts:71` `isAdminInDb(userId)` 不符，照抄会使库内管理员判定失效）；命中 `ADMIN_EMAILS` 时短路（不查库，保留破窗语义）。两处调用点改 `await`。
 
 - [ ] **Step 4: 跑测试确认通过**
 

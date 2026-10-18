@@ -19,9 +19,13 @@ coverage-tmp/
 .dev.vars
 
 # Rendered rqlite credentials (deploy/selfhost, Plan 3; *.auth.json covers a
-# custom AUTH_OUT_FILE name in the same directory)
+# custom AUTH_OUT_FILE name in the same directory, and the trailing * also
+# covers the render script's `.tmp` staging file, which holds every plaintext
+# password until the atomic rename)
 deploy/selfhost/.rqlite-auth.json
+deploy/selfhost/.rqlite-auth.json.*
 deploy/selfhost/*.auth.json
+deploy/selfhost/*.auth.json.*
 
 # Local wrangler/miniflare state (d1 emulation caches; never meaningful)
 .wrangler/

@@ -102,4 +102,30 @@ describe("POST /api/auth/register", () => {
     expect(res.status).toBe(500);
     expect((await res.json()).error).toBe("Registration failed");
   });
+
+  it("maps a concurrent-setup UNIQUE collision to 400 already set up", async () => {
+    // Both requests passed the "users is empty" pre-check; this one lost the
+    // race and hit the users.email UNIQUE index (or instance_setup's PK)
+    // inside the batch. It must read as "already set up" (400), not a 500.
+    mockQuery.mockResolvedValue({ results: [{ n: 0 }] });
+    dbWrite.batch.mockRejectedValueOnce(new Error("UNIQUE constraint failed: users.email"));
+
+    const res = await post({ email: "a@b.c", password: "password123" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/already set up/i);
+  });
+
+  it("does not relabel an invite-path UNIQUE failure as already set up", async () => {
+    // On the invite path a UNIQUE failure is a duplicate email, not a setup
+    // race; the bootstrap-only mapping must not leak into it.
+    mockQuery.mockResolvedValueOnce({ results: [{ n: 1 }] });
+    dbWrite.execute
+      .mockResolvedValueOnce({ changes: 1, duration: 0 }) // consume invite
+      .mockRejectedValueOnce(new Error("UNIQUE constraint failed: users.email")) // insert user
+      .mockResolvedValueOnce({ changes: 1, duration: 0 }); // release invite (best-effort)
+
+    const res = await post({ email: "n@x.y", password: "password123", inviteCode: "ABCD2345" });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Registration failed");
+  });
 });

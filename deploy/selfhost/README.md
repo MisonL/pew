@@ -9,6 +9,9 @@ cd deploy/selfhost
 cp .env.example .env
 chmod 600 .env        # 含明文密钥；同宿主其他用户不应能读（目录是 755 时 644 的 .env 谁都能读）
 # 编辑 .env：至少填 AUTH_SECRET、NEXTAUTH_URL、三个密钥
+# 纯 http 访问（本 Quickstart 默认）必须再填 USE_SECURE_COOKIES=false，
+# 否则 __Secure- 前缀 cookie 被浏览器丢弃、登录全线失效（见「Cookie 与
+# USE_SECURE_COOKIES」小节的四格表；https 部署留空即可）
 # .env 里 COMPOSE_PROFILES=single（默认），等价于 --profile single
 docker compose up -d --build
 ```
@@ -156,13 +159,31 @@ rqlite 后端写异常时 **fail-open 放行并告警**（不误判为超限拒�
 
 ## 集群模式
 
+> **从单节点切换过来时，旧 `rqlite` 容器必须先下线**（见下方步骤）。profile 只是
+> compose 的「是否创建」开关：inactive profile 的服务**不会被 `up` 启动，也不会被 `down`
+> 停止**。直接改 `.env` 再 `up` 会让旧的单节点 `rqlite` 继续运行，它与三个集群节点共享
+> 同一个网络别名 `rqlite`，应用服务的 DNS 会在四个容器间轮询——写可能落到那个独立的
+> Raft 实例上并「成功」，数据随即分叉。**而且集群的三个卷是全新的空卷：单节点的数据不会
+> 自动带过去。**
+
 ```bash
-# 必须同时把 .env 的 COMPOSE_PROFILES 改为 cluster：--profile 只对本次调用生效，
-# 后续任何裸 `docker compose up -d`（升级、排障、恢复）都会按 .env 拉起单节点
-# `rqlite` 服务（独立空卷，且与集群共享 `rqlite` 网络别名），backup.sh 也按
-# .env 选服务。改完 .env 后：
+# 1) 下线并删除旧的单节点容器（不带 -v，保留 rqlite-data 卷以便回退）
+docker compose --profile single stop rqlite
+docker compose --profile single rm -f rqlite
+
+# 2) 把 .env 的 COMPOSE_PROFILES 改为 cluster（--profile 只对本次调用生效，后续任何
+#    裸 `docker compose up -d`——升级、排障、恢复——都会按 .env 选择服务；backup.sh
+#    也按 .env 选服务）
+# 3) 起集群
 docker compose up -d --build
+
+# 4) 迁移数据（二选一）：从单节点时代备份恢复，或用 -join 把数据带进集群（见下）
 ```
+
+**从单节点迁到集群的数据路径**：compose 的 cluster profile 建的是**空集群**。要保留数据，
+在切换前用 `backup.sh` 备份，切到集群并让 migrate 跑通后，按「恢复」runbook 把归档
+`.restore` 进集群；或走下面的 `-join` 在线扩容路径（把新节点 join 进**已有数据**的单节点，
+而不是另起一套空集群）。
 
 三个 rqlite 节点通过 Raft 复制。**同机三容器只防进程故障，不防磁盘/主机故障**；跨机部署请把 compose 分发到三台机器并调整 `-join` 地址。
 
@@ -185,8 +206,9 @@ docker compose up -d --build
 
 **单节点在线扩容为 3 节点已验证可行**：向已运行的单节点 `-bootstrap-expect 1` 直接
 `-join <单节点>:4002`（join 节点**不要**带 `-bootstrap-expect`）即可，实测 3 节点全部
-voter/reachable，且新节点能读到扩容前写入的数据。若要走 compose 集群 profile，先
-`.env` 里改 `COMPOSE_PROFILES=cluster`，再 `docker compose up -d`。
+voter/reachable，且新节点能读到扩容前写入的数据。这条路把新节点加进**已有数据**的单节点，
+数据随 Raft 复制过去；而直接切 compose 的 cluster profile 是另起一套空集群，两者不能
+混为一谈（切换前务必按上一节先下线旧单节点容器）。
 
 ## 扩展（scale）
 
@@ -253,7 +275,10 @@ server {
   公网拓扑**，IP 限速不可依赖。
 
   ```bash
-  # !override 替换（而非追加）基础 compose 的 ports 列表，需 Compose >= v2.24.4
+  # !override 替换（而非追加）基础 compose 的 ports 列表，需 Compose >= v2.24.4。
+  # 注意：-f 叠加只作用于本次调用。之后任何裸 `docker compose up -d`（升级、排障）
+  # 都会回到基础 compose 的 0.0.0.0:7020 发布——要么每次调用都带两个 -f，要么在
+  # .env 里设 COMPOSE_FILE=docker-compose.yml:docker-compose.proxy.yml 固化。
   docker compose -f docker-compose.yml -f docker-compose.proxy.yml config   # 冒烟核对合并结果
   docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d
   ```
@@ -371,8 +396,9 @@ HTTP 方式需在容器内执行。注意：HTTP 通道的 `-u` 凭据**在宿�
 **定时备份用 `backup.sh`**（仓库交付的可执行脚本，cron/systemd timer 友好）：读 `.env`
 凭据、按 profile 自动选 `rqlite`/`rqlite-1`、在**目标旁一个 0700 的暂存目录**里接收副本并
 `chmod 600`（`docker compose cp` 按容器侧 0644 落地、无视 umask；暂存目录保证哪怕脚本被
-SIGKILL——此时 trap 无法执行——归档也不可被其他用户读取）、校验通过后再原子 `mv` 覆盖目标、
-空归档或非 SQLite 产物一律非零退出、退出时清理暂存目录与容器内临时文件。
+SIGKILL——此时 trap 无法执行——归档也不可被其他用户读取）、要求 REPL 打出成功行并校验产物、
+校验通过后再原子 `mv` 覆盖目标、空归档/截断归档/非 SQLite 产物一律非零退出、退出时清理
+暂存目录与容器内临时文件。
 脚本会 `cd` 到自身所在目录，所以默认产物落在 **`deploy/selfhost/backup-YYYY-MM-DD.db`**，
 不是当前工作目录；**相对路径参数也按脚本目录解析**（`bash deploy/selfhost/backup.sh out.db`
 会写到 `deploy/selfhost/out.db`，不是调用方 cwd——非 `backup-*.db` 的命名不在 gitignore
@@ -399,19 +425,23 @@ bash deploy/selfhost/backup.sh /var/backups/pew/pew.db
 
 - **cron 的 `PATH` 通常不含 docker**。用 `docker: command not found` 报错时，请在 crontab
   顶部显式设置 `PATH=/usr/local/bin:/usr/bin:/bin`（或 `command -v docker` 查到的目录）。
-- **不要在多个 timer 上并发跑同一个输出路径**：脚本内 `.backup` 写的是固定容器路径
-  `/rqlite/file/backup.db`，并发运行会互相覆盖。需要多份备份请错开时间或指向不同输出路径。
+- **不要在多个 timer 上并发跑备份**：脚本内 `.backup` 写的是固定容器路径
+  `/rqlite/file/backup.db`，与宿主输出路径无关，所以并发运行必然互相覆盖，且先结束者的
+  EXIT trap 会 `rm -f` 掉另一个正在使用的归档。**指向不同输出路径并不能避免冲突**——必须
+  错开时间，或用 `flock`（如 `flock -n /var/lock/pew-backup.lock bash backup.sh ...`）串行化。
 - **凭据经环境变量传入容器**（`docker exec -e RQLITE_USERNAME -e RQLITE_PASSWORD`）：宿主
   `ps` 里可见 argv，环境变量不可见，所以密码含空格也无需引号技巧。脚本不接受把
   `-u user:pass` 放进 argv。
-- **校验是白名单式的**：不仅非空，还要求前 16 字节是 `SQLite format 3\0` 魔数，挡住
-  `.backup` 失败留下的非空错误页。**这是格式门，不是完整性门**：截断/仅含头部的文件同样
-  通过；恢复演练时建议在可信宿主上补 `sqlite3 <archive> 'PRAGMA integrity_check'`。
-- **`.backup` 本身的退出状态不可信**：REPL 打出 `ERR!`（如凭据错误）后仍以 0 退出
-  （rqlite 10.5.3 实测），所以脚本不依赖 REPL 的退出码——`.backup` 前先清掉容器内可能
-  残留的旧归档（SIGKILL 会跳过清理 trap），完成后用 `test -s` 断言容器内归档真实存在，
-  两道门都过才继续 cp。没有这两道门时，一次失败的备份会安静地复制上一轮的陈旧归档并以
-  退出码 0 "成功"。
+- **校验是白名单式的**：不仅非空，还要求 REPL 打出成功行 `backup file written successfully`
+  且前 16 字节是 `SQLite format 3\0` 魔数。成功行是必需的一道：磁盘写满时 `.backup` 打出
+  `ERR! write ... no space left on device`（stdout，退出码仍是 0）并留下一个**截断**文件，
+  它同时通过非空与魔数检查（10.5.3 实测）。**这仍不是完整性门**：恢复演练时建议在可信宿主
+  上补 `sqlite3 <archive> 'PRAGMA integrity_check'`。
+- **`.backup` 本身的退出状态不可信**：REPL 打出 `ERR!`（如凭据错误、磁盘写满）后仍以 0
+  退出（rqlite 10.5.3 实测），所以脚本不依赖 REPL 的退出码——`.backup` 前先清掉容器内可能
+  残留的旧归档（SIGKILL 会跳过清理 trap），完成后要求 REPL 打出成功行、再用 `test -s`
+  断言容器内归档真实存在，两道门都过才继续 cp。没有这些门时，一次失败的备份会安静地复制
+  上一轮的陈旧归档、或把截断文件覆盖到完好归档上，并以退出码 0 "成功"。
 
 灾难恢复 runbook 见下文「**恢复**」部分（本节内的恢复步骤）；备份产物只含数据，`.env` 与
 `.rqlite-auth.json` 需另行保管（见下）。
@@ -626,6 +656,11 @@ docker compose up -d rqlite
 # Expected: 日志出现 "attempting node recovery using ..."，随后 healthy
 ```
 
+**集群部署（`COMPOSE_PROFILES=cluster`）不能用上面这份 peers.json**：节点 id 是
+`1`/`2`/`3`，地址是 `rqlite-1:4002` 等，且每个节点的文件要列出**全部三个** voter。
+单节点的那份只适用于 `rqlite` 服务；对集群套用会让节点以错误的配置启动。集群的
+peers.json 重建属于破坏性操作，先备份三个卷再逐个节点处理。
+
 **`unhealthy` 不等于自动重启**：`restart: unless-stopped` 只对进程退出生效；进程活着但
 服务僵死（探针持续失败）时 Docker 不会重启容器。处置靠人工 `docker compose restart <svc>`；
 本栈无自动告警通道，长期部署建议把 `docker compose ps` 纳入外部巡检。
@@ -675,7 +710,7 @@ Plan 1 交付「数据层与运行时可用、API 可经 CLI/密钥调用」。P
 
 ## 合并上游
 
-上游接触面分两批：
+上游接触面分三批：
 
 **Plan 1（数据层）**：`packages/web/src/lib/d1.ts`（新增 `D1_BASE_URL` 优先级）与
 `vitest.config.ts`（`test.include` 增加 `deploy/**/*.test.ts`）。
@@ -686,6 +721,10 @@ Plan 1 交付「数据层与运行时可用、API 可经 CLI/密钥调用」。P
 `cli/src/commands/login.ts` + `cli/src/config/manager.ts`（`--host`/`PEW_HOST` 与按 host
 隔离凭据）。新增文件（`lib/credentials.ts`、`app/setup/`、`app/api/auth/register|reset-password|
 login-options`、`api/admin/users/[userId]/reset-password` 等）不与上游冲突。
+
+**Plan 3（加固）**：`lib/rate-limit.ts`（`RqliteRateLimiter` 共享后端、`getClientIp` 取
+XFF 最后一段、IPv6 前缀归并）、`lib/invite.ts` 与 `lib/auth-helpers.ts`（E2E 门改为调用
+新增的共享 `lib/e2e-mode.ts`，三处手写副本收敛为单一 `isE2EMode`）。
 
 `packages/worker` 与 `packages/worker-read` 的 **`src/` 业务代码与 SQL 零改动**（仅
 `WORKER_VERSION` 常量随版本 bump）；为把

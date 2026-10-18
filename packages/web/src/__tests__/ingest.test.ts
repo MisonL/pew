@@ -207,6 +207,28 @@ describe("POST /api/ingest", () => {
       });
     });
 
+    it("derives the /ingest path from every WORKER_INGEST_URL shape", async () => {
+      // The selfhost compose default has no `/ingest` suffix; the token route
+      // used to fetch it verbatim, so every token upload hit the Worker root
+      // and 404'd (E2E masked it by injecting the suffixed form). All four
+      // ingest routes share resolveIngestUrl now.
+      for (const [env, expected] of [
+        ["http://ingest:8786", "http://ingest:8786/ingest"],
+        ["http://ingest:8786/", "http://ingest:8786/ingest"],
+        ["https://worker.example.com/ingest", "https://worker.example.com/ingest"],
+        ["https://worker.example.com/ingest/", "https://worker.example.com/ingest"],
+        ["https://worker.example.com/ingest/tokens", "https://worker.example.com/ingest"],
+      ] as const) {
+        vi.stubEnv("WORKER_INGEST_URL", env);
+        mockFetch.mockClear();
+        stubWorkerOk();
+        const res = await POST(makeRequest([VALID_RECORD], undefined, VALID_VERSION));
+        expect(res.status, env).toBe(200);
+        expect(mockFetch.mock.calls[0]![0], env).toBe(expected);
+      }
+      vi.unstubAllEnvs();
+    });
+
     it("should forward records to Worker via fetch", async () => {
       stubWorkerOk();
 

@@ -21,12 +21,17 @@
 #   into place only after validation: a failed same-day re-run must never
 #   overwrite (or delete) an intact earlier archive, and a SIGKILLed run
 #   cannot leave the archive world-readable (see the staging comment below).
-# - Exits non-zero when .backup produced nothing, an empty file, or a
-#   non-SQLite artifact, so a cron/systemd timer actually alerts instead of
-#   keeping a silent bad file. The REPL cannot be trusted for this: it exits
-#   0 even after printing `ERR! unauthorized`, so success is judged by the
-#   archive on disk, and any stale archive from an interrupted earlier run is
-#   removed before .backup starts.
+# - Exits non-zero when .backup produced nothing, an empty file, a truncated
+#   file, or a non-SQLite artifact, so a cron/systemd timer actually alerts
+#   instead of keeping a silent bad file. The REPL cannot be trusted for its
+#   exit code: it exits 0 even after printing `ERR! unauthorized`, so success
+#   is judged by BOTH the REPL's success line and the archive on disk. The
+#   archive checks alone are not enough — on a full filesystem the REPL prints
+#   `ERR! write ... no space left on device` and leaves a TRUNCATED file that
+#   passes `test -s` and the SQLite magic check (verified against 10.5.3), and
+#   a run that kept it would replace an intact earlier archive with a
+#   malformed one. Any stale archive from an interrupted earlier run is removed
+#   before .backup starts.
 #
 # .env is sourced as shell: a password must be single-quoted there (an
 # unquoted `$` expands, `$$` becomes the PID) and the file must not contain a
@@ -62,6 +67,16 @@ OUT="${1:-backup-$(date +%F).db}"
 # and silently discarded the archive). Reject it instead of trying to escape.
 case "$OUT" in
   -*) echo "backup.sh: output path may not start with '-': $OUT" >&2; exit 1;;
+esac
+# Reject `.`/`..` path components. The `[ -d "$OUT" ]` check below only fires
+# when the path already EXISTS as a directory; with a missing intermediate
+# (`/tmp/x/nodir/..`, `/tmp/x/nodir/.`) mkdir -p creates it and `mv` then
+# resolves to the PARENT (or the new dir), silently writing to the wrong place
+# and possibly replacing an unrelated file (verified on macOS and
+# debian:12-slim). Same guard as render-rqlite-auth.sh.
+case "$OUT" in
+  .|..|*/|/.|/..|*/.|*/..|*/../*|*/./*)
+    echo "backup.sh: refusing relative or self-referential output path: $OUT" >&2; exit 1;;
 esac
 # A cron target directory (/var/backups/pew) usually does not exist yet;
 # `docker compose cp` refuses a missing parent, so create it up front.
@@ -109,13 +124,24 @@ trap 'exit 129' HUP
 docker compose exec -T "$SERVICE" rm -f /rqlite/file/backup.db
 
 if [ -n "${RQLITE_USERNAME:-}" ] && [ -n "${RQLITE_PASSWORD:-}" ]; then
-  printf '.backup /rqlite/file/backup.db\n.exit\n' | \
+  REPL_OUT=$(printf '.backup /rqlite/file/backup.db\n.exit\n' | \
     docker compose exec -T -e RQLITE_USERNAME -e RQLITE_PASSWORD "$SERVICE" \
-      sh -c 'exec rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost'
+      sh -c 'exec rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost')
 else
-  printf '.backup /rqlite/file/backup.db\n.exit\n' | \
-    docker compose exec -T "$SERVICE" rqlite -H localhost
+  REPL_OUT=$(printf '.backup /rqlite/file/backup.db\n.exit\n' | \
+    docker compose exec -T "$SERVICE" rqlite -H localhost)
 fi
+# The REPL writes its diagnostics to STDOUT (verified: `ERR! open ...` and
+# `ERR! write ... no space left on device` both go to stdout, stderr stays
+# empty) and exits 0 regardless. Echo the transcript so an operator still sees
+# it, then require the success line. This is what catches a truncated archive
+# on a full disk: `test -s` and the magic check both pass on a half-written
+# file, and only the missing success line proves the write completed.
+printf '%s\n' "$REPL_OUT"
+case "$REPL_OUT" in
+  *"backup file written successfully"*) ;;
+  *) echo "backup.sh: .backup did not report success (see REPL output above)" >&2; exit 1;;
+esac
 
 # Success gate: the REPL's exit status cannot distinguish success from ERR!
 # (see above), so the archive itself is the only trustworthy signal. A failed

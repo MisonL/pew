@@ -177,6 +177,33 @@ describe("render-rqlite-auth.sh", () => {
       expect(stderr).toContain("refusing relative or self-referential AUTH_OUT_FILE");
     });
 
+  it("refuses an AUTH_OUT_FILE starting with '-' before writing plaintext", async () => {
+    // jq would write "-foo.tmp" (0600, every plaintext password), then mv and
+    // the EXIT trap's `rm -f "$OUT.tmp"` both parse the name as an option and
+    // fail, leaving a file that matches no ignore rule.
+    const dir = mkdtempSync(join(tmpdir(), "ra-")); dirs.push(dir);
+    const child = spawn("/bin/bash", [SCRIPT], {
+      cwd: dir,
+      env: {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        RQLITE_USERNAME: "pew", RQLITE_PASSWORD: "pw1", RQLITE_JOIN_PASSWORD: "pw2",
+        AUTH_OUT_FILE: "-foo",
+      },
+      stdio: "pipe",
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => { stderr += chunk; });
+    const code = await new Promise<number>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("exit", (c) => resolve(c ?? -1));
+    });
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("refusing AUTH_OUT_FILE starting with '-'");
+    expect(existsSync(join(dir, "-foo.tmp"))).toBe(false);
+    expect(existsSync(join(dir, "-foo"))).toBe(false);
+  });
+
   it("errors and leaves no .tmp residue when jq is missing", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ra-")); dirs.push(dir);
     const file = join(dir, ".rqlite-auth.json");

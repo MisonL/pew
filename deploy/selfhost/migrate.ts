@@ -69,6 +69,17 @@ export function splitStatements(sql: string): string[] {
   let current = "";
   let inTrigger = false;
   let quote: "'" | '"' | null = null;
+  // Block comments span lines, so this state lives outside the line loop.
+  // Without it a `;` inside `/* ... */` splits a statement in half.
+  let inBlockComment = false;
+  // BEGIN/END are recognized in the SAME scan that handles quotes and
+  // comments: a separate regex pass over the raw text latched on the literal
+  // in `VALUES ('BEGIN')` (swallowing the rest of the file) and closed a
+  // trigger body early at the END of a CASE expression.
+  let word = "";
+  // A trigger body's END must not be confused with the END of a CASE
+  // expression inside it; track the nesting depth.
+  let caseDepth = 0;
 
   const flush = () => {
     const trimmed = current.trim();
@@ -78,9 +89,16 @@ export function splitStatements(sql: string): string[] {
 
   // BEGIN opens a trigger body, END closes it; both matched at word boundaries
   // so identifiers like "endpoint" or "beginning" do not trip the state.
-  const applyState = (chunk: string) => {
-    if (!inTrigger && /\bBEGIN\b/i.test(chunk)) inTrigger = true;
-    if (inTrigger && /\bEND\b/i.test(chunk)) inTrigger = false;
+  const endWord = () => {
+    if (!word) return;
+    const upper = word.toUpperCase();
+    if (upper === "CASE" && inTrigger) caseDepth += 1;
+    else if (!inTrigger && upper === "BEGIN") inTrigger = true;
+    else if (inTrigger && upper === "END") {
+      if (caseDepth > 0) caseDepth -= 1;
+      else inTrigger = false;
+    }
+    word = "";
   };
 
   const lines = sql.split("\n");
@@ -91,40 +109,57 @@ export function splitStatements(sql: string): string[] {
     let end = line.length; // content stops here (line comment cut)
     while (i < line.length) {
       const ch = line[i];
+      if (inBlockComment) {
+        if (ch === "*" && line[i + 1] === "/") { inBlockComment = false; i += 2; continue; }
+        i += 1;
+        continue;
+      }
       if (quote) {
         if (ch === quote) quote = null;
         i += 1;
         continue;
       }
+      // Block comment: skip to its end (possibly on a later line).
+      if (ch === "/" && line[i + 1] === "*") {
+        endWord();
+        inBlockComment = true;
+        i += 2;
+        continue;
+      }
       // Line comment: discard the rest of the line.
       if (ch === "-" && line[i + 1] === "-") {
+        endWord();
         end = i;
         break;
       }
       if (ch === "'" || ch === '"') {
+        endWord();
         quote = ch;
         i += 1;
         continue;
       }
-      if (ch === ";") {
-        const body = line.slice(start, i);
-        // Update trigger state from the body *before* deciding: a ";" inside a
-        // body is kept; one that closes the body (or is outside one) is the
-        // statement terminator and is dropped.
-        applyState(body);
-        current += inTrigger ? body + ";" : body;
-        start = i + 1;
-        if (!inTrigger) flush();
+      if (/[A-Za-z0-9_]/.test(ch ?? "")) {
+        word += ch;
         i += 1;
         continue;
       }
+      endWord();
+      if (ch === ";") {
+        const body = line.slice(start, i);
+        // A ";" inside a body is kept; one that closes the body (or is
+        // outside one) is the statement terminator and is dropped.
+        current += inTrigger ? body + ";" : body;
+        start = i + 1;
+        if (!inTrigger) flush();
+      }
       i += 1;
     }
+    endWord();
     const tail = line.slice(start, end) + (li < lines.length - 1 ? "\n" : "");
-    applyState(tail);
     current += tail;
   }
 
+  endWord();
   flush();
   return statements;
 }

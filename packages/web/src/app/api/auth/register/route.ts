@@ -47,8 +47,10 @@ export async function POST(request: Request) {
     );
   }
 
+  let bootstrapping = false;
   try {
     if (await instanceIsEmpty()) {
+      bootstrapping = true;
       const { userId } = await bootstrapAdmin({ email, name: name || email, password });
       return NextResponse.json({ ok: true, userId, admin: true });
     }
@@ -57,6 +59,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, userId, admin: false });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Registration failed";
+    // Two concurrent /setup requests can both pass the "instance is empty"
+    // pre-check; the loser then hits the users.email UNIQUE index or the
+    // instance_setup PRIMARY KEY inside the batch and rolls back (no second
+    // admin is created). That is the same client-visible state as the
+    // pre-check's "already set up" — not a server fault. Scoped to the
+    // bootstrap branch: on the invite path a UNIQUE failure means a duplicate
+    // email, which must not be reported as "instance already set up".
+    if (bootstrapping && /UNIQUE constraint failed/i.test(message)) {
+      return NextResponse.json({ error: "Instance is already set up" }, { status: 400 });
+    }
     // Invite problems and "already set up" are the caller's to act on (400);
     // anything else is a server fault — log it but do not echo internals.
     const clientError = /invite|already/i.test(message);

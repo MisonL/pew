@@ -12,7 +12,8 @@
 ## Global Constraints
 
 - 分支 `feat/self-hosted-deployment`；**不推上游** nocoo/pew。
-- pre-commit 门禁 = 全量 L1（4580 测试 + 95% 覆盖率 ×4 + tsc + biome）。已知 flake：`scripts/__tests__/(e2e-utils|local-e2e-bindings)` 高负载下启动超时/EADDRINUSE；用 `.git/commit-retry.sh <attempts> <message-file>` 重试（只对这两个文件重试，其他失败中止）。提交前若 17020/27020 端口被占（残留 next-server），先 `lsof -ti tcp:<port> | xargs kill`。
+- pre-commit 门禁 = 全量 L1（约 4,670+ 测试 / 303 文件 + 95% 覆盖率 ×4 + tsc + biome；计划时点快照写 4580，以 AGENTS.md 的实测口径为准）。
+  （实现更正 2026-10-17：测试统一用 vitest——`./node_modules/.bin/vitest run <path>`；项目无 `tsc`/`vitest` 裸脚本，类型检查用 `bun run lint:typecheck`。下文历史步骤中的 `bun test` 均按此口径执行。）已知 flake：`scripts/__tests__/(e2e-utils|local-e2e-bindings)` 高负载下启动超时/EADDRINUSE；用 `.git/commit-retry.sh <attempts> <message-file>` 重试（只对这两个文件重试，其他失败中止）。提交前若 17020/27020 端口被占（残留 next-server），先 `lsof -ti tcp:<port> | xargs kill`。
 - 开关名全文唯一：`LOGIN_RATE_LIMIT_BACKEND`（不是 `RATE_LIMIT_BACKEND`）。
 - 迁移 DDL 带 `?norwtime&norwrandom`、DML 不带（副本一致性，既有约定）。
 - 凭据不得进任何 error message / 日志输出。
@@ -95,7 +96,7 @@ describe("basic auth", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd /path/to/pew && bun test deploy/selfhost/d1-adapter.test.ts`
+Run: `cd /path/to/pew && ./node_modules/.bin/vitest run deploy/selfhost/d1-adapter.test.ts`
 Expected: FAIL — `basicAuth` 不在类型里（TS 报错）或 Authorization 值不符。
 
 - [ ] **Step 3: 最小实现**（`d1-adapter.ts`）
@@ -130,7 +131,7 @@ export interface D1AdapterOptions {
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `bun test deploy/selfhost/d1-adapter.test.ts`
+Run: `./node_modules/.bin/vitest run deploy/selfhost/d1-adapter.test.ts`
 Expected: PASS（含原有用例，无回归）。
 
 - [ ] **Step 5: 提交**
@@ -182,7 +183,7 @@ describe("basicAuth passthrough", () => {
 
 - [ ] **Step 2: 确认失败**
 
-Run: `bun test deploy/selfhost/d1-http.test.ts`
+Run: `./node_modules/.bin/vitest run deploy/selfhost/d1-http.test.ts`
 Expected: FAIL（类型缺 `basicAuth`）。
 
 - [ ] **Step 3: 实现**
@@ -233,7 +234,7 @@ const server = createD1HttpServer({ baseUrl: RQLITE_URL, token: TOKEN, ...(BASIC
         if (!probe.ok || probeBody.results?.[0]?.error) throw new Error("db probe failed");
 ```
 
-- [ ] **Step 4: 确认通过** — `bun test deploy/selfhost/d1-http.test.ts && bun test deploy/selfhost/server-d1-http* 2>/dev/null || bun test deploy/selfhost/`，PASS 无回归。
+- [ ] **Step 4: 确认通过** — `./node_modules/.bin/vitest run deploy/selfhost/d1-http.test.ts deploy/selfhost/server-d1-http.test.ts`，PASS 无回归。
 
 - [ ] **Step 5: 提交**
 
@@ -296,7 +297,7 @@ describe("assertAuthReconciled (expectAuth=true)", () => {
 });
 ```
 
-- [ ] **Step 2: 确认失败** — `bun test deploy/selfhost/auth-reconcile.test.ts`，Expected: FAIL（导出不存在）。
+- [ ] **Step 2: 确认失败** — `./node_modules/.bin/vitest run deploy/selfhost/auth-reconcile.test.ts`，Expected: FAIL（导出不存在）。
 
 - [ ] **Step 3: 实现自检**（`migrate-cli.ts`）
 
@@ -347,7 +348,7 @@ export async function assertAuthReconciled(
 
 - [ ] **Step 4: rqlite-client 同样加 `basicAuth?`**（模式同 Task 1：设了发 Basic；**删除**现有对空 token 的 Bearer 兜底，未设不发头）。`verify-migrations.ts` 与 `reset-password.ts` 的构造改为 `token: ""` + 可选 `basicAuth`（从 `RQLITE_USERNAME/RQLITE_PASSWORD` 读，未设则两键都缺省）。测试：在 `rqlite-client.test.ts` 与 `reset-password.test.ts` 各加一个「未设凭据 → 不发 Authorization」用例（模式抄 Task 1 Step 1 第三个用例）。
 
-- [ ] **Step 5: 确认通过** — `bun test deploy/selfhost/`，Expected: 全 PASS。
+- [ ] **Step 5: 确认通过** — `./node_modules/.bin/vitest run deploy/selfhost/`，Expected: 全 PASS。
 
 - [ ] **Step 6: 提交**
 
@@ -428,7 +429,7 @@ describe("render-rqlite-auth.sh", () => {
 
 （测试顶部 import 需补 `writeFileSync, mkdirSync`；`Bun.file().stat` 行若无必要可删，以 `statSync` 断言为准。）
 
-- [ ] **Step 2: 确认失败** — `bun test deploy/selfhost/render-auth.test.ts`，Expected: FAIL（脚本不存在）。
+- [ ] **Step 2: 确认失败** — `./node_modules/.bin/vitest run deploy/selfhost/render-auth.test.ts`，Expected: FAIL（脚本不存在）。
 
 - [ ] **Step 3: 写脚本**
 
@@ -467,7 +468,7 @@ chmod 600 "$OUT"
 
 `deploy/selfhost/rqlite-entrypoint.sh`：spec §3.1.2 的脚本原文逐字照抄（含注释），`chmod +x` 两个脚本。
 
-- [ ] **Step 4: 确认通过** — `bun test deploy/selfhost/render-auth.test.ts`，PASS。
+- [ ] **Step 4: 确认通过** — `./node_modules/.bin/vitest run deploy/selfhost/render-auth.test.ts`，PASS。
 
 - [ ] **Step 5: 提交**
 
@@ -506,12 +507,17 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
     expect(single).not.toContain("RQLITE_JOIN_AS");
   });
 
-  it("write services get full credentials; read/scheduler get read-only ones", () => {
+  it("write services get full credentials; read/scheduler get the READ_* pair with full-credential fallback", () => {
     expect(compose).toContain("RQLITE_USERNAME: ${RQLITE_USERNAME:-}");
     expect(compose).toContain("RQLITE_READ_USERNAME: ${RQLITE_READ_USERNAME:-}");
     const sched = compose.slice(compose.indexOf("  scheduler:"), compose.indexOf("  web:"));
     expect(sched).toContain("RQLITE_READ_USERNAME");
-    expect(sched).not.toContain("RQLITE_USERNAME: ${RQLITE_USERNAME:-}");
+    // 实现更正 2026-10-17：scheduler 现在同时注入完整 RQLITE_USERNAME/PASSWORD
+    // 对，供服务端 resolveReadBasicAuth 的 READ_* 回退使用（见交付的
+    // selfhost-infrastructure.test.ts）。最小暴露的断言改为「无 d1-http 校验
+    // token、无 ingest 密钥」，按 key 名匹配（${VAR} 拼写可变，暴露面不变）。
+    expect(/CF_D1_API_TOKEN\s*:/.test(sched)).toBe(false);
+    expect(/WORKER_SECRET\s*:/.test(sched)).toBe(false);
   });
 
   it("ignores the rendered auth file in git and docker contexts", () => {
@@ -523,7 +529,7 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
 });
 ```
 
-- [ ] **Step 2: 确认失败** — `bun test deploy/selfhost/selfhost-infrastructure.test.ts`，FAIL。
+- [ ] **Step 2: 确认失败** — `./node_modules/.bin/vitest run deploy/selfhost/selfhost-infrastructure.test.ts`，FAIL。
 
 - [ ] **Step 3: 改 compose**。要点（全按 spec §3.1.2 片段）：
 
@@ -578,7 +584,7 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
   ```
 
   构造 adapter 时同 Task 3 模式（设了发 Basic、未设无头）。同时删除 compose 注释里已失实的「rqlite has no auth」两处（read/scheduler 的 `# No CF_D1_API_TOKEN` 注释改写为「direct rqlite access; uses optional read-only rqlite credentials」）。
-- [ ] **Step 5: 确认通过** — `bun test deploy/selfhost/ && bun run tsc`（web 侧不受影响），PASS。
+- [ ] **Step 5: 确认通过** — `./node_modules/.bin/vitest run deploy/selfhost/ && bun run lint:typecheck`（web 侧不受影响），PASS。
 - [ ] **Step 6: 提交**
 
 ```bash
@@ -599,7 +605,7 @@ git commit -m "feat: compose auth wiring for rqlite + service credentials (spec 
   1. migrate 通过、`/api/live` 200、登录成功
   2. 无凭据 `docker compose exec web node -e "fetch('http://rqlite:4001/db/query?q=SELECT%201').then(r=>console.log(r.status))"` → `401`；带凭据（Basic 头）→ `200`
   3. **对账自检触发**：另起一个无 `-auth` 的裸 rqlite 容器同网络，把 migrate 指过去（或临时删 auth.json 后 recreate rqlite 保持客户端凭据）→ migrate 显式报「credentials configured but auth is disabled」exit 1
-- [ ] **Step 3: cluster**。`--profile cluster` 重复 Step 2（三节点全部 `-join-as joiner`），真机项 2/4/5：迁移通过、数据一致（写一条 leaderboard 记录三副本可读）；**匿名 join 拒绝**：同网络起 `rqlite/rqlite:10.5.3 -raft-non-voter -join rqlite-1:4002`（无 `-join-as`）→ 日志 unauthorized。
+- [ ] **Step 3: cluster**。`.env` 设 `COMPOSE_PROFILES=cluster`（不要用一次性 `--profile`——后续裸 `up` 会按 `.env` 另起单节点 rqlite），重复 Step 2（三节点全部 `-join-as joiner`），真机项 2/4/5：迁移通过、数据一致（写一条 leaderboard 记录三副本可读）；**匿名 join 拒绝**：同网络起 `rqlite/rqlite:10.5.3 -raft-non-voter -join rqlite-1:4002`（无 `-join-as`）→ 日志 unauthorized。
 - [ ] **Step 4: 备份**（真机项 6）：带凭据 `GET /db/backup`（实现更正 2026-10-15：原文写 `POST /db/backup`，实测 10.5.3 下 POST 返回 405，**GET 才是 200**）到宿主文件，文件非空；恢复到临时节点可读。
 - [ ] **Step 5: 镜像层抽查**（真机项 7）：`git grep rqlite-auth .gitignore .dockerignore` 确认规则在；`docker build` 两个镜像后 `docker history pew-selfhost:local` 逐层确认无 auth.json，`docker save` 导出 grep 无命中。
 - [ ] **Step 6: 清理实验容器/卷；提交**（若有回改，逐文件提交并引用对应 Task）。
@@ -716,7 +722,7 @@ describe("RqliteRateLimiter", () => {
 });
 ```
 
-- [ ] **Step 2: 确认失败** — `cd packages/web && bun vitest run src/lib/__tests__/rate-limit.test.ts`，FAIL。
+- [ ] **Step 2: 确认失败** — `./node_modules/.bin/vitest run packages/web/src/lib/__tests__/rate-limit.test.ts`，FAIL。
 
 - [ ] **Step 3: 实现**（追加到 `rate-limit.ts`）
 
@@ -834,7 +840,7 @@ describe("login limiter backend switch", () => {
 
 （若 `auth.test.ts` 对 `@/lib/rate-limit` 是真模块而非 mock，`vi.spyOn` 直接可用；若 mock 了则在其 factory 里暴露 `rqliteRateLimiter` 假对象并断言调用——实现时以该文件现有 mock 结构为准。）
 
-- [ ] **Step 2: 确认失败** — `bun vitest run src/__tests__/auth.test.ts`，FAIL。
+- [ ] **Step 2: 确认失败** — `./node_modules/.bin/vitest run packages/web/src/__tests__/auth.test.ts`，FAIL。
 
 - [ ] **Step 3: 实现**。`authorizeCredentials` 内替换限速段：
 
@@ -868,7 +874,7 @@ describe("login limiter backend switch", () => {
 
 （`getClientIp` 已从 `@/lib/rate-limit` 导出；`req` 是 NextRequest，`headers.get` 兼容。）
 
-- [ ] **Step 4: 确认通过** — `bun vitest run src/__tests__/auth.test.ts`，PASS；`bun run tsc` 干净。
+- [ ] **Step 4: 确认通过** — `./node_modules/.bin/vitest run packages/web/src/__tests__/auth.test.ts`，PASS；`bun run lint:typecheck` 干净。
 - [ ] **Step 5: 提交**
 
 ```bash
@@ -882,7 +888,7 @@ git commit -m "feat: dual-key login limiting via rqlite backend switch (spec §3
 **Files:** 无代码改动（验证任务）。
 
 - [ ] **Step 1: 端到端双键**。单节点鉴权部署 + web 加 `LOGIN_RATE_LIMIT_BACKEND=rqlite` → 连续 6 次错误密码登录同一邮箱同一 IP → 第 6 次被拒（422/redirect 含 error）、`rqlite` 内 `SELECT COUNT(*) FROM rate_limit_hits WHERE key LIKE 'login:%'` 有 12 行（双键）→ 换 IP（curl 带 XFF）登录成功不误伤。
-- [ ] **Step 2: `meta.changes` 裁决**。直接对 rqlite 执行 Task 8 的原子语句确认 `rows_affected` 在 `/db/request` 响应中的字段路径与 d1-adapter 映射一致；若不一致，按规格回退方案改读 `results[0].meta` 或 `SELECT changes()` 后置查询，重跑单测 + 本步。
+- [x] **Step 2: `meta.changes` 裁决**（2026-10-18 实测完成）。对真实 rqlite 10.5.3 的 `/db/request?transaction=true` 执行 Task 8 的原子语句：插入 1 行返回 `{"last_insert_id":1,"rows_affected":1}`；超限时插入 0 行，响应只含 `{"last_insert_id":1}`、**省略 `rows_affected`**。d1-adapter 的 `changes: raw.rows_affected ?? 0` 因此对两条路径都正确（超限 → 0 → 拒绝）。无需回退方案。
 - [ ] **Step 3: 清理验证**。手动 `INSERT` 一条 `hit_at = datetime('now','-7200 seconds')` 老行，把 Math.random 触发不了的 1/100 概率改为临时调 `maybeCleanup`（或直接对该 DELETE 语句手跑）确认删除。
 - [ ] **Step 4: 记录结果并提交（如有回改）。**
 
@@ -935,7 +941,7 @@ example.intranet.corp {
 }
 ```
 
-- [ ] **Step 3: README「反向代理」小节**——内容=spec §3.3 全部要点：Caddy 推荐（≥2.5 默认忽略入站 XFF，引官方文档）、Nginx 完整 server 块示例（`proxy_set_header Host $host;`、`proxy_set_header X-Forwarded-For $remote_addr;` 覆写非追加、`proxy_set_header X-Forwarded-Proto https;`、`client_max_body_size 25m;`）、★ 三条硬约束、cookie 四格矩阵（强调 https 部署必须显式 `USE_SECURE_COOKIES=true`）、`-f` 叠加调用 + `docker compose config` 冒烟、`login:ip:unknown` 共享桶与漏配 XFF 的 DoS 关联注明。
+- [ ] **Step 3: README「反向代理」小节**——内容=spec §3.3 全部要点：Caddy 推荐（≥2.5 默认忽略入站 XFF，引官方文档）、Nginx 完整 server 块示例（`proxy_set_header Host $host;`、`proxy_set_header X-Forwarded-For $remote_addr;` 覆写非追加、`proxy_set_header X-Forwarded-Proto https;`、`client_max_body_size 25m;`）、★ 三条硬约束、cookie 四格矩阵（**https 留空即可**，空值由 auth.ts 在 production 下推导为 true；**纯 http 部署必须显式 `USE_SECURE_COOKIES=false`**——实现更正 2026-10-17：原文写「https 必须显式 true」，与交付的 `.env.example`/compose 空值默认不符）、`-f` 叠加调用 + `docker compose config` 冒烟、`login:ip:unknown` 共享桶与漏配 XFF 的 DoS 关联注明。
 - [ ] **Step 4: 冒烟**：`cd deploy/selfhost && docker compose -f docker-compose.yml -f docker-compose.proxy.yml config >/dev/null && docker compose -f docker-compose.yml -f docker-compose.caddy.yml config >/dev/null && echo OK`。Expected: OK（无 merge 错误、`!override` 生效）。
 - [ ] **Step 5: 提交**
 
@@ -956,7 +962,7 @@ git commit -m "docs: reverse-proxy deployment guide + compose overlays (spec §3
 - [ ] **Step 2: 备份/恢复订正**——带凭据 `-u user:pass`、端点 `GET /db/backup`（实现更正 2026-10-15：原文写 `POST /db/backup` 且称 GET /backup 在 10.5.3 是 404——实测恰好相反，**POST 是 405、GET /db/backup 返回 200**）、备份后校验非空（`[ -s file ]`）、恢复命令同凭据。
 - [ ] **Step 3: 破窗命令订正**——替换 `README.md:28` 的 `RQLITE_URL=http://127.0.0.1:14001`（端口从未发布）为 `docker compose exec -e RQLITE_USERNAME -e RQLITE_PASSWORD rqlite ...` 形态，凭据从 `.env` 读入 exec 环境。
 - [ ] **Step 4: 新增「升级」小节 + auth.json 丢失恢复 runbook**（spec §3.1.5 两种情形逐字落地；runbook 注明：auth 文件误删 `*` 条目 → healthcheck 401 → rqlite 永不 healthy → migrate 永不跑，启动门卡死难定位，spec §2.1 要求明示）+ 回滚清理 checklist（.env 三变量、磁盘 auth.json、dockerignore 回退）。
-- [ ] **Step 5: 安全注意事项改写**——「rqlite 默认无鉴权…本计划未做」改为条件描述（默认关、三变量开启）；跨机集群段补 auth.json 逐字节一致 / 轮换 = 全节点 recreate / 4002 明文需 WireGuard；三节点降级信号（单节点 down = 只读、两节点 down 须同时恢复）；限速段改写为 `LOGIN_RATE_LIMIT_BACKEND` 双后端描述 + 其余 5 处消费方保持 memory 的原因清单。
+- [ ] **Step 5: 安全注意事项改写**——「rqlite 默认无鉴权…本计划未做」改为条件描述（默认关、三变量开启）；跨机集群段补 auth.json 逐字节一致 / 轮换 = 全节点 recreate / 4002 明文需 WireGuard；三节点降级信号（**单节点 down = 仍有多数派、可写**，仅冗余减一；**两节点 down = 无多数派，读写全不可用**，须同时恢复——实现更正 2026-10-17：原文「单节点 down = 只读」错误，见 README 集群小节与 docs55 §5）；限速段改写为 `LOGIN_RATE_LIMIT_BACKEND` 双后端描述 + 其余 5 处消费方保持 memory 的原因清单。
 - [ ] **Step 6: 提交**
 
 ```bash

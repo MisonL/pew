@@ -33,11 +33,15 @@ const BASIC_AUTH = resolveReadBasicAuth(
 );
 
 const db = createD1Adapter({ baseUrl: RQLITE_URL, token: D1_TOKEN, ...(BASIC_AUTH ? { basicAuth: BASIC_AUTH } : {}) });
+// The KV adapter keeps expired rows (Cloudflare KV expires them itself), and
+// leaderboard snapshot keys embed the revision — without a sweep the table
+// grows forever. Piggy-back the sweep on the daily tick.
+const kv = createKvAdapter({ db });
 // Same narrowing as server-read: the adapters cover the worker's actual call
 // surface, not the full D1Database/KVNamespace interfaces.
 const env = {
   DB: db,
-  CACHE: createKvAdapter({ db }),
+  CACHE: kv,
   // Not requireSecret: the scheduler only calls scheduled(), which syncs
   // pricing outbound and never serves requests, so the read secret gate
   // (worker-read's /api/rpc Bearer check) is not on its path.
@@ -47,9 +51,25 @@ const env = {
 console.log(`scheduler running every ${INTERVAL_MS}ms`);
 // The worker's `scheduled` may be undefined per its Cloudflare type; this
 // worker defines it, so assert the concrete shape node-runtime expects.
-const stop = runScheduled({ scheduled: worker.scheduled } as {
-  scheduled: (event: unknown, env: Env) => Promise<void>;
+const scheduled = runScheduled({
+  scheduled: async (event: unknown, scheduledEnv: Env) => {
+    // Cloudflare KV expires rows itself; rqlite keeps them forever, and
+    // leaderboard snapshot keys embed the revision — unswept, the table grows
+    // without bound. A sweep failure must not skip the pricing sync.
+    try {
+      const removed = await kv.sweepExpired();
+      if (removed > 0) console.log(`kv_cache sweep removed ${removed} expired rows`);
+    } catch (error) {
+      console.error("kv_cache sweep failed", error);
+    }
+    await worker.scheduled?.(event, scheduledEnv);
+  },
 }, env, INTERVAL_MS);
+
 registerShutdownSignals(async () => {
-  stop();
+  scheduled.stop();
+  // Let an in-flight sync finish: it writes D1 and KV in sequence, and a
+  // process.exit mid-run would leave the cache half-updated. The 10s forced
+  // timeout in registerShutdownSignals still bounds a wedged run.
+  await scheduled.drain();
 });

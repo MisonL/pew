@@ -8,24 +8,10 @@
  */
 
 import { validateSessionIngestRecord } from "@pew/core";
-import { createIngestHandler } from "@/lib/ingest-handler";
-
-/**
- * Derive session ingest URL from token ingest URL.
- * WORKER_INGEST_URL = "https://...workers.dev/ingest"
- * → Session URL = "https://...workers.dev/ingest/sessions"
- */
-function getSessionWorkerUrl(): string {
-  const base = process.env.WORKER_INGEST_URL ?? "";
-  if (base.endsWith("/ingest")) {
-    return `${base}/sessions`;
-  }
-  // Fallback: append /ingest/sessions to base
-  return `${base}/ingest/sessions`;
-}
+import { createIngestHandler, resolveIngestUrl } from "@/lib/ingest-handler";
 
 export const POST = createIngestHandler({
   validateRecord: validateSessionIngestRecord,
-  getWorkerUrl: getSessionWorkerUrl,
+  getWorkerUrl: () => resolveIngestUrl("sessions"),
   entityName: "session records",
 });

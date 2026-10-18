@@ -25,6 +25,12 @@ case "$OUT" in /|/etc|/etc/*|/usr|/usr/*|/bin|/bin/*|/sbin|/sbin/*|/boot|/boot/*
   echo "render-rqlite-auth: refusing dangerous AUTH_OUT_FILE: $OUT" >&2; exit 1;; esac
 case "$OUT" in .|..|*/|/.|/..|*/.|*/..|*/../*|*/./*)
   echo "render-rqlite-auth: refusing relative or self-referential AUTH_OUT_FILE: $OUT" >&2; exit 1;; esac
+# A leading '-' is parsed as an OPTION by mv/rm: the jq write would succeed
+# (leaving a 0600 file of plaintext passwords), then `mv` and the EXIT trap's
+# `rm -f "$OUT.tmp"` both fail with "illegal option", so the temp file stays
+# behind. Its name matches no ignore rule. Same guard as backup.sh.
+case "$OUT" in -*)
+  echo "render-rqlite-auth: refusing AUTH_OUT_FILE starting with '-': $OUT" >&2; exit 1;; esac
 
 if [ -z "${RQLITE_USERNAME:-}" ] || [ -z "${RQLITE_PASSWORD:-}" ] || [ -z "${RQLITE_JOIN_PASSWORD:-}" ]; then
   rm -rf "$OUT"   # rm -rf also removes the directory docker may have created for a missing bind-mount
@@ -36,6 +42,11 @@ if [ -z "${RQLITE_USERNAME:-}" ] || [ -z "${RQLITE_PASSWORD:-}" ] || [ -z "${RQL
 fi
 
 command -v jq >/dev/null 2>&1 || { echo "render-rqlite-auth: jq is required but not installed" >&2; exit 1; }
+
+# The temp file holds every plaintext password. A SIGKILL between the jq write
+# and the rename would otherwise leave it behind — and `*.auth.json` ignore
+# rules do not match a `.tmp` suffix, so it could enter git or an image layer.
+trap 'rm -f "$OUT.tmp"' EXIT INT TERM HUP
 
 # Same bind-mount directory trap as the stale-file cleanup above, but on the
 # SUCCESS path: if $OUT is a directory, `mv "$OUT.tmp" "$OUT"` moves the file
