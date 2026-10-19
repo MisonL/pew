@@ -55,8 +55,8 @@ fi
 # Cluster profile has no `rqlite` service. rqlite-1 is used as the exec
 # target: `.backup` works from any node (the REPL request is forwarded to the
 # leader; verified), so the choice only needs to be a live cluster member.
-# A FOLLOWER target fails its first backup after >30 s of idle with a 503 —
-# see the retry below, which exists because rqlite-1 may well be a follower.
+# A FOLLOWER target can return a one-shot 503 when the inter-node pool is cold;
+# see the retry below for the exact conditions and its honest scope.
 # Comma-form lists (COMPOSE_PROFILES=single,test) must still match.
 SERVICE=rqlite
 case ",${COMPOSE_PROFILES:-single}," in
@@ -153,18 +153,31 @@ REPL_OUT=$(repl_backup) \
 case "$REPL_OUT" in
   *"backup file written successfully"*) ;;
   *"503 Service Unavailable"*)
-    # Cluster-mode follower hazard (verified against 10.5.3, real cluster):
-    # the follower serves /db/backup by forwarding to the leader over its
-    # inter-node connection pool, and rqlite closes pooled connections after
-    # 30 s idle (cluster connReadTimeout). Client.Backup does NOT retry on a
-    # stale connection (unlike Execute/Query, which force a fresh dial), so
-    # the FIRST backup after >30 s of backup-path idleness always fails with
-    # exactly `ERR! server responded with: 503 Service Unavailable` on a
-    # follower, and the next attempt succeeds. backup.sh picks rqlite-1,
-    # which may be any node — without this retry every cron run fails
-    # whenever rqlite-1 is a follower. The 503 signature is specific (auth
-    # failures, ENOSPC etc. never produce it), so retrying on exactly this
-    # line cannot mask a real error; a second 503 still fails closed.
+    # Cluster-mode follower hazard (verified against 10.5.3).
+    #
+    # Mechanism: a follower serves GET /db/backup by forwarding the request to
+    # the leader over its inter-node connection pool (http/service.go). rqlite
+    # closes pooled connections after 30 s without data (cluster
+    # connReadTimeout), but Client.Backup does NOT retry a stale pooled
+    # connection the way Execute/Query/Load do (no forced fresh dial), so the
+    # forwarded request fails with exactly `ERR! server responded with: 503
+    # Service Unavailable` and the next attempt succeeds.
+    #
+    # HONEST SCOPE — what this retry is and is not: the pool is shared with the
+    # other cluster-client calls, so in a normal deployment it is kept warm by
+    # traffic that the compose stack already generates. Specifically the
+    # rqlite healthcheck polls /readyz every 10 s, and /readyz calls
+    # cluster.GetNodeMeta through that same pool (http/service.go). Measured on
+    # a three-node 10.5.3 cluster: a follower under the compose healthcheck
+    # showed 0/6 failures across 40 s-idle rounds, while the identical node
+    # with the healthcheck traffic removed showed 3/6 (first attempt failing,
+    # retry succeeding). So this retry is a DEFENCE for the window where the
+    # pool really is cold — a hand-run backup against a node whose healthcheck
+    # was disabled, a node recently restarted, or a topology where nothing
+    # else touches the pool — NOT a fix for a failure that every cron run hits.
+    # The retry is safe because the 503 signature is specific: auth failures,
+    # ENOSPC and "no archive" never produce it, and a second 503 still fails
+    # closed (a genuine no-leader outage stays an error).
     echo "backup.sh: .backup got 503 Service Unavailable (stale inter-node connection) — retrying once" >&2
     sleep 1
     REPL_OUT=$(repl_backup) \

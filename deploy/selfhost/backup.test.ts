@@ -42,7 +42,7 @@ function run(opts: {
    * running): the command substitution is empty and its status is non-zero, so
    * `set -e` aborts and the script must say which step failed. */
   replCommandFails?: boolean;
-  /** Cluster follower, first backup after >30 s idle: one 503 then success. */
+  /** Cluster follower with a cold inter-node pool: one 503, then success. */
   replStale503?: boolean;
   /** Every .backup attempt returns 503 — the retry must still fail closed. */
   replAlways503?: boolean;
@@ -152,10 +152,10 @@ case " $* " in
     elif [ "${opts.replAlways503 ? "1" : "0"}" = "1" ]; then
       printf 'ERR! server responded with: 503 Service Unavailable\\n'
     elif [ "${opts.replStale503 ? "1" : "0"}" = "1" ] && [ ! -f ${JSON.stringify(join(dir, "seen-503"))} ]; then
-      # Cluster follower, first backup after >30 s idle (verified against a
-      # real 10.5.3 cluster): the pooled inter-node connection was closed
-      # server-side, so the forwarded request fails exactly like this and the
-      # REPL still exits 0. One-shot: the retry then succeeds, as observed.
+      # Cluster follower, cold inter-node pool (verified against 10.5.3): the
+      # pooled connection was closed server-side after 30 s idle, so the
+      # forwarded request fails exactly like this and the REPL still exits 0.
+      # One-shot: the retry then succeeds, as observed.
       : > ${JSON.stringify(join(dir, "seen-503"))}
       printf 'ERR! server responded with: 503 Service Unavailable\\n'
     else
@@ -467,13 +467,16 @@ describe("backup.sh", () => {
   });
 
   it("retries once when a follower returns 503 on the first .backup after idle", async () => {
-    // Verified against a real 10.5.3 cluster: a follower forwards /db/backup
-    // to the leader over a pooled inter-node connection that rqlite closes
-    // after 30 s idle (cluster connReadTimeout), and Client.Backup does not
-    // retry a stale connection the way Execute/Query do. The first backup
-    // after >30 s therefore always fails with exactly this 503 and the next
-    // one succeeds. Without the retry, every cron run fails whenever
-    // rqlite-1 is a follower (backup.sh picks rqlite-1 in cluster mode).
+    // A follower forwards /db/backup to the leader over its inter-node pool,
+    // which rqlite closes after 30 s without data (cluster connReadTimeout);
+    // Client.Backup does not re-dial a stale connection the way Execute/Query
+    // do, so a COLD pool yields exactly this 503 once and the next attempt
+    // succeeds. Measured on a three-node 10.5.3 cluster: the compose rqlite
+    // healthcheck polls /readyz every 10 s, and /readyz itself calls
+    // GetNodeMeta through the same pool, so an ordinary deployment never sees
+    // this (0/6 failures across 40 s-idle rounds with the healthcheck present;
+    // 3/6 once that traffic was removed). The retry therefore covers the cold
+    // pool window, not a failure every cron run hits.
     const r = await run({ replStale503: true, profile: "cluster" });
     expect(r.code, r.stderr).toBe(0);
     expect(r.stderr).toContain("retrying once");

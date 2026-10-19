@@ -491,12 +491,18 @@ chmod 600 "./backup-$(date +%F).db"   # 备份含全部 password_hash/api_key，
 # .backup 再 cp，不能在 A 节点 .backup 后到 B 节点 cp。把上面的 rqlite 换成任一
 # rqlite-N 即可；leader 不固定，用容器内 /status 的 leader 字段确认实际节点。）
 #
-# ⚠ follower 上的**第一次**备份在空闲 >30s 后必定失败：`ERR! server responded with:
-#   503 Service Unavailable`，第二次即成功（10.5.3 实测，真实集群复现）。原因是
-#   follower 经内部连接池向 leader 转发 /db/backup，rqlite 在 30s 无数据后关闭池内
-#   连接（cluster connReadTimeout），而 Client.Backup 不像 Execute/Query 那样换新
-#   连接重试。leader 上无此问题（走本地快照）。手工执行时重跑一次即可；backup.sh
-#   已对这一确切特征自动重试一次，第二次仍 503 则照常 fail-closed。
+# ⚠ follower 在内部连接池**冷**时，第一次备份可能返回 `ERR! server responded with:
+#   503 Service Unavailable`，重跑一次即成功。机制：follower 经内部连接池向 leader
+#   转发 /db/backup，rqlite 在 30s 无数据后关闭池内连接（cluster connReadTimeout），
+#   而 Client.Backup 不像 Execute/Query/Load 那样换新连接重试；leader 走本地快照，
+#   不受影响。
+#   但**正常部署里池不会冷**：compose 给 rqlite 配了 healthcheck，每 10s 打一次
+#   /readyz，而 /readyz 内部就走同一个 cluster client 池（GetNodeMeta）。三节点
+#   10.5.3 实测：带 healthcheck 的 follower 在 40s 空闲下 6 轮 0 次失败；把心跳
+#   流量去掉后同一节点 6 轮中有 3 次首击失败、重试成功。所以这条重试防的是「池真的
+#   是冷的」窗口（手工排障、healthcheck 被关、节点刚重启），不是每次 cron 都会踩到
+#   的故障。遇到时重跑一次即可；backup.sh 已对这一确切特征自动重试一次，第二次仍
+#   503 则照常 fail-closed（真正的无 leader 故障仍是错误）。
 # ⚠ 本片段是排障对照，不是 backup.sh 的等价物：它没有 0700 暂存目录，cp 与 chmod 600
 # 之间被 SIGKILL 会留下 world-readable 的归档（cp 落地 0644、无视 umask），不要把它
 # 放进 cron。
