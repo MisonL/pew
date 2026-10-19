@@ -448,7 +448,8 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 - **起步**：profile `single`，全部 5 个服务 + 1 个 rqlite。
 - **读/写应用层扩容**：`web`/`read`/`ingest` 均无状态（KV 缓存在 rqlite 共享、会话为 JWT），`docker compose up --scale read=2` 即可，无代码改动。注意 web 多副本时**登录限速退化为按副本计**（`inMemoryRateLimiter` 进程内，§4.4），生产多副本需外部化或接受弱化。
-- **数据层扩容**：单 rqlite → 3 节点 Raft 集群。**单→3 在线扩容已实测支持**：向已运行的 `-bootstrap-expect 1` 单节点直接 `-join <单节点>:4002`（join 节点**不带** `-bootstrap-expect`）→ 3 节点全部 voter/reachable，新节点能读到扩容前写入的数据。故扩容路径为「cluster profile + `-join`」，无需「备份 → 恢复」。（若改用 compose 的 cluster profile 从零起 3 节点，见下方启动参数说明。）
+- **数据层扩容**：单 rqlite → 3 节点 Raft 集群。**单→3 在线扩容已实测支持**：向已运行的 `-bootstrap-expect 1` 单节点直接 `-join <单节点>:4002`（join 节点**不带** `-bootstrap-expect`）→ 3 节点全部 voter/reachable，新节点能读到扩容前写入的数据。
+  注意这是**两条互斥路线**，不能混用：`-join` 扩容不走 compose 的 cluster profile（那三个服务写死了 `-bootstrap-expect 3` 与互相 `-join`，没有「join 进旧单节点」的位置），需要手工 `docker run` 或临时 compose 覆盖文件；而切到 cluster profile 会起一套**空集群**，数据要靠「备份 → `.restore`」带过去。运维步骤见 `deploy/selfhost/README.md` 的「集群模式」一节。
 - **失败域**：同机 3 容器只防**进程**故障，不防磁盘/主机故障；跨机部署（compose 部署到 3 台）写入部署文档，属运维配置不进设计。
 - 调度：定价同步 cron 从 read 容器拆到独立 `scheduler` 容器（单副本），多 read 副本不重复同步。
 
@@ -576,7 +577,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 1. **上游合并策略**：本分支改动集中在 `deploy/selfhost/` + 上游文件小改动（清单见 README「合并上游」的 Plan 1/2/3）——需定期 rebase 验证；§4.7 的「不改文件」清单随上游更新需复核。
 2. **构建期变量是否被内联进构建产物**（§4.4）：Dockerfile 注释称 page data collection 需要 `CF_*`/`AUTH_SECRET`——哪些被 Next 内联需实测；确认前一律用占位值构建。
-3. **单→3 在线扩容**（§4.6）：**已实测支持，关闭**。向已运行的单节点 `-join` 是 rqlite 支持的路径：`-bootstrap-expect 1` 单节点写入数据后，起两个新节点 `-join s1:4002`（**不带** `-bootstrap-expect`）→ 集群 3 节点全部 voter/reachable，新节点上能查到单节点时期写入的行。故扩容路径为「cluster profile + `-join`」，无需「备份 → 恢复」。
+3. **单→3 在线扩容**（§4.6）：**已实测支持，关闭**。向已运行的单节点 `-join` 是 rqlite 支持的路径：`-bootstrap-expect 1` 单节点写入数据后，起两个新节点 `-join s1:4002`（**不带** `-bootstrap-expect`）→ 集群 3 节点全部 voter/reachable，新节点上能查到单节点时期写入的行。注意 `-join` 与 compose 的 cluster profile 是**两条互斥路线**：切 profile 起的是空集群，数据要靠「备份 → `.restore`」带过去，见 `deploy/selfhost/README.md`「集群模式」一节。
 4. **手工 SQL 规约**（§4.1 专项五）：解冻后若有人手工 INSERT 省略时间列（多节点下有分叉风险），需写进开发规约——属实现阶段产物。
 5. **向导的实例选项范围**（§4.4）：已决——向导省略步骤 3，实例选项走管理后台（见 §4.4 实现更正）。
 6. **密码重置的令牌形态**（§4.4）：一次性令牌存库表结构（`password_reset_tokens`）、有效期、单次使用语义在实现阶段定稿；邮件自助重置是否本期做需决策。
