@@ -376,7 +376,12 @@ describe("backup.sh", () => {
     const r = await run({ containerStale: stale, replFails: true });
     expect(r.code).toBe(1);
     // The REPL success-line gate fires first now; the archive gates below it
-    // remain as defense in depth.
+    // remain as defense in depth. The transcript goes to STDERR on failure so
+    // the cron/systemd log still shows the REPL's own `ERR!` line — the whole
+    // point of the gate is that an operator sees why it failed, and the
+    // script must not print the transcript on the success path (that noise
+    // buries real failures).
+    expect(r.stderr).toContain("ERR! unauthorized");
     expect(r.stderr).toContain("did not report success");
     expect(existsSync(r.out)).toBe(false);
   });
@@ -452,6 +457,9 @@ describe("backup.sh", () => {
     writeFileSync(existing, "SQLite format 3\0previous-intact");
     const r = await run({ replTruncated: true, args: [existing] });
     expect(r.code).toBe(1);
+    // The ENOSPC diagnosis reaches the log: script message AND the REPL's own
+    // `ERR! write ...` line (transcript is echoed to stderr on failure).
+    expect(r.stderr).toContain("no space left on device");
     expect(r.stderr).toContain("did not report success");
     // The intact earlier archive is untouched and no staging dir survives.
     expect(readFileSync(existing, "utf8")).toBe("SQLite format 3\0previous-intact");
@@ -481,6 +489,14 @@ describe("backup.sh", () => {
     // success, and no archive may be written.
     const r = await run({ replAlways503: true, profile: "cluster" });
     expect(r.code).toBe(1);
+    // Both the retry's transcript (with the second 503) and the script's own
+    // verdict reach stderr — an operator must be able to tell a persistent
+    // no-leader outage from a one-shot stale connection.
+    expect(r.stderr).toContain("retrying once");
+    // The REPL's own line (prefix included) must reach the log — the script's
+    // "got 503 ... retrying once" message alone would not prove the retry's
+    // transcript was surfaced.
+    expect(r.stderr).toContain("ERR! server responded with: 503 Service Unavailable");
     expect(r.stderr).toContain("did not report success");
     expect(existsSync(r.out)).toBe(false);
     expect(readdirSync(r.dir).filter((n) => n.startsWith(".pew-backup."))).toEqual([]);

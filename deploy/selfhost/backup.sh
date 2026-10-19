@@ -147,7 +147,9 @@ REPL_OUT=$(repl_backup) \
 # it, then require the success line. This is what catches a truncated archive
 # on a full disk: `test -s` and the magic check both pass on a half-written
 # file, and only the missing success line proves the write completed.
-printf '%s\n' "$REPL_OUT"
+# The transcript is not echoed to stdout: on success it would print the REPL's
+# banner and `Connected to ...` line on every cron run, and that noise is what
+# hides a real failure in the timer's log. Print it only on the failure paths.
 case "$REPL_OUT" in
   *"backup file written successfully"*) ;;
   *"503 Service Unavailable"*)
@@ -167,13 +169,18 @@ case "$REPL_OUT" in
     sleep 1
     REPL_OUT=$(repl_backup) \
       || { echo "backup.sh: the .backup command could not run (see docker error above)" >&2; exit 1; }
-    printf '%s\n' "$REPL_OUT"
     case "$REPL_OUT" in
       *"backup file written successfully"*) ;;
-      *) echo "backup.sh: .backup did not report success (see REPL output above)" >&2; exit 1;;
+      *)
+        printf '%s\n' "$REPL_OUT" >&2
+        echo "backup.sh: .backup did not report success (see REPL output above)" >&2
+        exit 1;;
     esac
     ;;
-  *) echo "backup.sh: .backup did not report success (see REPL output above)" >&2; exit 1;;
+  *)
+    printf '%s\n' "$REPL_OUT" >&2
+    echo "backup.sh: .backup did not report success (see REPL output above)" >&2
+    exit 1;;
 esac
 
 # Success gate: the REPL's exit status cannot distinguish success from ERR!

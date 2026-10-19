@@ -442,6 +442,10 @@ bash deploy/selfhost/backup.sh /var/backups/pew/pew.db
 
 注意事项：
 
+- **成功时日志只有一行 `backup written to <路径>`**。REPL 的转录（banner、`Connected to ...`、
+  成功行）只在**失败**时打到 stderr——成功路径上重复打印这段噪声会把 timer 日志里真正
+  的失败淹没，所以脚本只在需要人看诊断时输出它。期望每次 cron 日志都极短；看到多行输出
+  即意味着有失败要排查。
 - **cron 的 `PATH` 通常不含 docker**。用 `docker: command not found` 报错时，请在 crontab
   顶部显式设置 `PATH=/usr/local/bin:/usr/bin:/bin`（或 `command -v docker` 查到的目录）。
 - **不要在多个 timer 上并发跑备份**：脚本内 `.backup` 写的是固定容器路径
