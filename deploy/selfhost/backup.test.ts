@@ -42,6 +42,10 @@ function run(opts: {
    * running): the command substitution is empty and its status is non-zero, so
    * `set -e` aborts and the script must say which step failed. */
   replCommandFails?: boolean;
+  /** Cluster follower, first backup after >30 s idle: one 503 then success. */
+  replStale503?: boolean;
+  /** Every .backup attempt returns 503 — the retry must still fail closed. */
+  replAlways503?: boolean;
   /** Fail the pre-.backup rm (e.g. daemon error); set -e must abort the run. */
   rmFails?: boolean;
   /** Have cp land an empty host file despite a non-empty container file (defense-in-depth path). */
@@ -145,6 +149,15 @@ case " $* " in
       # ENOSPC shape: a half-written file that still passes size + magic.
       head -c 64 ${JSON.stringify(archive)} > ${JSON.stringify(containerFile)}
       printf 'ERR! write /rqlite/file/backup.db: no space left on device\\n'
+    elif [ "${opts.replAlways503 ? "1" : "0"}" = "1" ]; then
+      printf 'ERR! server responded with: 503 Service Unavailable\\n'
+    elif [ "${opts.replStale503 ? "1" : "0"}" = "1" ] && [ ! -f ${JSON.stringify(join(dir, "seen-503"))} ]; then
+      # Cluster follower, first backup after >30 s idle (verified against a
+      # real 10.5.3 cluster): the pooled inter-node connection was closed
+      # server-side, so the forwarded request fails exactly like this and the
+      # REPL still exits 0. One-shot: the retry then succeeds, as observed.
+      : > ${JSON.stringify(join(dir, "seen-503"))}
+      printf 'ERR! server responded with: 503 Service Unavailable\\n'
     else
       cp ${JSON.stringify(archive)} ${JSON.stringify(containerFile)}
       printf 'backup file written successfully\\n'
@@ -443,6 +456,34 @@ describe("backup.sh", () => {
     // The intact earlier archive is untouched and no staging dir survives.
     expect(readFileSync(existing, "utf8")).toBe("SQLite format 3\0previous-intact");
     expect(readdirSync(dir).filter((n) => n.startsWith(".pew-backup."))).toEqual([]);
+  });
+
+  it("retries once when a follower returns 503 on the first .backup after idle", async () => {
+    // Verified against a real 10.5.3 cluster: a follower forwards /db/backup
+    // to the leader over a pooled inter-node connection that rqlite closes
+    // after 30 s idle (cluster connReadTimeout), and Client.Backup does not
+    // retry a stale connection the way Execute/Query do. The first backup
+    // after >30 s therefore always fails with exactly this 503 and the next
+    // one succeeds. Without the retry, every cron run fails whenever
+    // rqlite-1 is a follower (backup.sh picks rqlite-1 in cluster mode).
+    const r = await run({ replStale503: true, profile: "cluster" });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stderr).toContain("retrying once");
+    expect(existsSync(r.out)).toBe(true);
+    // The 503 transcript is echoed (operator still sees it) and the retry's
+    // success line is what authorizes the copy.
+    expect(r.transcript).toContain(".backup /rqlite/file/backup.db");
+  });
+
+  it("still fails closed when the 503 repeats on the retry", async () => {
+    // A persistent 503 is a real outage (no leader, or a broken inter-node
+    // path), not a stale pooled connection. Retrying must not turn it into a
+    // success, and no archive may be written.
+    const r = await run({ replAlways503: true, profile: "cluster" });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("did not report success");
+    expect(existsSync(r.out)).toBe(false);
+    expect(readdirSync(r.dir).filter((n) => n.startsWith(".pew-backup."))).toEqual([]);
   });
 
   it("names the failing step when docker cannot even run the .backup command", async () => {

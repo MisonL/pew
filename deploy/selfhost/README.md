@@ -486,6 +486,13 @@ chmod 600 "./backup-$(date +%F).db"   # 备份含全部 password_hash/api_key，
 # **执行节点**本地卷上，Raft 复制的是 SQL 日志而非文件——所以必须在同一个节点上先
 # .backup 再 cp，不能在 A 节点 .backup 后到 B 节点 cp。把上面的 rqlite 换成任一
 # rqlite-N 即可；leader 不固定，用容器内 /status 的 leader 字段确认实际节点。）
+#
+# ⚠ follower 上的**第一次**备份在空闲 >30s 后必定失败：`ERR! server responded with:
+#   503 Service Unavailable`，第二次即成功（10.5.3 实测，真实集群复现）。原因是
+#   follower 经内部连接池向 leader 转发 /db/backup，rqlite 在 30s 无数据后关闭池内
+#   连接（cluster connReadTimeout），而 Client.Backup 不像 Execute/Query 那样换新
+#   连接重试。leader 上无此问题（走本地快照）。手工执行时重跑一次即可；backup.sh
+#   已对这一确切特征自动重试一次，第二次仍 503 则照常 fail-closed。
 # ⚠ 本片段是排障对照，不是 backup.sh 的等价物：它没有 0700 暂存目录，cp 与 chmod 600
 # 之间被 SIGKILL 会留下 world-readable 的归档（cp 落地 0644、无视 umask），不要把它
 # 放进 cron。

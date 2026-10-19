@@ -55,6 +55,8 @@ fi
 # Cluster profile has no `rqlite` service. rqlite-1 is used as the exec
 # target: `.backup` works from any node (the REPL request is forwarded to the
 # leader; verified), so the choice only needs to be a live cluster member.
+# A FOLLOWER target fails its first backup after >30 s of idle with a 503 —
+# see the retry below, which exists because rqlite-1 may well be a follower.
 # Comma-form lists (COMPOSE_PROFILES=single,test) must still match.
 SERVICE=rqlite
 case ",${COMPOSE_PROFILES:-single}," in
@@ -127,16 +129,18 @@ docker compose exec -T "$SERVICE" rm -f /rqlite/file/backup.db
 # running) into an immediate exit here — fail-closed, but the only output would
 # be docker's own message. Give the cron/systemd log a line that says which
 # step failed, without swallowing the exit status.
-if [ -n "${RQLITE_USERNAME:-}" ] && [ -n "${RQLITE_PASSWORD:-}" ]; then
-  REPL_OUT=$(printf '.backup /rqlite/file/backup.db\n.exit\n' | \
-    docker compose exec -T -e RQLITE_USERNAME -e RQLITE_PASSWORD "$SERVICE" \
-      sh -c 'exec rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost') \
-    || { echo "backup.sh: the .backup command could not run (see docker error above)" >&2; exit 1; }
-else
-  REPL_OUT=$(printf '.backup /rqlite/file/backup.db\n.exit\n' | \
-    docker compose exec -T "$SERVICE" rqlite -H localhost) \
-    || { echo "backup.sh: the .backup command could not run (see docker error above)" >&2; exit 1; }
-fi
+repl_backup() {
+  if [ -n "${RQLITE_USERNAME:-}" ] && [ -n "${RQLITE_PASSWORD:-}" ]; then
+    printf '.backup /rqlite/file/backup.db\n.exit\n' | \
+      docker compose exec -T -e RQLITE_USERNAME -e RQLITE_PASSWORD "$SERVICE" \
+        sh -c 'exec rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost'
+  else
+    printf '.backup /rqlite/file/backup.db\n.exit\n' | \
+      docker compose exec -T "$SERVICE" rqlite -H localhost
+  fi
+}
+REPL_OUT=$(repl_backup) \
+  || { echo "backup.sh: the .backup command could not run (see docker error above)" >&2; exit 1; }
 # The REPL writes its diagnostics to STDOUT (verified: `ERR! open ...` and
 # `ERR! write ... no space left on device` both go to stdout, stderr stays
 # empty) and exits 0 regardless. Echo the transcript so an operator still sees
@@ -146,6 +150,29 @@ fi
 printf '%s\n' "$REPL_OUT"
 case "$REPL_OUT" in
   *"backup file written successfully"*) ;;
+  *"503 Service Unavailable"*)
+    # Cluster-mode follower hazard (verified against 10.5.3, real cluster):
+    # the follower serves /db/backup by forwarding to the leader over its
+    # inter-node connection pool, and rqlite closes pooled connections after
+    # 30 s idle (cluster connReadTimeout). Client.Backup does NOT retry on a
+    # stale connection (unlike Execute/Query, which force a fresh dial), so
+    # the FIRST backup after >30 s of backup-path idleness always fails with
+    # exactly `ERR! server responded with: 503 Service Unavailable` on a
+    # follower, and the next attempt succeeds. backup.sh picks rqlite-1,
+    # which may be any node — without this retry every cron run fails
+    # whenever rqlite-1 is a follower. The 503 signature is specific (auth
+    # failures, ENOSPC etc. never produce it), so retrying on exactly this
+    # line cannot mask a real error; a second 503 still fails closed.
+    echo "backup.sh: .backup got 503 Service Unavailable (stale inter-node connection) — retrying once" >&2
+    sleep 1
+    REPL_OUT=$(repl_backup) \
+      || { echo "backup.sh: the .backup command could not run (see docker error above)" >&2; exit 1; }
+    printf '%s\n' "$REPL_OUT"
+    case "$REPL_OUT" in
+      *"backup file written successfully"*) ;;
+      *) echo "backup.sh: .backup did not report success (see REPL output above)" >&2; exit 1;;
+    esac
+    ;;
   *) echo "backup.sh: .backup did not report success (see REPL output above)" >&2; exit 1;;
 esac
 
