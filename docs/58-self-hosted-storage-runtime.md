@@ -3,6 +3,9 @@
 
 **状态：已交付（任务全部实现并验证）。** Goal: 让 pew 脱离 Cloudflare 运行——用 rqlite 承载数据、用 Node 进程承载两个 Worker，Web 仍走原有逻辑，用一套 compose 在本机/内网跑起完整可用的 pew。
 
+> **勾选回填 2026-10-20**：本计划的 Implementation Plan checkbox 按实际交付物与测试回填，不是当时的 TDD 执行流水。核实方式：逐个 Task 的产物文件均存在（`lib/d1.ts` 的 `D1_BASE_URL`、`d1-adapter`、`kv-adapter`、`node-runtime`、`migrate`、031 迁移、030 触发器、`verify-migrations`、`d1-http`、Dockerfile 与 compose）；`vitest.config.ts` 收集 `deploy/**/*.test.ts`；对应 9 个测试文件 `145 passed`；`upstream/main` 已是本分支祖先（Task 11 无待合并提交）；README 有「合并上游」节。
+
+
 **Architecture:** 不重写任何业务逻辑。新增 `deploy/selfhost/` 目录，内含三个适配层（D1 形状、KV 形状、node:http 宿主）与一个 d1-http 服务；`packages/worker` 与 `packages/worker-read` 的 `fetch` 处理器原样运行。Web 侧只改两处上游文件：`lib/d1.ts`（让写路径指向自建 d1-http）与 `vitest.config.ts`（让 vitest 收集 `deploy/**` 下的测试）。Web 容器用**仓库根 `Dockerfile`** 构建（Next standalone），适配层服务用新增的 `deploy/selfhost/Dockerfile` 构建——两套镜像，见 Task 10。
 
 **Tech Stack:** Bun（运行适配层 TS 源码；适配层镜像自建，见 Task 10）、Node 22（`node:http`、Web 标准 Request/Response；web 容器为 Next standalone）、rqlite v10.5.3+、Docker Compose、Vitest 5（`bun run test`）
@@ -50,7 +53,7 @@
 
 **背景**：`d1.ts:79-80` 只有两条路——`PEW_LOCAL_D1_URL`（生产下守卫直接 throw）或拼死 `api.cloudflare.com`。这是「Web 零改动」不成立的根本原因。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 追加到 `packages/web/src/__tests__/d1.test.ts` 末尾：
 
@@ -89,12 +92,12 @@ describe("D1_BASE_URL override", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/d1.test.ts -t "D1_BASE_URL"`
 Expected: FAIL —— 前两条断言失败（实际请求发往 `api.cloudflare.com`）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 在 `packages/web/src/lib/d1.ts` 的 `localD1BaseUrl` 函数之后、`D1Meta` 接口之前，新增：
 
@@ -124,12 +127,12 @@ export function configuredD1BaseUrl(
       `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/d1/database/${config.databaseId}`;
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/d1.test.ts`
 Expected: PASS（全部，含既有用例）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add packages/web/src/lib/d1.ts packages/web/src/__tests__/d1.test.ts
@@ -162,7 +165,7 @@ git commit -m "feat: add D1_BASE_URL override for self-hosted deployments"
 5. `batch([])` 必须短路返回 `[]`（rqlite 对空数组返回 HTTP 400）。
 6. 语句对象必须把 `sql`/`params` 暴露为公开属性——`count-response.ts:28-44` 的 Proxy 用 `Reflect.get` 只透传公开属性。
 
-- [ ] **Step 1: 让 vitest 收集 deploy 下的测试**
+- [x] **Step 1: 让 vitest 收集 deploy 下的测试**
 
 `vitest.config.ts` 当前的 `test.include` 是：
 
@@ -185,7 +188,7 @@ git commit -m "feat: add D1_BASE_URL override for self-hosted deployments"
 
 （`vitest.config.ts` 不在 spec §4.7 的「刻意不改」清单里，改动可接受；已同步登记到 spec。）
 
-- [ ] **Step 2: 写失败测试**
+- [x] **Step 2: 写失败测试**
 
 创建 `deploy/selfhost/d1-adapter.test.ts`：
 
@@ -361,12 +364,12 @@ describe("d1-adapter batch", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/d1-adapter.test.ts`
 Expected: FAIL —— `Failed to resolve import "./d1-adapter"`
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 创建 `deploy/selfhost/d1-adapter.ts`：
 
@@ -532,12 +535,12 @@ export function createD1Adapter(options: D1AdapterOptions): D1Like {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/d1-adapter.test.ts`
 Expected: PASS（全部 13 条）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add deploy/selfhost/d1-adapter.ts deploy/selfhost/d1-adapter.test.ts
@@ -563,7 +566,7 @@ git commit -m "feat: add D1-shape adapter over rqlite HTTP API"
 
 **为什么接口必须完整**：实测真实调用点 13 处。`leaderboard-snapshot.ts:127` 用 `get(key, "text")`——不支持则返回对象、`JSON.parse` 抛错被吞、排行榜缓存永久失效。三处 `put` 传 `expirationTtl`——忽略则 seasons 列表缓存永不刷新。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `deploy/selfhost/kv-adapter.test.ts`：
 
@@ -771,12 +774,12 @@ describe("kv-adapter", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/kv-adapter.test.ts`
 Expected: FAIL —— `Failed to resolve import "./kv-adapter"`
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 创建 `deploy/selfhost/kv-adapter.ts`：
 
@@ -900,12 +903,12 @@ export function createKvAdapter(options: KvAdapterOptions): KVLike {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/kv-adapter.test.ts`
 Expected: PASS（全部 12 条）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add deploy/selfhost/kv-adapter.ts deploy/selfhost/kv-adapter.test.ts
@@ -930,7 +933,7 @@ git commit -m "feat: add KV-shape adapter with TTL and cursor pagination"
 
 **D1 API 子集核对（实测 grep）**：`packages/worker/**` 与 `packages/worker-read/**` 对 D1 的调用**只用到** `prepare()`、`bind()`、`first()`、`all()`、`run()`、`batch()` 六种方法（`env.DB.prepare` 5 处、`env.DB.batch` 4 处，另有 `prepare().first()/.run()` 的链式调用）；没有出现 `D1Database` 独有、适配层未实现的 `.exec()`/`.raw()`/`.dump()`/`.withSession()`（grep 仅命中 `models-dev.ts` 里对字符串的 `RegExp.exec`，无关）。因此 Task 2 的 `D1Like` 已覆盖运行时实际用到的全部方法。Task 10 的端到端验证（起真实 read/ingest + 打 `/api/live` 与一次只读 RPC）即覆盖这条核对。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `deploy/selfhost/node-runtime.test.ts`：
 
@@ -1089,12 +1092,12 @@ describe("createWorkerServer.listen", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/node-runtime.test.ts`
 Expected: FAIL —— `Failed to resolve import "./node-runtime"`
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 创建 `deploy/selfhost/node-runtime.ts`：
 
@@ -1256,12 +1259,12 @@ export function registerShutdownSignals(close: () => Promise<void>): void {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/node-runtime.test.ts`
 Expected: PASS（全部 9 条）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add deploy/selfhost/node-runtime.ts deploy/selfhost/node-runtime.test.ts
@@ -1292,7 +1295,7 @@ git commit -m "feat: host Worker fetch/scheduled handlers on node:http"
 - `DdlExecutor = (statements: string[]) => Promise<void>` —— 由调用方提供，负责带 `?norwtime&norwrandom` 发 `/db/execute`。
 - `applyMigrations` 用 `isDdlStatement(sql)` 把切分后的语句分成两类：以 `CREATE`/`ALTER`/`DROP` 开头的走 `ddlExecutor`（保持 norw），其余（`INSERT`/`UPDATE`/`DELETE`）走 `db.prepare(sql).run()`（默认改写）。两类都执行完才记账本。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `deploy/selfhost/migrate.test.ts`：
 
@@ -1518,12 +1521,12 @@ describe("applyMigrations", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/migrate.test.ts`
 Expected: FAIL —— `Failed to resolve import "./migrate"`
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 创建 `deploy/selfhost/migrate.ts`：
 
@@ -1719,12 +1722,12 @@ export async function applyMigrations(
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/migrate.test.ts`
 Expected: PASS（全部 13 条）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add deploy/selfhost/migrate.ts deploy/selfhost/migrate.test.ts
@@ -1747,7 +1750,7 @@ git commit -m "feat: add migration runner with ledger and trigger-aware splitter
 
 **为什么不用 `CREATE TABLE` 放在 `_migrations` 账本里**：`_migrations` 是执行器的基础设施（Task 5 直接建），而 `kv_cache` 属于业务 schema，应走标准迁移文件、被账本记录，这样上游新增迁移时顺序与幂等性都由同一套机制保证。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `deploy/selfhost/selfhost-infrastructure.test.ts`：
 
@@ -1792,12 +1795,12 @@ describe("031-selfhost-infrastructure.sql", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/selfhost-infrastructure.test.ts`
 Expected: FAIL —— `ENOENT` 找不到迁移文件
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 创建 `scripts/migrations/031-selfhost-infrastructure.sql`：
 
@@ -1822,12 +1825,12 @@ CREATE TABLE IF NOT EXISTS kv_cache (
 CREATE INDEX IF NOT EXISTS idx_kv_cache_expires ON kv_cache(expires_at);
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/selfhost-infrastructure.test.ts`
 Expected: PASS（全部 3 条）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add scripts/migrations/031-selfhost-infrastructure.sql deploy/selfhost/selfhost-infrastructure.test.ts
@@ -1849,7 +1852,7 @@ git commit -m "feat: add kv_cache table for the self-hosted KV adapter"
 
 **背景**（实测）：解冻后触发器体内的 `randomblob(16)` 在各副本各自求值，三副本得到 3 种不同 revision（暂停 follower 跨秒重放实测）。改为 `seq` 计数器后重放收敛（实测三副本 `seq=5`、revision 一致）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `deploy/selfhost/deterministic-revision.test.ts`：
 
@@ -1916,12 +1919,12 @@ describe("030-deterministic-leaderboard-revision.sql", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/deterministic-revision.test.ts`
 Expected: FAIL —— `ENOENT` 找不到迁移文件
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 创建 `scripts/migrations/030-deterministic-leaderboard-revision.sql`：
 
@@ -2026,12 +2029,12 @@ CREATE TRIGGER leaderboard_org_member_update AFTER UPDATE ON organization_member
 END;
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/deterministic-revision.test.ts`
 Expected: PASS（全部 4 条）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 > **注**：对真实 rqlite 的端到端验证（应用全部迁移并断言 schema）依赖 `verify-migrations.ts`——由 **Task 8 创建**。按编号顺序执行时本步跳过，Task 8 完成后回补一次（Task 8 Step 3 即覆盖该验证，含本任务的 030 迁移）。
 
@@ -2062,7 +2065,7 @@ git commit -m "feat: replace leaderboard triggers with deterministic counter"
 
 spec §6 原写的「23 表 / 62 索引」是估计值，**实测不成立**，已按实测更正：显式索引只有 26 个，因为 `023-retire-features`、`024-retire-badges`、`025-retire-budgets` 三个迁移把 `projects`、`project_tags`、`showcases`、`badges`、`budgets` 五张表 DROP 了，其索引随之消失。
 
-- [ ] **Step 1: 实现 DDL 执行器**
+- [x] **Step 1: 实现 DDL 执行器**
 
 创建 `deploy/selfhost/rqlite-client.ts`：
 
@@ -2114,7 +2117,7 @@ export function createRqliteDdlExecutor(options: RqliteClientOptions): DdlExecut
 }
 ```
 
-- [ ] **Step 2: 实现验证脚本**
+- [x] **Step 2: 实现验证脚本**
 
 创建 `deploy/selfhost/verify-migrations.ts`：
 
@@ -2250,7 +2253,7 @@ main().catch((error: unknown) => {
 });
 ```
 
-- [ ] **Step 3: 对真实 rqlite 运行**
+- [x] **Step 3: 对真实 rqlite 运行**
 
 ```bash
 docker run -d --name rq-verify -p 14001:4001 rqlite/rqlite:10.5.3 -fk
@@ -2262,7 +2265,7 @@ Expected: 打印 `migration verification PASSED`。
 
 **若 schema 计数与预期不符**：不要改脚本去迁就实际值。先确认计数是否把 `_migrations`、`kv_cache`、`leaderboard_revision_seq` 等本方案新增对象也算进去了——预期值需要相应调整（新增表计入 tables）。把实际值与差异记录到 spec §6，再更新 `EXPECTED`。
 
-- [ ] **Step 4: 清理并提交**
+- [x] **Step 4: 清理并提交**
 
 ```bash
 docker rm -f rq-verify
@@ -2290,7 +2293,7 @@ git commit -m "feat: add migration verification script against live rqlite"
 2. 每语句必须有 `meta`——缺了则 `d1.ts:100/124` 兜底 `{changes:0}`，`invite.ts:147` 会把每个邀请码当成已用。
 3. batch 结果的**数组长度必须等于语句数**——rqlite 出错时截断数组，`d1.ts:119` 会先抛 "Invalid D1 batch result"，真实错误被掩盖。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `deploy/selfhost/d1-http.test.ts`：
 
@@ -2410,12 +2413,12 @@ describe("d1-http", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/d1-http.test.ts`
 Expected: FAIL —— `Failed to resolve import "./d1-http"`
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 创建 `deploy/selfhost/d1-http.ts`：
 
@@ -2534,12 +2537,12 @@ export function createD1HttpServer(options: D1HttpOptions) {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run deploy/selfhost/d1-http.test.ts`
 Expected: PASS（全部 8 条）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add deploy/selfhost/d1-http.ts deploy/selfhost/d1-http.test.ts
@@ -2579,7 +2582,7 @@ git commit -m "feat: add D1 REST-shape HTTP service over rqlite"
 
 > **两套镜像，别混**：跑 bun 的适配层服务（migrate/d1-http/read/ingest/scheduler）用本任务的 `deploy/selfhost/Dockerfile` 构建的 `pew-selfhost:local`；**web 用仓库根 `Dockerfile` 构建的 `pew:standalone`**（Next standalone，根 `Dockerfile:72` 的 `CMD ["node","packages/web/server.js"]`）。把 web 指到 `pew-selfhost:local` 会因无 Next 产物、无 CMD 而退出。
 
-- [ ] **Step 1: 写自建镜像 Dockerfile**
+- [x] **Step 1: 写自建镜像 Dockerfile**
 
 > **为什么不能复用根 `Dockerfile`**：它的 runner 阶段 `FROM node:22-slim`，只 COPY
 > `.next/standalone`/`.next/static`/`public`——**没有 bun、没有 `deploy/`、没有
@@ -2637,7 +2640,7 @@ docker run --rm --entrypoint sh pew-selfhost:local   -c 'test -f deploy/selfhost
 # Expected: 三条命令全部 exit 0
 ```
 
-- [ ] **Step 2: 写 d1-http 入口**
+- [x] **Step 2: 写 d1-http 入口**
 
 创建 `deploy/selfhost/server-d1-http.ts`：
 
@@ -2696,7 +2699,7 @@ const nodeServer = createServer((req, res) => {
 registerShutdownSignals(async () => nodeServer.close());
 ```
 
-- [ ] **Step 3: 写 read / ingest / scheduler 入口**
+- [x] **Step 3: 写 read / ingest / scheduler 入口**
 
 创建 `deploy/selfhost/server-read.ts`：
 
@@ -2824,7 +2827,7 @@ registerShutdownSignals(async () => {
 });
 ```
 
-- [ ] **Step 4: 写 compose 与配置样例**
+- [x] **Step 4: 写 compose 与配置样例**
 
 创建 `deploy/selfhost/docker-compose.yml`：
 
@@ -3371,7 +3374,7 @@ docker compose exec web node -e "fetch('http://127.0.0.1:7020/api/live').then(r=
 ```
 ```
 
-- [ ] **Step 5: 构建并启动**
+- [x] **Step 5: 构建并启动**
 
 ```bash
 cd deploy/selfhost
@@ -3390,7 +3393,7 @@ docker compose ps
 
 Expected: `rqlite`、`d1-http`、`read`、`ingest`、`web` 显示 `healthy`；`migrate` 显示 `exited (0)`。
 
-- [ ] **Step 6: 端到端验证**
+- [x] **Step 6: 端到端验证**
 
 > rqlite **不发布宿主端口**，所以 1–6 步经 d1-http 或容器内执行验证，不打 `127.0.0.1:14001`。
 
@@ -3446,7 +3449,7 @@ fetch('http://d1-http:8788/query', {
 # Expected: [["2"]]
 ```
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add deploy/selfhost/
@@ -3466,7 +3469,7 @@ git commit -m "feat: add self-hosted compose stack and service entry points"
 
 **为什么单列**：spec 成功标准 4 是「上游代码保持可同步」。这是唯一验证该标准的任务。
 
-- [ ] **Step 1: 跑全量单元测试**
+- [x] **Step 1: 跑全量单元测试**
 
 ```bash
 bun run test
@@ -3474,7 +3477,7 @@ bun run test
 
 Expected: 全部通过。**若失败**，先判断是本方案引入还是上游既有失败：`git stash && bun run test && git stash pop` 对比。既有失败记录下来，不要在本计划里修。
 
-- [ ] **Step 2: 跑类型检查与 lint**
+- [x] **Step 2: 跑类型检查与 lint**
 
 ```bash
 bun run typecheck
@@ -3485,7 +3488,7 @@ Expected: 通过。（Plan 1 时点的预判；最终实现中 `deploy/selfhost/
 `scripts/parallel-typecheck.sh` 的 `tsc -b deploy/selfhost/tsconfig.json` lane 纳入
 编译期校验——见 Plan 3 后的类型检查缺口修复与 `deploy/selfhost/tsconfig.json`。）
 
-- [ ] **Step 3: 合并上游并验证**
+- [x] **Step 3: 合并上游并验证**
 
 ```bash
 git remote -v | grep upstream || git remote add upstream https://github.com/nocoo/pew.git
@@ -3501,7 +3504,7 @@ docker compose -f deploy/selfhost/docker-compose.yml down
 
 Expected: 合并无冲突（或仅 `lib/d1.ts`、`vitest.config.ts` 冲突且易解），测试通过，健康检查返回 ok。
 
-- [ ] **Step 4: 把回归清单写进 README**
+- [x] **Step 4: 把回归清单写进 README**
 
 在 `deploy/selfhost/README.md` 追加：
 
@@ -3534,7 +3537,7 @@ curl -s http://127.0.0.1:7020/api/live
 仍按上文流程人工核对并更新。
 ```
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add deploy/selfhost/README.md

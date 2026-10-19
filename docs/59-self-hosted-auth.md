@@ -3,6 +3,9 @@
 
 **状态：已交付（任务全部实现并验证）。** Goal: 让自建部署（Plan 1 的数据层与运行时）具备**可用的浏览器登录**——邮箱 + 密码（Credentials）、首个用户即管理员的 `/setup` 引导、库内 `is_admin` 判定、密码重置路径、内网 http 的 cookie 关闭分支，以及 CLI 指向自建 host。Plan 1 交付「数据层可用」，Plan 2 交付「浏览器可登录的完整产品」。
 
+> **勾选回填 2026-10-20**：同上，按实际交付物与测试回填。核实方式：`032-auth-credentials.sql`（含 `password_resets`）、`lib/credentials.ts`、`auth.ts` 的 Credentials provider 与 `pwd_v`、`/setup` 引导、`lib/admin.ts`、`proxy.ts` 公开路由、重置密码 API 与 `deploy/selfhost/reset-password.ts`、CLI 的 `--host`/`PEW_HOST` 全部在位；对应 11 个测试文件 `166 passed`。`login/page.tsx` 的渲染由 L3 Playwright 覆盖（`e2e/bdd/page-readiness.spec.ts` 断言 Email/Password 表单可见），符合 vitest 对演示型 `.tsx` 的 by-design 排除。
+
+
 **Architecture:** 仍是「不重写业务逻辑」。认证接缝集中在 `auth.ts` 一处组装：`providers` 按环境条件挂 Google/Credentials，`signIn` 对 credentials 直接放行，邀请闸门逻辑从 `lib/invite.ts`（不改）移到新的 `lib/credentials.ts`。密码哈希（scrypt）与注册都由新增文件承担；`password_hash` 的读取走 D1 REST 原始查询（`getD1Client().query`），从而**不改 worker-read、不改 `lib/db.ts`**。管理员判定从「纯 `ADMIN_EMAILS`」扩展为「`ADMIN_EMAILS` 命中 OR 库内 `is_admin=1`」。首个用户即管理员，用一次性单行表 `instance_setup` 做并发安全的认领，解开「无用户建不了邀请码、无邀请码建不了用户」的死锁。
 
 **Tech Stack:** Next.js（App Router）+ Auth.js（NextAuth v5，JWT strategy）、Node `crypto.scryptSync`（密码哈希）、rqlite/D1（经 Plan 1 的 `D1_BASE_URL` → d1-http）、Vitest 5（`bun run test`）
@@ -51,7 +54,7 @@ spec 隐含、但任务测试天然覆盖不到的输入类别：
 
 **背景**：`users` 表（`001-init.sql:15` 起）无任何 password/role 字段（已核验）。`ALTER TABLE ADD COLUMN` 幂等性靠 Plan 1 的账本 + 本迁移的恢复逻辑；但为稳妥，列定义写成可被 Plan 1 `isBenignReplayError` 兜底的形式（重复执行报 `duplicate column name`，Plan 1 会跳过——Task 5 已实现）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `packages/web/src/__tests__/auth-migration.test.ts`：读迁移文件文本，断言四个对象都在，且不含非确定默认值：
 
@@ -93,12 +96,12 @@ describe("032-auth-credentials.sql", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/auth-migration.test.ts`
 Expected: FAIL —— `ENOENT` 找不到迁移文件
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 创建 `scripts/migrations/032-auth-credentials.sql`：
 
@@ -135,12 +138,12 @@ CREATE TABLE IF NOT EXISTS password_resets (
 CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/auth-migration.test.ts`
 Expected: PASS（4 条）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add scripts/migrations/032-auth-credentials.sql packages/web/src/__tests__/auth-migration.test.ts
@@ -164,7 +167,7 @@ git commit -m "feat: add credentials auth migration (password_hash, is_admin, in
 
 **背景**：参数用 `N=32768, r=8, p=1, keylen=64, maxmem=64MiB`。存储格式带参数，便于日后调整而兼容旧记录。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `packages/web/src/__tests__/credentials.test.ts`：
 
@@ -206,12 +209,12 @@ describe("password hashing (scrypt)", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/credentials.test.ts`
 Expected: FAIL —— `Failed to resolve import "../lib/credentials"`
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 创建 `packages/web/src/lib/credentials.ts`（本步只放哈希部分，注册逻辑在 Task 3 追加）：
 
@@ -289,12 +292,12 @@ export async function verifyPasswordDummy(password: string): Promise<void> {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/credentials.test.ts`
 Expected: PASS（6 条）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add packages/web/src/lib/credentials.ts packages/web/src/__tests__/credentials.test.ts
@@ -319,7 +322,7 @@ git commit -m "feat: add scrypt password hashing for credentials auth"
 
 **背景**：注册时原子消费邀请码（沿用 `invite.ts:140-150` 的 `UPDATE ... WHERE used_by IS NULL` + `changes === 0` 模式）；`created_by` 引用真实用户（首个管理员建立后才有）。`accounts` 表不写。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `packages/web/src/__tests__/credentials-register.test.ts`，用一个记录 SQL 的假 `D1Client`（`getD1Client()` 可 mock）覆盖：老用户查到记录 → 免邀请码；新用户无邀请码 → 拒绝；新用户带有效邀请码 → 消费成功并建用户。
 
@@ -363,12 +366,12 @@ describe("credentials registration gate", () => {
 
 （完整断言在实现时补全：`registerWithInvite` 需先消费邀请码再 `INSERT users`。）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/credentials-register.test.ts`
 Expected: FAIL —— 导入的 `findCredentialUser` / `registerWithInvite` 不存在
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 在 `lib/credentials.ts` 追加：
 
@@ -428,12 +431,12 @@ providers.push(Credentials({
 if (account?.provider === "credentials") return true;
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/credentials-register.test.ts packages/web/src/__tests__/auth.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add packages/web/src/lib/credentials.ts packages/web/src/auth.ts packages/web/src/app/api/admin/invites/route.ts packages/web/src/__tests__/credentials-register.test.ts
@@ -453,7 +456,7 @@ git commit -m "feat: add credentials provider and invite-gated registration"
 
 **背景**：镜像硬编码 `NODE_ENV=production`，故必须让 `false` 有显式分支——Plan 1 的 compose 已下发该变量但代码没读（Plan 1 review H2）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 追加到 `packages/web/src/__tests__/auth.test.ts`：
 
@@ -473,12 +476,12 @@ it("still forces secure cookies in production by default", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/auth.test.ts -t "USE_SECURE_COOKIES"`
 Expected: FAIL —— 第二条（false 分支不存在，仍返回 true）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `auth.ts` 的 `shouldUseSecureCookies()`（当前 `auth.ts:21-27`）改为先判显式关闭：
 
@@ -498,12 +501,12 @@ export function shouldUseSecureCookies(): boolean {
 
 （保持原有 `true`/https 分支语义不变，只在最前面插入 `false` 早返回。）
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/auth.test.ts`
 Expected: PASS（含既有用例）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add packages/web/src/auth.ts packages/web/src/__tests__/auth.test.ts
@@ -528,7 +531,7 @@ git commit -m "fix: add explicit USE_SECURE_COOKIES=false opt-out for intranet h
 
 **背景**：并发安全靠 `instance_setup` 主键冲突（见 Task 1 表）。rqlite 写路径单 leader 串行 + `?transaction=true` 原子（Plan 1 §4.1 专项一）。批量写走 `getD1Client().batch([...])`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `packages/web/src/__tests__/bootstrap.test.ts`：
 
@@ -567,12 +570,12 @@ describe("bootstrapAdmin", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/bootstrap.test.ts`
 Expected: FAIL —— `bootstrapAdmin` 不存在
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `lib/credentials.ts` 追加 `bootstrapAdmin`（事务批）；创建 `app/api/auth/register/route.ts`（判断库是否为空决定走 bootstrap 还是 invite 路径）；创建 `app/setup/page.tsx`（单步表单——实现更正 2026-10-17：原写「4 步向导」，交付为单个 `<form>` 的单步页面，步骤 3 的实例选项已省略，见 docs 52 §4.4）。实现更正 2026-10-17：向导页是纯客户端组件（`"use client"`），**没有服务端 302 门**——库非空时访问 `/setup` 仍渲染向导，拒绝发生在 `POST /api/auth/register`（`registerWithInvite` 失败返回 400），与 docs 52 §4.4 的实现更正同源。
 
@@ -586,12 +589,12 @@ INSERT INTO instance_setup (id, admin_user_id, completed_at) VALUES (1, ?, datet
 
 （`created_at` 显式写入——多节点确定性，spec §4.1 专项五。）
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/bootstrap.test.ts`
 Expected: PASS（2 条）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add packages/web/src/lib/credentials.ts packages/web/src/app/api/auth/register/route.ts packages/web/src/app/setup/ packages/web/src/__tests__/bootstrap.test.ts
@@ -611,7 +614,7 @@ git commit -m "feat: add first-user-is-admin setup wizard with instance_setup cl
 
 **背景**：`login/page.tsx` 当前只有 Google 按钮（spec §4.4）。Credentials 表单需提交到 Auth.js 的 credentials callback。
 
-- [ ] **Step 1–5**：TDD——先断言「有 credentials provider 时渲染邮箱/密码表单」，再实现条件渲染；断言「无用户时显示 /setup 入口」。实现遵循上游组件风格（Tailwind + shadcn，与既有页面一致）。提交信息 `feat: add email/password login form and setup entry point`。
+- [x] **Step 1–5**：TDD——先断言「有 credentials provider 时渲染邮箱/密码表单」，再实现条件渲染；断言「无用户时显示 /setup 入口」。实现遵循上游组件风格（Tailwind + shadcn，与既有页面一致）。提交信息 `feat: add email/password login form and setup entry point`。
 
 ---
 
@@ -628,25 +631,25 @@ git commit -m "feat: add first-user-is-admin setup wizard with instance_setup cl
 
 **背景**：`isAdmin(email)`（`admin.ts:54`）是同步、只收 email，直接改查库会波及 38 处调用点。策略：保留其同步纯 env 语义，把库内判定并入已是异步的 `resolveAdmin`/`isAdminUser`；两处**直接**调用同步 `isAdmin(email)` 的路由（`api/admin/check/route.ts:44`、`api/users/[slug]/route.ts:53`）改为异步判定。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 追加到 `admin.test.ts`：mock D1 返回 `is_admin=1` 的用户，断言 `resolveAdmin` 对其返回管理员、`isAdminUser` 为真；断言 `isAdmin(email)`（同步）**仅**看 `ADMIN_EMAILS`（不查库）。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/admin.test.ts -t "is_admin"`
 Expected: FAIL
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `resolveAdmin`/`isAdminUser` 增加一次 D1 查询（`SELECT is_admin FROM users WHERE id = ?`，按用户 id 查询——实现更正 2026-10-17：原文写 `WHERE email = ?`，与交付的 `lib/admin.ts:71` `isAdminInDb(userId)` 不符，照抄会使库内管理员判定失效）；命中 `ADMIN_EMAILS` 时短路（不查库，保留破窗语义）。两处调用点改 `await`。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `./node_modules/.bin/vitest run packages/web/src/__tests__/admin.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git commit -m "feat: recognize in-database admins alongside ADMIN_EMAILS"
@@ -665,13 +668,13 @@ git commit -m "feat: recognize in-database admins alongside ADMIN_EMAILS"
 
 **背景**：`isPublicRoute`（`proxy.ts:48-58`）不含 `/setup`，未登录访问会被 302 到 `/login`，向导永远进不去。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 追加：`expect(isPublicRoute("/setup")).toBe(true);` 且断言 `/setup/anything` 也为真（前缀匹配）。
 
-- [ ] **Step 2: 确认失败** → **Step 3: 实现**（在 `isPublicRoute` 的公开前缀集合里加 `/setup`）→ **Step 4: 确认通过**
+- [x] **Step 2: 确认失败** → **Step 3: 实现**（在 `isPublicRoute` 的公开前缀集合里加 `/setup`）→ **Step 4: 确认通过**
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git commit -m "fix: allow /setup through the auth proxy for first-run onboarding"
@@ -692,7 +695,7 @@ git commit -m "fix: allow /setup through the auth proxy for first-run onboarding
 
 **背景**：项目无任何邮件能力（已核验无 nodemailer 等依赖）。故令牌由管理员**线下**交付。`pwd_v`（`password_hash` 短前缀）进 JWT，改密后旧 token 失效（spec §4.4 缺口二）。
 
-- [ ] **Step 1–5**：TDD——断言令牌写入/校验/过期/一次性；断言 `sessionCallback` 在 `pwd_v` 不匹配时判会话失效。破窗脚本 `deploy/selfhost/reset-password.ts` 用 `createD1Adapter` + `hashPassword`，参数 `--email`。提交 `feat: add admin-initiated password reset and pwd_v session invalidation`。
+- [x] **Step 1–5**：TDD——断言令牌写入/校验/过期/一次性；断言 `sessionCallback` 在 `pwd_v` 不匹配时判会话失效。破窗脚本 `deploy/selfhost/reset-password.ts` 用 `createD1Adapter` + `hashPassword`，参数 `--email`。提交 `feat: add admin-initiated password reset and pwd_v session invalidation`。
 
 ---
 
@@ -708,7 +711,7 @@ git commit -m "fix: allow /setup through the auth proxy for first-run onboarding
 
 **背景**：`ConfigManager` 生产/开发共用 `config.json`/`config.dev.json`，不按 host 区分（spec §4.5）。
 
-- [ ] **Step 1–5**：TDD——断言 `--host` 覆盖、`PEW_HOST` 次之；断言不同 host 落到不同配置文件。提交 `feat: cli --host/PEW_HOST support with per-host credential isolation`。
+- [x] **Step 1–5**：TDD——断言 `--host` 覆盖、`PEW_HOST` 次之；断言不同 host 落到不同配置文件。提交 `feat: cli --host/PEW_HOST support with per-host credential isolation`。
 
 ---
 
