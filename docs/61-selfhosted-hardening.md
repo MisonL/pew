@@ -599,16 +599,23 @@ git commit -m "feat: compose auth wiring for rqlite + service credentials (spec 
 
 **Interfaces:** Consumes 全部前序任务。Produces: 段 1 验收记录（写进提交信息或 PR 描述）。
 
-- [ ] **Step 1: 默认路径回归**（不设凭据）
+> **验收结果 2026-10-19（隔离栈，项目名 `pew-verify`，端口 7021，未触碰运维 `.env`）**：Step 1-5 全部通过，Step 6 的容器/卷/网络已清理。逐项证据见各 Step 末的「实测」行。
+
+- [x] **Step 1: 默认路径回归**（不设凭据）
   `cd deploy/selfhost && docker compose up -d --build` → migrate 完成、`/api/live` 200、Plan 2 认证流抽样（登录成功）。确认 `.rqlite-auth.json` 未产出、rqlite 进程 argv 无 `-auth`（`docker compose exec rqlite sh -c 'cat /proc/1/cmdline | tr "\0" " "'`）。
-- [ ] **Step 2: 鉴权路径单节点**。`.env` 写三要素 → `bash deploy/selfhost/render-rqlite-auth.sh` → `docker compose up -d --force-recreate rqlite && docker compose up -d` → 真机项 1-3、5：
+  > 实测：migrate `applied 34, skipped 0`；`/api/live` 200 `database.connected: true`；`verify-migrations` 报 `upstreamTables 22 / planTables 6 / indexes 69 / triggers 12 / views 2`（与 EXPECTED 一致）且 `migration verification PASSED`；`/api/auth/register` 建首个管理员返回 `admin: true`，随后 `/api/auth/callback/credentials` 302 且 `/api/auth/session` 返回该用户；目录内无 `.rqlite-auth.json`；argv 无 `-auth`。
+- [x] **Step 2: 鉴权路径单节点**。`.env` 写三要素 → `bash deploy/selfhost/render-rqlite-auth.sh` → `docker compose up -d --force-recreate rqlite && docker compose up -d` → 真机项 1-3、5：
   1. migrate 通过、`/api/live` 200、登录成功
   2. 无凭据 `docker compose exec web node -e "fetch('http://rqlite:4001/db/query?q=SELECT%201').then(r=>console.log(r.status))"` → `401`；带凭据（Basic 头）→ `200`
   3. **对账自检触发**：另起一个无 `-auth` 的裸 rqlite 容器同网络，把 migrate 指过去（或临时删 auth.json 后 recreate rqlite 保持客户端凭据）→ migrate 显式报「credentials configured but auth is disabled」exit 1
-- [ ] **Step 3: cluster**。`.env` 设 `COMPOSE_PROFILES=cluster`（不要用一次性 `--profile`——后续裸 `up` 会按 `.env` 另起单节点 rqlite），重复 Step 2（三节点全部 `-join-as joiner`），真机项 2/4/5：迁移通过、数据一致（写一条 leaderboard 记录三副本可读）；**匿名 join 拒绝**：同网络起 `rqlite/rqlite:10.5.3 -raft-non-voter -join rqlite-1:4002`（无 `-join-as`）→ 日志 unauthorized。
-- [ ] **Step 4: 备份**（真机项 6）：带凭据 `GET /db/backup`（实现更正 2026-10-15：原文写 `POST /db/backup`，实测 10.5.3 下 POST 返回 405，**GET 才是 200**）到宿主文件，文件非空；恢复到临时节点可读。
-- [ ] **Step 5: 镜像层抽查**（真机项 7）：`git grep rqlite-auth .gitignore .dockerignore` 确认规则在；`docker build` 两个镜像后 `docker history pew-selfhost:local` 逐层确认无 auth.json，`docker save` 导出 grep 无命中。
-- [ ] **Step 6: 清理实验容器/卷；提交**（若有回改，逐文件提交并引用对应 Task）。
+  > 实测：渲染出 `pew:["all"] / joiner:["join"] / *:["status","ready"]` 三条目、0600；recreate 后 argv 出现 `-auth /auth/auth.json`；无凭据 401、正确 Basic 200、错误密码 401；裸节点上 migrate 报 `error: auth reconciliation failed: credentials configured but auth is disabled on the server`，**exit code 1**。
+- [x] **Step 3: cluster**。`.env` 设 `COMPOSE_PROFILES=cluster`（不要用一次性 `--profile`——后续裸 `up` 会按 `.env` 另起单节点 rqlite），重复 Step 2（三节点全部 `-join-as joiner`），真机项 2/4/5：迁移通过、数据一致（写一条 leaderboard 记录三副本可读）；**匿名 join 拒绝**：同网络起 `rqlite/rqlite:10.5.3 -raft-non-voter -join rqlite-1:4002`（无 `-join-as`）→ 日志 unauthorized。
+  > 实测：三节点全部 `voter=True`、leader=3；写入 `leaderboard_revision=424242` 后三副本 `level=none` 直读一致；匿名 join 节点日志 `failed to join ... unauthorized (did you forget to set -join-as?)`，集群仍是 3 节点。
+- [x] **Step 4: 备份**（真机项 6）：带凭据 `GET /db/backup`（实现更正 2026-10-15：原文写 `POST /db/backup`，实测 10.5.3 下 POST 返回 405，**GET 才是 200**）到宿主文件，文件非空；恢复到临时节点可读。
+  > 实测：备份 495,616 字节、`SQLite format 3\0` 魔数；SQLite 直读 29 张表、`_migrations` 34 行、管理员行在、`kv_cache`/`rate_limit_hits` 均在；`.restore` 到临时节点报 `Database restored successfully.` 且恢复后可查。
+- [x] **Step 5: 镜像层抽查**（真机项 7）：`git grep rqlite-auth .gitignore .dockerignore` 确认规则在；`docker build` 两个镜像后 `docker history pew-selfhost:local` 逐层确认无 auth.json，`docker save` 导出 grep 无命中。
+  > 实测：`git grep` 四条 ignore 规则在位；对 `pew-selfhost:local` 与 `pew:standalone` 各做 `docker save` 后 tar 清单 grep `rqlite-auth` 0 命中、`.env` 0 命中；`docker history pew-selfhost:local` 同样 0 命中。
+- [x] **Step 6: 清理实验容器/卷；提交**（若有回改，逐文件提交并引用对应 Task）。
 
 ---
 
