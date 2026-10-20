@@ -142,6 +142,58 @@ rqlite 后端写异常时 **fail-open 放行并告警**（不误判为超限拒�
 
 ## CLI 指向自建服务（`--host` / `PEW_HOST`）
 
+### ★ 先拿到带 `--host` 的 CLI
+
+**这一步不能跳过**：`--host` / `PEW_HOST` 只存在于本分支，npm 上的
+`@nocoo/pew`（包名与本分支相同、版本同为 3.3.3）是**上游版本，没有这两个参数**。
+直接 `npx @nocoo/pew sync --host ...` 会报 `Unknown argument: host`。
+
+本分支不发布 npm 包，因此从本仓库构建：
+
+```bash
+git clone --branch feat/self-hosted-deployment --single-branch <本仓库地址> pew
+cd pew
+bun --version                   # ★ 必须与仓库固定的 1.4.0 同次版本
+bun install --frozen-lockfile
+bun run build                    # 先构建 @pew/core（web 与 CLI 都依赖）
+bun run --cwd packages/cli build # 产出 packages/cli/dist/bin.js
+node packages/cli/dist/bin.js --version   # 自检：应打印 3.3.3
+node packages/cli/dist/bin.js sync --help | grep -- --host   # 自检：必须能看到 --host
+```
+
+★ **Bun 必须装 1.4.0**：两个 Dockerfile 都 pin 了 `oven/bun:1.4.0`（根 `Dockerfile:7`
+的注释写明「floating `oven/bun:1` broke frozen-lockfile across Bun minors」）。换用别的
+小版本，`bun install --frozen-lockfile` 会直接报 `lockfile had changes, but lockfile is
+frozen`——实测 1.3.14 必失败、1.4.0 通过。系统已有旧版时装一份用户级副本，不要覆盖系统
+那份（可能被其它项目依赖）：
+
+```bash
+curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.0"   # 装到 ~/.bun/bin/bun
+export PATH="$HOME/.bun/bin:$PATH"                          # 仅本步骤需要；写进 shell rc 则全局生效
+bun --version                                               # 确认 1.4.0 后再执行上面的 install
+```
+
+（只跑 `bun run build` / `bun run --cwd packages/cli build` 时用哪个 bun 都行，
+锁定只影响 `install`。）
+
+然后把 `packages/cli/dist/bin.js` 放进 PATH（或建个包装脚本）：
+
+```bash
+# 方式一：软链到用户 bin（推荐，升级时重新 build 即可生效）
+mkdir -p ~/.local/bin
+ln -sf "$PWD/packages/cli/dist/bin.js" ~/.local/bin/pew
+export PATH="$HOME/.local/bin:$PATH"     # 写进 ~/.bashrc 或 ~/.zshrc
+
+# 方式二：直接以绝对路径调用，适合只在一台机器上偶尔同步
+node /path/to/pew/packages/cli/dist/bin.js sync --host http://pew.corp:7020
+```
+
+需要 Node 或 Bun 运行时（`bin.js` 自带 `#!/usr/bin/env node` shebang；build 产物默认无
+可执行位，软链方式先 `chmod +x packages/cli/dist/bin.js`）。**升级**：`git pull && bun
+install && bun run build && bun run --cwd packages/cli build`，软链无需重建。
+
+### 登录与同步
+
 局域网客户端要完成登录与同步（设计成功标准 2），三步都走**同一 host**：
 
 ```bash
