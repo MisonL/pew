@@ -2,13 +2,15 @@ import { describe, it, expect } from "vitest";
 import { executeUpdate } from "../commands/update.js";
 
 describe("executeUpdate", () => {
+  // Every pre-existing case injects latestVersionFn so no test touches the
+  // registry; the guard tests below pin the version gate itself.
+  const ok = (stdout = "added 1 package\n") => async () => ({ stdout, stderr: "" });
+
   it("should return success when command succeeds", async () => {
     const result = await executeUpdate({
       currentVersion: "1.0.0",
-      execFn: async () => ({
-        stdout: "added 1 package, changed 1 package in 2s\n",
-        stderr: "",
-      }),
+      latestVersionFn: async () => "1.1.0",
+      execFn: ok(),
     });
 
     expect(result.success).toBe(true);
@@ -19,6 +21,7 @@ describe("executeUpdate", () => {
   it("should return failure when command throws Error", async () => {
     const result = await executeUpdate({
       currentVersion: "1.0.0",
+      latestVersionFn: async () => "1.1.0",
       execFn: async () => {
         throw new Error("EACCES: permission denied");
       },
@@ -31,6 +34,7 @@ describe("executeUpdate", () => {
   it("should return failure when command throws non-Error", async () => {
     const result = await executeUpdate({
       currentVersion: "1.0.0",
+      latestVersionFn: async () => "1.1.0",
       execFn: async () => {
         throw "string error";
       },
@@ -43,6 +47,7 @@ describe("executeUpdate", () => {
   it("should combine stdout and stderr in output", async () => {
     const result = await executeUpdate({
       currentVersion: "1.0.0",
+      latestVersionFn: async () => "1.1.0",
       execFn: async () => ({
         stdout: "added 1 package\n",
         stderr: "npm warn deprecated\n",
@@ -54,11 +59,106 @@ describe("executeUpdate", () => {
     expect(result.output).toContain("npm warn deprecated");
   });
 
+  // -------------------------------------------------------------------------
+  // Version guard — refuses a downgrade to the published npm package
+  // -------------------------------------------------------------------------
+
+  it("skips when the published version equals the running one (no install runs)", async () => {
+    let ranInstall = false;
+    const result = await executeUpdate({
+      currentVersion: "3.3.3",
+      latestVersionFn: async () => "3.3.3",
+      execFn: async () => {
+        ranInstall = true;
+        return { stdout: "added 1 package\n", stderr: "" };
+      },
+    });
+
+    expect(ranInstall).toBe(false);
+    expect(result.success).toBe(true);
+    expect(result.skipped).toBe(true);
+    expect(result.latestVersion).toBe("3.3.3");
+  });
+
+  it("skips when the running build is newer than the published package (downgrade guard)", async () => {
+    // The real 2026-10-20 incident: a fork build at 3.3.3 with `pew update`
+    // installed upstream 3.3.0 globally, which shadows the local binary and
+    // silently ignores --host — self-hosted uploads then go to the SaaS.
+    let ranInstall = false;
+    const result = await executeUpdate({
+      currentVersion: "3.3.3",
+      latestVersionFn: async () => "3.3.0",
+      execFn: async () => {
+        ranInstall = true;
+        return { stdout: "", stderr: "" };
+      },
+    });
+
+    expect(ranInstall).toBe(false);
+    expect(result.success).toBe(true);
+    expect(result.skipped).toBe(true);
+    expect(result.output).toContain("3.3.0");
+    expect(result.output).toContain("3.3.3");
+  });
+
+  it("compares versions numerically, not lexicographically", async () => {
+    let ranInstall = false;
+    const result = await executeUpdate({
+      currentVersion: "3.3.9",
+      latestVersionFn: async () => "3.3.10",
+      execFn: async () => {
+        ranInstall = true;
+        return { stdout: "", stderr: "" };
+      },
+    });
+
+    expect(ranInstall).toBe(true);
+    expect(result.skipped).toBeUndefined();
+  });
+
+  it("fails closed when the latest version cannot be determined", async () => {
+    let ranInstall = false;
+    const result = await executeUpdate({
+      currentVersion: "1.0.0",
+      latestVersionFn: async () => undefined,
+      execFn: async () => {
+        ranInstall = true;
+        return { stdout: "", stderr: "" };
+      },
+    });
+
+    expect(ranInstall).toBe(false);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("could not determine");
+  });
+
+  it("bypasses the version check entirely under force", async () => {
+    let ranInstall = false;
+    let askedLatest = false;
+    const result = await executeUpdate({
+      currentVersion: "3.3.3",
+      force: true,
+      latestVersionFn: async () => {
+        askedLatest = true;
+        return "3.3.0";
+      },
+      execFn: async () => {
+        ranInstall = true;
+        return { stdout: "added 1 package\n", stderr: "" };
+      },
+    });
+
+    expect(askedLatest).toBe(false);
+    expect(ranInstall).toBe(true);
+    expect(result.success).toBe(true);
+  });
+
   it("should execute a valid update command string", async () => {
     let capturedCmd = "";
 
     await executeUpdate({
       currentVersion: "1.0.0",
+      latestVersionFn: async () => "1.1.0",
       execFn: async (cmd) => {
         capturedCmd = cmd;
         return { stdout: "", stderr: "" };

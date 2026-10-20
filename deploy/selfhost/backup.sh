@@ -204,7 +204,22 @@ if ! docker compose exec -T "$SERVICE" sh -c 'test -s /rqlite/file/backup.db'; t
   exit 1
 fi
 
-docker compose cp "$SERVICE:/rqlite/file/backup.db" "$TMP"
+# docker cp can fail for the whole container when a mount it recorded went
+# stale: verified on the live deployment, a container created BEFORE
+# .rqlite-auth.json existed keeps an empty DIRECTORY bind at /auth/auth.json,
+# and every `docker compose cp` then dies with
+#   Error response from daemon: openat auth/auth.json: is a directory
+# — for ANY source path, so cron backups fail with a message that never
+# mentions the remedy. Wrap it: fail closed (set -e would anyway) but say what
+# to do. Recreating the service re-resolves the bind to the rendered file.
+if ! docker compose cp "$SERVICE:/rqlite/file/backup.db" "$TMP"; then
+  echo "backup.sh: docker cp failed." >&2
+  echo "  If the docker error above mentions 'auth/auth.json: is a directory', the" >&2
+  echo "  container was created while .rqlite-auth.json did not exist (render must" >&2
+  echo "  run before the first up). Recreate the service and retry:" >&2
+  echo "    docker compose up -d --force-recreate $SERVICE" >&2
+  exit 1
+fi
 # 0600 immediately: the copy arrives with the container-side 0644 (tar mode
 # preserves it, ignoring this shell's umask) and the archive holds every
 # password_hash/api_key.

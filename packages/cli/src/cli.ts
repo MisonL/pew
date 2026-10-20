@@ -1032,12 +1032,26 @@ const updateCommand = defineCommand({
     name: "update",
     description: "Update pew to the latest version from npm",
   },
-  async run() {
+  args: {
+    force: {
+      type: "boolean",
+      description: "Install even when the published version is not newer (downgrade/reinstall)",
+      default: false,
+    },
+  },
+  async run({ args }) {
     log.start(`Updating pew from v${CLI_VERSION}...`);
 
-    const result = await executeUpdate({ currentVersion: CLI_VERSION });
+    const result = await executeUpdate({ currentVersion: CLI_VERSION, force: args.force });
 
     if (result.success) {
+      if (result.skipped) {
+        log.blank();
+        log.info(
+          `Already current: ${result.output}. This build may be ahead of the published package; use ${pc.cyan("pew update --force")} to install it anyway.`,
+        );
+        return;
+      }
       if (result.output) {
         log.text(pc.dim(result.output));
       }

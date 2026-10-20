@@ -50,6 +50,10 @@ function run(opts: {
   rmFails?: boolean;
   /** Have cp land an empty host file despite a non-empty container file (defense-in-depth path). */
   cpProducesEmpty?: boolean;
+  /** Fail `docker compose cp` with the exact daemon error a container created
+   * while .rqlite-auth.json did not exist produces (stale directory bind at
+   * /auth/auth.json chokes docker cp for the whole container). */
+  cpFails?: boolean;
   /** Sleep in the REPL / cp branch so a test can deliver a signal mid-run. */
   delayAt?: "repl" | "cp";
   delaySeconds?: number;
@@ -164,6 +168,14 @@ case " $* " in
     fi
     exit 0;;
   *" cp "*)
+    if [ "${opts.cpFails ? "1" : "0"}" = "1" ]; then
+      # Verified against docker 28 on the live deployment: a container whose
+      # /auth/auth.json bind-mount was created as an empty DIRECTORY (render
+      # never ran before the first up) makes docker compose cp fail with this
+      # daemon error for ANY source path — the tar walk hits the directory.
+      echo "Error response from daemon: openat auth/auth.json: is a directory" >&2
+      exit 1
+    fi
     # The script must stage inside a 0700 directory: docker cp lands 0644
     # (tar mode), so between the cp and the script's chmod — and permanently
     # after a SIGKILL — the parent mode is the only protection.
@@ -301,6 +313,20 @@ describe("backup.sh", () => {
     const r = await run({ args: [target] });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("is a directory");
+  });
+
+  it("names the stale auth mount when docker cp fails", async () => {
+    // Verified on the live deployment: a container created while
+    // .rqlite-auth.json did not exist keeps an empty DIRECTORY bind at
+    // /auth/auth.json, and every docker cp then dies with `openat
+    // auth/auth.json: is a directory` — so cron backups fail with a message
+    // that never mentions the actual remedy. Fail closed AND say it.
+    const r = await run({ cpFails: true });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("is a directory");
+    expect(r.stderr).toContain("force-recreate");
+    // Nothing may reach the final path.
+    expect(existsSync(r.out)).toBe(false);
   });
 
   it("targets rqlite-1 under the cluster profile and never touches the rqlite service", async () => {

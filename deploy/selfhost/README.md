@@ -207,6 +207,18 @@ node /path/to/pew/packages/cli/dist/bin.js sync --host http://pew.corp:7020
 可执行位，软链方式先 `chmod +x packages/cli/dist/bin.js`）。**升级**：`git pull && bun
 install && bun run build && bun run --cwd packages/cli build`，软链无需重建。
 
+⚠️ **不要用 `pew update` 升级本分支的 CLI。** 该命令执行的是
+`npm install -g @nocoo/pew@latest`（或按检测到的包管理器等价命令），装回的是**上游
+npm 包**：既没有 `--host`，又会作为全局 `pew` 抢占 PATH（例如 nvm 的 bin 目录排在
+`~/.local/bin` 之前时），下一次 `pew sync` 就会静默上传到 pew.md——本机 2026-10-20
+实际发生过一次。本分支的 `update` 现在会在「npm 版本不高于当前版本」时拒绝执行
+（`--force` 可绕过），但这只挡住降级：上游一旦发布更高版本，它仍会装回一个没有
+`--host` 的包。**自托管场景请始终用上面的 git build 流程升级。**
+
+另外，如果机器上还装着上游全局包（`npm ls -g @nocoo/pew`），先卸载再建软链，否则
+`which -a pew` 可能列出两个，非交互 shell 里可能解析到上游那个：
+`npm uninstall -g @nocoo/pew`。
+
 ### 登录与同步
 
 局域网客户端要完成登录与同步（设计成功标准 2），三步都走**同一 host**：
@@ -620,6 +632,11 @@ bash deploy/selfhost/backup.sh /var/backups/pew/pew.db
   即意味着有失败要排查。
 - **cron 的 `PATH` 通常不含 docker**。用 `docker: command not found` 报错时，请在 crontab
   顶部显式设置 `PATH=/usr/local/bin:/usr/bin:/bin`（或 `command -v docker` 查到的目录）。
+- **`docker compose cp` 对整个容器失败（`openat auth/auth.json: is a directory`）**：容器在
+  `.rqlite-auth.json` 渲染**之前**首次 `up` 时，compose 会把缺失的 bind-mount 源创建为空
+  **目录**；此后该容器的任何 `docker cp` 都会因 tar 遍历撞上这个目录而失败（docker 28 实测），
+  与备份的源路径无关。backup.sh 会显式报错并给出修复命令；手工恢复时同样先：
+  `docker compose up -d --force-recreate rqlite`（cluster profile 用 rqlite-1），再重跑。
 - **不要在多个 timer 上并发跑备份**：脚本内 `.backup` 写的是固定容器路径
   `/rqlite/file/backup.db`，与宿主输出路径无关，所以并发运行必然互相覆盖，且先结束者的
   EXIT trap 会 `rm -f` 掉另一个正在使用的归档。**指向不同输出路径并不能避免冲突**——必须
