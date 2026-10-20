@@ -1,72 +1,3 @@
-# Allowlist, not blocklist: the context starts empty and only the paths a
-# build actually reads are re-included. A blocklist kept missing new secret
-# and artifact shapes (verified: deploy/selfhost/.env and packages/web/.next
-# both entered image layers under the old list).
-**
-!package.json
-!bun.lock
-!tsconfig.json
-!packages/
-!packages/**
-!scripts/
-!scripts/fix-standalone-swc-helpers.ts
-# The self-hosted compose builds from this same root context with
-# deploy/selfhost/Dockerfile, which COPYs deploy/ — without these two lines
-# that build has no deploy directory at all.
-!deploy/
-!deploy/**
-#
-# Everything below must stay AFTER every `!` negation: Docker applies the LAST
-# matching rule, so a directory excluded before a `!` has its matching files
-# re-included (verified: .claude/worktrees/*/packages/web/.env.example entered
-# the context, and BuildKit still walked the whole tree to evaluate the
-# negation).
-#
-# Secrets at ANY depth. A bare `.env` only excludes the context root, so
-# deploy/selfhost/.env (created by the quickstart) would still be COPYed into
-# the pew-selfhost:local image — leaking real secrets into an image layer.
-# `cp .env .env.bak` must not reopen the hole.
-**/.env
-**/.env.*
-# The one .env-family file that is meant to ship (documentation only, no
-# secrets).
-!**/.env.example
-!**/.env.*.example
-**/.dev.vars
-**/.rqlite-auth.json
-**/.rqlite-auth.json.*
-# The render script's staging file holds every plaintext password until the
-# atomic rename; `.auth.json` alone does not match a `.tmp` suffix. Two
-# spellings are needed, and not because of a leading dot (Docker's `*` DOES
-# match one — verified): the default file is `.rqlite-auth.json`, whose name
-# has a HYPHEN before `auth`, so `*.auth.json*` can never match it.
-deploy/selfhost/*.auth.json
-deploy/selfhost/*.auth.json.*
-**/*.pem
-**/*.key
-# Build artifacts and dependencies at ANY depth: both Dockerfiles run
-# `bun install` inside the image, so host copies are never needed (and could
-# shadow the linux-native install).
-**/node_modules
-**/.next*
-**/coverage
-**/coverage-tmp
-**/dist
-**/*.tsbuildinfo
-.git
-.DS_Store
-# Agent/editor worktrees and scratch state at any depth: a root-anchored
-# `.claude` only excludes the top-level directory (verified: a nested
-# packages/web/.claude/worktrees copy entered the context).
-**/.claude
-**/.superpowers
-# Local wrangler/miniflare state (D1 emulation caches; git ignores them, the
-# images must too — deploy/selfhost/Dockerfile copies packages/worker whole).
-**/.wrangler/
-# Playwright output: gitignored, but Docker does not read nested .gitignore
-# files, so it would otherwise reach the image layers.
-**/test-results
-**/playwright-report
 # Backup archives and their staging dirs (backup.sh output; the archive holds
 # every password_hash/api_key, and build contexts are the repo root, so a
 # build running while an archive exists would bake it into an image layer).
@@ -78,6 +9,6 @@ deploy/selfhost/*.auth.json.*
 **/backup-*.db
 **/*.db
 **/*.db-*
+**/*.db-shm
+**/*.db-wal
 **/.pew-backup.*/
-logo.png
-scripts/resize-logos.py

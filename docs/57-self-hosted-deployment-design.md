@@ -507,7 +507,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | 8 | `packages/web/src/app/api/admin/invites/route.ts` 等 | 省略时间列的 INSERT 补 `datetime('now')`（全量 grep 定位，实测已知 2 处起）。（实现更正 2026-10-17：`invites/route.ts` 最终**未改动**——该表 INSERT 均有 `DEFAULT datetime('now')`，与 §3.2 更正一致。） |
 | 9 | `packages/cli/src/commands/login.ts` | `resolveHost` 支持 `--host` / `PEW_HOST`。（实现更正 2026-10-20：同一批还把读取侧补齐——`upload-engine.ts`、`logout.ts`、`cli.ts` 的 `sync`/`logout` `--host`，见 §4.5） |
 | 10 | `packages/cli/src/config/manager.ts` | 自建 host 使用独立配置文件（见 §4.5） |
-| 11 | `scripts/migrations/` | **新增**：① `password_hash` + `is_admin` 列；② 确定性触发器后置迁移（专项二）；③ `kv_cache` 基础设施表（实测：无任何上游迁移创建它，缺表只在运行时暴露）——均为**新增文件**，不改既有迁移 |
+| 11 | `scripts/migrations/` | **新增**：① `password_hash` + `is_admin` 列；② 确定性触发器后置迁移（专项二）；③ `kv_cache` 基础设施表（实测：无任何上游迁移创建它，缺表只在运行时暴露）——均为**新增文件**。（实现更正 2026-10-20：上句原写「不改既有迁移」，与事实不符——为支持迁移重放，`scripts/migrations/029-leaderboard-revision.sql` 的种子 INSERT 已改为 `INSERT OR IGNORE`（提交 `607455db`），这是**对上游既有迁移的唯一修改**。） |
 | 12 | `vitest.config.ts` | `test.include` 增加 `deploy/**/*.test.ts`——否则 `deploy/selfhost/` 下的适配层测试**一条都不会执行** |
 
 **新增文件（全部在既定目录，不触碰上游代码）**

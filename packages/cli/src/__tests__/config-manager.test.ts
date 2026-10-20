@@ -78,6 +78,30 @@ describe("ConfigManager", () => {
     expect(manager.configPath).toBe(join(tempDir, "config.pew.internal.json"));
   });
 
+  it("maps an explicit dev-host override onto config.dev.json without --dev", () => {
+    // `pew login --host https://pew.dev.hexly.ai` (no --dev) used to write
+    // config.json because the built-in host collapsed to "no scope" and the
+    // file was then chosen by the --dev flag alone — so the dev token landed
+    // in config.json and the next plain `pew sync` sent it to https://pew.md.
+    const noDevFlag = new ConfigManager(tempDir, false, "https://pew.dev.hexly.ai");
+    expect(noDevFlag.configPath).toBe(join(tempDir, "config.dev.json"));
+    const devFlag = new ConfigManager(tempDir, true, "https://pew.dev.hexly.ai");
+    expect(devFlag.configPath).toBe(join(tempDir, "config.dev.json"));
+  });
+
+  it("maps the prod host and its equivalent spellings onto config.json", () => {
+    for (const host of ["https://pew.md", "https://PEW.MD", "https://pew.md:443", "https://pew.md/"]) {
+      expect(new ConfigManager(tempDir, false, host).configPath).toBe(join(tempDir, "config.json"));
+    }
+    // A --dev flag must not divert an explicit prod-host command.
+    expect(new ConfigManager(tempDir, true, "https://pew.md").configPath).toBe(join(tempDir, "config.json"));
+  });
+
+  it("keeps the SaaS file names untouched when no host is given", () => {
+    expect(new ConfigManager(tempDir, false).configPath).toBe(join(tempDir, "config.json"));
+    expect(new ConfigManager(tempDir, true).configPath).toBe(join(tempDir, "config.dev.json"));
+  });
+
   it("derives a stable filename stem from host[:port] regardless of scheme", () => {
     expect(hostConfigStem("http://pew.corp:7020")).toBe("config.pew.corp_7020.json");
     expect(hostConfigStem("https://pew.corp:7020")).toBe("config.pew.corp_7020.json");

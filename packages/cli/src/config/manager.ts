@@ -36,19 +36,30 @@ export function hostConfigStem(host: string | undefined): string | undefined {
 /**
  * The host scope a command must use when reading or writing credentials.
  *
- * `pew login --host X` (and `PEW_HOST=X pew login`) stores the token in a
- * per-host file; every command that later touches credentials has to derive
- * the SAME stem from its own resolved API URL, or it reads a different file
- * and either reports "Not logged in" or acts on the SaaS token instead.
+ * Every command that touches credentials derives the SAME scope from its own
+ * resolved API URL, so `login`, `sync` and `logout` always agree on the file.
  *
- * Returns undefined for the built-in SaaS hosts so their file names (and every
- * already-issued token) stay unchanged.
+ * The two built-in SaaS hosts are returned as-is (normalized) rather than as
+ * undefined: `ConfigManager` maps them onto the historical `config.json` /
+ * `config.dev.json`, so their file names never change. They must NOT be
+ * collapsed to "no scope" here — the file choice would then fall back to the
+ * `--dev` flag alone, and `pew login --host https://pew.dev.hexly.ai` (no
+ * `--dev`) would write the dev token into `config.json`, where the next plain
+ * `pew sync` sends it to https://pew.md.
  */
 export function credentialHostScope(apiUrl: string | undefined): string | undefined {
   if (!apiUrl) return undefined;
-  const normalized = apiUrl.trim().replace(/\/+$/, "");
-  if (!normalized || normalized === DEFAULT_HOST || normalized === DEV_HOST) return undefined;
-  return normalized;
+  const raw = apiUrl.trim();
+  if (!raw) return undefined;
+  try {
+    // `origin` lowercases the host, drops the default port and strips
+    // credentials/path/query, so `https://PEW.MD:443/` and `https://pew.md`
+    // select the same file.
+    const u = new URL(raw.includes("://") ? raw : `https://${raw}`);
+    return u.origin;
+  } catch {
+    return raw.replace(/\/+$/, "");
+  }
 }
 
 /**
@@ -67,12 +78,19 @@ export class ConfigManager extends BaseConfigManager<PewConfig> {
    * @param host      Optional self-hosted API URL; isolates credentials per host
    */
   constructor(configDir: string, dev = false, host?: string) {
-    // A self-hosted host gets its own file, taking precedence over dev/prod so
-    // a per-host token never collides with the SaaS default.
-    const perHost = hostConfigStem(host);
+    // A built-in SaaS host keeps its historical file name; every other host
+    // gets a file of its own. The host therefore wins over `dev` in BOTH
+    // slots: a command that passes https://pew.dev.hexly.ai must use
+    // config.dev.json whether or not --dev was given, or the dev token lands
+    // in config.json and the next plain `pew sync` sends it to https://pew.md.
+    const scope = credentialHostScope(host);
+    const filename =
+      scope === DEFAULT_HOST ? PROD_CONFIG
+      : scope === DEV_HOST ? DEV_CONFIG
+      : hostConfigStem(scope);
     super(configDir, dev, {
-      prodFilename: perHost ?? PROD_CONFIG,
-      devFilename: perHost ?? DEV_CONFIG,
+      prodFilename: filename,
+      devFilename: filename,
     });
   }
 

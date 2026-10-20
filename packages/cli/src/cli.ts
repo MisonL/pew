@@ -45,6 +45,21 @@ function handleCorruptLine(line: string, _error: unknown): void {
   log.warn(`${pc.yellow("Skipping corrupt queue line:")} ${pc.dim(line.slice(0, 80))}${line.length > 80 ? "…" : ""}`);}
 
 /**
+ * resolveHost() throws on an unusable --host/PEW_HOST. Turn that into a one
+ * line error and a failing exit code instead of a stack trace; callers that
+ * use the result must stop when this returns undefined.
+ */
+function resolveHostOrReport(dev: boolean, override?: string): string | undefined {
+  try {
+    return resolveHost(dev, override);
+  } catch (err) {
+    log.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+    return undefined;
+  }
+}
+
+/**
  * Parse `--not-before=<epoch-ms>` from the notify.cjs handler. Returns
  * undefined on empty / malformed input so legacy callers (older
  * handlers, manual invocations) keep the fire-immediately behavior.
@@ -394,7 +409,8 @@ export const syncCommand = defineCommand({
       // `--host` must win over PEW_HOST here too: a stray PEW_HOST in the
       // shell must not redirect an explicit sync, and the login below stored
       // the token under the host that was actually used.
-      const host = resolveHost(dev, args.host);
+      const host = resolveHostOrReport(dev, args.host);
+      if (!host) return;
       await runUpload(paths.stateDir, host, dev);
       await runSessionUpload(paths.stateDir, host, dev);
     }
@@ -568,7 +584,8 @@ const loginCommand = defineCommand({
     const dev = isDevMode();
     // Explicit --host (or PEW_HOST) wins and isolates credentials per host.
     const hostOverride = args.host ?? process.env.PEW_HOST;
-    const host = resolveHost(dev, hostOverride);
+    const host = resolveHostOrReport(dev, hostOverride);
+    if (!host) return;
 
     if (args.code) {
       log.start("Verifying authentication code...");
@@ -637,10 +654,12 @@ const logoutCommand = defineCommand({
     const paths = resolveDefaultPaths();
     const dev = isDevMode();
 
+    const host = resolveHostOrReport(dev, args.host);
+    if (!host) return;
     const result = await executeLogout({
       configDir: paths.stateDir,
       dev,
-      host: resolveHost(dev, args.host),
+      host,
     });
 
     if (result.alreadyLoggedOut) {

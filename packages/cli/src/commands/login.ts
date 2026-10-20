@@ -26,11 +26,45 @@ export { DEFAULT_HOST, DEV_HOST };
  * Precedence: explicit `--host` value > PEW_HOST env > DEV_HOST (dev) >
  * DEFAULT_HOST. Used by self-hosted deployments pointing the CLI at an
  * intranet pew instance.
+ *
+ * An override that is present but unusable (empty, a flag the parser
+ * swallowed, a non-URL) is an error, never a silent fallback: falling back
+ * to the SaaS host would upload the local queue to pew.md while the operator
+ * believes they are talking to their own instance.
  */
 export function resolveHost(dev: boolean, override?: string): string {
   const host = override ?? process.env.PEW_HOST;
-  if (host?.trim()) return host.trim().replace(/\/+$/, "");
-  return dev ? DEV_HOST : DEFAULT_HOST;
+  if (host === undefined) return dev ? DEV_HOST : DEFAULT_HOST;
+  const trimmed = host.trim();
+  if (!trimmed) {
+    throw new Error(
+      "Invalid host: expected a URL such as http://pew.corp:7020 (empty value)",
+    );
+  }
+  if (trimmed.startsWith("-")) {
+    throw new Error(
+      `Invalid host "${trimmed}": expected a URL such as http://pew.corp:7020 (looks like a flag, not a value)`,
+    );
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`);
+  } catch {
+    throw new Error(
+      `Invalid host "${trimmed}": expected a URL such as http://pew.corp:7020`,
+    );
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(
+      `Invalid host "${trimmed}": only http:// and https:// are supported`,
+    );
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error(
+      `Invalid host "${trimmed}": remove the user:password part (credentials in the URL are not supported)`,
+    );
+  }
+  return trimmed.replace(/\/+$/, "");
 }
 
 /**

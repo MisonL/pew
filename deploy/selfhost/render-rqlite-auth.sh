@@ -32,8 +32,22 @@ case "$OUT" in .|..|*/|/.|/..|*/.|*/..|*/../*|*/./*)
 case "$OUT" in -*)
   echo "render-rqlite-auth: refusing AUTH_OUT_FILE starting with '-': $OUT" >&2; exit 1;; esac
 
+# Remove a leftover credential artefact, but never a populated directory.
+# - regular file / symlink: `rm -f` (a stale render must not survive)
+# - empty directory:        `rmdir` (the bind-mount stub Docker creates)
+# - populated directory:    refuse — that means AUTH_OUT_FILE points at a real
+#   directory, and `rm -rf` there would destroy it (verified: it did).
+remove_stale() {
+  if [ -d "$1" ] && [ ! -L "$1" ]; then
+    rmdir "$1" 2>/dev/null || {
+      echo "render-rqlite-auth: refusing to remove non-empty directory: $1" >&2; return 1; }
+  else
+    rm -f "$1"
+  fi
+}
+
 if [ -z "${RQLITE_USERNAME:-}" ] || [ -z "${RQLITE_PASSWORD:-}" ] || [ -z "${RQLITE_JOIN_PASSWORD:-}" ]; then
-  rm -rf "$OUT"   # rm -rf also removes the directory docker may have created for a missing bind-mount
+  remove_stale "$OUT" || exit 1
   if [ -n "${RQLITE_USERNAME:-}${RQLITE_PASSWORD:-}${RQLITE_JOIN_PASSWORD:-}" ]; then
     echo "render-rqlite-auth: RQLITE_USERNAME, RQLITE_PASSWORD and RQLITE_JOIN_PASSWORD must all be set (or all empty)" >&2
     exit 1
@@ -53,15 +67,25 @@ trap 'rm -f "$OUT.tmp"' EXIT INT TERM HUP
 # INTO the directory and `chmod` on the directory exits 0 — the entrypoint's
 # [ -f ] check would then be false and rqlite would start WITHOUT auth,
 # silently. Remove the directory first (N1, review round 2).
-if [ -d "$OUT" ]; then
-  rm -rf "$OUT"
+# `rmdir` again: this path only needs to clear the empty bind-mount stub, and
+# a populated directory means a misconfigured AUTH_OUT_FILE that must not be
+# destroyed (see remove_stale above).
+if [ -d "$OUT" ] && [ ! -L "$OUT" ]; then
+  rmdir "$OUT" 2>/dev/null || {
+    echo "render-rqlite-auth: refusing to remove non-empty directory: $OUT" >&2; exit 1; }
 fi
 
-jq -n \
-  --arg u "$RQLITE_USERNAME" --arg p "$RQLITE_PASSWORD" --arg jp "$RQLITE_JOIN_PASSWORD" \
-  '[
-    { username: $u, password: $p, perms: ["all"] },
-    { username: "joiner", password: $jp, perms: ["join"] },
+# The passwords must not appear in `jq`'s argv — on a shared host any local
+# user can read /proc/<pid>/cmdline for the lifetime of the process. They go
+# through the environment instead (jq exposes it to the filter as $ENV.VAR).
+# `env` prints VAR=... lines; an empty variable is dropped, which would let an
+# empty password slip through as undefined, so re-check them here.
+RQLITE_USERNAME="$RQLITE_USERNAME" RQLITE_PASSWORD="$RQLITE_PASSWORD" \
+  RQLITE_JOIN_PASSWORD="$RQLITE_JOIN_PASSWORD" \
+jq -n '
+  [
+    { username: $ENV.RQLITE_USERNAME, password: $ENV.RQLITE_PASSWORD, perms: ["all"] },
+    { username: "joiner", password: $ENV.RQLITE_JOIN_PASSWORD, perms: ["join"] },
     { username: "*", perms: ["status", "ready"] }
   ]' > "$OUT.tmp"
 # Write-then-rename: a killed render must never leave a half-written auth file.

@@ -9,16 +9,23 @@ import { executeLogin, resolveHost, parseHostArg, DEFAULT_HOST, DEV_HOST } from 
 // ---------------------------------------------------------------------------
 
 describe("resolveHost", () => {
-  const ORIGINAL_ENV = process.env;
+  // PEW_HOST from the developer's shell would otherwise leak into the
+  // "no override" baseline cases and make them fail for the wrong reason.
+  const ORIGINAL_ENV = { ...process.env };
+  delete ORIGINAL_ENV.PEW_HOST;
   afterEach(() => {
     process.env = ORIGINAL_ENV;
   });
 
   it("should return DEFAULT_HOST when dev is false", () => {
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.PEW_HOST;
     expect(resolveHost(false)).toBe(DEFAULT_HOST);
   });
 
   it("should return DEV_HOST when dev is true", () => {
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.PEW_HOST;
     expect(resolveHost(true)).toBe(DEV_HOST);
   });
 
@@ -36,6 +43,22 @@ describe("resolveHost", () => {
   it("lets an explicit override beat PEW_HOST", () => {
     process.env = { ...ORIGINAL_ENV, PEW_HOST: "https://env.example" };
     expect(resolveHost(false, "https://flag.example")).toBe("https://flag.example");
+  });
+
+  it("rejects an unusable override instead of falling back to the SaaS host", () => {
+    // Falling back would upload the local queue to pew.md while the operator
+    // believes they are talking to their own instance.
+    for (const bad of ["", "   ", "--force", "ftp://files.example", "http://user:pw@h:7020"]) {
+      expect(() => resolveHost(false, bad)).toThrow(/Invalid host/);
+    }
+  });
+
+  it("treats an unset override as absent but an empty PEW_HOST as an error", () => {
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.PEW_HOST;
+    expect(resolveHost(false)).toBe(DEFAULT_HOST);
+    process.env = { ...ORIGINAL_ENV, PEW_HOST: "  " };
+    expect(() => resolveHost(false)).toThrow(/Invalid host/);
   });
 });
 

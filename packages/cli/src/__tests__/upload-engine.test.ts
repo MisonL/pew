@@ -9,7 +9,7 @@ import {
 } from "../commands/upload-engine.js";
 import { BaseQueue } from "../storage/base-queue.js";
 import { ConfigManager } from "../config/manager.js";
-import { DEFAULT_HOST } from "../commands/login.js";
+import { DEFAULT_HOST, DEV_HOST } from "../commands/login.js";
 
 // ---------------------------------------------------------------------------
 // Test record type
@@ -111,17 +111,21 @@ describe("upload-engine", () => {
 
   // ---- Per-host credentials (self-hosted, spec §4.5) ----
 
-  it("reads the per-host credential file when uploading to a self-hosted URL", async () => {
+  it("uses the per-host token for the request when both files exist", async () => {
     // `pew login --host http://pew.corp:7020` stores its token in the
     // host-scoped file so it never overwrites the SaaS default (see
-    // ConfigManager.hostConfigStem). The upload must look in that same file:
-    // reading the default one either fails ("Not logged in") or, worse, sends
-    // this instance's data to the SaaS host with the SaaS token.
-    const { config } = createTestEngine(dir);
-    const cm = new ConfigManager(dir, false, "http://pew.corp:7020");
-    await cm.save({ token: "pk_selfhosted" });
+    // ConfigManager.hostConfigStem). Both files exist here on purpose: an
+    // empty queue would let a wrong file choice pass unnoticed ("nothing to
+    // upload"), so the assertion is on the Authorization header that actually
+    // goes out.
+    const { queue, config } = createTestEngine(dir);
+    await new ConfigManager(dir, false).save({ token: "pk_saas" });
+    await new ConfigManager(dir, false, "http://pew.corp:7020").save({ token: "pk_selfhosted" });
+    await queue.append(makeRecord(1));
 
-    const { fetchFn, calls } = createMockFetch([]);
+    const { fetchFn, calls } = createMockFetch([
+      { status: 200, body: { ingested: 1 } },
+    ]);
     const engine = createUploadEngine(config);
     const result = await engine.execute({
       stateDir: dir,
@@ -130,7 +134,11 @@ describe("upload-engine", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(calls.length).toBe(0);
+    expect(result.uploaded).toBe(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url.startsWith("http://pew.corp:7020/")).toBe(true);
+    const auth = (calls[0].init.headers as Record<string, string>).Authorization;
+    expect(auth).toBe("Bearer pk_selfhosted");
   });
 
   it("does not borrow the SaaS token when uploading to a self-hosted URL", async () => {
@@ -665,7 +673,10 @@ describe("upload-engine", () => {
     const engine = createUploadEngine(config);
     const result = await engine.execute({
       stateDir: dir,
-      apiUrl: DEFAULT_HOST,
+      // --dev resolves to DEV_HOST; the apiUrl is the source of truth for the
+      // credential file, so a mismatched (prod URL + dev flag) pair cannot
+      // silently read the dev token.
+      apiUrl: DEV_HOST,
       fetch: fetchFn,
       dev: true,
     });

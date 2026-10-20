@@ -16,6 +16,11 @@ chmod 600 .env        # 含明文密钥；同宿主其他用户不应能读（�
 docker compose up -d --build
 ```
 
+> **本 Quickstart 是可访问内网的默认拓扑**：web 的 7020 绑在 `0.0.0.0`，局域网内可直连。
+> 这对内网自用是可接受的（单人/小团队、LAN 可信），但要清楚「IP 维度限速可被伪造
+> `X-Forwarded-For` 绕过」（邮箱桶仍有效，详见「★ 硬约束清单」首条）。
+> **有公网入口时不要用这个默认拓扑**，改走「反向代理 → 部署拓扑」里的公网组合。
+
 首次启动后访问 `http://<host>:7020`。
 
 > **重要**：web 在**首次使用认证时**校验 `AUTH_SECRET`——缺失或仍是占位符（`replace-me`、
@@ -67,6 +72,8 @@ fallback）。
    # Expected: "auth":"enabled"
    # 若显示 "auth":"disabled"：凭据已配置但服务端以无鉴权启动 —— 立即停下，
    # 用上面的 --force-recreate 序列重做（普通 up -d 不会重建容器，重试无效）
+   # ⚠️ grep 无输出即失败（字段在 /status 的 "http" 对象下，形如 "http":{"auth":"enabled",...}），
+   #    别把空输出当成通过。
    ```
 
    带凭据复核（应 200 且 `enabled`）：`docker compose exec d1-http bun -e
@@ -144,9 +151,16 @@ rqlite 后端写异常时 **fail-open 放行并告警**（不误判为超限拒�
 
 ### ★ 先拿到带 `--host` 的 CLI
 
-**这一步不能跳过**：`--host` / `PEW_HOST` 只存在于本分支，npm 上的
-`@nocoo/pew`（包名与本分支相同、版本同为 3.3.3）是**上游版本，没有这两个参数**。
-直接 `npx @nocoo/pew sync --host ...` 会报 `Unknown argument: host`。
+**这一步不能跳过**：`--host` / `PEW_HOST` 只存在于本分支。npm 上的 `@nocoo/pew`
+（与本分支**同包名**）是上游版本，没有这两个参数；npm 最新是 3.3.0，本分支是未发布的
+3.3.3。
+
+⚠️ **危险的不是报错，而是静默回落**：CLI 用的 citty 是 `strict: false`，未识别的参数
+会被**忽略并继续执行**（实测 `pew sync --bogus` 返回 0）。所以用上游 CLI 跑
+`pew sync --host http://pew.corp:7020` **不会报任何错**，它会照常采集，然后把数据
+**上传到 pew.md**（`PEW_HOST` 同理被忽略，读的还是 `config.json` 里的 SaaS token）。
+这就是「数据发去了错误的主机」，而且没有任何提示。**每次升级后都要跑一次下面的
+`sync --help | grep` 自检。**
 
 本分支不发布 npm 包，因此从本仓库构建：
 
@@ -161,11 +175,12 @@ node packages/cli/dist/bin.js --version   # 自检：应打印 3.3.3
 node packages/cli/dist/bin.js sync --help | grep -- --host   # 自检：必须能看到 --host
 ```
 
-★ **Bun 必须装 1.4.0**：两个 Dockerfile 都 pin 了 `oven/bun:1.4.0`（根 `Dockerfile:7`
-的注释写明「floating `oven/bun:1` broke frozen-lockfile across Bun minors」）。换用别的
-小版本，`bun install --frozen-lockfile` 会直接报 `lockfile had changes, but lockfile is
-frozen`——实测 1.3.14 必失败、1.4.0 通过。系统已有旧版时装一份用户级副本，不要覆盖系统
-那份（可能被其它项目依赖）：
+★ **Bun 需与仓库固定的 1.4.0 同一次版本**：两个 Dockerfile 都 pin 了 `oven/bun:1.4.0`
+（根 `Dockerfile:6` 的注释写明「floating `oven/bun:1` broke frozen-lockfile across Bun
+minors」）。**实测 1.3.14 必失败**（`lockfile had changes, but lockfile is frozen`），
+1.4.0 通过；1.4.3 亦通过（同一 1.4.x 次版本内 lockfile 兼容）。换主版本前先跑一次
+`bun install --frozen-lockfile --dry-run` 确认。系统已有旧版时装一份用户级副本，不要
+覆盖系统那份（可能被其它项目依赖）：
 
 ```bash
 curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.0"   # 装到 ~/.bun/bin/bun
@@ -326,6 +341,28 @@ voter/reachable，且新节点能读到扩容前写入的数据。这条路把�
 推荐形态：**Caddy 以 compose 服务加入**（`reverse_proxy web:7020`，在 compose 网络内解析上游；
 发布 80/443）。次选宿主 Nginx（上游指向 `127.0.0.1:7020`，配合下述端口改绑）。
 
+### 部署拓扑：公网 vs 内网，默认值差一件事
+
+**默认 compose 把 web 的 7020 发布到 `0.0.0.0`**（`docker-compose.yml:314-315` 的
+`"${WEB_PORT:-7020}:7020"` 没有 host 前缀），Quickstart 的裸 `docker compose up -d`
+就是这个状态。它是否可接受，取决于部署位置：
+
+| 拓扑 | 需要做什么 | 不做的后果 |
+|---|---|---|
+| **可控内网**（本章默认假设：无公网入口、LAN 内可信、单人/小团队自用） | 可接受现状。知道「IP 维度限速（auth-code、CLI 登录）可被伪造 XFF 绕过」即可——邮箱桶仍有效，密码登录本身只按邮箱限速 | 无额外风险（已如实评估） |
+| **公有云 / 有公网入口 / 跨不可信网段** | **必须**套反代 + 收紧端口，见下面 Caddy/Nginx；并把 7020 用防火墙限到只让反代可达 | 与上表同一绕过，但攻击面从「LAN 内」变成「整个互联网」；弱口令被无限次试（IP 桶失效），邮箱桶是唯一防线 |
+| **跨公网的多节点集群**（cluster profile） | 至少 WireGuard 或私有网段 | rqlite 的 4001/4002 若可达，等于把数据库暴露给任意读写 |
+
+★ **公网/云部署的最低组合**：① `docker-compose.caddy.yml`（自动 TLS + XFF 覆写 +
+移除 0.0.0.0 发布，三件事一次解决）② `USE_SECURE_COOKIES=true`（https 下默认即可，
+**别**照抄内网的 `false`）③ `LOGIN_RATE_LIMIT_BACKEND=rqlite`（多副本时登录限速才共享）
+④ `NEXTAUTH_URL` 逐字符等于对外域名（含协议，**不要带端口号**除非非标端口）。
+CLI 侧 `PEW_HOST` 同步指向该域名。
+
+**内网 http 部署不要留空 `USE_SECURE_COOKIES`**：空值在 production 下推导为 true，
+`__Secure-` cookie 会被 http origin 拒收、登录全线失效——必须显式填 `false`（见
+「Cookie 与 USE_SECURE_COOKIES」小节的四格表）。这与上面公网行正好相反，别混。
+
 ### Caddy（推荐）
 
 两行配置自动 HTTPS；**需 Caddy ≥ 2.5**——[官方文档](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)
@@ -342,6 +379,50 @@ docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
 
 接入骨架见 `docker-compose.caddy.yml` + `Caddyfile`（把 `Caddyfile` 里的
 `example.intranet.corp` 换成你的内网域名）。
+
+**公有云 + 公网域名的完整落法**（Caddy 自动签发 Let's Encrypt 证书，客户端用域名访问）：
+
+```bash
+cd /path/to/pew/deploy/selfhost
+
+# 1) 域名 A/AAAA 记录指向公网 IP，80/443 放行（证书签发与续期都要走这两个端口）
+# 2) Caddyfile 换成你的公网域名
+cat > Caddyfile <<'EOF'
+pew.example.com {
+    reverse_proxy web:7020
+}
+EOF
+# 注意：这一行**不要**取消注释 `tls internal`（那是内网无公网 DNS 时的自签方案，
+# 公网域名要用自动签发的受信任证书——自签证书会让 CLI 的 HTTPS 请求直接失败）
+
+# 3) .env 按公网拓扑调整
+#    NEXTAUTH_URL=https://pew.example.com     ← 逐字符等于对外 URL，不带尾斜杠
+#    USE_SECURE_COOKIES=                       ← https 下留空（推导为 true，正确）
+#    LOGIN_RATE_LIMIT_BACKEND=rqlite           ← 多副本时登录限速才共享
+#    PEW_HOST=https://pew.example.com          ← CLI 侧同步
+#    WEB_PORT=7020                             ← 仅容器内端口；Caddy overlay 会移除它的宿主发布
+
+# 4) 起栈（caddy overlay 自身就把 web 的 0.0.0.0:7020 发布去掉了）
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+
+# 5) 验证
+curl -s https://pew.example.com/api/live      # 应返回 {"status":"ok",...}
+curl -sI https://pew.example.com/setup | head -1   # 200（未登录可达）
+```
+
+客户端（任意机器）用**域名**连接——CLI 的 host 归一化只取 `host[:port]`，所以
+`https://pew.example.com` 与 `https://pew.example.com:443` 落到同一个凭据文件
+`config.pew.example.com.json`：
+
+```bash
+pew login --host https://pew.example.com
+pew sync  --host https://pew.example.com
+```
+
+**公网部署的三个易错点**：① `NEXTAUTH_URL` 必须与浏览器地址栏**逐字符**一致（含
+`https://`），否则 Auth.js 的 `TRUSTED_ORIGIN` 锚错、回调指向错误主机；② 自签证书
+（`tls internal`）会让 CLI 的 HTTPS 校验失败，公网务必用受信任证书；③ 502/登录跳转
+回 http 时，八成是 `NEXTAUTH_URL` 与实际访问地址不一致。
 
 ### Nginx（宿主，次选）
 
@@ -368,12 +449,14 @@ server {
 
 ### ★ 硬约束清单
 
-- ★ **web 的 7020 端口只绑 `127.0.0.1` 或不发布**：任何能直连 7020 的客户端都可以整体伪造
-  `X-Forwarded-For`（无反代时它就是唯一的 IP 信任来源）。**绕过后果**：攻击者每个请求带
-  不同的自造 XFF 即可获得无限个新的 IP 限速桶，IP 维度登录限速形同虚设（邮箱桶仍有效）。
-  用 `docker-compose.proxy.yml`
-  覆盖文件把端口改绑到回环；直接暴露 7020 的部署（如纯内网无反代）应视为**不受支持的
-  公网拓扑**，IP 限速不可依赖。
+- ★ **有公网入口时，web 的 7020 必须只绑 `127.0.0.1` 或不发布**：任何能直连 7020 的客户端
+  都可以整体伪造 `X-Forwarded-For`（无反代时它就是唯一的 IP 信任来源）。**绕过后果**：
+  攻击者每个请求带不同的自造 XFF 即可获得无限个新的 IP 限速桶，IP 维度限速形同虚设
+  （邮箱桶仍有效）。**默认 compose 不满足这条**——它把 7020 发布到 `0.0.0.0`，因此
+  公网/云部署必须叠加 `docker-compose.caddy.yml`（推荐，同时解决 TLS 与 XFF 覆写）或
+  `docker-compose.proxy.yml`（已有宿主反代时）。**可控内网、无公网入口的部署可以接受
+  默认值**，但要清楚上述 IP 限速绕过存在（已实测：轮换 XFF 12 次全部通过，同一 XFF 第
+  11 次即 429）。
 
   ```bash
   # !override 替换（而非追加）基础 compose 的 ports 列表，需 Compose >= v2.24.4。
@@ -470,11 +553,14 @@ cd /path/to/pew/deploy/selfhost                  # compose 只读 ./.env，以�
 set -a; . ./.env; set +a
 docker compose exec -T \
   -e RQLITE_URL=http://rqlite:4001 \
-  -e RQLITE_USERNAME="$RQLITE_USERNAME" \
-  -e RQLITE_PASSWORD="$RQLITE_PASSWORD" \
+  -e RQLITE_USERNAME -e RQLITE_PASSWORD \
   d1-http \
   bun /app/deploy/selfhost/verify-migrations.ts --base-url http://rqlite:4001
 ```
+
+（`-e VAR` 只写变量名、由容器侧从环境取值；`-e VAR=值` 的带值形式会把值放进
+`docker compose exec` 进程的 argv，宿主 `ps` 在 exec 期间可见——与上文 reset-password
+和 backup.sh 的同一条规则。）
 
 > **类型检查**：`deploy/selfhost/` 由 `scripts/parallel-typecheck.sh` 的
 > `tsc -b deploy/selfhost/tsconfig.json` lane 编译期校验（project references 指向 core 与两个
@@ -852,6 +938,20 @@ login-options`、`api/admin/users/[userId]/reset-password` 等）不与上游冲
 **Plan 3（加固）**：`lib/rate-limit.ts`（`RqliteRateLimiter` 共享后端、`getClientIp` 取
 XFF 最后一段、IPv6 前缀归并）、`lib/invite.ts` 与 `lib/auth-helpers.ts`（E2E 门改为调用
 新增的共享 `lib/e2e-mode.ts`，三处手写副本收敛为单一 `isE2EMode`）。
+
+**Plan 3 之后的零散改动（实现更正 2026-10-20 补齐）**：合并上游时除上面三批外，还要注意
+这几处接触面——
+
+- `packages/web/src/lib/ingest-handler.ts`：新增 `resolveIngestUrl()`，四条 ingest 路由统一
+  经它推导 `WORKER_INGEST_URL`（变量带不带 `/ingest` 后缀、带不带尾斜杠都可）。**上游若
+  仍按原值直拼，自托管默认值（无后缀）会让 token 上传打到 worker 根路径并 404**——这是
+  实测过的 bug，合并时别丢。
+- `scripts/migrations/029-leaderboard-revision.sql`：种子 `INSERT` 改为 `INSERT OR IGNORE`
+  （提交 `607455db`，为支持迁移重放）。这是**对上游既有迁移的唯一修改**，docs/52 §4.7
+  原写「不改既有迁移」已按此更正。
+- 根 `Dockerfile`：builder 阶段注入 build-time 占位 ENV。
+- `.dockerignore`：除 `**/.env` 与 `**/.rqlite-auth.json` 外还有多条深度排除（`**/.claude`、
+  `**/backup-*.db` 等），防凭据与备份进镜像层。
 
 `packages/worker-read` 的 **`src/` 业务代码与 SQL 零改动**（仅 `WORKER_VERSION` 常量随版本
 bump）。`packages/worker` 另有 `secureCompare` 一处改动：长度不等时不再提前 return，而是把

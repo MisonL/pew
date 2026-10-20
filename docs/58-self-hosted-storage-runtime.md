@@ -3242,6 +3242,12 @@ DAILY_INTERVAL_MS=86400000
 
 创建 `deploy/selfhost/README.md`：
 
+> ⚠️ **下面是计划时点（2026-10-10）的草案快照，已过时，仅作历史记录保留。**
+> 权威版本是仓库里的 `deploy/selfhost/README.md`——集群切换步骤、安全约束、备份/恢复、
+> 公网部署拓扑、CLI 指向自建服务等内容都已大幅扩充和更正（例如草案里的
+> `docker compose --profile cluster up -d --build` 会留下单节点 `rqlite` 造成数据分叉，
+> 正式 README 已给出四步切换法）。**部署时一律以正式 README 为准，不要照抄下面这段。**
+
 ```markdown
 # pew 私有化部署
 

@@ -607,7 +607,7 @@ git commit -m "feat: add first-user-is-admin setup wizard with instance_setup cl
 
 **Files:**
 - Modify: `packages/web/src/app/login/page.tsx`
-- Test: `packages/web/src/__tests__/login-page.test.tsx`（或复用既有页面测试）
+- Test: `packages/web/src/app/login/page.tsx` 的渲染由 L3 Playwright 覆盖（`e2e/bdd/page-readiness.spec.ts` 断言 Email/Password 表单可见），符合 vitest 对演示型 `.tsx` 的 by-design 排除；本计划早期的 `login-page.test.tsx` 目标文件并不存在，已由 L3 取代。
 
 **Interfaces:**
 - Produces: 登录页按 provider 条件渲染；库内无用户时显示「首次部署？前往初始化」入口指向 `/setup`。
@@ -695,7 +695,7 @@ git commit -m "fix: allow /setup through the auth proxy for first-run onboarding
 
 **背景**：项目无任何邮件能力（已核验无 nodemailer 等依赖）。故令牌由管理员**线下**交付。`pwd_v`（`password_hash` 短前缀）进 JWT，改密后旧 token 失效（spec §4.4 缺口二）。
 
-- [x] **Step 1–5**：TDD——断言令牌写入/校验/过期/一次性；断言 `sessionCallback` 在 `pwd_v` 不匹配时判会话失效。破窗脚本 `deploy/selfhost/reset-password.ts` 用 `createD1Adapter` + `hashPassword`，参数 `--email`。提交 `feat: add admin-initiated password reset and pwd_v session invalidation`。
+- [x] **Step 1–5**：TDD——断言令牌写入/校验/过期/一次性；断言 `sessionCallback` 在 `pwd_v` 不匹配时判会话失效。破窗脚本 `deploy/selfhost/reset-password.ts` 用 `createD1Adapter` + `hashPassword`，参数 `--email`。提交 `feat: add admin-initiated password reset and pwd_v session invalidation`。（实现更正 2026-10-20：脚本最终用的是**本地 `hashPasswordForReset`**（`reset-password.ts:28`）而非 `lib/credentials.ts` 的 `hashPassword`——因为后者随 Web 侧参数演进而变化，破窗脚本需要一份与之同步的固定实现，见该文件注释。`--email` 参数描述准确。）
 
 ---
 
