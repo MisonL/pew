@@ -304,3 +304,5 @@ The Basalt navigation baseline also exposed two orchestration mistakes: external
 ## 2026-10-21: Check intermediate breakpoints during UI upgrades
 
 Basalt 3.2.0 added responsive SheetContent padding. Pew's unprefixed `p-0` did not override it between 640px and the application's 768px desktop breakpoint, leaving a 260px sidebar inside a padded 260px drawer. Independent review identified the mismatch, and a 700px browser regression confirmed 24px padding before the fix. Explicitly clear the responsive padding and verify drawer bounds, footer visibility, Escape focus restoration and close-on-navigation.
+
+The full browser suite also caught a tooltip handoff race: the previous tooltip remains mounted during its exit animation while the next one opens. Assert that the previous tooltip leaves the DOM before using an unscoped tooltip locator; keep the content assertions and avoid arbitrary sleeps or longer timeouts.

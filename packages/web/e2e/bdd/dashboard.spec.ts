@@ -51,6 +51,7 @@ test.describe("Feature: Overview", () => {
     await summary.getByRole("button", { name: "More information", exact: true }).focus();
     await expect(page.getByRole("tooltip")).toContainText("TD compares the same elapsed days");
     await page.getByRole("button", { name: "Overview information", exact: true }).click();
+    await expect(page.getByRole("tooltip").filter({ hasText: "TD compares the same elapsed days" })).toHaveCount(0);
     await expect(page.getByRole("tooltip")).toContainText("Cache details: reads 100% covered; writes unavailable.");
   });
 

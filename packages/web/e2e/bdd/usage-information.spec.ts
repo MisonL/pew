@@ -43,6 +43,7 @@ test.describe("Feature: Compact usage information", () => {
       await trigger.focus();
       await expect(tooltip).toBeVisible();
       await page.keyboard.press("Escape");
+      await expect(tooltip).toHaveCount(0);
       await expect(trigger).toBeFocused();
       if (path === "/dashboard") {
         await page.getByRole("button", { name: "Salary estimate information", exact: true }).hover();
@@ -110,6 +111,7 @@ test.describe("Feature: Compact usage information", () => {
     await expect(page.getByRole("tooltip")).toContainText("Some prices may be out of date");
     await expect(page.getByRole("tooltip")).not.toContainText("PRIVATE_BACKEND_ERROR");
     await page.keyboard.press("Escape");
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
     await page.getByRole("button", { name: "Additional prices for test/model", exact: true }).hover();
     await expect(page.getByRole("tooltip")).toContainText("Input ≥ 200,000");
     await expect(page.locator("details")).toHaveCount(0);
