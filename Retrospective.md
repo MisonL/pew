@@ -298,3 +298,5 @@ Dashboard actions and public privacy links used plain anchors, replacing the doc
 ## 2026-10-21: Focused harness tests still require isolation
 
 During the Cloudflare dependency upgrade, a focused Vitest run included the E2E process-isolation tests in the development checkout. Three cases failed because their child runners correctly rejected the existing `.env.local`; no remote fixtures ran. Rerun these checks in a temporary clone without environment files. Inspect subprocess entry points before treating a focused unit-test command as independent of the E2E isolation contract.
+
+The Basalt navigation baseline also exposed two orchestration mistakes: externally symlinked dependencies are suitable for the staged static/unit gate but fall outside Turbopack's hermetic root, and running browser E2E alongside pre-commit competes for port 27020 with the harness tests. Install frozen dependencies inside the E2E clone and finish the unit gate before starting API/browser lanes; preserve port-conflict rejection rather than terminating another runner.
