@@ -294,3 +294,7 @@ does not replace the already tested CLI artifact.
 ## 2026-10-21: Internal links must use the router
 
 Dashboard actions and public privacy links used plain anchors, replacing the document and discarding shared layout state. Use Next Link while preserving external and new-tab links. Navigation regressions now retain shell node references and check collapsed state and Document requests rather than only checking the destination URL. The first test used an assumed "Agents" heading; checking the actual "By Agent" title corrected the assertion before recording the failing navigation behavior.
+
+## 2026-10-21: Focused harness tests still require isolation
+
+During the Cloudflare dependency upgrade, a focused Vitest run included the E2E process-isolation tests in the development checkout. Three cases failed because their child runners correctly rejected the existing `.env.local`; no remote fixtures ran. Rerun these checks in a temporary clone without environment files. Inspect subprocess entry points before treating a focused unit-test command as independent of the E2E isolation contract.
