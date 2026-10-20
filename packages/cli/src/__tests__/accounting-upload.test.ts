@@ -6,10 +6,15 @@ import type { AccountingRecord } from "@pew/core";
 import { AccountingQueue, accountingKey } from "../storage/accounting-queue.js";
 import { LocalQueue } from "../storage/local-queue.js";
 import { executeUpload } from "../commands/upload.js";
+import { DEFAULT_HOST } from "../config/manager.js";
 import { accountingFixture } from "../../../core/src/__test-helpers__/accounting.js";
 
 const dirs: string[] = [];
 afterEach(async () => { await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true }))); });
+// apiUrl must stay on a built-in SaaS host: the upload engine derives the
+// credential file name from the host, so an arbitrary test host would read
+// config.<host>.json instead of the config.json written below.
+const API = DEFAULT_HOST;
 async function setup() {
   const dir = await mkdtemp(join(tmpdir(), "pew-cache-upload-")); dirs.push(dir);
   await writeFile(join(dir, "config.json"), JSON.stringify({ token: "pk_synthetic" }));
@@ -27,7 +32,7 @@ describe("accounting outbox capability acknowledgment", () => {
     const { dir, record, details } = await setup();
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({ ingested: 1 }))
       .mockResolvedValueOnce(Response.json({ ingested: 1 }, { status: code }));
-    const result = await executeUpload({ stateDir: dir, apiUrl: "https://synthetic.invalid", fetch, maxRetries: 0 });
+    const result = await executeUpload({ stateDir: dir, apiUrl: API, fetch, maxRetries: 0 });
     expect(result.uploaded).toBe(1);
     expect(await details.loadDirtyKeys()).toEqual([accountingKey(record)]);
     expect(result.warning).toContain("pending");
@@ -36,7 +41,7 @@ describe("accounting outbox capability acknowledgment", () => {
   it.each(["applied", "duplicate", "superseded"])("clears an explicitly acknowledged %s snapshot", async (status) => {
     const { dir, record, details } = await setup();
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({ ingested: 1 })).mockResolvedValueOnce(Response.json(ack(record, status)));
-    const result = await executeUpload({ stateDir: dir, apiUrl: "https://synthetic.invalid", fetch, maxRetries: 0 });
+    const result = await executeUpload({ stateDir: dir, apiUrl: API, fetch, maxRetries: 0 });
     expect(result.success).toBe(true); expect(await details.loadDirtyKeys()).toEqual([]);
     expect((await details.readFromOffset(0)).records).toHaveLength(1);
   });
@@ -44,7 +49,7 @@ describe("accounting outbox capability acknowledgment", () => {
   it.each(["base_mismatch", "conflict"])("retains %s for reconciliation", async (status) => {
     const { dir, record, details } = await setup();
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({ ingested: 1 })).mockResolvedValueOnce(Response.json(ack(record, status)));
-    await executeUpload({ stateDir: dir, apiUrl: "https://synthetic.invalid", fetch, maxRetries: 0 });
+    await executeUpload({ stateDir: dir, apiUrl: API, fetch, maxRetries: 0 });
     expect(await details.loadDirtyKeys()).toEqual([accountingKey(record)]);
   });
 
@@ -52,7 +57,7 @@ describe("accounting outbox capability acknowledgment", () => {
     const { dir, record, details } = await setup();
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({ ingested: 1 }))
       .mockResolvedValueOnce(Response.json(ack({ ...record, detail_revision: 2 }, "applied")));
-    await executeUpload({ stateDir: dir, apiUrl: "https://synthetic.invalid", fetch, maxRetries: 0 });
+    await executeUpload({ stateDir: dir, apiUrl: API, fetch, maxRetries: 0 });
     expect(await details.loadDirtyKeys()).toEqual([accountingKey(record)]);
   });
 });

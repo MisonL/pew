@@ -9,14 +9,16 @@
  */
 
 import { performLogin } from "@nocoo/base-cli";
-import { ConfigManager } from "../config/manager.js";
+import { ConfigManager, DEFAULT_HOST, DEV_HOST, credentialHostScope } from "../config/manager.js";
 
 // ---------------------------------------------------------------------------
 // Host constants
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_HOST = "https://pew.md";
-export const DEV_HOST = "https://pew.dev.hexly.ai";
+// Defined in config/manager.ts so credential readers (upload engine, logout)
+// can share them without importing a command module; re-exported here because
+// commands and tests import them from this module.
+export { DEFAULT_HOST, DEV_HOST };
 
 /**
  * Resolve the API host, with an explicit override winning over dev/prod.
@@ -109,7 +111,11 @@ export async function executeLogin(options: LoginOptions): Promise<LoginResult> 
   // A caller that resolved the host from an explicit --host / PEW_HOST
   // override asks for an isolated config file, so its token never overwrites
   // the SaaS default's credentials (spec §4.5).
-  const configManager = new ConfigManager(configDir, dev, options.hostIsolation);
+  const configManager = new ConfigManager(
+    configDir,
+    dev,
+    credentialHostScope(options.hostIsolation),
+  );
 
   // 1. Check existing login
   if (!force) {

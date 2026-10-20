@@ -16,7 +16,7 @@
  *   Now the Retry-After sleep replaces the exponential backoff for that attempt.
  */
 
-import { ConfigManager } from "../config/manager.js";
+import { ConfigManager, credentialHostScope } from "../config/manager.js";
 import type { BaseQueue } from "../storage/base-queue.js";
 
 // ---------------------------------------------------------------------------
@@ -111,8 +111,11 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
       clientVersion,
     } = opts;
 
-    // 1. Load API key
-    const configManager = new ConfigManager(stateDir, dev);
+    // 1. Load API key. The host scope is load-bearing: `pew login --host X`
+    //    writes to a host-scoped file, and reading the default file here would
+    //    either report "Not logged in" for a self-hosted instance or send its
+    //    data to the SaaS host under the SaaS token.
+    const configManager = new ConfigManager(stateDir, dev, credentialHostScope(apiUrl));
     const cfg = await configManager.load();
 
     if (!cfg.token) {

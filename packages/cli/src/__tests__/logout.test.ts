@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeLogout } from "../commands/logout.js";
@@ -51,6 +51,63 @@ describe("executeLogout", () => {
     const result = await executeLogout({ configDir: tempDir, dev: true });
     expect(result.success).toBe(true);
     expect(result.alreadyLoggedOut).toBeUndefined();
+  });
+
+  it("clears the per-host token file for a self-hosted host", async () => {
+    // `pew login --host X` stores the token under config.<host>.json; logout
+    // must clear THAT file, not config.json.
+    await writeFile(
+      join(tempDir, "config.pew.corp_7020.json"),
+      JSON.stringify({ token: "pk_selfhosted" }),
+    );
+
+    const result = await executeLogout({
+      configDir: tempDir,
+      host: "http://pew.corp:7020",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.alreadyLoggedOut).toBeUndefined();
+    const saved = JSON.parse(
+      await readFile(join(tempDir, "config.pew.corp_7020.json"), "utf-8"),
+    ) as { token?: string };
+    expect(saved.token).toBeUndefined();
+  });
+
+  it("leaves the SaaS token alone when logging out of a self-hosted host", async () => {
+    await writeFile(
+      join(tempDir, "config.json"),
+      JSON.stringify({ token: "pk_saas" }),
+    );
+    await writeFile(
+      join(tempDir, "config.pew.corp_7020.json"),
+      JSON.stringify({ token: "pk_selfhosted" }),
+    );
+
+    await executeLogout({ configDir: tempDir, host: "http://pew.corp:7020" });
+
+    const saas = JSON.parse(
+      await readFile(join(tempDir, "config.json"), "utf-8"),
+    ) as { token?: string };
+    expect(saas.token).toBe("pk_saas");
+  });
+
+  it("treats an explicit SaaS host as the shared config file", async () => {
+    await writeFile(
+      join(tempDir, "config.json"),
+      JSON.stringify({ token: "pk_saas" }),
+    );
+
+    const result = await executeLogout({
+      configDir: tempDir,
+      host: "https://pew.md",
+    });
+
+    expect(result.alreadyLoggedOut).toBeUndefined();
+    const saved = JSON.parse(
+      await readFile(join(tempDir, "config.json"), "utf-8"),
+    ) as { token?: string };
+    expect(saved.token).toBeUndefined();
   });
 
   it("returns error with message when an Error is thrown", async () => {

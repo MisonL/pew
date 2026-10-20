@@ -9,6 +9,7 @@ import { handleUsageRpc } from "../../packages/worker-read/src/rpc/usage";
 import { accountingFixture } from "../../packages/core/src/__test-helpers__/accounting";
 import { AccountingQueue } from "../../packages/cli/src/storage/accounting-queue";
 import { executeUpload } from "../../packages/cli/src/commands/upload";
+import { DEFAULT_HOST } from "../../packages/cli/src/config/manager";
 import type { AccountingRecord } from "@pew/core";
 
 describe("accounting annotations through native transaction-shaped SQLite batches", () => {
@@ -68,9 +69,9 @@ describe("accounting annotations through native transaction-shaped SQLite batche
       await writeFile(join(stateDir, "config.json"), JSON.stringify({ token: "pk_synthetic" }));
       const queue = new AccountingQueue(stateDir); await queue.merge(records);
       let calls = 0;
-      const upload = () => executeUpload({ stateDir, apiUrl: "https://test.invalid", maxRetries: 0, fetch: async (url, init) => {
+      const upload = () => executeUpload({ stateDir, apiUrl: DEFAULT_HOST, maxRetries: 0, fetch: async (url, init) => {
         calls++;
-        expect(String(url)).toBe("https://test.invalid/api/ingest/details");
+        expect(String(url)).toBe(`${DEFAULT_HOST}/api/ingest/details`);
         return send(JSON.parse(String(init?.body)));
       } });
       expect((await upload()).uploaded).toBe(25);

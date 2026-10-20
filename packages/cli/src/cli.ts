@@ -23,7 +23,7 @@ import { executeUpdate } from "./commands/update.js";
 import { resolveNotifierPaths } from "./notifier/paths.js";
 import { repairRetiredNotifyHandler } from "./notifier/notify-handler.js";
 import { statusAll } from "./notifier/registry.js";
-import { ConfigManager } from "./config/manager.js";
+import { ConfigManager, credentialHostScope } from "./config/manager.js";
 
 // ---------------------------------------------------------------------------
 // CLI version — read from package.json (single source of truth)
@@ -237,6 +237,11 @@ export const syncCommand = defineCommand({
       description: "Use the dev host (pew.dev.hexly.ai)",
       default: false,
     },
+    host: {
+      type: "string",
+      description: "API host for a self-hosted instance (e.g. http://pew.corp:7020)",
+      required: false,
+    },
   },
   async run({ args }) {
     const paths = resolveDefaultPaths();
@@ -386,7 +391,10 @@ export const syncCommand = defineCommand({
     // Auto-upload if logged in
     if (args.upload) {
       const dev = isDevMode();
-      const host = resolveHost(dev);
+      // `--host` must win over PEW_HOST here too: a stray PEW_HOST in the
+      // shell must not redirect an explicit sync, and the login below stored
+      // the token under the host that was actually used.
+      const host = resolveHost(dev, args.host);
       await runUpload(paths.stateDir, host, dev);
       await runSessionUpload(paths.stateDir, host, dev);
     }
@@ -599,7 +607,7 @@ const loginCommand = defineCommand({
         `Logged in as ${pc.bold(result.email ?? "unknown")}`,
       );
       log.info(
-        `Token saved to ${pc.dim(paths.stateDir + (dev ? "/config.dev.json" : "/config.json"))}`,
+        `Token saved to ${pc.dim(new ConfigManager(paths.stateDir, dev, credentialHostScope(hostOverride)).configPath)}`,
       );
     } else {
       log.error(`Login failed: ${result.error}`);
@@ -619,14 +627,20 @@ const logoutCommand = defineCommand({
       description: "Use the dev host (pew.dev.hexly.ai)",
       default: false,
     },
+    host: {
+      type: "string",
+      description: "API host for a self-hosted instance (e.g. http://pew.corp:7020)",
+      required: false,
+    },
   },
-  async run() {
+  async run({ args }) {
     const paths = resolveDefaultPaths();
     const dev = isDevMode();
 
     const result = await executeLogout({
       configDir: paths.stateDir,
       dev,
+      host: resolveHost(dev, args.host),
     });
 
     if (result.alreadyLoggedOut) {

@@ -6,7 +6,7 @@ import { executeSync } from "../commands/sync.js";
 import { executeReset } from "../commands/reset.js";
 import { CursorStore } from "../storage/cursor-store.js";
 import { executeUpload } from "../commands/upload.js";
-import { ConfigManager } from "../config/manager.js";
+import { ConfigManager, DEFAULT_HOST } from "../config/manager.js";
 import { accountingKey } from "../storage/accounting-queue.js";
 import type { AccountingRecord } from "@pew/core";
 
@@ -102,9 +102,9 @@ describe("supplemental evidence sync", () => {
       }
       throw new Error("Unexpected upload endpoint");
     });
-    const opts = { stateDir, apiUrl: "https://synthetic.invalid", fetch, retryDelayMs: 0 };
+    const opts = { stateDir, apiUrl: DEFAULT_HOST, fetch, retryDelayMs: 0 };
     expect((await executeUpload(opts)).success).toBe(false);
-    expect(fetch.mock.calls[0][0]).toBe("https://synthetic.invalid/api/ingest/evidence");
+    expect(fetch.mock.calls[0][0]).toBe(`${DEFAULT_HOST}/api/ingest/evidence`);
     const firstBody = fetch.mock.calls[0][1].body;
     expect((await executeUpload(opts)).uploaded).toBe(2); // one evidence and its accounting companion
     expect(fetch.mock.calls[1][1].body).toBe(firstBody);

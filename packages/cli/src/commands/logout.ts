@@ -6,7 +6,7 @@
  * again to re-authenticate.
  */
 
-import { ConfigManager } from "../config/manager.js";
+import { ConfigManager, credentialHostScope } from "../config/manager.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -17,6 +17,12 @@ export interface LogoutOptions {
   configDir: string;
   /** Whether dev mode is active (uses config.dev.json) */
   dev?: boolean;
+  /**
+   * API host this session talks to. When it is a self-hosted instance, the
+   * token lives in that host's own config file, so logout has to clear THAT
+   * file — clearing config.json would leave the self-hosted token on disk.
+   */
+  host?: string;
 }
 
 export interface LogoutResult {
@@ -30,10 +36,10 @@ export interface LogoutResult {
 // ---------------------------------------------------------------------------
 
 export async function executeLogout(options: LogoutOptions): Promise<LogoutResult> {
-  const { configDir, dev = false } = options;
+  const { configDir, dev = false, host } = options;
 
   try {
-    const configManager = new ConfigManager(configDir, dev);
+    const configManager = new ConfigManager(configDir, dev, credentialHostScope(host));
     const config = await configManager.load();
 
     if (!config.token) {

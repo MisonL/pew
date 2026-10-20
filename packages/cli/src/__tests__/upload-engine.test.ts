@@ -109,6 +109,49 @@ describe("upload-engine", () => {
     expect(result.uploaded).toBe(0);
   });
 
+  // ---- Per-host credentials (self-hosted, spec §4.5) ----
+
+  it("reads the per-host credential file when uploading to a self-hosted URL", async () => {
+    // `pew login --host http://pew.corp:7020` stores its token in the
+    // host-scoped file so it never overwrites the SaaS default (see
+    // ConfigManager.hostConfigStem). The upload must look in that same file:
+    // reading the default one either fails ("Not logged in") or, worse, sends
+    // this instance's data to the SaaS host with the SaaS token.
+    const { config } = createTestEngine(dir);
+    const cm = new ConfigManager(dir, false, "http://pew.corp:7020");
+    await cm.save({ token: "pk_selfhosted" });
+
+    const { fetchFn, calls } = createMockFetch([]);
+    const engine = createUploadEngine(config);
+    const result = await engine.execute({
+      stateDir: dir,
+      apiUrl: "http://pew.corp:7020",
+      fetch: fetchFn,
+    });
+
+    expect(result.success).toBe(true);
+    expect(calls.length).toBe(0);
+  });
+
+  it("does not borrow the SaaS token when uploading to a self-hosted URL", async () => {
+    // The SaaS default token must not authenticate a self-hosted upload: the
+    // two are different accounts on different servers.
+    const { config } = createTestEngine(dir);
+    const saas = new ConfigManager(dir);
+    await saas.save({ token: "pk_saas" });
+
+    const { fetchFn } = createMockFetch([]);
+    const engine = createUploadEngine(config);
+    const result = await engine.execute({
+      stateDir: dir,
+      apiUrl: "http://pew.corp:7020",
+      fetch: fetchFn,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/not logged in/i);
+  });
+
   // ---- Empty queue ----
 
   it("should succeed with 0 records when queue is empty", async () => {

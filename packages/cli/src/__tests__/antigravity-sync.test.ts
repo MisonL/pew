@@ -7,7 +7,7 @@ import { executeSync } from "../commands/sync.js";
 import { executeSessionSync } from "../commands/session-sync.js";
 import { executeReset } from "../commands/reset.js";
 import { executeUpload } from "../commands/upload.js";
-import { ConfigManager } from "../config/manager.js";
+import { ConfigManager, DEFAULT_HOST } from "../config/manager.js";
 import { readAntigravitySource } from "../parsers/antigravity.js";
 import { AccountingQueue } from "../storage/accounting-queue.js";
 import { CursorStore } from "../storage/cursor-store.js";
@@ -106,7 +106,7 @@ describe("Antigravity source-isolated sync", () => {
       for (const r of batch) remote.set(`${r.model}|${r.hour_start}`, r.total_tokens);
       return Response.json({ ingested: batch.length });
     });
-    const upload = () => executeUpload({ stateDir: dir, apiUrl: "https://synthetic.invalid", fetch });
+    const upload = () => executeUpload({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch });
     await sync();
     expect((await upload()).success).toBe(true);
     reader.mockResolvedValue({ deltas: [delta(50, 900, "corrected-model", "2026-10-01T12:31:00.000Z")], snapshots: [], dbCount: 1 });

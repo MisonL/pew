@@ -16,7 +16,7 @@ import { executeSessionSync } from "../commands/session-sync.js";
 import { executeStatus } from "../commands/status.js";
 import { SessionCursorStore } from "../storage/session-cursor-store.js";
 import { isRetiredCursorPath } from "../utils/retired-sources.js";
-import { ConfigManager } from "../config/manager.js";
+import { ConfigManager, DEFAULT_HOST } from "../config/manager.js";
 
 const retired: Source[] = ["gemini-cli", "kosmos", "omp", "zcode", "pmstudio", "vscode-copilot"];
 const row = (source: Source, device_id = "old-device"): QueueRecord => ({ source, device_id, model: "historic-model",
@@ -131,7 +131,7 @@ describe("retired sources", () => {
     expect(await queue.loadOffset()).toBe(offset);
     await new ConfigManager(stateDir).save({ token: "synthetic" });
     const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({ ingested: 5 }));
-    const options = { stateDir, apiUrl: "https://synthetic.invalid", fetch };
+    const options = { stateDir, apiUrl: DEFAULT_HOST, fetch };
     expect((await executeSessionUpload(options)).success).toBe(true);
     expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual(records.slice(1));
     await executeReset({ stateDir });

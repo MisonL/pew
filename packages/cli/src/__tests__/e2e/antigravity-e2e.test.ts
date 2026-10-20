@@ -11,6 +11,7 @@ import { executeSessionSync } from "../../commands/session-sync.js";
 import { executeStatus } from "../../commands/status.js";
 import { executeSync } from "../../commands/sync.js";
 import { executeUpload } from "../../commands/upload.js";
+import { DEFAULT_HOST } from "../../config/manager.js";
 import { AccountingQueue, accountingKey } from "../../storage/accounting-queue.js";
 import { LocalQueue } from "../../storage/local-queue.js";
 import { SessionQueue } from "../../storage/session-queue.js";
@@ -111,12 +112,12 @@ describe("CLI E2E: real Antigravity SQLite/WAL accounting", () => {
           detail_revision: record.detail_revision, status: "applied",
         })) });
       }
-      expect(endpoint).toBe("https://synthetic.invalid/api/ingest");
+      expect(endpoint).toBe(`${DEFAULT_HOST}/api/ingest`);
       const rows = JSON.parse(body) as QueueRecord[];
       for (const record of rows) usage.set(tokenKey(record), record);
       return Response.json({ ingested: rows.length });
     };
-    const upload = () => executeUpload({ stateDir, apiUrl: "https://synthetic.invalid", fetch, maxRetries: 0 });
+    const upload = () => executeUpload({ stateDir, apiUrl: DEFAULT_HOST, fetch, maxRetries: 0 });
     return { usage, accounting, requests, upload };
   }
 
