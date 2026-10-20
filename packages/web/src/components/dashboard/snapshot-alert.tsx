@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Button } from "@nocoo/basalt/components/button";
 import {
   Dialog,
@@ -56,7 +57,7 @@ function SnapshotAlertInner() {
             Dismiss
           </Button>
           <Button size="sm" asChild>
-            <a href="/admin/seasons">Go to Seasons</a>
+            <Link href="/admin/seasons">Go to Seasons</Link>
           </Button>
         </DialogFooter>
       </DialogContent>

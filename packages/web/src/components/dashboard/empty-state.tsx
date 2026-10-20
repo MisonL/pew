@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Button } from "@nocoo/basalt/components/button";
 import { Empty } from "@nocoo/basalt/components/empty";
 import { type LucideIcon, Rocket, Zap } from "lucide-react";
@@ -28,7 +29,7 @@ function EmptyState({
 }: EmptyStateProps) {
   const actionNode = action?.href ? (
     <Button asChild icon={<Rocket strokeWidth={1.5} aria-hidden="true" />}>
-      <a href={action.href}>{action.label}</a>
+      <Link href={action.href}>{action.label}</Link>
     </Button>
   ) : action?.onClick ? (
     <Button icon={<Rocket strokeWidth={1.5} aria-hidden="true" />} onClick={action.onClick}>

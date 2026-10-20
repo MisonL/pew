@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Button } from "@nocoo/basalt/components/button";
 import { ShieldCheck } from "lucide-react";
 import { Github } from "@/components/icons/github";
@@ -23,9 +24,9 @@ export default function LeaderboardLayout({
       <div className="absolute right-6 top-4 z-50 flex items-center gap-1">
         <HeaderTooltip label="Privacy policy">
           <Button variant="ghost" size="icon" className={chromeIconClassName} asChild>
-            <a href="/privacy" aria-label="Privacy policy">
+            <Link href="/privacy" aria-label="Privacy policy">
               <ShieldCheck strokeWidth={1.5} aria-hidden="true" />
-            </a>
+            </Link>
           </Button>
         </HeaderTooltip>
         <HeaderTooltip label="GitHub repository">

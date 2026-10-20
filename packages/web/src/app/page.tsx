@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Button } from "@nocoo/basalt/components/button";
 import { chromeIconClassName } from "@/components/ui/button";
 import { ShieldCheck } from "lucide-react";
@@ -21,9 +22,9 @@ export default function LandingPage() {
             className={chromeIconClassName}
             asChild
           >
-            <a href="/privacy" aria-label="Privacy policy">
+            <Link href="/privacy" aria-label="Privacy policy">
               <ShieldCheck strokeWidth={1.5} aria-hidden="true" />
-            </a>
+            </Link>
           </Button>
         </HeaderTooltip>
         <HeaderTooltip label="GitHub repository">

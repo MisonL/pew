@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { AppHeader } from "@nocoo/basalt/components/app-header";
 import { AppMain, AppShell as BasaltAppShell, AppSkipLink } from "@nocoo/basalt/components/app-shell";
 import { Button, ContentIsland, Sheet, SheetContent, SheetTitle } from "@nocoo/basalt";
@@ -97,9 +98,9 @@ export function AppShell({ children }: AppShellProps) {
                   className={chromeIconClassName}
                   asChild
                 >
-                  <a href="/privacy" aria-label="Privacy policy">
+                  <Link href="/privacy" aria-label="Privacy policy">
                     <ShieldCheck aria-hidden="true" strokeWidth={1.5} />
-                  </a>
+                  </Link>
                 </Button>
               </HeaderTooltip>
               <HeaderTooltip label="GitHub repository">

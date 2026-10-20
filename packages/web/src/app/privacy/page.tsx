@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Button } from "@nocoo/basalt/components/button";
 import { ArrowLeft } from "lucide-react";
 import { chromeIconClassName } from "@/lib/ghost-icon";
@@ -20,9 +21,9 @@ export default function PrivacyPage() {
             <div className="flex items-center gap-2">
               <HeaderTooltip label="Back to Pew">
                 <Button variant="ghost" size="icon" className={chromeIconClassName} asChild>
-                  <a href="/" aria-label="Back to home">
+                  <Link href="/" aria-label="Back to home">
                     <ArrowLeft strokeWidth={1.5} aria-hidden="true" />
-                  </a>
+                  </Link>
                 </Button>
               </HeaderTooltip>
               <h1 className="text-2xl md:text-3xl font-semibold font-display tracking-tight text-foreground">

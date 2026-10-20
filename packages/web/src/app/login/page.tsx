@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Banner } from "@nocoo/basalt/components/banner";
 import { Button } from "@nocoo/basalt/components/button";
 import { chromeIconClassName } from "@/components/ui/button";
@@ -180,12 +181,12 @@ function LoginContent() {
 
             <p className="mt-3 text-center text-[10px] leading-relaxed text-basalt-muted-foreground/60">
               By signing in you agree to our{" "}
-              <a
+              <Link
                 href="/privacy"
                 className="underline transition-colors hover:text-basalt-muted-foreground"
               >
                 privacy policy
-              </a>
+              </Link>
             </p>
           </BadgeCard>
         </div>

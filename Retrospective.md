@@ -291,3 +291,6 @@ Remove that check and use native force removal for this known local output only.
 Regression tests run the actual runner cleanup with missing output and preserve
 permission errors. Published tags remain immutable; this harness-only correction
 does not replace the already tested CLI artifact.
+## 2026-10-21: Internal links must use the router
+
+Dashboard actions and public privacy links used plain anchors, replacing the document and discarding shared layout state. Use Next Link while preserving external and new-tab links. Navigation regressions now retain shell node references and check collapsed state and Document requests rather than only checking the destination URL. The first test used an assumed "Agents" heading; checking the actual "By Agent" title corrected the assertion before recording the failing navigation behavior.

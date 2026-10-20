@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Github } from "@/components/icons/github";
 
 const GITHUB_URL = "https://github.com/nocoo/pew";
@@ -23,12 +24,12 @@ export function SiteFooter() {
           GitHub
         </a>
         <span className="text-muted-foreground/40">&middot;</span>
-        <a
+        <Link
           href="/privacy"
           className="hover:text-foreground transition-colors"
         >
           Privacy
-        </a>
+        </Link>
       </p>
     </footer>
   );
