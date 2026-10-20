@@ -10,6 +10,29 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+test("mobile navigation fits its drawer at the small breakpoint", async ({ page }) => {
+  await page.setViewportSize({ width: 700, height: 900 });
+  await page.goto("/dashboard");
+  const opener = page.getByRole("button", { name: "Open navigation", exact: true });
+  const drawer = page.getByRole("dialog", { name: "Navigation", exact: true });
+  await opener.click();
+  await expect(drawer).toBeVisible();
+  await expect(drawer).toHaveCSS("padding", "0px");
+  expect(await drawer.evaluate((element) => {
+    const outer = element.getBoundingClientRect();
+    const sidebar = element.querySelector("[data-basalt-sidebar]")!.getBoundingClientRect();
+    return sidebar.left >= outer.left && sidebar.right <= outer.right;
+  })).toBe(true);
+  await expect(drawer.getByRole("button", { name: "Sign out", exact: true })).toBeInViewport();
+  await page.keyboard.press("Escape");
+  await expect(drawer).not.toBeVisible();
+  await expect(opener).toBeFocused();
+  await opener.click();
+  await drawer.getByRole("button", { name: "By Model", exact: true }).click();
+  await expect(page).toHaveURL(/\/models$/);
+  await expect(drawer).not.toBeVisible();
+});
+
 for (const action of ["Get Started", "Go to Seasons"] as const) {
   test(`${action} preserves dashboard chrome without document navigation`, async ({ page }) => {
     let showAlert = () => {};

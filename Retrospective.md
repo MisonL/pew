@@ -300,3 +300,7 @@ Dashboard actions and public privacy links used plain anchors, replacing the doc
 During the Cloudflare dependency upgrade, a focused Vitest run included the E2E process-isolation tests in the development checkout. Three cases failed because their child runners correctly rejected the existing `.env.local`; no remote fixtures ran. Rerun these checks in a temporary clone without environment files. Inspect subprocess entry points before treating a focused unit-test command as independent of the E2E isolation contract.
 
 The Basalt navigation baseline also exposed two orchestration mistakes: externally symlinked dependencies are suitable for the staged static/unit gate but fall outside Turbopack's hermetic root, and running browser E2E alongside pre-commit competes for port 27020 with the harness tests. Install frozen dependencies inside the E2E clone and finish the unit gate before starting API/browser lanes; preserve port-conflict rejection rather than terminating another runner.
+
+## 2026-10-21: Check intermediate breakpoints during UI upgrades
+
+Basalt 3.2.0 added responsive SheetContent padding. Pew's unprefixed `p-0` did not override it between 640px and the application's 768px desktop breakpoint, leaving a 260px sidebar inside a padded 260px drawer. Independent review identified the mismatch, and a 700px browser regression confirmed 24px padding before the fix. Explicitly clear the responsive padding and verify drawer bounds, footer visibility, Escape focus restoration and close-on-navigation.
