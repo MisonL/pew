@@ -11,7 +11,7 @@ pew 官方形态依赖 Cloudflare：Web（Next.js）读写经两个 Cloudflare W
 ### 成功标准
 
 1. 一套 compose 能在自有服务器/内网跑起完整 pew（Web + 读服务 + 写服务 + 数据库），功能与官方一致。
-2. 局域网客户端（CLI）能指向自建服务完成登录与同步。**（实现更正 2026-10-20：交付时只做到了写入侧——`pew login --host X` 把 token 写进 per-host 文件，但 `pew sync` 仍读 `config.json`，该标准**当时并不成立**；已补齐见 §4.5「实现更正 2026-10-20」。验收范围：单元测试覆盖三条命令的凭据文件选择与互相隔离；未做真实的「CLI 对 compose 栈 login→sync→logout」黑盒验收，故本条按「代码与单测已覆盖」而非「端到端实测」记录。）**
+2. 局域网客户端（CLI）能指向自建服务完成登录与同步。**（实现更正 2026-10-20：交付时只做到了写入侧——`pew login --host X` 把 token 写进 per-host 文件，但 `pew sync` 仍读 `config.json`，该标准**当时并不成立**；已补齐见 §4.5「实现更正 2026-10-20」。同日补做了黑盒验收（隔离栈 `pew-cli-verify`、`WEB_PORT=7021`、随机密钥、复用当日 `pew-selfhost:local`/`pew:standalone` 镜像），全部通过：未登录时 `sync --host` 报 "Not logged in — skipping upload" 且不落任何 `config*.json`；`login --host --code` 成功且 `Token saved to config.localhost_7021.json`（不是 `config.json`）；入队 235 tokens → `sync --host` 上传 → rqlite `usage_records` 单行 235、归属引导管理员、device_id 与 `device.json` 一致；`/api/usage`、`/api/devices` 用该 token 各回 200；`logout --host` 清掉 per-host token 而**并存的 SaaS `config.json` token 原样保留**；logout 后再 `sync --host` 拒绝上传，库内容不增（幂等未被破坏）。验收用例 source 无效时报 `400 record[0]: invalid source "claude"` 时队列 offset/dirtyKeys **保留**，失败不留脏状态（附带观察）。）**
 3. 数据可多副本、可故障切换、可备份。
 4. **上游代码保持可同步**：不改动上游 SQL 与 Worker 业务逻辑，上游更新可合并。
 
