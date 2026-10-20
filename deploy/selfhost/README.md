@@ -827,3 +827,21 @@ Credentials 放行分支与库内管理员判定仍在；若上游改到 `packag
 `secureCompare`，重新确认零填充定长比较仍在（测试无法覆盖，见该函数注释）。新增上游迁移后，
 重跑 `verify-migrations.ts` 并更新其 `EXPECTED` 计数。
 
+**最近一次回归（2026-10-20）**：`git fetch upstream main` 后 `git rev-list --count HEAD..upstream/main`
+= **0**（上游 main 仍停在 v3.3.3 的 `28144795`，已是本分支 `0d46434d` 的父之一），**没有新
+`git merge` 需要执行**；本分支领先上游 93 个提交。检查清单逐项复核（读码为证）：
+`d1.ts:100` 仍是 `D1_BASE_URL → localD1BaseUrl` 优先、`vitest.config.ts:19` 仍含
+`deploy/**/*.test.ts`、`auth.ts:308` Credentials 放行在、`admin.ts` `isAdmin/isAdminInDb/
+resolveAdmin/isAdminUser` 齐、`worker/src/index.ts:184-201` secureCompare 零填充定长比较在。
+
+compose 全量回归（`pew-regress` 隔离栈、7021、随机密钥，复用 `deploy/selfhost/docker-compose.yml`
+原样副本 + `.env.example` 变体，与运维流程同构）：`docker compose build` **两个镜像都重建**，
+`up -d` 六容器就绪，`/api/live` 200；认证回归 4/4——`/setup` 未登录 200；引导管理员注册
+200、库非空后二次注册 400；会话 cookie 登录 302 → `/api/usage` 200；管理员签发重置令牌
+→ 改密 200 → **旧 cookie 访问 `/api/usage` 立即 401**（pwd_v 失效）、新密码重新登录 200、
+旧密码登录得 302 但**会话无权限**（`/api/usage` 401，auth.js 对失败登录也回 302 的既有行为）。
+验收后 `down -v` 拆栈、卷与端口 7021 释放。镜像构建命中已知的 virtiofs
+`IntegrityCheckFailed` 抖动（宿主直连 sha512 与 lockfile 一致，网络损坏非锁文件损坏），
+用验证副本 Dockerfile 的 `bun install --network-concurrency=4` 绕过——**正式 `Dockerfile`
+未改动**。
+
