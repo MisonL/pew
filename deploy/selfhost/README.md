@@ -140,6 +140,38 @@ rqlite 后端写异常时 **fail-open 放行并告警**（不误判为超限拒�
 | team join | 邀请码本身是低熵通道但已有邮箱域约束，访问量极低 |
 | ingest 写入 | 限 300/min——走 rqlite 后端则每请求 2 次 DB 往返（计数+清理），把限速本身变成写放大源，得不偿失 |
 
+## CLI 指向自建服务（`--host` / `PEW_HOST`）
+
+局域网客户端要完成登录与同步（设计成功标准 2），三步都走**同一 host**：
+
+```bash
+pew login --host http://pew.corp:7020     # 浏览器流程，凭据落 config.pew.corp_7020.json
+pew sync  --host http://pew.corp:7020     # 解析并上传到自建服务
+pew logout --host http://pew.corp:7020    # 清掉的是自建那份，SaaS 的 config.json 不动
+```
+
+不想每条命令都带参数，就导出环境变量：`export PEW_HOST=http://pew.corp:7020`。
+优先级是 `--host` > `PEW_HOST` > `--dev` > 内置 SaaS 地址，所以显式参数能盖掉
+shell 里残留的 `PEW_HOST`。
+
+**凭据按 host 隔离，三条命令共用同一条规则**（`cli/src/config/manager.ts` 的
+`credentialHostScope`）：自建 host 的 token 存独立文件 `config.<host[:port]>.json`，
+内置 SaaS 地址（`https://pew.md` / `https://pew.dev.hexly.ai`）仍用原来的
+`config.json` / `config.dev.json`——已签发的 SaaS token 文件名不变。**未加 `--host`
+的命令行为也完全不变。**
+
+这是 2026-10-20 补的缺口，记在这里因为合并上游时会碰到：`login` 早已按 host 写，
+但 `sync` 读凭据时没带 host——结果要么对自建实例报 "Not logged in"，要么
+**把自建采集的数据带着 SaaS token 传到 pew.md**。`logout` 同样会清错文件、
+把自建 token 留在盘上。现在 `login` / `sync` / `logout` 三处都过 `credentialHostScope`，
+`sync` / `logout` 补上了 `--host` 参数，`login` 的 "Token saved to" 打印真实路径。
+设备身份不受影响（base-cli 的 `device.json` 跨 host 共享，多设备去重要求如此）。
+
+**导出的队列记录不区分目标 host**：队列里没有「这条属于哪个实例」的概念，
+`pew sync --host A` 和 `pew sync --host B` 会把同一批待传记录先后推给两个实例。
+只指向一个实例就没这个问题；真要同时喂两个自建实例，请分两套 `~/.config/pew`
+（改 `HOME` 或 `XDG_CONFIG_HOME`）。
+
 ## 架构
 
 | 容器 | 作用 |
@@ -303,7 +335,9 @@ server {
   注意：此约束防的是**网络外**直连；同宿主其他本地用户进程仍可达 `127.0.0.1:7020`（多租户宿主
   属部署者自担），compose 网络内攻击者本就绕过 web 直达数据层，7020 收紧不改变该模型。
 - ★ **`NEXTAUTH_URL` 必须与反代对外访问 URL 逐字符一致**（协议+域名+端口；`TRUSTED_ORIGIN`
-  永远 pinned 到它，不一致则重定向/回调指向错误主机）。CLI 侧 `PEW_HOST` 同步。
+  永远 pinned 到它，不一致则重定向/回调指向错误主机）。CLI 侧 `PEW_HOST` 同步——且
+  这个 host 串同时决定凭据文件名（`config.<host[:port]>.json`），所以换了写法（加尾斜杠
+  无所谓，改端口或 http/https 不影响——文件名只取 `host:port`）就等于换了另一个登录态。
 - ★ **反代必须覆写 `X-Forwarded-For`**（`getClientIp` 取**最后一段**——自己代理追加的那个；客户端可注入前面的段，覆写型配置是硬要求而非建议），同时覆写 `X-Real-IP`、清空
   `CF-Connecting-IP`（`getClientIp` 依次信任三者）。Caddy ≥ 2.5 默认满足；Nginx 按上面
   `$remote_addr` 覆写。
@@ -758,7 +792,9 @@ Plan 1 交付「数据层与运行时可用、API 可经 CLI/密钥调用」。P
 分支）、`app/login/page.tsx`（邮箱密码表单）、`lib/admin.ts` + `api/admin/check` +
 `api/users/[slug]`（库内 `is_admin` 判定）、`proxy.ts`（`/setup` 公开）、`cli.ts` +
 `cli/src/commands/login.ts` + `cli/src/config/manager.ts`（`--host`/`PEW_HOST` 与按 host
-隔离凭据）。新增文件（`lib/credentials.ts`、`app/setup/`、`app/api/auth/register|reset-password|
+隔离凭据；2026-10-20 补：`cli/src/commands/upload-engine.ts` 与 `cli/src/commands/logout.ts`
+读凭据时过 `credentialHostScope`，`cli.ts` 的 `sync`/`logout` 也补了 `--host`——见
+「CLI 指向自建服务」小节）。新增文件（`lib/credentials.ts`、`app/setup/`、`app/api/auth/register|reset-password|
 login-options`、`api/admin/users/[userId]/reset-password` 等）不与上游冲突。
 
 **Plan 3（加固）**：`lib/rate-limit.ts`（`RqliteRateLimiter` 共享后端、`getClientIp` 取

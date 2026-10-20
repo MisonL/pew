@@ -704,14 +704,34 @@ git commit -m "fix: allow /setup through the auth proxy for first-run onboarding
 **Files:**
 - Modify: `packages/cli/src/commands/login.ts`
 - Modify: `packages/cli/src/config/manager.ts`
-- Test: `packages/cli/src/commands/__tests__/login.test.ts`（或既有）
+- Modify（实现更正 2026-10-20）: `packages/cli/src/commands/upload-engine.ts`、`packages/cli/src/commands/logout.ts`、`packages/cli/src/cli.ts`
+- Test: `packages/cli/src/commands/__tests__/login.test.ts`（或既有）、`upload-engine.test.ts`、`logout.test.ts`
 
 **Interfaces:**
 - Produces: `resolveHost` 优先级 `--host` > `PEW_HOST` > 现有 dev/DEFAULT；自建 host 用独立配置文件（`config.<host>.json`），不覆盖 `config.json`。
+- Produces（实现更正 2026-10-20）: `credentialHostScope(apiUrl): string | undefined`——读凭据的一律过它，内置 SaaS host 返回 `undefined` 保持原文件名。
 
 **背景**：`ConfigManager` 生产/开发共用 `config.json`/`config.dev.json`，不按 host 区分（spec §4.5）。
 
 - [x] **Step 1–5**：TDD——断言 `--host` 覆盖、`PEW_HOST` 次之；断言不同 host 落到不同配置文件。提交 `feat: cli --host/PEW_HOST support with per-host credential isolation`。
+
+**实现更正 2026-10-20**：上面那条只在 `login` 的**写入**侧成立，读取侧漏了——
+`commands/upload-engine.ts` 与 `commands/logout.ts` 都用 `new ConfigManager(dir, dev)`
+读 `config.json`。后果是 `pew sync` 对自建实例报 "Not logged in"，或（用户同时登录了
+SaaS 时）**把自建采集的数据带 SaaS token 传到 pew.md**；`logout` 则清错文件、把自建
+token 留在盘上。补齐方式：
+
+- `config/manager.ts` 新增 `credentialHostScope(apiUrl)`：归一化 URL，内置 SaaS host
+  返回 `undefined`（文件名不变，已签发 token 不受影响），其余返回该 host。
+  `DEFAULT_HOST` / `DEV_HOST` 常量也移到这里，`login.ts` 再导出，避免命令模块之间互引。
+- `upload-engine.ts`、`logout.ts`、`login.ts` 三处共用这一条规则。
+- `cli.ts`：`sync` 与 `logout` 补 `--host` 参数（此前只有 `PEW_HOST` 环境变量能指向
+  自建实例），优先级与 `login` 一致；`login` 成功提示改印真实配置文件路径。
+- 测试：`upload-engine.test.ts` 断言读的是 per-host 文件、且**不会**借用 SaaS token；
+  `logout.test.ts` 断言自建 host 只清它自己的文件、SaaS token 原样保留。
+  另有 6 个既有上传测试把 token 写进 `config.json` 却指向 `https://*.invalid`，
+  在 host 隔离生效后会读到不存在的 per-host 文件——一律钉到 `DEFAULT_HOST`
+  （SaaS 用户行为未变，自建部署才走新路径）。
 
 ---
 

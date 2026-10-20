@@ -11,7 +11,7 @@ pew 官方形态依赖 Cloudflare：Web（Next.js）读写经两个 Cloudflare W
 ### 成功标准
 
 1. 一套 compose 能在自有服务器/内网跑起完整 pew（Web + 读服务 + 写服务 + 数据库），功能与官方一致。
-2. 局域网客户端（CLI）能指向自建服务完成登录与同步。
+2. 局域网客户端（CLI）能指向自建服务完成登录与同步。**（实现更正 2026-10-20：交付时只做到了写入侧——`pew login --host X` 把 token 写进 per-host 文件，但 `pew sync` 仍读 `config.json`，该标准**当时并不成立**；已补齐见 §4.5「实现更正 2026-10-20」。验收范围：单元测试覆盖三条命令的凭据文件选择与互相隔离；未做真实的「CLI 对 compose 栈 login→sync→logout」黑盒验收，故本条按「代码与单测已覆盖」而非「端到端实测」记录。）**
 3. 数据可多副本、可故障切换、可备份。
 4. **上游代码保持可同步**：不改动上游 SQL 与 Worker 业务逻辑，上游更新可合并。
 
@@ -423,6 +423,8 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 **凭据隔离（复核新发现）**：`ConfigManager` 生产写 `~/.config/pew/config.json`、dev 写 `config.dev.json`（`config/manager.ts:4-5`），**没有按 host 区分**。自建 host 若复用 `config.json`，会**覆盖**用户在 pew.md 的登录态（反之亦然）。→ 自建 host 使用独立配置文件（如 `config.<host>.json`），需小幅修改 `config/manager.ts`（上游文件）或在 host 解析处派生文件名。
 
+**实现更正 2026-10-20（凭据隔离只做了一半，已补齐）**：上面这条只落到 `login`（写入侧）。读取侧漏了——`commands/upload-engine.ts` 用 `new ConfigManager(stateDir, dev)` 读 `config.json`，`commands/logout.ts` 同样。后果有两个方向：`pew sync` 对自建实例报 "Not logged in"；或用户同时登录了 SaaS，自建采集的数据会**带着 SaaS token 上传到 pew.md**。此外 `sync` 只认 `PEW_HOST` 环境变量，没有 `--host` 参数（原「影响点」只列了 `cli.ts:389,556` 两处调用，实际 `sync` 那条不接 override）。现统一为 `config/manager.ts` 导出的 `credentialHostScope(apiUrl)`：归一化 URL，对内置 SaaS host 返回 `undefined`（文件名不变），其余返回该 host——`login`、`upload-engine`、`logout` 共用同一条规则；`sync` 与 `logout` 补上 `--host`（优先级高于 `PEW_HOST`）；`login` 的「Token saved to」改印真实路径。设备身份不受影响：base-cli 的 `ensureDeviceId()` 用独立的 `device.json`，不随 host 分文件——这是刻意的，多设备去重需要同一 ID。
+
 **登录流程本身无需改动**：浏览器流程经 `/api/auth/cli`（`route.ts`）——要求浏览器已有会话，然后下发 `pk_` 前缀的 `api_key`（`route.ts:104-113`）。凭据登录建立的会话同样满足，流程照旧。注意 `/api/auth/cli` 的回调 origin 取自 `NEXTAUTH_URL`（`route.ts:31-37`），自建下必须正确设置。限速 `AUTH_CLI_RATE_LIMIT`（10 次/时/IP）沿用。
 
 ### 4.6 部署编排
@@ -503,7 +505,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | 6 | `packages/web/src/app/api/admin/check/route.ts`、`packages/web/src/app/api/users/[slug]/route.ts` | 直接调用同步 `isAdmin(email)` 的两处改为异步判定（否则库内管理员被误判） |
 | 7 | `packages/web/src/proxy.ts` | `isPublicRoute()` 增加 `/setup`（未登录必须能进向导） |
 | 8 | `packages/web/src/app/api/admin/invites/route.ts` 等 | 省略时间列的 INSERT 补 `datetime('now')`（全量 grep 定位，实测已知 2 处起）。（实现更正 2026-10-17：`invites/route.ts` 最终**未改动**——该表 INSERT 均有 `DEFAULT datetime('now')`，与 §3.2 更正一致。） |
-| 9 | `packages/cli/src/commands/login.ts` | `resolveHost` 支持 `--host` / `PEW_HOST` |
+| 9 | `packages/cli/src/commands/login.ts` | `resolveHost` 支持 `--host` / `PEW_HOST`。（实现更正 2026-10-20：同一批还把读取侧补齐——`upload-engine.ts`、`logout.ts`、`cli.ts` 的 `sync`/`logout` `--host`，见 §4.5） |
 | 10 | `packages/cli/src/config/manager.ts` | 自建 host 使用独立配置文件（见 §4.5） |
 | 11 | `scripts/migrations/` | **新增**：① `password_hash` + `is_admin` 列；② 确定性触发器后置迁移（专项二）；③ `kv_cache` 基础设施表（实测：无任何上游迁移创建它，缺表只在运行时暴露）——均为**新增文件**，不改既有迁移 |
 | 12 | `vitest.config.ts` | `test.include` 增加 `deploy/**/*.test.ts`——否则 `deploy/selfhost/` 下的适配层测试**一条都不会执行** |
@@ -649,7 +651,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | `WORKER_READ_URL` / `WORKER_READ_SECRET` | 读路径（`read` 容器服务名 + 密钥） |
 | `WORKER_INGEST_URL` / `WORKER_SECRET` | 写路径（`ingest` 容器服务名 + 密钥）。**实现更正 2026-10-18**：四条 ingest 路由统一经 `resolveIngestUrl()` 推导——变量带不带 `/ingest` 后缀、带不带尾斜杠都可；此前 token 路由直接使用原值，自托管默认值（无后缀）会让每次 token 上传打到 worker 根路径并 404（E2E 注入的是带后缀形态，掩盖了该缺陷） |
 | `ADMIN_EMAILS` | 管理员邮箱列表（`lib/admin.ts`）。**可选**：库内 `is_admin` 与它取或——首个 `/setup` 用户即管理员（`lib/admin.ts:67-74,113-115,136`）；无 `/setup` 的旧部署才依赖它 |
-| `PEW_HOST` | （CLI 侧）指向自建服务。**已生效**（Plan 2 交付：`cli/src/commands/login.ts` 的 `--host` / `PEW_HOST` 支持） |
+| `PEW_HOST` | （CLI 侧）指向自建服务。**已生效**（Plan 2 交付：`cli/src/commands/login.ts` 的 `--host` / `PEW_HOST` 支持）。**实现更正 2026-10-20**：`pew sync` / `pew logout` 此前只认这个环境变量，现也接受 `--host`（优先级高于 `PEW_HOST`），与 `pew login` 一致；三者共用 `credentialHostScope()` 决定读哪个凭据文件 |
 | `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | 可选；不配置则隐藏 Google 登录按钮。**内网 http 下 Google OAuth 不可用**（回调须 https） |
 | `CF_R2_ENDPOINT` / `CF_R2_ACCESS_KEY_ID` / `CF_R2_SECRET_ACCESS_KEY` / `CF_R2_BUCKET` | 团队/组织 logo 上传；缺则 `lib/r2.ts` throw（logo API 500）。可用 MinIO |
 | `CF_ACCOUNT_ID` / `CF_D1_DATABASE_ID` | 自建下仅需非空占位（写路径已切 `D1_BASE_URL`）；构建用占位值 |
