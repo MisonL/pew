@@ -64,7 +64,12 @@ export function resolveHost(dev: boolean, override?: string): string {
       `Invalid host "${trimmed}": remove the user:password part (credentials in the URL are not supported)`,
     );
   }
-  return trimmed.replace(/\/+$/, "");
+  // Return the normalized origin, not the raw input: `--host pew.corp:7020`
+  // (no scheme) passed the old validation (which parsed with an https://
+  // prefix) but was then returned verbatim, so every fetch died with
+  // "Failed to parse URL". origin also lowercases the host, drops the default
+  // port and strips any path/query, matching credentialHostScope's rule.
+  return parsed.origin;
 }
 
 /**

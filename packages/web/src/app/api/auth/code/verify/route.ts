@@ -12,6 +12,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { BodyTooLargeError, MAX_AUTH_BODY_BYTES, readBoundedJson } from "@pew/core";
 import { getDbRead, getDbWrite } from "@/lib/db";
 import {
   AUTH_CODE_VERIFY_RATE_LIMIT,
@@ -48,8 +49,11 @@ export async function POST(request: Request) {
   // 1. Parse and validate request body
   let body: { code?: string } | null;
   try {
-    body = await request.json();
-  } catch {
+    body = (await readBoundedJson(request, MAX_AUTH_BODY_BYTES)) as { code?: string } | null;
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) {
+      return NextResponse.json({ error: error.message }, { status: 413 });
+    }
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 

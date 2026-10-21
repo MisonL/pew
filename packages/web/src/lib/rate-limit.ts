@@ -262,10 +262,15 @@ class RqliteRateLimiter {
       this.maybeCleanup(db);
       return { allowed: true, current: 1, limit: config.maxRequests, retryAfter: 0 };
     } catch (error) {
-      // Fail-open (spec §3.2): a login limiter must not out-wait the login DB.
-      // Distinguishable from over-limit precisely because it THROWS here.
-      console.warn(`login rate limiter degraded (allowing): ${error instanceof Error ? error.message : error}`);
-      return { allowed: true, current: 0, limit: config.maxRequests, retryAfter: 0 };
+      // Degraded, not open: the rqlite backend failed (missing 033 migration,
+      // leader timeout/election), so fall back to the process-local limiter
+      // for this key instead of allowing every attempt. Fail-open turned a
+      // partial DB outage into unlimited password guessing with only a
+      // console.warn as the signal (verified review 2026-10-21). The
+      // in-memory bucket keeps the per-process bound; across replicas it is
+      // weaker, but still far better than no limit at all.
+      console.warn(`login rate limiter degraded (falling back to in-memory): ${error instanceof Error ? error.message : error}`);
+      return inMemoryRateLimiter.check(key, config);
     }
   }
 

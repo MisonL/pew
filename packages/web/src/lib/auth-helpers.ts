@@ -22,6 +22,14 @@ export const E2E_TEST_USER_EMAIL =
 export interface AuthResult {
   userId: string;
   email?: string | undefined;
+  /**
+   * How the caller authenticated. Admin routes must require "session": a
+   * Bearer api_key is a long-lived credential that a password reset does NOT
+   * invalidate (it only changes password_hash), so allowing it on admin
+   * routes would let a leaked CLI key mint password-reset tokens for any
+   * user. Undefined on the E2E bypass path (treated as a session).
+   */
+  via?: "session" | "bearer";
 }
 
 /**
@@ -47,7 +55,7 @@ export async function resolveUser(
   if (session?.user?.id) {
     const db = await getDbRead();
     const user = await db.getUserById(session.user.id);
-    return user ? { userId: user.id, email: user.email } : null;
+    return user ? { userId: user.id, email: user.email, via: "session" } : null;
   }
 
   // Bearer api_key auth
@@ -57,7 +65,7 @@ export async function resolveUser(
     const db = await getDbRead();
     const row = await db.getUserByApiKey(apiKey);
     if (row) {
-      return { userId: row.id, email: row.email };
+      return { userId: row.id, email: row.email, via: "bearer" };
     }
   }
 

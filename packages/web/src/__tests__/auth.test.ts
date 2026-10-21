@@ -34,6 +34,7 @@ import {
   sessionCallback,
   authorizeCredentials,
   LOGIN_RATE_LIMIT,
+  LOGIN_IP_RATE_LIMIT,
   requireAuthSecret,
   AUTH_SECRET_PLACEHOLDERS,
 } from "@/auth";
@@ -216,11 +217,40 @@ describe("login limiter backend switch", () => {
     // change to the 10/60s policy should be a conscious edit of auth.ts.
     expect(LOGIN_RATE_LIMIT.maxRequests).toBe(10);
     expect(LOGIN_RATE_LIMIT.windowSeconds).toBe(60);
+    expect(LOGIN_IP_RATE_LIMIT.maxRequests).toBe(30);
+    expect(LOGIN_IP_RATE_LIMIT.windowSeconds).toBe(60);
     const { inMemoryRateLimiter } = await import("@/lib/rate-limit");
     const spy = vi.spyOn(inMemoryRateLimiter, "check");
     mockFindCredentialUser.mockResolvedValue(null);
-    await authorizeCredentials({ email: "anchor@b.c", password: "x" });
-    expect(spy.mock.calls[0]?.[1]).toBe(LOGIN_RATE_LIMIT);
+    await authorizeCredentials({ email: "anchor@b.c", password: "x", ip: "198.51.100.7" });
+    // IP bucket first (closes email rotation), then the per-email bucket.
+    expect(spy.mock.calls[0]?.[0]).toBe("login:ip:198.51.100.7");
+    expect(spy.mock.calls[0]?.[1]).toBe(LOGIN_IP_RATE_LIMIT);
+    expect(spy.mock.calls[1]?.[0]).toBe("login:anchor@b.c");
+    expect(spy.mock.calls[1]?.[1]).toBe(LOGIN_RATE_LIMIT);
+  });
+
+  it("applies a shared IP bucket when no proxy header is present", async () => {
+    const { inMemoryRateLimiter } = await import("@/lib/rate-limit");
+    const spy = vi.spyOn(inMemoryRateLimiter, "check");
+    mockFindCredentialUser.mockResolvedValue(null);
+    await authorizeCredentials({ email: "noip@b.c", password: "x" });
+    expect(spy.mock.calls[0]?.[0]).toBe("login:ip:unknown");
+  });
+
+  it("rejects rotating emails from one IP once the IP bucket is full", async () => {
+    // The per-email bucket alone let an attacker mint a fresh bucket per
+    // request and burn a scrypt each time; the IP bucket bounds that.
+    const { inMemoryRateLimiter } = await import("@/lib/rate-limit");
+    const spy = vi.spyOn(inMemoryRateLimiter, "check");
+    spy.mockReturnValue({ allowed: false, current: 30, limit: 30, retryAfter: 60 });
+    mockFindCredentialUser.mockResolvedValue(null);
+    expect(
+      await authorizeCredentials({ email: "rotate@b.c", password: "x", ip: "203.0.113.50" })
+    ).toBeNull();
+    // Stopped at the IP bucket — no scrypt work, no email-bucket call.
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(mockFindCredentialUser).not.toHaveBeenCalled();
   });
 
   it("keeps the in-memory per-email limiter by default", async () => {

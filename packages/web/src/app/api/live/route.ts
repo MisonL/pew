@@ -29,8 +29,11 @@ export async function GET() {
     ]);
     database = { connected: true };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    database = { connected: false, error: msg.replace(/\bok\b/gi, "***") };
+    // Public endpoint: never echo the driver's error text. It names internal
+    // topology (rqlite URLs, table/column names) and the old single-word
+    // `ok` scrub left everything else intact. Log server-side instead.
+    console.error("live health check failed:", err instanceof Error ? err.message : err);
+    database = { connected: false, error: "database unavailable" };
   }
 
   const healthy = database.connected;

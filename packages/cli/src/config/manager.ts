@@ -27,9 +27,14 @@ export function hostConfigStem(host: string | undefined): string | undefined {
   } catch {
     // Not a parseable URL — fall back to the raw string.
   }
-  const safe = key
+  let safe = key
     .replace(/\.\./g, "_") // no parent-directory traversal
     .replace(/[^a-z0-9.-]/gi, "_"); // no separators or other unsafe chars
+  // A host literally named "dev" would produce config.dev.json — the built-in
+  // dev SaaS credential file. A custom instance's token would then live in the
+  // dev file, and `pew sync --dev` would send it to pew.dev.hexly.ai. Prefix
+  // the one colliding stem (prod is config.json, which no stem can equal).
+  if (safe === "dev") safe = "host-dev";
   return `config.${safe}.json`;
 }
 

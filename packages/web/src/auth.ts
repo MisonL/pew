@@ -37,6 +37,17 @@ export const LOGIN_RATE_LIMIT: RateLimitConfig = {
   windowSeconds: 60,
 };
 
+/**
+ * Per-IP login cap for the in-memory backend. Higher than the per-email cap
+ * because one IP can legitimately host several users (NAT), but low enough
+ * that rotating emails cannot turn login into an unbounded scrypt generator.
+ * Without a proxy header all requests share the "unknown" bucket.
+ */
+export const LOGIN_IP_RATE_LIMIT: RateLimitConfig = {
+  maxRequests: 30,
+  windowSeconds: 60,
+};
+
 // ---------------------------------------------------------------------------
 // Exported helpers (testable without next-auth runtime)
 // ---------------------------------------------------------------------------
@@ -87,8 +98,18 @@ export async function authorizeCredentials(input: {
       if (!result.allowed) return null;
     }
   } else {
+    // The memory backend used to key per-email only, so an attacker rotating
+    // emails had no limit at all and each attempt burned a full scrypt. Check
+    // an IP bucket first (global bucket when no proxy header), then the email
+    // bucket; both keys are clamped because they come from the request body /
+    // headers and live in a Map for up to the longest limiter window.
+    const ipLimit = inMemoryRateLimiter.check(
+      `login:ip:${input.ip ? ipv6PrefixKey(input.ip) : "unknown"}`,
+      LOGIN_IP_RATE_LIMIT
+    );
+    if (!ipLimit.allowed) return null;
     const limit = inMemoryRateLimiter.check(
-      `login:${input.rateKey ?? email}`,
+      `login:${(input.rateKey ?? email).slice(0, 254)}`,
       LOGIN_RATE_LIMIT
     );
     if (!limit.allowed) return null;
@@ -236,9 +257,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth(async (req) => {
     providers,
     session: {
       strategy: "jwt",
-      // Spec §4.4 (docs/52): tighten from Auth.js's 30-day default so a
-      // stolen session cookie has a bounded life (pwd_v invalidation handles
-      // the password-change case; this bounds the copy-around case).
+      // Idle timeout, not an absolute lifetime: Auth.js re-signs the JWT and
+      // resets the cookie on every session read, so a stolen cookie that is
+      // used at least weekly never expires. The 7-day default (down from
+      // Auth.js's 30) still bounds an unused copy; an absolute cap would need
+      // a login timestamp in the token and a check in sessionCallback
+      // (2026-10-21 review).
       maxAge: 7 * 24 * 60 * 60,
     },
     // Cookie configuration for reverse proxy environments

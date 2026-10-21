@@ -142,7 +142,22 @@ describe("GET /api/live", () => {
     const res = await GET(makeGetRequest());
     const body = (await res.json()) as Record<string, unknown>;
     const database = body.database as Record<string, unknown>;
-    expect(database.error).toBe("*** something failed");
+    // Public endpoint: the driver's message never leaves the process (it names
+    // internal topology). The server log keeps the detail.
+    expect(database.error).toBe("database unavailable");
+  });
+
+  it("never echoes the driver error text on the public endpoint", async () => {
+    const mockDbRead = createMockDbRead();
+    mockDbRead.ping.mockRejectedValue(
+      new Error("rqlite at http://rqlite:4001: no such table: usage_records")
+    );
+    getDbRead.mockResolvedValue(mockDbRead);
+
+    const res = await GET(makeGetRequest());
+    const text = await res.text();
+    expect(text).not.toContain("rqlite");
+    expect(text).not.toContain("usage_records");
   });
 
   it("should handle non-Error throw from D1", async () => {
@@ -182,7 +197,7 @@ describe("GET /api/live", () => {
       expect(body.status).toBe("error");
       const database = body.database as Record<string, unknown>;
       expect(database.connected).toBe(false);
-      expect(database.error).toBe("DB ping timed out");
+      expect(database.error).toBe("database unavailable");
     } finally {
       vi.useRealTimers();
     }

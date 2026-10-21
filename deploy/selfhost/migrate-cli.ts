@@ -17,6 +17,34 @@ const SQUASHED = new Set(["004-is-public.sql", "006-device-id.sql", "006c-team-l
 const BASE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
 
 /**
+ * Partial credential configuration must fail closed.
+ *
+ * render-rqlite-auth.sh deletes auth.json and exits 1 when the three variables
+ * are not all set — but the stack is usually started by a separate `compose up`
+ * afterwards, so a half-filled .env reaches rqlite as "no -auth at all" and
+ * every service connects anonymously. `assertAuthReconciled` cannot catch it:
+ * `expectAuth` is derived from the full pair alone, so a JOIN-only fill makes it
+ * skip the probe. Verified combination on 2026-10-21 review: JOIN set + full
+ * pair empty -> auth.json removed -> rqlited without -auth -> migrate healthy,
+ * whole stack unauthenticated with no warning.
+ *
+ * Empty strings count as unset: compose injects `${VAR:-}` defaults, so a
+ * blank .env entry must behave like a missing one (same rule as
+ * resolveBasicAuth in basic-auth.ts).
+ */
+export function assertCredentialConsistency(env: NodeJS.ProcessEnv = process.env): void {
+  const vars = ["RQLITE_USERNAME", "RQLITE_PASSWORD", "RQLITE_JOIN_PASSWORD"] as const;
+  const missing = vars.filter((name) => !env[name]);
+  if (missing.length === 0 || missing.length === vars.length) return;
+  throw new Error(
+    `credentials are partially configured: ${missing.join(", ")} empty — set all of ` +
+      `RQLITE_USERNAME/RQLITE_PASSWORD/RQLITE_JOIN_PASSWORD or none. With a partial set the ` +
+      `render script deletes auth.json, rqlite starts WITHOUT -auth, and every service would ` +
+      `connect anonymously.`
+  );
+}
+
+/**
  * Reconciliation probe (spec §3.1.4): rqlite IGNORES every Authorization
  * header when started without -auth (verified), so a fully-configured client
  * would silently run unauthenticated. Guards against config mistakes only —
@@ -64,6 +92,7 @@ async function waitForRqlite(timeoutMs = 60_000): Promise<void> {
 
 async function main(): Promise<void> {
   await waitForRqlite();
+  assertCredentialConsistency();
   const basicAuth = resolveEnvBasicAuth();
   await assertAuthReconciled(fetch, BASE_URL, basicAuth !== undefined);
   const db = createD1Adapter({ baseUrl: BASE_URL, token: "", ...(basicAuth ? { basicAuth } : {}) });

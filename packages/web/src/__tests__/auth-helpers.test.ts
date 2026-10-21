@@ -133,6 +133,7 @@ describe("resolveUser", () => {
       expect(result).toEqual({
         userId: "u-session-1",
         email: "user@example.com",
+        via: "session",
       });
       expect(db.getUserById).toHaveBeenCalledWith("u-session-1");
     });
@@ -150,6 +151,7 @@ describe("resolveUser", () => {
       expect(result).toEqual({
         userId: "u-no-email",
         email: "current@example.com",
+        via: "session",
       });
     });
 
@@ -212,6 +214,7 @@ describe("resolveUser", () => {
       expect(result).toEqual({
         userId: "u-api-key-1",
         email: "api@example.com",
+        via: "bearer",
       });
     });
   });
@@ -236,6 +239,7 @@ describe("resolveUser", () => {
       expect(result).toEqual({
         userId: "u-api-1",
         email: "apiuser@example.com",
+        via: "bearer",
       });
       expect(mockClient.getUserByApiKey).toHaveBeenCalledWith("pk_test_key_123");
     });
@@ -285,6 +289,7 @@ describe("resolveUser", () => {
       expect(result).toEqual({
         userId: "u-session",
         email: "session@example.com",
+        via: "session",
       });
       // Should NOT even check D1 for the API key
       expect(db.getUserByApiKey).not.toHaveBeenCalled();

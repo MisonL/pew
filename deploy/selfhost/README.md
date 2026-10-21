@@ -80,6 +80,21 @@ fallback）。
    "fetch('http://rqlite:4001/status',{headers:{Authorization:'Basic '+btoa(process.env.RQLITE_USERNAME+':'+process.env.RQLITE_PASSWORD)}}).then(r=>r.json()).then(s=>console.log(s.http.auth))"`
    （d1-http 容器已从 `.env` 注入这对凭据）。
 
+   **还要确认容器内能读到 auth.json**：rqlite 以 uid 1000 运行，而宿主目录属主不会被
+   Docker 改写。若 `.rqlite-auth.json` 属主是 root（root 克隆仓库、`sudo cp` 恢复目录），
+   rqlited 会 `failed to get credential store` 直接 crashloop——`test -f` 在宿主看得到
+   文件不代表容器读得到：
+
+   ```bash
+   docker compose exec -T -u root rqlite ls -ln /auth/auth.json   # 期望属主 1000、权限 600
+   # 修复：sudo chown 1000:1000 deploy/selfhost/.rqlite-auth.json（或整个仓库目录）
+   ```
+
+   另一类半填凭据的静默失败：三个变量只填了一部分时渲染脚本会**删掉** auth.json 并退出 1，
+   此时若跳过 render 直接 `up`，rqlite 无鉴权启动；migrate 的 `assertCredentialConsistency`
+   会因此 fail-closed（「credentials are partially configured」），整栈起不来而不是静默
+   裸奔——看到这条错误时补齐三个变量后重新 render。
+
 **⚠ 先 up 后 render 会以无鉴权静默启动。** rqlite 在无 `-auth` 时忽略一切 Authorization
 头——客户端带凭据请求也是 200 静默成功（不是 401）。这是整个鉴权设计里最危险的失败模式：
 migrate 启动时的对账自检会显式报错（「credentials configured but auth is disabled」），但
@@ -91,6 +106,11 @@ migrate 启动时的对账自检会显式报错（「credentials configured but 
 
 1. **首次部署**：访问 `/setup`（登录页在实例为空时会显示「Create the administrator
    account」入口）。第一个注册的用户自动成为管理员（库内 `is_admin=1`）。
+   ⚠️ **实例为空时，任何能访问 `/setup` 的人都会成为管理员**——这是设计行为，不是
+   漏洞。公网部署必须先完成这一步再对外发布：先在 `127.0.0.1`/内网起栈并注册管理员，
+   确认 `GET /api/auth/login-options` 返回 `"setupNeeded":false` 后再挂公网域名/放行
+   端口。`/api/auth/login-options` 匿名暴露 `setupNeeded`，等于对外广播这个窗口。
+   （2026-10-21 审查记录；可选的 `SETUP_TOKEN` 加固尚未实现。）
 2. **邀请后续用户**：管理员在后台生成邀请码，新用户带邀请码注册。
 3. **密码重置**：管理员可为用户签发一次性重置令牌（无邮件能力，令牌线下交付）。
    若**管理员自己**也进不去，用破窗脚本直连 rqlite 改密。rqlite 不发布宿主端口，**必须
@@ -131,8 +151,10 @@ migrate 启动时的对账自检会显式报错（「credentials configured but 
 INSERT...SELECT，多 web 副本共享同一计数），双键 `login:email:<email>` 与 `login:ip:<ip>` 各查一次——email 键攻击者可任意轮换，**IP 键是唯一硬防线**（IPv6 按
   /64 前缀归并防隐私扩展轮换）。已知绕过（如实注明）：反代漏配 XFF 时全部请求落
 `login:ip:unknown` 共享桶，打满即全员登录 DoS——按反代小节的 XFF 硬约束部署即可避免。
-rqlite 后端写异常时 **fail-open 放行并告警**（不误判为超限拒绝）；仅 `meta.changes=0`
-（计数满）才拒绝。已知绕过（如实注明）之二：双键的键值（随机 email / 伪造 IP 变体）
+rqlite 后端写异常时**降级到进程内限速器**（不再 fail-open 放行）：同一 key 的后续尝试
+由本地 memory 桶约束，并打 `console.warn`。2026-10-21 之前的行为是异常即放行——一次
+「读可用、限速写失败」的部分故障就会变成无限密码尝试，已改为降级。仅 `meta.changes=0`
+（计数满）才按超限拒绝。已知绕过（如实注明）之二：双键的键值（随机 email / 伪造 IP 变体）
 由攻击者任意构造，可直接向 `rate_limit_hits` 表洪注新行——**存储放大面**；缓解是每次
 写入路径自带 1% 采样清理（DELETE 限 3600s 窗口），异常洪注不会无限累积，但长期运行的
 实例应关注该表体积。
@@ -246,10 +268,14 @@ shell 里残留的 `PEW_HOST`。
 `sync` / `logout` 补上了 `--host` 参数，`login` 的 "Token saved to" 打印真实路径。
 设备身份不受影响（base-cli 的 `device.json` 跨 host 共享，多设备去重要求如此）。
 
-**导出的队列记录不区分目标 host**：队列里没有「这条属于哪个实例」的概念，
-`pew sync --host A` 和 `pew sync --host B` 会把同一批待传记录先后推给两个实例。
-只指向一个实例就没这个问题；真要同时喂两个自建实例，请分两套 `~/.config/pew`
-（改 `HOME` 或 `XDG_CONFIG_HOME`）。
+**导出的队列记录不区分目标 host**：队列里没有「这条属于哪个实例」的概念。实测行为比
+「先后推给两个实例」更隐蔽——`pew sync --host A` 成功后 offset/dirtyKeys 已清，
+随后 `pew sync --host B` **只会上传 B 期间新增的记录**，A 侧的历史在 B 上永久缺失
+（accounting details 例外，会重推最近窗口）。`pew sync` 现在会在上传横幅里打印解析后的
+目标 host（`Uploading tokens to http://...`），这是判断「数据去了哪」的唯一可靠信号。
+只指向一个实例就没这个问题；真要同时喂两个自建实例，请分两套状态目录——注意**只认
+`HOME`**：`resolveDefaultPaths` 不读 `XDG_CONFIG_HOME`（实测设置后仍写入
+`$HOME/.config/pew`），必须改 `HOME`。
 
 ## 架构
 
@@ -611,7 +637,10 @@ SIGKILL——此时 trap 无法执行——归档也不可被其他用户读取�
 
 **`.env` 会被当作 shell 脚本执行**（脚本 `set -a; . ./.env`）：密码值必须用**单引号**包裹
 （不加引号时 `$` 会展开——实测 `pa$$word` 变成 `pa<PID>word`——反斜杠会被吞）；`.env` 里
-不能出现裸 `exit`（会让备份静默跳过且退出码为 0）。`.env` 本身请 `chmod 600`：它含明文
+不能出现裸 `exit`（会让备份静默跳过且退出码为 0）。**`RQLITE_PASSWORD` 不要含 `:`**：
+backup.sh 在容器内用 `rqlite -u "$USER:$PASS"`，rqlite 10.5.3 按 `:` 切分且要求恰好两段，
+含冒号的密码会让备份报 `invalid Basic Auth credential format`（渲染出的 auth.json 本身
+支持任意密码，只有 REPL 这条通道有这个限制）。`.env` 本身请 `chmod 600`：它含明文
 `AUTH_SECRET`/`CF_D1_API_TOKEN`/`WORKER_SECRET`/`RQLITE_PASSWORD`，且可写它=可劫持以你
 身份运行的备份 cron。不要把任何不可信来源的文件放进这个路径。
 
@@ -871,7 +900,9 @@ rqlite 容器反复 unhealthy 时优先怀疑 auth.json **损坏**（`*` 条目�
 
 ```bash
 docker compose stop rqlite
-docker volume ls --format '{{.Name}}' | grep rqlite-data   # 确认承载数据的卷名（供备份/核对）
+# 卷名带 compose 项目前缀（目录名派生，如 selfhost_rqlite-data / deploy_rqlite-data），
+# 裸 `grep rqlite-data` 在故障现场容易误判为「卷不存在」。用锚定后缀匹配：
+docker volume ls --format '{{.Name}}' | grep -E 'rqlite-data(-[123])?$'   # 确认承载数据的卷名（供备份/核对）
 # rqlite 读的是**数据目录**下的 raft/peers.json（DATA_DIR 默认 /rqlite/file/data，
 # 见 rqlite 源码 store.go 的 peersPath 与官方 entrypoint 的 DATA_DIR 默认值），
 # 不是 /rqlite/file/raft/。compose 把卷挂在 /rqlite/file，因此落点是

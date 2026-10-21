@@ -9,15 +9,62 @@
  *     their own tests.
  */
 
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { randomBytes, scrypt as scryptCallback, scryptSync, timingSafeEqual } from "node:crypto";
+import type { ScryptOptions } from "node:crypto";
 import { getD1Client } from "./d1";
 import { getDbWrite } from "./db";
 import { validateInviteCode } from "./invite";
+
+function scryptAsync(
+  password: string,
+  salt: Buffer,
+  keylen: number,
+  options: ScryptOptions,
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scryptCallback(password, salt, keylen, options, (err, key) =>
+      err ? reject(err) : resolve(key)
+    );
+  });
+}
 
 // N=32768 with r=8 needs 128*N*r + 128*r*p = 33,555,456 bytes of memory, which
 // is just over Node's default maxmem (32 MiB) and throws "Invalid scrypt
 // params". Pass maxmem explicitly.
 const SCRYPT = { N: 32768, r: 8, p: 1, keylen: 64, maxmem: 64 * 1024 * 1024 } as const;
+
+/**
+ * Login-path CPU guard. Each scrypt derivation costs ~33 MiB and tens of
+ * milliseconds; scryptSync would block the single web process outright
+ * (verified: 64.5 ms per call), and rotating emails defeats the per-email
+ * limiter, so an unauthenticated attacker could stall every dashboard/API
+ * request with a handful of concurrent login POSTs. The async form runs on
+ * the libuv threadpool, and this cap bounds how much derivation work can be
+ * queued at once — excess attempts fail closed (login rejected) instead of
+ * piling up.
+ */
+const MAX_CONCURRENT_SCRYPT = 8;
+let scryptInFlight = 0;
+
+async function deriveWithSlot(
+  password: string,
+  salt: Buffer,
+  keylen: number,
+  params: { N: number; r: number; p: number; maxmem: number },
+): Promise<Buffer | null> {
+  if (scryptInFlight >= MAX_CONCURRENT_SCRYPT) return null;
+  scryptInFlight++;
+  try {
+    return (await scryptAsync(password, salt, keylen, params)) as Buffer;
+  } finally {
+    scryptInFlight--;
+  }
+}
+
+/** Test-only introspection: current number of in-flight derivations. */
+export function scryptInFlightCount(): number {
+  return scryptInFlight;
+}
 
 export function hashPassword(password: string): string {
   const salt = randomBytes(16);
@@ -47,9 +94,9 @@ export async function verifyPassword(password: string, stored: string): Promise<
   } catch {
     return false;
   }
-  let actual: Buffer;
+  let actual: Buffer | null;
   try {
-    actual = scryptSync(password, salt, expected.length, {
+    actual = await deriveWithSlot(password, salt, expected.length, {
       N,
       r,
       p,
@@ -58,6 +105,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
   } catch {
     return false;
   }
+  if (!actual) return false;
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
@@ -67,12 +115,12 @@ export async function verifyPassword(password: string, stored: string): Promise<
  */
 export async function verifyPasswordDummy(password: string): Promise<void> {
   const salt = randomBytes(16);
-  scryptSync(password, salt, SCRYPT.keylen, {
+  await deriveWithSlot(password, salt, SCRYPT.keylen, {
     N: SCRYPT.N,
     r: SCRYPT.r,
     p: SCRYPT.p,
     maxmem: SCRYPT.maxmem,
-  });
+  }).catch(() => null);
 }
 
 // ---------------------------------------------------------------------------
@@ -233,7 +281,11 @@ export async function consumePasswordReset(
       params: [now, token],
     },
     {
-      sql: `UPDATE users SET password_hash = ?, updated_at = datetime('now')
+      // api_key is revoked with the password: it is a long-lived Bearer
+      // credential that no other code path rotates, so leaving it valid would
+      // let a stolen CLI key survive the very reset meant to lock the
+      // attacker out (verified review 2026-10-21). The CLI must re-login.
+      sql: `UPDATE users SET password_hash = ?, api_key = NULL, updated_at = datetime('now')
             WHERE id = ? AND EXISTS (
               SELECT 1 FROM password_resets
               WHERE token = ? AND used_at = ?

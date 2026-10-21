@@ -102,6 +102,12 @@ export async function resolveAdmin(
   const authResult = await resolveUser(request);
   if (!authResult) return null;
 
+  // Admin operations require an interactive session. A Bearer api_key is a
+  // long-lived CLI credential that a password reset does NOT rotate, so a
+  // leaked key must not be able to reach admin endpoints (reset-password for
+  // any user, invites, settings). E2E bypass carries no `via` and passes.
+  if (authResult.via === "bearer") return null;
+
   // resolveUser may not always have the email (e.g. session without email)
   // If email is missing, look it up via RPC
   let email = authResult.email;

@@ -123,6 +123,10 @@ describe("password reset", () => {
     expect(stmts[1]!.sql).toMatch(/used_at = \?\s*\)/);
     expect(stmts[1]!.params![3]).toBe(stmts[0]!.params![0]);
     expect(stmts[1]!.sql).toMatch(/UPDATE users SET password_hash/);
+    // The CLI api_key is revoked with the password: it is long-lived and no
+    // other path rotates it, so leaving it valid would let a stolen key
+    // survive the reset meant to lock the attacker out.
+    expect(stmts[1]!.sql).toMatch(/api_key = NULL/);
     expect(stmts[1]!.params![0]).toMatch(/^scrypt\$/);
   });
 

@@ -56,13 +56,17 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
     expect(single).not.toContain("RQLITE_JOIN_AS");
   });
 
-  it("write services get full credentials; read/scheduler get the READ_* pair with full-credential fallback", () => {
+  it("write services get full credentials; read/scheduler get no READ_* pair at all", () => {
     // biome-ignore lint/suspicious/noTemplateCurlyInString: compose var-expansion literal, not interpolation
     expect(compose).toContain("RQLITE_USERNAME: ${RQLITE_USERNAME:-}");
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: compose var-expansion literal, not interpolation
-    expect(compose).toContain("RQLITE_READ_USERNAME: ${RQLITE_READ_USERNAME:-}");
+    // The deprecated READ_* pair is no longer injected anywhere: a leftover
+    // .env from the pew-ro era would otherwise win over the full pair inside
+    // resolveReadBasicAuth and 401 every read. Absence is the only reliable
+    // guard, since a comment cannot stop an operator from filling a key.
+    expect(compose).not.toContain("RQLITE_READ_USERNAME");
+    expect(compose).not.toContain("RQLITE_READ_PASSWORD");
     const sched = compose.slice(compose.indexOf("  scheduler:"), compose.indexOf("  web:"));
-    expect(sched).toContain("RQLITE_READ_USERNAME");
+    expect(sched).toContain("RQLITE_USERNAME");
     // Relaxed (review round 2): scheduler now ALSO receives the full
     // RQLITE_USERNAME/PASSWORD pair so the server-side READ_* fallback works
     // (resolveReadBasicAuth). The remaining checkable minimal-exposure intent:

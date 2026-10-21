@@ -35,6 +35,17 @@ describe("resolveHost", () => {
     expect(resolveHost(false, "http://pew.corp:7020/")).toBe("http://pew.corp:7020");
   });
 
+  it("normalizes a scheme-less host instead of returning it verbatim", () => {
+    // `--host pew.corp:7020` used to pass validation (parsed with an https://
+    // prefix) but return the raw string, so every fetch died with
+    // "Failed to parse URL". The returned origin is what fetch can use.
+    expect(resolveHost(false, "pew.corp")).toBe("https://pew.corp");
+    expect(resolveHost(false, "172.16.81.4:7020")).toBe("https://172.16.81.4:7020");
+    // origin normalization also matches credentialHostScope: lowercase host,
+    // default port dropped, path/query stripped.
+    expect(resolveHost(false, "HTTPS://PEW.MD:443/")).toBe("https://pew.md");
+  });
+
   it("falls back to PEW_HOST when no override is given", () => {
     process.env = { ...ORIGINAL_ENV, PEW_HOST: "https://pew.internal" };
     expect(resolveHost(false)).toBe("https://pew.internal");

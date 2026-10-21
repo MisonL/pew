@@ -9,6 +9,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { BodyTooLargeError, MAX_AUTH_BODY_BYTES, readBoundedJson } from "@pew/core";
 import { getDbRead } from "@/lib/db";
 import { validateInviteCode } from "@/lib/invite";
 import { shouldUseSecureCookies } from "@/auth";
@@ -16,8 +17,14 @@ import { shouldUseSecureCookies } from "@/auth";
 export async function POST(request: Request) {
   let body: Record<string, unknown>;
   try {
-    body = await request.json();
-  } catch {
+    body = (await readBoundedJson(request, MAX_AUTH_BODY_BYTES)) as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) {
+      return NextResponse.json(
+        { valid: false, error: error.message },
+        { status: 413 }
+      );
+    }
     return NextResponse.json(
       { valid: false, error: "Invalid JSON" },
       { status: 400 }

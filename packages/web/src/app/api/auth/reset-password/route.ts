@@ -7,6 +7,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { BodyTooLargeError, MAX_AUTH_BODY_BYTES, readBoundedJson } from "@pew/core";
 import { consumePasswordReset } from "@/lib/credentials";
 
 const MIN_PASSWORD_LENGTH = 8;
@@ -14,8 +15,11 @@ const MIN_PASSWORD_LENGTH = 8;
 export async function POST(request: Request) {
   let body: Record<string, unknown>;
   try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
+    body = (await readBoundedJson(request, MAX_AUTH_BODY_BYTES)) as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) {
+      return NextResponse.json({ error: error.message }, { status: 413 });
+    }
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 

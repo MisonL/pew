@@ -247,6 +247,7 @@ CREATE INDEX IF NOT EXISTS idx_rate_limit_hits_at ON rate_limit_hits(hit_at);
 - **清理**：每次 check 以 1/100 概率 `DELETE FROM rate_limit_hits WHERE hit_at < datetime('now', ?)`，阈值用**表级常量**——该表全局最大窗口（登录 60s + 未来可能的口内扩展，取 3600s 余量，写成模块级常量并注释依据；不用各进程观测的 maxWindowMs——共享表中只见过 60s 窗口的副本会误删 3600s 窗口内的行）；`idx_rate_limit_hits_at` 单列索引支撑该 DELETE。
 - **开关与范围**：`LOGIN_RATE_LIMIT_BACKEND=rqlite` 仅切换**登录**限速（全文唯一名——v2 三处拼写不一致已统一，可实施性报告）。其余 5 处消费方（auth-code 生成/校验、CLI auth、team join、ingest）显式保持 memory 并在 README 列出及原因（300/min 的 ingest 走表驱动每请求 2 次 DB 往返不划算；评审 M1）。
 - **fail-open 语义精确化（红队 High W4）**：两种「没放行成功」必须区分——①`changes === 0` = **超限，拒绝**（DB 工作正常，只是计数满）；②语句**执行异常**（网络错误/超时）= **放行**（fail-open）+ `console.warn` 告警日志。不区分则攻击者制造限速写超时即可静默绕过限速而读路径正常。两个分支路径在单测里各自覆盖。
+  > **实现更正 2026-10-21**：审查复核认为「异常即放行」会把一次部分故障（读可用、限速写失败）变成无限密码尝试，仅靠一条 `console.warn` 留痕。实现已改为**降级到进程内 memory 限速器**（同一 key 继续受本地桶约束，跨副本共享性变弱但不再是全放行），单测相应改为断言「降级后桶会打满拒绝」。本文其余 fail-open 措辞保留为当时的设计记录。
 
 #### 测试
 

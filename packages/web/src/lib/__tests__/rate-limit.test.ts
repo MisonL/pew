@@ -44,14 +44,23 @@ describe("RqliteRateLimiter", () => {
     expect(r.retryAfter).toBeGreaterThan(0);
   });
 
-  it("fails OPEN with a console.warn on execution error", async () => {
+  it("falls back to the in-memory limiter on execution error (degraded, not open)", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     mockQuery.mockRejectedValueOnce(new Error("timeout"));
     const { rqliteRateLimiter } = await import("../rate-limit");
-    const r = await rqliteRateLimiter.check("login:ip:1.2.3.4", LOGIN_RATE_LIMIT);
+    // Under the fallback the first attempt is allowed by the in-memory bucket,
+    // but the bucket is real: exhausting it rejects. Fail-open would have
+    // allowed every attempt regardless (the pre-2026-10-21 behaviour).
+    const key = `login:ip:degraded-${Math.random()}`;
+    const r = await rqliteRateLimiter.check(key, LOGIN_RATE_LIMIT);
     expect(r.allowed).toBe(true);
     expect(warn).toHaveBeenCalledOnce();
     expect(warn.mock.calls[0]?.[0]).not.toContain("secret"); // no creds in logs
+    for (let i = 0; i < LOGIN_RATE_LIMIT.maxRequests; i++) {
+      await rqliteRateLimiter.check(key, LOGIN_RATE_LIMIT);
+    }
+    const denied = await rqliteRateLimiter.check(key, LOGIN_RATE_LIMIT);
+    expect(denied.allowed).toBe(false);
   });
 
   it("merges IPv6 addresses to /64 prefixes", async () => {

@@ -109,6 +109,17 @@ describe("ConfigManager", () => {
     expect(hostConfigStem("http://pew.corp:7020")).not.toBe(hostConfigStem("http://pew.corp:7021"));
   });
 
+  it("keeps a host literally named 'dev' out of the built-in dev credential file", () => {
+    // config.dev.json is the built-in dev SaaS file. Without the reserved-stem
+    // guard, an instance whose host is "dev" would write its token there, and
+    // a later `pew sync --dev` would ship it to pew.dev.hexly.ai.
+    expect(hostConfigStem("http://dev")).toBe("config.host-dev.json");
+    expect(new ConfigManager(tempDir, true, "http://dev").configPath).toBe(
+      join(tempDir, "config.host-dev.json")
+    );
+    expect(new ConfigManager(tempDir, true).configPath).toBe(join(tempDir, "config.dev.json"));
+  });
+
   it("sanitizes characters that would escape the config directory", () => {
     // A crafted host must not introduce path separators.
     expect(hostConfigStem("http://../../etc/passwd")).not.toContain("/");

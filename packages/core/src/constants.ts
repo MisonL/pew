@@ -51,6 +51,14 @@ export const MAX_ACCOUNTING_BATCH_SIZE = 25;
 export const MAX_INGEST_BODY_BYTES = 1024 * 1024;
 export const MAX_ACCOUNTING_BODY_BYTES = 24 * 1024 * 1024;
 
+/**
+ * Body cap for the unauthenticated auth routes (register, reset-password,
+ * invite verification, CLI code verification). These bodies are a handful of
+ * short strings; 16 KiB is generous for all of them and stops an anonymous
+ * caller from making the single web process buffer arbitrary payloads.
+ */
+export const MAX_AUTH_BODY_BYTES = 16 * 1024;
+
 /** Maximum string field length (model names, session keys, etc.) */
 export const MAX_STRING_LENGTH = 1024;
 

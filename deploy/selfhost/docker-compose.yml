@@ -141,6 +141,11 @@ services:
       RQLITE_URL: http://rqlite:4001
       RQLITE_USERNAME: ${RQLITE_USERNAME:-}
       RQLITE_PASSWORD: ${RQLITE_PASSWORD:-}
+      # The third credential is never used by migrate itself — it is injected
+      # so assertCredentialConsistency() can tell "auth intentionally off"
+      # (all three empty) from "half-filled .env" (render deleted auth.json,
+      # rqlite would start WITHOUT -auth, every service connects anonymously).
+      RQLITE_JOIN_PASSWORD: ${RQLITE_JOIN_PASSWORD:-}
     depends_on:
       rqlite:
         condition: service_healthy
@@ -188,9 +193,9 @@ services:
       # name and read/scheduler carry /db/request write paths, so no read-only
       # user exists in auth.json. NOT a harmless fallback: resolveReadBasicAuth
       # PREFERS this pair, and a user set here does not exist in auth.json, so
-      # read/scheduler would 401 against rqlite. Leave both EMPTY (the default).
-      RQLITE_READ_USERNAME: ${RQLITE_READ_USERNAME:-}
-      RQLITE_READ_PASSWORD: ${RQLITE_READ_PASSWORD:-}
+      # read/scheduler would 401 against rqlite. The keys are deliberately NOT
+      # injected any more — a .env left over from the pew-ro era can therefore
+      # not break the stack, and an operator cannot fill them by mistake.
       RQLITE_USERNAME: ${RQLITE_USERNAME:-}
       RQLITE_PASSWORD: ${RQLITE_PASSWORD:-}
       WORKER_READ_SECRET: ${WORKER_READ_SECRET}
@@ -248,9 +253,8 @@ services:
       RQLITE_URL: http://rqlite:4001
       # Deprecated (pew-ro removed): NOT a harmless fallback — resolveReadBasicAuth
       # prefers this pair, and a value here does not exist in auth.json (401).
-      # Leave both EMPTY; the RQLITE_* pair below is what read/scheduler use.
-      RQLITE_READ_USERNAME: ${RQLITE_READ_USERNAME:-}
-      RQLITE_READ_PASSWORD: ${RQLITE_READ_PASSWORD:-}
+      # Deliberately not injected (see the read service above); the RQLITE_*
+      # pair below is what read/scheduler use.
       RQLITE_USERNAME: ${RQLITE_USERNAME:-}
       RQLITE_PASSWORD: ${RQLITE_PASSWORD:-}
       WORKER_READ_SECRET: ${WORKER_READ_SECRET}

@@ -118,6 +118,24 @@ describe("resolveAdmin", () => {
     expect(result).toBeNull();
   });
 
+  it("rejects an admin authenticated via Bearer api_key (session required)", async () => {
+    // A CLI api_key is long-lived and NOT rotated by a password reset, so it
+    // must never reach admin endpoints (reset-password for any user, invites,
+    // settings) even when its owner is an admin.
+    vi.mocked(resolveUser).mockResolvedValueOnce({
+      userId: "u1",
+      email: "admin@example.com",
+      via: "bearer",
+    });
+
+    const result = await resolveAdmin(new Request("http://localhost", {
+      headers: { Authorization: "Bearer pk_admin" },
+    }));
+    expect(result).toBeNull();
+    // The allowlist/DB path must not even be consulted.
+    expect(mockDbRead.getUserEmail).not.toHaveBeenCalled();
+  });
+
   it("should return admin result when email matches directly", async () => {
     vi.mocked(resolveUser).mockResolvedValueOnce({
       userId: "u1",

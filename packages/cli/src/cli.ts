@@ -892,7 +892,12 @@ const uninstallCommand = defineCommand({
 
 async function runUpload(stateDir: string, apiUrl: string, dev: boolean): Promise<void> {
   log.blank();
-  log.start("Uploading tokens...");
+  // Print the resolved target: the queue is shared across hosts, so the only
+  // thing that decides where data goes is this URL. Without it, a stray
+  // PEW_HOST (or a silently ignored --host on an old binary) looks exactly
+  // like a normal sync — the 2026-10-20 incident shipped data to the SaaS
+  // with no line of output naming the destination.
+  log.start(`Uploading tokens to ${apiUrl}...`);
 
   const uploadResult = await executeUpload({
     stateDir,
@@ -935,7 +940,7 @@ async function runUpload(stateDir: string, apiUrl: string, dev: boolean): Promis
 
 async function runSessionUpload(stateDir: string, apiUrl: string, dev: boolean): Promise<void> {
   log.blank();
-  log.start("Uploading sessions...");
+  log.start(`Uploading sessions to ${apiUrl}...`);
 
   const uploadResult = await executeSessionUpload({
     stateDir,
