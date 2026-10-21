@@ -392,10 +392,14 @@ export default function RecentPage() {
     };
   }, [tzOffset]);
 
+  // The pattern charts rank by accountedTotal(); the server-side projection
+  // returns exactly those numbers, so the annotations (the bulk of a 30-day
+  // half-hour response) never leave the server.
   const { data: patternData, loading: patternLoading } = useUsageData({
     from: patternFrom,
     to: patternTo,
     granularity: "half-hour",
+    includeAccounting: "project",
   });
 
   // Fetch device data for the same period (day granularity for pattern
