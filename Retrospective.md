@@ -1,5 +1,16 @@
 # Retrospective
 
+### 2026-10-22: Resolve traced native modules from their runtime consumer
+
+The first secretless Docker smoke check assumed standalone output retained
+`packages/web/node_modules/sharp`. The build had succeeded, but that direct link
+was absent: Bun's traced Sharp package and native bindings were present under
+the isolated dependency tree used by Next.js. The check now resolves Sharp from
+the traced Next package, as the image optimizer does, instead of adding unused
+links or copying the full installation. Inspect the isolated runtime tree before
+diagnosing a failed smoke-check import as a missing dependency. No image was
+published and no running service changed.
+
 ## 2026-10-09: Antigravity reference decoders contradicted the installed schema
 
 Recent high-star usage trackers treated `ModelUsageStats` field 1 as additional

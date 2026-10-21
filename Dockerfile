@@ -30,21 +30,6 @@ WORKDIR /app
 # layout. The base image pins Node.js to the same supported major as the runner.
 RUN node --version | grep -Eq '^v22\.'
 
-# Railway injects service env vars as Docker build args.
-# Next.js needs these at build time for page data collection.
-ARG CF_ACCOUNT_ID
-ARG CF_D1_DATABASE_ID
-ARG CF_D1_API_TOKEN
-ARG WORKER_INGEST_URL
-ARG WORKER_SECRET
-ARG AUTH_SECRET
-ENV CF_ACCOUNT_ID=$CF_ACCOUNT_ID
-ENV CF_D1_DATABASE_ID=$CF_D1_DATABASE_ID
-ENV CF_D1_API_TOKEN=$CF_D1_API_TOKEN
-ENV WORKER_INGEST_URL=$WORKER_INGEST_URL
-ENV WORKER_SECRET=$WORKER_SECRET
-ENV AUTH_SECRET=$AUTH_SECRET
-
 COPY --from=deps /app ./
 COPY . .
 # Build @pew/core with bun (pure TS, no native deps).
@@ -61,9 +46,12 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-COPY --from=builder /app/packages/web/.next/standalone ./
-COPY --from=builder /app/packages/web/.next/static ./packages/web/.next/static
-COPY --from=builder /app/packages/web/public ./packages/web/public
+COPY --from=builder --chown=node:node /app/packages/web/.next/standalone ./
+COPY --from=builder --chown=node:node /app/packages/web/.next/static ./packages/web/.next/static
+COPY --from=builder --chown=node:node /app/packages/web/public ./packages/web/public
+
+USER node
+RUN node -e "require('node:module').createRequire(require.resolve('./packages/web/node_modules/next'))('sharp')({ create: { width: 1, height: 1, channels: 4, background: '#fff' } }).png().toBuffer().then(() => console.log('Sharp ready'))"
 
 EXPOSE 7020
 ENV PORT=7020
