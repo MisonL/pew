@@ -91,6 +91,11 @@ test.describe("Feature: Overview", () => {
       if (releaseAnnual) {
         try {
           await expect(regions[2]).toBeVisible();
+          // The all-time view derives its year strip from the main response, so
+          // no separate annual request exists to gate. A shorter period's year
+          // strip IS its own query (the main window no longer contains it) —
+          // switch to one to observe the Activity region staying busy.
+          await page.getByRole("button", { name: "Last 6 Months", exact: true }).click();
           await expect(regions[0]).toHaveAttribute("aria-busy", "true");
         } finally { releaseAnnual(); }
       }

@@ -3,7 +3,10 @@ export const READINESS_PAGES = [
   { route: "/login", check: "login", apis: [] },
   { route: "/setup", check: "setup", apis: [] },
   { route: "/privacy", check: "privacy", apis: [] },
-  { route: "/dashboard", check: "overview", apis: ["/api/usage#5", "/api/pricing", "/api/usage/by-device", "/api/seasons?status=ended"] },
+  // Two usage queries, not five: the all-time view derives the year strip, the
+  // week/month comparisons and the forecast from the main day-granularity
+  // response, so only that one and the half-hour insights query are issued.
+  { route: "/dashboard", check: "overview", apis: ["/api/usage#2", "/api/pricing", "/api/usage/by-device", "/api/seasons?status=ended"] },
   { route: "/devices", check: "devices", apis: ["/api/usage/by-device", "/api/usage?deviceId", "/api/pricing"] },
   { route: "/agents", check: "agents", apis: ["/api/usage", "/api/pricing", "/api/pricing/models"] },
   { route: "/models", check: "models", apis: ["/api/usage", "/api/pricing", "/api/pricing/models"] },
