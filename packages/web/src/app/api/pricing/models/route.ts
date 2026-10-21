@@ -17,5 +17,5 @@ export async function GET(request: Request) {
     return unauthorizedResponse();
   }
 
-  return fetchDynamicPricingPayload();
+  return fetchDynamicPricingPayload(request);
 }

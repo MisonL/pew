@@ -21,5 +21,5 @@ export async function GET(request: Request) {
     return forbiddenResponse();
   }
 
-  return fetchDynamicPricingPayload();
+  return fetchDynamicPricingPayload(request);
 }

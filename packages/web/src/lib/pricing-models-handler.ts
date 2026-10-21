@@ -11,8 +11,9 @@
 
 import { NextResponse } from "next/server";
 import { getDbRead } from "@/lib/db";
+import { jsonResponse } from "@/lib/json-response";
 
-export async function fetchDynamicPricingPayload(): Promise<NextResponse> {
+export async function fetchDynamicPricingPayload(request: Request): Promise<Response> {
   try {
     const dbRead = await getDbRead();
     const [dyn, meta] = await Promise.all([
@@ -20,14 +21,13 @@ export async function fetchDynamicPricingPayload(): Promise<NextResponse> {
       dbRead.getDynamicPricingMeta(),
     ]);
 
-    return NextResponse.json(
-      {
-        entries: dyn.entries,
-        servedFrom: dyn.servedFrom,
-        meta,
-      },
-      { headers: { "Cache-Control": "private, no-store" } },
-    );
+    // A full pricing catalogue is a few hundred KB; gzip it like the other
+    // read endpoints rather than shipping raw JSON from the route handler.
+    return jsonResponse(request, {
+      entries: dyn.entries,
+      servedFrom: dyn.servedFrom,
+      meta,
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err) {
     console.error("Failed to load dynamic pricing:", err);
     return NextResponse.json(
