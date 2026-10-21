@@ -81,6 +81,7 @@ export function PublicProfileView({ slug }: PublicProfileViewProps) {
   const { user, loading, error, notFound } = useUserProfile({
     slug,
     days: 30,
+    includeRecords: false,
   });
 
   // 404

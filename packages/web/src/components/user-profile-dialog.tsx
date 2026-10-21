@@ -241,6 +241,7 @@ export function UserProfileDialog({
   const { user: profileUser, loading: profileLoading } = useUserProfile({
     slug: slug ?? "",
     days: 7,
+    includeRecords: false,
   });
 
   // Season from props (season leaderboard entry point)

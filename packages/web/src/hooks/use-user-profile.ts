@@ -36,6 +36,8 @@ interface UseUserProfileOptions {
   from?: string;
   to?: string;
   source?: string;
+  /** Header-only fetch: skip the per-day records, which dominate the payload. */
+  includeRecords?: boolean;
 }
 
 interface UseUserProfileResult {
@@ -68,7 +70,7 @@ async function userProfileFetcher(url: string): Promise<ProfileResult> {
 export function useUserProfile(
   options: UseUserProfileOptions,
 ): UseUserProfileResult {
-  const { slug, days = 30, from, to, source } = options;
+  const { slug, days = 30, from, to, source, includeRecords = true } = options;
 
   const url = useMemo(() => {
     if (!slug) return null;
@@ -80,8 +82,9 @@ export function useUserProfile(
       params.set("days", String(days));
     }
     if (source) params.set("source", source);
+    if (!includeRecords) params.set("includeRecords", "0");
     return `/api/users/${slug}?${params.toString()}`;
-  }, [slug, days, from, to, source]);
+  }, [slug, days, from, to, source, includeRecords]);
 
   const { data: result, error, isLoading, mutate } = useSWR<ProfileResult>(
     url,

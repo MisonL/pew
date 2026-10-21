@@ -296,6 +296,24 @@ describe("GET /api/users/[slug]", () => {
       expect(options.granularity).toBe("day");
     });
 
+    it("skips the usage query entirely when includeRecords=0", async () => {
+      // The profile header only renders the user object; the records are
+      // re-fetched per tab by the content view, so the header must not pay
+      // for them (or trigger the read RPC at all).
+      mockDbRead.getPublicUserBySlugOrId.mockResolvedValueOnce(testUser);
+      mockDbRead.getUserFirstSeen.mockResolvedValueOnce(null);
+
+      const [req, ctx] = makeRequest("testuser", { includeRecords: "0" });
+      const res = await GET(req, ctx);
+
+      expect(res.status).toBe(200);
+      expect(mockDbRead.getUsageRecords).not.toHaveBeenCalled();
+      const body = await res.json();
+      expect(body.records).toEqual([]);
+      expect(body.user.slug).toBe("testuser");
+      expect(body.summary.total_tokens).toBe(0);
+    });
+
     it("should use a valid days parameter to build the date range", async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-04-10T12:34:56.000Z"));

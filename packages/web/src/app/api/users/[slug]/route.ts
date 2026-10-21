@@ -115,6 +115,10 @@ export async function GET(
   const fromParam = url.searchParams.get("from");
   const toParam = url.searchParams.get("to");
   const sourceFilter = url.searchParams.get("source");
+  // Profile headers only need the user object (404 detection, member since).
+  // The records are the multi-MB part and get re-fetched per tab by the
+  // content view, so the header requests pass includeRecords=0.
+  const includeRecords = url.searchParams.get("includeRecords") !== "0";
 
   // Determine time range: from/to takes precedence over days
   let fromDate: Date;
@@ -157,7 +161,7 @@ export async function GET(
 
   // 4. Execute query via RPC
   try {
-    const records = await db.getUsageRecords(
+    const records = !includeRecords ? [] : await db.getUsageRecords(
       user.id,
       fromDate.toISOString(),
       toDate.toISOString(),
