@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GET } from "@/app/api/usage/route";
 import * as dbModule from "@/lib/db";
 import { createMockDbRead, loadMockedAuthHelpers, makeGetRequest } from "./test-utils";
+import { accountingFixture } from "../../../core/src/__test-helpers__/accounting";
 
 // Mock DB
 vi.mock("@/lib/db", () => ({
@@ -198,6 +199,40 @@ describe("GET /api/usage", () => {
       expect(res.status).toBe(200);
       const [, , , options] = mockDbRead.getUsageRecords.mock.calls[0]!;
       expect(options.granularity).toBe("day");
+    });
+
+    it("omits annotations when includeAccounting=0 and leaves the counters untouched", async () => {
+      // The annotations are ~98% of a large response; page-level callers that
+      // only rank or sum totals skip them. Records keep their raw counters, so
+      // a consumer that ranked raw totals before ranks identically now.
+      const r = accountingFixture();
+      const accounting = [{ status: "matched" as const, basis: r.basis, groups: [r.groups[0]!] }];
+      const row = { ...r.basis, source: r.source, model: r.model, hour_start: r.hour_start, accounting };
+      mockDbRead.getUsageRecords.mockResolvedValue([row]);
+
+      const full = await (await GET(makeGetRequest("/api/usage"))).json();
+      const lean = await (await GET(makeGetRequest("/api/usage", { includeAccounting: "0" }))).json();
+
+      expect(full.records[0].accounting).toBeDefined();
+      expect(lean.records[0].accounting).toBeUndefined();
+      const counters = ["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"] as const;
+      for (const field of counters) expect(lean.records[0][field]).toBe(full.records[0][field]);
+      // The summary stays the raw legacy reconciliation basis in both modes.
+      expect(lean.summary).toEqual(full.summary);
+    });
+
+    it("returns the summary without records when summaryOnly=1", async () => {
+      mockDbRead.getUsageRecords.mockResolvedValueOnce([{
+        source: "claude-code", model: "m", hour_start: "2026-03-07T10:00:00.000Z",
+        input_tokens: 100, cached_input_tokens: 0, output_tokens: 50, reasoning_output_tokens: 0, total_tokens: 150,
+      }]);
+
+      const res = await GET(makeGetRequest("/api/usage", { summaryOnly: "1" }));
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.records).toEqual([]);
+      expect(body.summary.total_tokens).toBe(150);
     });
 
     it("should return 500 on D1 error", async () => {

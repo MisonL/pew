@@ -26,9 +26,11 @@ interface UseDeviceDataOptions {
   /**
    * Fetch the accounting annotations. They are the bulk of an all-time
    * response and only the pages that split billed vs legacy counters need
-   * them; the dashboard breakdown charts read labels and totals only.
+   * them. `false` drops every annotation (the server pre-splits the
+   * counters); "details" keeps them only on the drill-down rows, which is
+   * what the device page's coverage notes read.
    */
-  includeAccounting?: boolean;
+  includeAccounting?: boolean | "details";
 }
 
 interface UseDeviceDataResult {
@@ -54,7 +56,8 @@ export function useDeviceData(
     if (toDate) params.set("to", toDate);
     if (granularity) params.set("granularity", granularity);
     if (!includeDetails) params.set("includeDetails", "0");
-    if (!includeAccounting) params.set("includeAccounting", "0");
+    if (includeAccounting === false) params.set("includeAccounting", "0");
+    else if (includeAccounting === "details") params.set("includeAccounting", "details");
     params.set("tzOffset", String(tzOffset));
 
     const qs = params.toString();

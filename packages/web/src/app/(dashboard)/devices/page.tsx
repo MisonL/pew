@@ -165,9 +165,14 @@ export default function ByDevicePage() {
   const { from, to } = periodToDateRange(period, tzOffset);
   const { pricingMap, loading: pricingLoading } = usePricingMap();
 
+  // Labels, totals and the drill-down rows feed this page; the per-device and
+  // timeline annotations are 10.8 MB of an all-time response and nothing here
+  // reads them. The drill-down ones stay: UsageInformation's coverage notes
+  // and cost estimation need the accounting evidence.
   const { data, loading, error } = useDeviceData({
     from,
     ...(to ? { to } : {}),
+    includeAccounting: "details",
   });
 
   const devices = useMemo(() => data?.devices ?? [], [data]);
@@ -237,12 +242,18 @@ export default function ByDevicePage() {
     [filteredDetails],
   );
 
-  // Deep Dive: time-series data for selected device (reuse usage.get with deviceId filter)
+  // Deep Dive: time-series data for selected device (reuse usage.get with deviceId filter).
+  // Gated on a selection: until devices load there is nothing to filter by, and
+  // the unfiltered fetch this used to fire first was a duplicate multi-MB
+  // download discarded the moment the device arrived. The annotations stay:
+  // the trend and model-mix charts rank by accountedTotal(), whose display
+  // split can differ from the raw counters when a row reports a total_mismatch.
   const { data: deviceUsage, error: deviceUsageError } = useUsageData({
     from,
     ...(to ? { to } : {}),
     ...(effectiveDevice ? { deviceId: effectiveDevice } : {}),
     granularity: "day",
+    enabled: Boolean(effectiveDevice),
   });
 
   const agentTrend = useMemo(

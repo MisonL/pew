@@ -76,23 +76,31 @@ export default function SessionsPage() {
   });
 
   // Fetch usage data for token totals (needed for tokens/hour + reasoning ratio)
+  // Only the summary is read below, so the per-row records stay on the server.
   const { data: usageData, loading: usageLoading } = useUsageData({
     from,
     ...(to ? { to } : {}),
+    summaryOnly: true,
   });
 
-  // Half-hour granularity for peak hour detection
+  // Half-hour granularity for peak hour detection. Peaks are ranked by
+  // total_tokens, which the annotation split preserves, so dropping the
+  // annotations leaves every peak and bar unchanged.
   const { data: halfHourUsage, loading: halfHourLoading } = useUsageData({
     from,
     ...(to ? { to } : {}),
     granularity: "half-hour",
+    includeAccounting: false,
   });
 
-  // Daily device timeline for the "By Device" dimension on Daily Activity
+  // Daily device timeline for the "By Device" dimension on Daily Activity;
+  // only labels and timeline totals are read.
   const { data: deviceData, loading: deviceLoading } = useDeviceData({
     from,
     ...(to ? { to } : {}),
     granularity: "day",
+    includeDetails: false,
+    includeAccounting: false,
   });
 
   const subtitle = periodLabel(period);

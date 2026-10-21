@@ -47,6 +47,15 @@ export async function GET(request: Request) {
   const fromParam = url.searchParams.get("from");
   const toParam = url.searchParams.get("to");
   const tzOffsetParam = url.searchParams.get("tzOffset");
+  // Per-row accounting annotations are reconciliation evidence and on a large
+  // window they dominate the payload (~98% of the body). Pages that only read
+  // counters pass includeAccounting=0; the records then come back already
+  // projected through displayCounters(), so their numbers are unchanged.
+  // Default stays true for API compatibility.
+  const includeAccounting = url.searchParams.get("includeAccounting") !== "0";
+  // Some callers only read the summary (e.g. sessions' efficiency stat). The
+  // records are the multi-MB part; the summary is computed here either way.
+  const summaryOnly = url.searchParams.get("summaryOnly") === "1";
   const tzOffset = parseBoundedInt(tzOffsetParam, {
     min: -840,
     max: 840,
@@ -147,7 +156,17 @@ export async function GET(request: Request) {
 
     const evidenceTokens = records.reduce((n, r) => sumCounts(n, r.evidence_tokens ?? 0), 0);
     const approximateTokens = records.reduce((n, r) => sumCounts(n, r.approximate_tokens ?? 0), 0);
-    return jsonResponse(request, { records, summary: evidenceTokens > 0
+    // The summary stays the sum of the raw legacy counters regardless of the
+    // annotation mode: it is the documented reconciliation basis, not a display
+    // aggregate. Records likewise keep their raw counters when the annotations
+    // are dropped — unlike by-device, this endpoint's callers that opt out
+    // (sessions' peak detection) rank by the raw total, so projecting through
+    // displayCounters() here would move their numbers.
+    const projected = includeAccounting ? records : records.map((r) => {
+      const { accounting: _accounting, ...row } = r;
+      return row;
+    });
+    return jsonResponse(request, { records: summaryOnly ? [] : projected, summary: evidenceTokens > 0
       ? { ...summary, evidence_tokens: evidenceTokens, approximate_tokens: approximateTokens }
       : summary });
   } catch (err) {

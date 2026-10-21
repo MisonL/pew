@@ -3,6 +3,7 @@ import { GET } from "@/app/api/usage/by-device/route";
 import * as dbModule from "@/lib/db";
 import { createMockDbRead, loadMockedAuthHelpers, makeGetRequest } from "./test-utils";
 import { accountingFixture } from "../../../core/src/__test-helpers__/accounting";
+import { displayCounters } from "@/lib/accounting";
 
 // Mock DB
 vi.mock("@/lib/db", () => ({
@@ -82,7 +83,7 @@ describe("GET /api/usage/by-device", () => {
     // must still be the same display split the client would have derived.
     vi.mocked(resolveUser).mockResolvedValue({ userId: "u1", email: "test@example.com" });
     const r = accountingFixture();
-    const accounting = [{ status: "matched", basis: r.basis, groups: [r.groups[0]!] }];
+    const accounting = [{ status: "matched" as const, basis: r.basis, groups: [r.groups[0]!] }];
     const row = { ...r.basis, source: r.source, model: r.model, device_id: r.device_id, accounting };
     mockDbRead.getDeviceSummary.mockResolvedValue([{ ...row, alias: null, first_seen: r.hour_start, last_seen: r.hour_start,
       sources: r.source, models: r.model }]);
@@ -102,6 +103,31 @@ describe("GET /api/usage/by-device", () => {
       expect(lean.timeline[0][field]).toBe(full.timeline[0][field]);
     }
     expect(lean.devices[0].estimated_cost).toBe(full.devices[0].estimated_cost);
+  });
+
+  it("keeps annotations only on the drill-down rows when includeAccounting=details", async () => {
+    // /devices reads labels, totals and its UsageInformation coverage notes:
+    // the notes need the per-(device,source,model) evidence, while the device
+    // and timeline annotations (10.8 MB on an all-time window) are unread.
+    vi.mocked(resolveUser).mockResolvedValue({ userId: "u1", email: "test@example.com" });
+    const r = accountingFixture();
+    const accounting = [{ status: "matched" as const, basis: r.basis, groups: [r.groups[0]!] }];
+    const row = { ...r.basis, source: r.source, model: r.model, device_id: r.device_id, accounting };
+    mockDbRead.getDeviceSummary.mockResolvedValue([{ ...row, alias: null, first_seen: r.hour_start, last_seen: r.hour_start,
+      sources: r.source, models: r.model }]);
+    mockDbRead.getDeviceCostDetails.mockResolvedValue([row]);
+    mockDbRead.getDeviceTimeline.mockResolvedValue([{ ...row, date: "2026-09-01" }]);
+
+    const res = await GET(makeGetRequest("/api/usage/by-device", { from: "2026-09-01", to: "2026-09-02", includeAccounting: "details" }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.deviceDetails[0].accounting).toBeDefined();
+    expect(body.devices[0].accounting).toBeUndefined();
+    expect(body.timeline[0].accounting).toBeUndefined();
+    // Pre-split counters match what the client would have derived.
+    const projected = displayCounters(row as Parameters<typeof displayCounters>[0]);
+    expect(body.devices[0].total_tokens).toBe(projected.total_tokens);
+    expect(body.timeline[0].total_tokens).toBe(projected.total_tokens);
   });
 
   describe("authentication", () => {

@@ -286,8 +286,11 @@ export default function DailyUsagePage() {
 
   const { data, loading: usageLoading, error } = useUsageData({ from, to });
 
-  // Fetch device data for the same period
-  const { data: deviceData, loading: deviceLoading } = useDeviceData({ from, to });
+  // Device timeline for the By Device area and donut charts: labels and
+  // totals only, so neither the drill-down rows nor the annotations are read.
+  const { data: deviceData, loading: deviceLoading } = useDeviceData({
+    from, to, includeDetails: false, includeAccounting: false,
+  });
 
   // Wait for all data before showing content
   const loading = usageLoading || deviceLoading;

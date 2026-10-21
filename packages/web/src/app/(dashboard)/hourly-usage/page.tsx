@@ -367,11 +367,14 @@ export default function RecentPage() {
     granularity: "half-hour",
   });
 
-  // Fetch device timeline with half-hour granularity for the main chart
+  // Fetch device timeline with half-hour granularity for the main chart.
+  // Only timeline totals and device labels are read here.
   const { data: recentDeviceData, loading: deviceLoading } = useDeviceData({
     from: recentFrom.slice(0, 10), // API expects date string
     to: recentTo.slice(0, 10),
     granularity: "half-hour",
+    includeDetails: false,
+    includeAccounting: false,
   });
 
   // Wait for both data sources before showing content to avoid double animation
@@ -395,10 +398,13 @@ export default function RecentPage() {
     granularity: "half-hour",
   });
 
-  // Fetch device data for the same period (day granularity for pattern charts)
+  // Fetch device data for the same period (day granularity for pattern
+  // charts). The drill-down rows are read for their (device, source, model)
+  // attribution only, so the annotations can stay on the server.
   const { data: deviceData, loading: patternDeviceLoading } = useDeviceData({
     from: patternFrom,
     to: patternTo,
+    includeAccounting: false,
   });
 
   // Pattern charts wait for both data sources to avoid double animation

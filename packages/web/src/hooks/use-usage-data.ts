@@ -47,6 +47,14 @@ interface UseUsageDataOptions {
    * duplicate multi-MB download.
    */
   enabled?: boolean;
+  /**
+   * Drop the per-row accounting annotations. Annotations are ~98% of a large
+   * response; the server returns the counters already split, so pages that
+   * only chart totals can skip them without changing a single number.
+   */
+  includeAccounting?: boolean;
+  /** Fetch the summary only, with an empty record list. */
+  summaryOnly?: boolean;
 }
 
 interface UseUsageDataResult {
@@ -62,7 +70,8 @@ interface UseUsageDataResult {
 export function useUsageData(
   options: UseUsageDataOptions = {}
 ): UseUsageDataResult {
-  const { days = 30, from: fromDate, to: toDate, source, deviceId, granularity = "day", enabled = true } = options;
+  const { days = 30, from: fromDate, to: toDate, source, deviceId, granularity = "day", enabled = true,
+    includeAccounting = true, summaryOnly = false } = options;
 
   // Frozen per mount — acceptable; page refresh handles DST changes
   const tzOffset = useTzOffset();
@@ -88,9 +97,11 @@ export function useUsageData(
     if (granularity === "day") {
       params.set("tzOffset", String(tzOffset));
     }
+    if (!includeAccounting) params.set("includeAccounting", "0");
+    if (summaryOnly) params.set("summaryOnly", "1");
 
     return `/api/usage?${params.toString()}`;
-  }, [days, fromDate, toDate, source, deviceId, granularity, tzOffset]);
+  }, [days, fromDate, toDate, source, deviceId, granularity, tzOffset, includeAccounting, summaryOnly]);
 
   const { data, loading, error, refetch } = useFetchData<UsageData>(url, { enabled });
 

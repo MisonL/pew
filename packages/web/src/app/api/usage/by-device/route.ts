@@ -82,11 +82,17 @@ export async function GET(request: Request) {
   // The accounting annotations are reconciliation evidence: accounting for the
   // split between billed and legacy counters. On a large all-time window they
   // ARE the payload — a single device's annotation is 5.4 MB and the timeline's
-  // another 5.4 MB, against 6 KB of actual counters. The dashboard's breakdown
-  // charts read only device labels and timeline totals and pass
-  // includeAccounting=0. Default stays true: /devices and /hourly-usage need
-  // the annotations to split counters client-side.
-  const includeAccounting = url.searchParams.get("includeAccounting") !== "0";
+  // another 5.4 MB, against 6 KB of actual counters. Three modes:
+  //   (default)  annotations everywhere — /devices' UsageInformation needs the
+  //              per-(device,source,model) ones for its coverage notes
+  //   "details"  only on deviceDetails: devices and timeline lose the 10.8 MB
+  //              nobody reads (labels and totals are all that's consumed)
+  //   "0"        none; the counters come back already projected through
+  //              displayCounters() so a client that skips them still charts the
+  //              same split — /dashboard's breakdown charts pass this
+  const accountingMode = url.searchParams.get("includeAccounting");
+  const includeDeviceAccounting = accountingMode !== "0" && accountingMode !== "details";
+  const includeDetailAccounting = accountingMode !== "0";
   const tzOffset = parseBoundedInt(tzOffsetParam, {
     min: -840,
     max: 840,
@@ -142,14 +148,14 @@ export async function GET(request: Request) {
         complete: (previous?.complete ?? true) && cost.complete });
     }
 
-    // 6. Assemble response. When the annotations are omitted the counters are
-    // returned already projected through displayCounters(), so a client that
-    // skips them still charts the same split billed-vs-legacy partition it
-    // would have derived locally — displayCounters() is idempotent on its own
-    // output (a row without annotations projects to itself), so clients that
-    // run it unconditionally are unaffected.
+    // 6. Assemble response. In the modes that drop an annotation the counters
+    // are returned already projected through displayCounters(), so a client
+    // that skips the annotations still charts the same split billed-vs-legacy
+    // partition it would have derived locally — displayCounters() is idempotent
+    // on its own output (a row without annotations projects to itself), so
+    // clients that run it unconditionally are unaffected.
     const devices = summaryRows.map((row) => {
-      const counters = includeAccounting ? row : displayCounters(row);
+      const counters = includeDeviceAccounting ? row : displayCounters(row);
       return {
         device_id: row.device_id,
         alias: row.alias,
@@ -162,14 +168,14 @@ export async function GET(request: Request) {
         reasoning_output_tokens: counters.reasoning_output_tokens,
         estimated_cost: costByDevice.get(row.device_id)?.total ?? 0,
         estimated_cost_complete: costByDevice.get(row.device_id)?.complete ?? row.total_tokens === 0,
-        ...(row.accounting && includeAccounting ? { accounting: row.accounting } : {}),
+        ...(row.accounting && includeDeviceAccounting ? { accounting: row.accounting } : {}),
         sources: row.sources ? row.sources.split(",") : [],
         models: row.models ? row.models.split(",") : [],
       };
     });
 
     const timeline = timelineRows.map((row) => {
-      const counters = includeAccounting ? row : displayCounters(row);
+      const counters = includeDeviceAccounting ? row : displayCounters(row);
       return {
         date: row.date,
         device_id: row.device_id,
@@ -178,7 +184,7 @@ export async function GET(request: Request) {
         output_tokens: counters.output_tokens,
         cached_input_tokens: counters.cached_input_tokens,
         reasoning_output_tokens: counters.reasoning_output_tokens ?? 0,
-        ...(row.accounting && includeAccounting ? { accounting: row.accounting } : {}),
+        ...(row.accounting && includeDeviceAccounting ? { accounting: row.accounting } : {}),
       };
     });
 
@@ -195,7 +201,7 @@ export async function GET(request: Request) {
         output_tokens: row.output_tokens,
         cached_input_tokens: row.cached_input_tokens,
         reasoning_output_tokens: reasoning,
-        ...(row.accounting ? { accounting: row.accounting } : {}),
+        ...(row.accounting && includeDetailAccounting ? { accounting: row.accounting } : {}),
       };
     }) : [];
 
