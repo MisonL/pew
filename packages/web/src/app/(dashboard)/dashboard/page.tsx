@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { ArrowDownToLine, ArrowUpFromLine, DollarSign, Gauge, TrendingUp, Zap, type LucideIcon } from "lucide-react";
 import { Button } from "@nocoo/basalt/components/button";
 import { PageHeader } from "@nocoo/basalt/components/page-header";
-import { useUsageData, toHeatmapData, type DailyPoint } from "@/hooks/use-usage-data";
+import { useUsageData, toHeatmapData, toDailyPoints, type DailyPoint } from "@/hooks/use-usage-data";
 import { useTzOffset } from "@/hooks/use-tz-offset";
 import { usePricingMap, formatCost } from "@/hooks/use-pricing";
 import { summarizeAccounting } from "@/lib/accounting";
@@ -46,16 +46,51 @@ export default function DashboardPage() {
   const currentYear = Number(today.slice(0, 4));
   const firstDay = range.start ?? daily[0]?.date ?? today;
 
-  const yearData = useUsageData({
-    from: new Date(Date.UTC(currentYear, 0, 1) + tzOffset * 60_000).toISOString(),
-    to: range.to,
-  });
+  // The main query is always the widest window the page can ask for: the
+  // "all" period starts 2020-01-01, which contains every other period. Each
+  // extra dataset below re-requests a window the main query already covers,
+  // so it is only fetched when that is NOT true. Measured on a 3.4k-row
+  // instance: the unconditional version transferred 44 MB per dashboard load,
+  // dominated by four overlapping multi-MB responses.
+  const allTime = period === "all";
+  const yearStart = useMemo(
+    () => new Date(Date.UTC(currentYear, 0, 1) + tzOffset * 60_000).toISOString(),
+    [currentYear, tzOffset],
+  );
+  const yearCovered =
+    allTime || (range.from !== undefined && new Date(range.from).getTime() <= new Date(yearStart).getTime());
+
+  const yearData = useUsageData({ from: yearStart, to: range.to, enabled: !yearCovered });
+  const yearStartDate = `${currentYear}-01-01`;
+  const derivedYearRecords = useMemo(
+    () => (yearCovered
+      // Main records are day-granularity, so hour_start is already the LOCAL
+      // date ("YYYY-MM-DD", see the worker's date() grouping). Compare the
+      // date strings directly — parsing them as UTC midnight and comparing to
+      // a tz-shifted instant would drop Jan 1 for positive offsets.
+      ? records.filter((r) => r.hour_start.slice(0, 10) >= yearStartDate)
+      : undefined),
+    [yearCovered, records, yearStartDate],
+  );
+  const yearRecords = derivedYearRecords ?? yearData.data?.records ?? [];
+  const yearLoading = yearCovered ? loading : yearData.loading;
+  const yearError = yearCovered ? error : yearData.error;
+  // Same projection the API applies for a year window (day granularity, local
+  // bucketing), computed from the already-fetched superset.
+  const yearDaily = useMemo(() => toDailyPoints(yearRecords, tzOffset), [yearRecords, tzOffset]);
+
+  // Week/month comparisons and the forecast need calendar windows that can
+  // extend before the selected period (e.g. a 14-day window asks for the
+  // whole previous week). Only the all-time view is guaranteed to contain
+  // them, so the extra fetches stay enabled for shorter periods.
   const halfHourData = useUsageData({ from: range.from, to: range.to, granularity: "half-hour" });
-  const wowData = useUsageData({ days: 14, granularity: "half-hour" });
-  const momData = useUsageData({ days: 62, granularity: "half-hour" });
+  const wowData = useUsageData({ days: 14, granularity: "half-hour", enabled: !allTime });
+  const momData = useUsageData({ days: 62, granularity: "half-hour", enabled: !allTime });
+  const comparisonLoading = wowData.loading || momData.loading;
+  const comparisonError = wowData.error ?? momData.error;
 
   const accounting = useMemo(() => summarizeAccounting(records), [records]);
-  const yearTotalTokens = useMemo(() => summarizeAccounting(yearData.data?.records ?? []).totalTokens, [yearData.data]);
+  const yearTotalTokens = useMemo(() => summarizeAccounting(yearRecords).totalTokens, [yearRecords]);
   const estimatedCost = useMemo(() => computeTotalCost(models, pricingMap), [models, pricingMap]);
   const cacheSavings = useMemo(() => computeCacheSavings(models, pricingMap), [models, pricingMap]);
 
@@ -77,15 +112,19 @@ export default function DashboardPage() {
   }, [records, tzOffset, firstDay, today]);
 
   // Comparisons and the monthly forecast retain their own calendar windows.
-  const wow = useMemo(() => wowData.data
-    ? computeWoWGrowth(wowData.data.records, pricingMap, undefined, tzOffset) : null,
-  [wowData.data, pricingMap, tzOffset]);
-  const mom = useMemo(() => momData.data
-    ? computeMoMGrowth(momData.data.records, pricingMap, undefined, tzOffset) : null,
-  [momData.data, pricingMap, tzOffset]);
-  const costForecast = useMemo(() => momData.data
-    ? forecastMonthlyCost(toDailyCostPoints(momData.data.records, pricingMap, tzOffset)) : null,
-  [momData.data, pricingMap, tzOffset]);
+  // The all-time view already covers them, so they are derived from the same
+  // records instead of triggering two more half-hour downloads.
+  const wowSource = allTime ? records : wowData.data?.records;
+  const momSource = allTime ? records : momData.data?.records;
+  const wow = useMemo(() => wowSource
+    ? computeWoWGrowth(wowSource, pricingMap, undefined, tzOffset) : null,
+  [wowSource, pricingMap, tzOffset]);
+  const mom = useMemo(() => momSource
+    ? computeMoMGrowth(momSource, pricingMap, undefined, tzOffset) : null,
+  [momSource, pricingMap, tzOffset]);
+  const costForecast = useMemo(() => momSource
+    ? forecastMonthlyCost(toDailyCostPoints(momSource, pricingMap, tzOffset)) : null,
+  [momSource, pricingMap, tzOffset]);
 
   const weekdayWeekend = useMemo(() => halfHourData.data
     ? compareWeekdayWeekend(halfHourData.data.records, { from: firstDay, to: today }, pricingMap, tzOffset) : null,
@@ -115,10 +154,10 @@ export default function DashboardPage() {
 
         <div className="grid grid-cols-1 gap-3 md:gap-4 xl:grid-cols-3">
           <div className="min-w-0 xl:col-span-2">
-            <ErrorBanner messagePrefix="Failed to load annual activity" error={yearData.error} />
-            {!yearData.error && <HeatmapHero
-              data={toHeatmapData(yearData.daily)} year={currentYear} totalTokens={yearTotalTokens}
-              activeDays={yearData.daily.filter((day) => day.total > 0).length} loading={yearData.loading}
+            <ErrorBanner messagePrefix="Failed to load annual activity" error={yearError} />
+            {!yearError && <HeatmapHero
+              data={toHeatmapData(yearDaily)} year={currentYear} totalTokens={yearTotalTokens}
+              activeDays={yearDaily.filter((day) => day.total > 0).length} loading={yearLoading}
               className="h-full"
             />}
           </div>
@@ -130,7 +169,7 @@ export default function DashboardPage() {
 
         <DashboardSegment title="Usage summary"
           hint="Changes compare this week / month so far with the previous period. TD compares the same elapsed days. Cost estimates use public pricing.">
-          <ErrorBanner messagePrefix="Failed to load growth comparisons" error={wowData.error ?? momData.error} />
+          <ErrorBanner messagePrefix="Failed to load growth comparisons" error={comparisonError} />
           <StatGrid columns={3} className="sm:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
             <StatCard
               title="Total Tokens" value={formatTokens(accounting.totalTokens)} subtitle={periodLabel(period)}
@@ -191,9 +230,9 @@ export default function DashboardPage() {
               ]}
             >
               <SummaryDetails items={[
-                { title: "Monthly Forecast", value: pricingLoading || momData.loading ? "…" : costForecast ? formatCost(costForecast.projectedMonthCost) : "—",
+                { title: "Monthly Forecast", value: pricingLoading || comparisonLoading ? "…" : costForecast ? formatCost(costForecast.projectedMonthCost) : "—",
                   subtitle: costForecast ? `This month · ${formatCost(costForecast.currentMonthCost)} so far` : "This month · Not enough data", icon: TrendingUp, iconColor: "text-chart-6" },
-                { title: "Daily Average", value: pricingLoading || momData.loading ? "…" : costForecast ? formatCost(costForecast.dailyAverage) : "—",
+                { title: "Daily Average", value: pricingLoading || comparisonLoading ? "…" : costForecast ? formatCost(costForecast.dailyAverage) : "—",
                   subtitle: costForecast ? `This month · ${costForecast.daysInMonth - costForecast.daysElapsed} days left` : "This month · Not enough data", icon: DollarSign, iconColor: "text-chart-6" },
               ]} />
             </StatCard>

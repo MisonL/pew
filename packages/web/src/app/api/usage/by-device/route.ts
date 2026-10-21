@@ -16,6 +16,7 @@ import { NextResponse } from "next/server";
 import { sumCounts } from "@pew/core";
 import { resolveUser } from "@/lib/auth-helpers";
 import { unauthorizedResponse } from "@/lib/api-responses";
+import { jsonResponse } from "@/lib/json-response";
 import { parseBoundedInt } from "@/lib/query-params";
 import { getDbRead } from "@/lib/db";
 import { loadPricingMap } from "@/lib/load-pricing-map";
@@ -72,6 +73,12 @@ export async function GET(request: Request) {
   const toParam = url.searchParams.get("to");
   const granularityParam = url.searchParams.get("granularity");
   const tzOffsetParam = url.searchParams.get("tzOffset");
+  // The drill-down detail rows are ~1/3 of this response and only two pages
+  // read them (/devices, /hourly-usage). Default stays true for API
+  // compatibility; the dashboard's breakdown charts — which use `devices` and
+  // `timeline` only — pass includeDetails=0. Measured: 15.6 MB -> 10.4 MB for
+  // an all-time window before compression.
+  const includeDetails = url.searchParams.get("includeDetails") !== "0";
   const tzOffset = parseBoundedInt(tzOffsetParam, {
     min: -840,
     max: 840,
@@ -157,7 +164,7 @@ export async function GET(request: Request) {
     }));
 
     // 7. Map cost detail rows for client-side drill-down charts
-    const deviceDetails = costRows.map((row) => {
+    const deviceDetails = includeDetails ? costRows.map((row) => {
       const reasoning = row.reasoning_output_tokens ?? 0;
       return {
         device_id: row.device_id,
@@ -171,9 +178,9 @@ export async function GET(request: Request) {
         reasoning_output_tokens: reasoning,
         ...(row.accounting ? { accounting: row.accounting } : {}),
       };
-    });
+    }) : [];
 
-    return NextResponse.json({ devices, timeline, deviceDetails });
+    return jsonResponse(request, { devices, timeline, deviceDetails });
   } catch (err) {
     console.error("Failed to query by-device usage:", err);
     return NextResponse.json(

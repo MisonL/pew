@@ -55,6 +55,27 @@ describe("GET /api/usage/by-device", () => {
     expect(body.deviceDetails[0]).toMatchObject({ ...r.basis, accounting });
   });
 
+  it("omits the drill-down rows when includeDetails=0, keeping devices and timeline intact", async () => {
+    // The dashboard's breakdown charts read only `devices` and `timeline`;
+    // deviceDetails is ~1/3 of the response, so they opt out.
+    vi.mocked(resolveUser).mockResolvedValue({ userId: "u1", email: "test@example.com" });
+    const r = accountingFixture();
+    const row = { ...r.basis, source: r.source, model: r.model, device_id: r.device_id };
+    mockDbRead.getDeviceSummary.mockResolvedValue([{ ...row, alias: null, first_seen: r.hour_start, last_seen: r.hour_start,
+      sources: r.source, models: r.model }]);
+    mockDbRead.getDeviceCostDetails.mockResolvedValue([row]);
+    mockDbRead.getDeviceTimeline.mockResolvedValue([{ ...row, date: "2026-09-01" }]);
+
+    const response = await GET(makeGetRequest("/api/usage/by-device", { from: "2026-09-01", to: "2026-09-02", includeDetails: "0" }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.devices).toHaveLength(1);
+    expect(body.timeline).toHaveLength(1);
+    expect(body.deviceDetails).toEqual([]);
+    // Cost estimation still runs — it reads the cost rows server-side.
+    expect(body.devices[0].estimated_cost).toBeGreaterThanOrEqual(0);
+  });
+
   describe("authentication", () => {
     it("should reject unauthenticated requests", async () => {
       vi.mocked(resolveUser).mockResolvedValueOnce(null);

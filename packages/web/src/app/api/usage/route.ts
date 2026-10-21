@@ -15,6 +15,7 @@ import { NextResponse } from "next/server";
 import { sumCounts, VALID_SOURCES } from "@pew/core";
 import { resolveUser } from "@/lib/auth-helpers";
 import { unauthorizedResponse } from "@/lib/api-responses";
+import { jsonResponse } from "@/lib/json-response";
 import { parseBoundedInt } from "@/lib/query-params";
 import { getDbRead } from "@/lib/db";
 
@@ -146,7 +147,7 @@ export async function GET(request: Request) {
 
     const evidenceTokens = records.reduce((n, r) => sumCounts(n, r.evidence_tokens ?? 0), 0);
     const approximateTokens = records.reduce((n, r) => sumCounts(n, r.approximate_tokens ?? 0), 0);
-    return NextResponse.json({ records, summary: evidenceTokens > 0
+    return jsonResponse(request, { records, summary: evidenceTokens > 0
       ? { ...summary, evidence_tokens: evidenceTokens, approximate_tokens: approximateTokens }
       : summary });
   } catch (err) {

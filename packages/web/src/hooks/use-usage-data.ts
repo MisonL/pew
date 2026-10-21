@@ -41,6 +41,12 @@ interface UseUsageDataOptions {
   deviceId?: string;
   /** Granularity for the API query (default "day"). Use "half-hour" for time-of-day analysis. */
   granularity?: "day" | "half-hour";
+  /**
+   * Skip the request entirely (SWR key null). Callers that can derive the
+   * same window from an already-fetched superset use this to avoid a
+   * duplicate multi-MB download.
+   */
+  enabled?: boolean;
 }
 
 interface UseUsageDataResult {
@@ -56,7 +62,7 @@ interface UseUsageDataResult {
 export function useUsageData(
   options: UseUsageDataOptions = {}
 ): UseUsageDataResult {
-  const { days = 30, from: fromDate, to: toDate, source, deviceId, granularity = "day" } = options;
+  const { days = 30, from: fromDate, to: toDate, source, deviceId, granularity = "day", enabled = true } = options;
 
   // Frozen per mount — acceptable; page refresh handles DST changes
   const tzOffset = useTzOffset();
@@ -86,7 +92,7 @@ export function useUsageData(
     return `/api/usage?${params.toString()}`;
   }, [days, fromDate, toDate, source, deviceId, granularity, tzOffset]);
 
-  const { data, loading, error, refetch } = useFetchData<UsageData>(url);
+  const { data, loading, error, refetch } = useFetchData<UsageData>(url, { enabled });
 
   // Memoize derived data to avoid recalculation on every render
   const { daily, sources, models } = useDerivedUsageData(data?.records ?? null, tzOffset);

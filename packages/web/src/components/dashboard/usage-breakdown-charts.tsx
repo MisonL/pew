@@ -43,7 +43,9 @@ export function UsageBreakdownCharts({ records, from, to, start, end, tzOffset, 
   dimension: UsageDimension;
   onDimensionChange: (dimension: UsageDimension) => void;
 }) {
-  const devices = useDeviceData({ from, to });
+  // Only `devices` and `timeline` feed these charts; the per-(device,source,
+  // model) drill-down rows are ~1/3 of the response and unused here.
+  const devices = useDeviceData({ from, to, includeDetails: false });
   const breakdown = useMemo(() => toUsageBreakdown(records, devices.data?.timeline ?? [], dimension, { start, end }, tzOffset),
     [records, devices.data, dimension, start, end, tzOffset]);
   const labels = useMemo(() => buildDeviceLabelMap(devices.data?.devices ?? []), [devices.data]);

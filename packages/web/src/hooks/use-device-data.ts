@@ -17,6 +17,12 @@ interface UseDeviceDataOptions {
   to?: string;
   /** Timeline granularity: "half-hour" or "day" (default: "day") */
   granularity?: "half-hour" | "day";
+  /**
+   * Fetch the per-(device,source,model) drill-down rows. Only /devices and
+   * /hourly-usage read them; the dashboard breakdown charts use `devices` and
+   * `timeline` only, so they pass false to skip ~1/3 of the payload.
+   */
+  includeDetails?: boolean;
 }
 
 interface UseDeviceDataResult {
@@ -33,7 +39,7 @@ interface UseDeviceDataResult {
 export function useDeviceData(
   options: UseDeviceDataOptions = {}
 ): UseDeviceDataResult {
-  const { from: fromDate, to: toDate, granularity } = options;
+  const { from: fromDate, to: toDate, granularity, includeDetails = true } = options;
   const tzOffset = useTzOffset();
 
   const url = useMemo(() => {
@@ -41,11 +47,12 @@ export function useDeviceData(
     if (fromDate) params.set("from", fromDate);
     if (toDate) params.set("to", toDate);
     if (granularity) params.set("granularity", granularity);
+    if (!includeDetails) params.set("includeDetails", "0");
     params.set("tzOffset", String(tzOffset));
 
     const qs = params.toString();
     return `/api/usage/by-device${qs ? `?${qs}` : ""}`;
-  }, [fromDate, toDate, granularity, tzOffset]);
+  }, [fromDate, toDate, granularity, includeDetails, tzOffset]);
 
   const result = useFetchData<ByDeviceResponse>(url);
   const data = useMemo(() => result.data ? toDeviceDisplayData(result.data) : null, [result.data]);
