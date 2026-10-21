@@ -1,8 +1,10 @@
 # Railway to jp2 Migration
 
-Status, 2026-10-22 (Asia/Shanghai): **jp2 deployed privately; public cutover is
-not authorized or performed**. Public `pew.md` still uses the unchanged Railway
-instance. DNS, zone TLS/AOP settings, Workers, D1 schema, KV and R2 are unchanged.
+Status, 2026-10-22 (Asia/Shanghai): **public cutover completed after the owner's
+07:10 approval**. Public `pew.md` uses jp2, Full (strict) and shared AOP;
+`DEPLOY_PHASE=production`. The temporary internal listener was removed at 07:24.
+The original Railway instance remains running for rollback. Workers, D1 schema,
+KV, R2 and application secrets are unchanged.
 The owner explicitly waived the fresh Google login test; it is not a passed test.
 
 ## Deployed Identity and Rollback Images
@@ -47,8 +49,9 @@ It does not automatically roll back after failed remote verification.
 All five commits were pushed through normal hooks from an env-free task clone.
 Independent `max` source review approved the final code after all P0-P3 findings
 were resolved. Approval of source does not itself prove deployment or OAuth.
-The final receipt-only documentation commit is retained locally, not pushed, to
-avoid rebuilding the already accepted image. It does not change deployed source.
+The precutover documentation commits `ac8fe8db` and `3cb57812`, plus this cutover
+record, remain local, not pushed, to avoid rebuilding the already accepted image.
+They do not change deployed source.
 Any later push must complete normal hooks/CI/CD and revalidate its new digest.
 
 At 05:24 Beijing time the owner approved removing only Railway's verified main
@@ -64,16 +67,17 @@ trigger and issuing/installing a certificate covering only `pew.md`:
 - Production mode is enforced, with no E2E flags or `NODE_OPTIONS`. Preserve the
   actual Railway memory ceiling of 8,000,000,000 bytes, not an invented 1 GiB cap.
 - Deployment credentials are scoped to GitHub environment `pew / production`.
-  Repository controls remain `DEPLOY_PHASE=precutover`,
-  `DEPLOY_URL=https://pew.md`, `DEPLOY_ORIGIN_MARKER=jp2`; precutover CD never
-  treats the public Railway response as new-origin acceptance.
+  Repository controls now use `DEPLOY_PHASE=production`, retaining
+  `DEPLOY_URL=https://pew.md` and `DEPLOY_ORIGIN_MARKER=jp2`. The phase changed
+  only after public acceptance. Precutover CD did not treat a public Railway
+  response as new-origin acceptance.
 
 Unlike Firefly, Pew's typed `DbRead` uses the read Worker while `DbWrite` still
 uses D1 REST. Runtime `CF_D1_API_TOKEN` remains required. Google/Auth.js,
 `NEXTAUTH_URL`, Worker URLs/secrets and R2 values retain their original values.
 Accounting uploads still allow 24 MiB; no smaller shared-proxy limit was added.
 
-## Origin TLS and Private Ingress
+## Origin TLS and Ingress
 
 Certificate SAN is **exactly `pew.md`**, valid until 2041-10-17. The public
 certificate is `/opt/proxy/certs/pew-origin.pem`; the private key is
@@ -81,27 +85,36 @@ certificate is `/opt/proxy/certs/pew-origin.pem`; the private key is
 public keys and certificate SAN/validity were verified; the key never left jp2.
 No other certificate or local trust store was changed.
 
-`deploy/Caddyfile.staging` is loaded in the existing `proxy-caddy`:
+The live public route now requires and verifies client certificates against
+`/etc/caddy/certs/cf-origin-pull-ca.pem`, adds `X-Pew-Origin: jp2`, and proxies to
+`pew-app:7020`. There is no internal 17443 listener. Both changes used validated
+inode-preserving writes and `SIGUSR1`; the shared proxy was not restarted.
 
-- Public 443 for `pew.md` only returns 403, regardless of client address.
-- The actual application uses TLS port 17443 inside the Caddy container. Docker
-  does not publish that port, and the host has no 17443 listener. SSH forwards
-  to the inspected Caddy edge IP and internal port for canonical-SNI/Host tests.
+### Precutover Isolation (Historical)
+
+`deploy/Caddyfile.staging` was loaded in the existing `proxy-caddy` for private
+acceptance. It remains a staging template, not the active production config:
+
+- Public 443 for `pew.md` returned only 403, regardless of client address.
+- The application used TLS port 17443 inside the Caddy container. Docker did not
+  publish that port, and the host had no 17443 listener. SSH forwarded to the
+  inspected Caddy edge IP and internal port for canonical-SNI/Host tests.
 - Do not identify SSH traffic by Docker gateway IP: userland-proxy can collapse
   other clients to that source address. The unpublished-listener design avoids
   that assumption and does not trust forwarded headers as an access gate.
 - Candidate validation preceded an inode-preserving file write and `SIGUSR1`.
   Loaded autosave configuration confirms both listeners. Proxy start time stayed
   `2026-10-21T05:50:17.30329842Z`; no proxy restart occurred.
-- External IPv4 with normal Origin CA/hostname verification receives 403.
+- External IPv4 with normal Origin CA/hostname verification received 403.
   The host has no public global IPv6 address (only a Tailscale ULA); external
   Internet IPv6 was not exercised. Non-publication of 17443 is verified for
   both protocols; the public denial has no IP-family condition.
 - All seven other sites retain their baseline 200 or normal 307 responses:
   neo, manifest, admin.tongji, bbs.tongji, bbs2.tongji, pass and lizheng.blog.
 
-These checks prove private origin TLS and routing, **not Cloudflare-to-jp2 AOP**.
-Public Cloudflare ingress cannot be claimed before the separately approved switch.
+These precutover checks alone proved private TLS/routing, not Cloudflare-to-jp2
+AOP. The later public acceptance and client-certificate rejection are recorded
+in the public cutover receipt below.
 
 ## Verification Receipt
 
@@ -118,7 +131,7 @@ Public Cloudflare ingress cannot be claimed before the separately approved switc
 | Authorization failures | All four unauthenticated ingest routes return 401; `/leaderboard` redirects to canonical login |
 | Google configuration | Provider callback remains `https://pew.md/api/auth/callback/google` |
 | Fresh Google OAuth/session | **Waived by owner**, not executed or claimed as passed; temporary browser profile removed |
-| Real CLI upload | Approved exact script executed with exit 0: actual CLI uploader submitted one genuine incremental bucket in one batch, HTTP 200; D1 REST parameterized readback equals the submitted bucket |
+| Precutover CLI upload | Approved exact private-origin script executed with exit 0: actual CLI uploader submitted one genuine incremental bucket in one batch, HTTP 200; D1 REST parameterized readback equals the submitted bucket |
 
 The operational script received independent `max` APPROVE at SHA256
 `947e13eeba2a2654fb04d9c3134809dfd098218ab1b993faaa3c7a8938faca80`;
@@ -152,14 +165,15 @@ Capacity preflight found 2 CPUs, 15.56 GiB RAM, about 13 GiB available and 45 Gi
 root disk free. A post-start Pew sample used about 66 MiB; this is an instantaneous
 observation, not a concurrency/image-processing stress-test certification.
 
-## Exact Cutover Plan -- Not Executed
+## Approved Cutover Procedure
 
-**Stop until the owner explicitly approves DNS and TLS/AOP cutover.** No part of
-this section authorizes stopping, restarting or redeploying Railway.
+The owner approved this exact procedure at 07:10 Beijing time on 2026-10-22.
+It has been executed; results follow the checklist. This approval does not
+authorize stopping, restarting, redeploying or deleting Railway.
 
 ### Records and Settings
 
-| Field | Current | Approved-switch proposal |
+| Field | Before cutover | Current production state |
 | --- | --- | --- |
 | DNS record ID | `4302e3370f3de070a1a164c2a78972c4` | Same record |
 | DNS name / type | `pew.md` / CNAME | Unchanged |
@@ -178,7 +192,7 @@ The retained Railway origin also passed direct canonical-host TLS validation
 with normal public CA checking; changing to strict mode need not rely on a guess
 about its certificate.
 
-### Ordered Procedure After Approval
+### Executed Order
 
 1. Capture fresh DNS/TLS/AOP/Caddy before-images, both deployment identities,
    current/previous accepted digests and runtime equality. Confirm Railway is
@@ -207,23 +221,72 @@ about its certificate.
 
 ### Public Acceptance Checklist
 
-- [ ] Public no-store `/api/live` proves jp2 marker, 3.4.0 and connected D1;
+- [x] Public no-store `/api/live` proves jp2 marker, 3.4.0 and connected D1;
       container digest/revision still match the accepted receipt.
-- [ ] Cloudflare reaches jp2 with strict server validation and required shared
+- [x] Cloudflare reaches jp2 with strict server validation and required shared
       client authentication; unauthenticated direct public-origin requests fail.
-- [ ] Homepage, leaderboard data, images and normal authorization redirects work.
-- [ ] CLI authentication/upload behavior and preserved runtime values remain valid;
+- [x] Homepage, leaderboard data, images and normal authorization redirects work.
+- [x] CLI authentication/upload behavior and preserved runtime values remain valid;
       no queue reset, synthetic production data or duplicate accounting.
-- [ ] Existing monitoring observes the real public endpoint healthy; no fake
+- [x] Existing monitoring observes the real public endpoint healthy; no fake
       heartbeats or monitor-target changes.
-- [ ] Other Caddy sites and proxy start time remain unchanged.
+- [x] Other Caddy sites and proxy start time remain unchanged.
+- [x] Strict HTTPS to both real public A records and both global AAAA records
+      returns jp2, 3.4.0 and connected D1, including after internal-listener removal.
 - Fresh Google OAuth is owner-waived. Existing-session survival has not been
   independently demonstrated and must not be silently included in a green claim.
 
+## Public Cutover Receipt
+
+- Fresh DNS/TLS/AOP/Railway before-images matched the previous handoff. All 17
+  runtime application variables again compared equal to Railway without printing
+  their values. The full Caddy before-image matched the previously applied file.
+- Enabled `ssl=strict` and shared `tls_client_auth=on`, leaving custom AOP false;
+  the still-Railway public endpoint and direct canonical Railway TLS remained
+  healthy. Replaced only Pew's public denial block with required shared-client
+  authentication, validated and hot-reloaded it, then changed only the apex
+  CNAME content. Every other DNS record and all other apex fields except the
+  expected modification timestamp compared unchanged.
+- Verified loaded Caddy configuration, unchanged start time and direct-origin
+  rejection with `ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED` while validating the
+  server's CA/hostname. Public responses carry both `X-Pew-Origin: jp2` and
+  `CF-Ray`. Headers alone are not the AOP proof.
+- Public read checks passed for `/`, `/login`, `/privacy`, protected leaderboard
+  redirect, real leaderboard API data, static PNG and Next image optimization.
+  All four unauthenticated ingest routes still return 401. The seven other sites
+  retained their baseline 200/307 responses after both hot reloads.
+- Independent `max` review approved the public uploader at SHA256
+  `f0200005cdce4c421f7c76659f62d0755cafcda2d94fe070f254fd705b6fb0e2`.
+  Its hash matched before the single execution: exit 0, one genuine pending
+  incremental bucket, one batch, HTTP 200, exact D1 REST readback, preserved CLI
+  bearer callback and unchanged real state bytes. Real locks and temporary state
+  were cleaned. This may be the same server bucket as the earlier private probe;
+  it is not claimed to be a different bucket or a reversible production write.
+- The system resolver initially returned a synthetic IPv4-mapped address for
+  `curl -6`; that is not native IPv6 evidence. Strict HTTPS forced to the real
+  global AAAA addresses `2606:4700:3037::ac43:b051` and
+  `2606:4700:3037::6815:5867` passed, as did both real A addresses. These are
+  observed Cloudflare edge addresses, not permanent deployment configuration.
+  jp2 itself still has no global IPv6 address; public IPv6 terminates at Cloudflare.
+- Kuma's existing `/api/live` monitor reported up with valid public TLS. Hexly's
+  real post-cutover scheduled observation at 07:20:39 Beijing time reported
+  operational, HTTP 200, version 3.4.0. No monitor configuration or heartbeat was
+  changed or manufactured.
+- After these gates, set only `DEPLOY_PHASE=production`, validated and removed
+  the temporary internal Pew block, and hot-reloaded again. Loaded config and
+  container TCP/TCP6 tables confirm 17443 is no longer listening. Repeated all
+  four real-address public health checks and the seven-site comparison after
+  removal. App/source/digest stayed unchanged; shared Caddy's start time remains
+  `2026-10-21T05:50:17.30329842Z`.
+
+All required acceptance gates passed and no routing rollback was invoked. These
+bounded probes do not establish zero interruption or a load-test guarantee.
+
 ## Rollback Procedure
 
-At this handoff, neither DNS nor Cloudflare TLS/AOP has changed, so no routing or
-settings rollback is needed. The private jp2 service can remain staged.
+The current public deployment uses the post-DNS branch below if rollback becomes
+necessary. The pre-DNS branch remains for an approved future attempt starting
+from the retained Railway route; it describes no rollback needed at present.
 
 If an approved attempt fails before changing the apex CNAME, including a failed
 or partially successful TLS/AOP update in step 3:
@@ -273,7 +336,7 @@ of this task; do not restore a database snapshot to roll back application hostin
 An image-only rollback that keeps the public origin on jp2 retains
 `DEPLOY_PHASE=production`; it must not use the routing-rollback phase change.
 
-## Private Receipts and Stop Boundary
+## Receipts and Remaining Work
 
 `/opt/pew/railway-rollback.json` holds Railway before-images.
 `/opt/pew/precutover-20261022/` holds DNS, SSL/AOP, Caddy and certificate receipts.
@@ -281,15 +344,24 @@ An image-only rollback that keeps the public origin on jp2 retains
 the deployed digest. Runtime values remain only in private `.env.runtime` and
 container configuration, never in this runbook or build inputs.
 
-Final read-only checks at 06:30 Beijing time reconfirmed the same jp2 digest and
+Precutover read-only checks at 06:30 Beijing time reconfirmed the same jp2 digest and
 healthy container with zero restarts/OOM, connected database on jp2 and Railway,
 the unchanged Railway deployment/instance with no repository trigger, and exact
-equality of DNS/SSL/shared-AOP/custom-AOP before-images. Public jp2 443 still
-returns 403, port 17443 remains unpublished, shared Caddy's start time is unchanged,
-and all seven other sites retain their baseline responses. The sanitized
+equality of DNS/SSL/shared-AOP/custom-AOP before-images. At that point public jp2
+443 returned 403, port 17443 was unpublished, shared Caddy's start time was unchanged,
+and all seven other sites retained their baseline responses. The sanitized
 `final-acceptance.json` and `real-cli-acceptance.json` receipts are retained in the
 host's precutover directory; neither contains credentials or source records.
 
-At handoff, keep `DEPLOY_PHASE=precutover`, leave all DNS and TLS/AOP values
-unchanged, and keep Railway running. Do not interpret source-review approval,
-certificate issuance or a private HTTP 200 as permission to perform cutover.
+Cutover before-images and the sanitized `cutover-complete.json`, public CLI,
+native IPv6 and post-cleanup receipts are in `/opt/pew/cutover-20261022T0710/`.
+The completion receipt was copied with a matching SHA256 and mode 0600. The
+deployed image is still the `fcdf6e07` digest recorded above; this operation did
+not build an image, push commits, publish npm or change versions.
+
+Keep `DEPLOY_PHASE=production`, strict/shared AOP and Railway running. Before
+pushing the two local precutover documentation commits and this completion record,
+plan for normal hooks and a new CI/CD deployment. Recheck the exact new SHA,
+GHCR digest, public origin/version/database and retained rollback image afterward;
+the current image receipt cannot certify a future rebuild. Railway shutdown or
+deletion and fresh Google login testing remain outside this operation's scope.

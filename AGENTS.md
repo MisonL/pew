@@ -121,12 +121,15 @@ jp2. All hooks remain enabled; never use `railway up` or manual image rebuilding
 to bypass the proven-source deployment chain. Any Worker code or schema change
 still requires `wrangler deploy` plus a real verification request.
 
-The [jp2 migration](docs/52-jp2-migration.md) is privately staged, not publicly
-cut over. Railway still serves `pew.md`; only its main auto-deploy trigger was
-removed. Keep Railway running and DNS/TLS/AOP unchanged until separate owner
-approval. `DEPLOY_PHASE=precutover` remains explicit. Shared Caddy uses validated
-`SIGUSR1` hot reload, never a proxy restart. Runtime values remain unchanged from
-Railway. See [Retrospective.md](Retrospective.md) for the operational lessons.
+The [jp2 migration](docs/52-jp2-migration.md) completed public cutover on 2026-10-22.
+`pew.md` uses jp2 with Full (strict), shared AOP and `DEPLOY_PHASE=production`;
+the temporary internal listener is removed. Railway remains running for rollback,
+with its main auto-deploy trigger removed; do not stop or delete it without
+separate approval. Shared Caddy uses validated `SIGUSR1` hot reload, never a proxy
+restart. Runtime values remain unchanged from Railway. A routing rollback to
+Railway must restore `DEPLOY_PHASE=precutover` before later releases; an image-only
+rollback on jp2 retains production. See [Retrospective.md](Retrospective.md) for
+the operational lessons.
 
 ## Ponytail audit
 

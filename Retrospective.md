@@ -1,5 +1,17 @@
 # Retrospective
 
+### 2026-10-22: An IPv4-mapped socket is not native IPv6 evidence
+
+The initial cutover probe used `curl -6`, but the machine's resolver/network layer
+returned a synthetic IPv4-mapped peer. A successful response proved application
+reachability, not public native IPv6. Before marking acceptance complete or
+promoting the deployment phase, retrieved the real public AAAA records and forced
+strict canonical-host HTTPS to each global, non-mapped IPv6 address. Both passed,
+including after the temporary listener was removed. Record the connected address
+and reject mapped/fake addresses when claiming IPv6 coverage; distinguish IPv6
+at Cloudflare's edge from a source server without global IPv6. No DNS or proxy
+rollback was required because the real-address acceptance passed.
+
 ### 2026-10-22: A historical replay is not a harmless upload probe
 
 Independent review rejected an unexecuted production-acceptance script that
