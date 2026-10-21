@@ -25,11 +25,12 @@ All date/time valuesfollow a strict UTC-in, local-out pattern:
 
 ## Release
 
-- Authorized release entrypoint: `bun run release` (patch by default; accepts minor/major/version). Synchronize versions and lockfile, generate CHANGELOG and check stale versions. Never move tags.
+- Root and Web share the project release version. CLI, core and Workers are independently versioned; a Web-only release leaves their versions unchanged. Prepare scoped releases manually: update the selected manifests and lockfile, maintain CHANGELOG, run normal hooks, push the exact tag and create its GitHub Release. Never move tags.
+- `bun run release` (patch by default; accepts minor/major/version) remains a coordinated-release script: it synchronizes every package and Worker constant, commits, pushes and publishes without an interactive confirmation. Do not use it for independent Web or CLI releases.
 - Publish only `packages/cli` as `@nocoo/pew`. Build, test, verify package/dist versions and run `npm publish --dry-run` in the CLI directory before authorized publication and OTP verification.
 - Git/CI drives Railway deployment; never use `railway up`. Preserve pinned Bun, standalone public/static assets and the complete `@swc/helpers` packaging fix.
 - Deploy ingest/read Workers separately. Apply dependent migrations first, then deploy the corresponding Worker and verify its runtime version and behavior. A Web deployment does not update Workers.
-- Check CI for the exact pushed commit. The existing pre-push hook requires remote E2E resources; the local replacement remains planned. Never bypass the hook to publish.
+- Check CI and Railway deployment for the exact pushed commit. Pre-push runs isolated local D1/KV API/browser tests and security checks; use a clean clone without local environment files. Never bypass the hook to publish.
 
 ## Specialized audit
 

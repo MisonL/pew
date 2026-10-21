@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## v3.4.0
+
+### Changed
+- Upgrade Basalt to 3.2.0, lucide-react to 1.60.0, and the AWS S3 SDK to 3.1154.0.
+- Upgrade Wrangler to 4.151.3, Workers types to 5.20261019.1, and oxc-parser to 0.155.0.
+- Upgrade Vite to 8.3.4 in the Vitest toolchain, resolving the reported Vite security advisories without changing the Next.js application framework.
+- Release the Web dashboard independently. Root and Web are 3.4.0; CLI, core, and Workers remain 3.3.3. No npm CLI package is published with this release.
+
+### Fixed
+- Preserve dashboard layout state and client navigation when following internal links.
+- Keep the mobile navigation drawer padding-free between the small and desktop breakpoints after the Basalt upgrade.
+- Wait for tooltip exit completion before subsequent browser-test interactions, retaining content and privacy assertions.
+
 ## v3.3.3
 
 ### Changed

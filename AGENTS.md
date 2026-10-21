@@ -102,9 +102,11 @@ The owner merged former G1 into L1 on 2026-09-21; the framework keeps the 6DQ na
 
 ## Operations and release
 
+Root `package.json` is the project/Web release version; keep `packages/web/package.json` aligned with it. CLI, core and Worker versions are independent and do not change for a Web-only release. Prepare scoped releases manually with the matching manifest, lockfile, changelog, normal Git hooks, exact tag and GitHub Release. The existing `bun run release` script synchronizes every package and Worker constant and pushes without a confirmation prompt; use it only when an explicitly coordinated version bump is intended, not for a scoped release.
+
 npm publication of `@nocoo/pew` follows the full procedure; it is an authorized operation, not a per-edit step:
 
-1. `bun run release` (or `-- minor|major|x.y.z`): bumps versions across files, syncs the lockfile, generates the changelog, verifies no stale versions, commits. Push/tag/GitHub-release are interactive; pre-push runs the isolated L2/L3/G2 gates without cloud credentials.
+1. Prepare the explicitly authorized CLI version, sync the lockfile, update the changelog and commit. The CLI version is independent of the Web release; a Web-only release does not authorize an npm publication. Pre-push runs the isolated L2/L3/G2 gates without cloud credentials.
 2. Build both: `bun install && bun run build && bun run --cwd packages/cli build` — root `build` builds core + web only.
 3. `bun run test`.
 4. Verify the dist version (`packages/cli/package.json` is authoritative; the CLI reads its version at runtime via `readVersion()`).
