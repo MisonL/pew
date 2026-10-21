@@ -34,7 +34,7 @@
 - IP 键的 IPv6 轮换绕过（隐私扩展每连接换地址）+ email 键可任意轮换 + `login:ip:unknown` 共享桶污染（反代漏配 XFF 时打满桶 = 全员登录 DoS）→ §3.2
 - 全栈六容器共享同一 rqlite 写凭据是结构性弱点（单容器 RCE = 全库凭据）；read/scheduler 分离为只读用户 → §3.1.1
 - 渲染脚本需 umask 077 + `chmod 600`；凭据不得进应用 error message；对账自检声明不做安全边界 → §3.1.2/§3.1.4
-- README 备份端点须写明 **POST /db/backup**（GET /backup 在 10.5.3 是 404）；joiner 密码与主凭据同强度要求 → §3.1.5
+- README 备份端点须写明 **GET /db/backup（原写 POST，见下方实现更正）**（GET /backup 在 10.5.3 是 404）；joiner 密码与主凭据同强度要求 → §3.1.5
 - ~~Caddy XFF 假阳性~~：红队称「Caddy 默认透传+追加 XFF」经查官方文档不成立——v2.5 起默认忽略入站 XFF；规格补「需 Caddy ≥ 2.5」版本前提 → §3.3
 
 ---
@@ -115,7 +115,7 @@ Plan 1/2 交付后，规格（`docs/57-self-hosted-deployment-design.md`）§7 �
 
 #### 3.1.2 服务端（compose）与「默认关闭」的实现机制
 
-**渲染脚本** `deploy/selfhost/render-rqlite-auth.sh`：读 `RQLITE_USERNAME` / `RQLITE_PASSWORD` / `RQLITE_JOIN_PASSWORD`。三要素都非空 → 生成 `deploy/selfhost/.rqlite-auth.json`（§2.1 数组格式：`pew` 全权用户、`pew-ro` 只读用户 `["select"]`、`joiner` 用户 `[join]` 密码取 `RQLITE_JOIN_PASSWORD`、`*` 通配 `[status, ready]`）；任一为空 → **删除残留文件**（含误建的同名目录，`rm -rf`）并不产出。**实现更正（注记 2026-10-14，多维审查）**：上文 `pew-ro` 只读用户已移除（rqlite 10.5.3 无合法只读权限名，实际产出 `pew` 全权 / `joiner` / `*` 三条目）；渲染脚本以 `jq -n` 写临时文件后 `mv` 原子落盘，并在落盘前清除 `$OUT` 位置可能存在的同名目录（bind-mount 目录陷阱）、落盘后校验其为常规文件。**文件权限（红队 Medium 2.3）**：脚本开头 `umask 077`，产出后 `chmod 600`——文件是明文 JSON 含全部密码，同宿主其他用户不得读。密码用 `printf '%s'` 写入（不用 `echo`，避免 zsh 反斜杠转义差异），脚本对密码中的 `/` 等字符只要求 JSON 转义正确（用 `jq -n` 生成，不手拼字符串）。
+**渲染脚本** `deploy/selfhost/render-rqlite-auth.sh`：读 `RQLITE_USERNAME` / `RQLITE_PASSWORD` / `RQLITE_JOIN_PASSWORD`。三要素都非空 → 生成 `deploy/selfhost/.rqlite-auth.json`（§2.1 数组格式：`pew` 全权用户、`pew-ro` 只读用户 `["select"]`、`joiner` 用户 `[join]` 密码取 `RQLITE_JOIN_PASSWORD`、`*` 通配 `[status, ready]`）；任一为空 → **删除残留文件**（含误建的同名目录，`rm -rf`）并不产出。**实现更正（注记 2026-10-14，多维审查）**：上文 `pew-ro` 只读用户已移除（rqlite 10.5.3 无合法只读权限名，实际产出 `pew` 全权 / `joiner` / `*` 三条目）；渲染脚本以 `jq -n` 写临时文件后 `mv` 原子落盘，并在落盘前清除 `$OUT` 位置可能存在的同名目录（bind-mount 目录陷阱）、落盘后校验其为常规文件。**文件权限（红队 Medium 2.3）**：脚本开头 `umask 077`，产出后 `chmod 600`——文件是明文 JSON 含全部密码，同宿主其他用户不得读。密码经 `jq -n` 的 `$ENV` 传入（不进 argv）（不用 `echo`，避免 zsh 反斜杠转义差异），脚本对密码中的 `/` 等字符只要求 JSON 转义正确（用 `jq -n` 生成，不手拼字符串）。
 
 **rqlite 容器**：两个 bind-mount **无条件**存在（docker 对不存在的宿主路径做 bind-mount 会在宿主创建同名**目录**，实测；常驻挂载 + 文件由脚本按需产出/删除规避此坑）：
 - `deploy/selfhost/.rqlite-auth.json` → `/auth/auth.json:ro`
@@ -187,14 +187,14 @@ exec rqlited "$@"
 
 #### 3.1.5 连带文档订正（评审 M4/H4 + 运维演练报告）
 
-- README 备份/恢复命令补 rqlite CLI 凭据（`-u user:pass`，实测可用），**端点写明 `POST /db/backup`**（红队 1.4：`GET /backup` 在 10.5.3 是 404，旧 README 若用 GET 须一并修），**并在备份后校验文件非空**——实测 `.backup` 失败仍创建 0 字节假备份。**备份端点鉴权行为需真机验证**（`/db/backup` 在 `-auth` 开启下对 `*` 用户匿名是否 401；§3.1.7 验收项 6 覆盖）。
-  > **实现更正**：10.5.3 实测 **GET `/db/backup` = 200**（返回全库 SQLite 文件）、`POST /db/backup` = 405（Ruling 7fe93059）——与本条原写的 POST 端点相反，README 已按实测结果写为 GET。
+- README 备份/恢复命令补 rqlite CLI 凭据（`-u user:pass`，实测可用），**端点写明 `GET /db/backup（原写 POST，见下方实现更正）`**（红队 1.4：`GET /backup` 在 10.5.3 是 404，旧 README 若用 GET 须一并修），**并在备份后校验文件非空**——实测 `.backup` 失败仍创建 0 字节假备份。**备份端点鉴权行为需真机验证**（`/db/backup` 在 `-auth` 开启下对 `*` 用户匿名是否 401；§3.1.7 验收项 6 覆盖）。
+  > **实现更正**：10.5.3 实测 **GET `/db/backup` = 200**（返回全库 SQLite 文件）、`GET /db/backup（原写 POST，见下方实现更正）` = 405（Ruling 7fe93059）——与本条原写的 POST 端点相反，README 已按实测结果写为 GET。
 - **README 破窗命令端口错误（存量 bug，运维演练 Blocker 2）**：`README.md:28` 的 `RQLITE_URL=http://127.0.0.1:14001` 引用的端口从未在 compose 发布（rqlite 不发布宿主端口）——Plan 2 现状下这条灾难恢复命令就跑不通。订正为 `docker compose exec -e RQLITE_USERNAME=... -e RQLITE_PASSWORD=... rqlite ...` 形态或经 d1-http 容器内访问；与「补凭据透传」一并改写。
 - README「安全注意事项」首段（「rqlite 默认无鉴权…本计划未做」）在 A 落地后改写为条件描述——**同时删掉与已交付功能矛盾的措辞**。
 - README 跨机集群一节：auth.json 必须同源逐字节一致；轮换 = 全节点 recreate；join/复制流量 4002 明文，跨机需 WireGuard/私有网段。
 - **README Quickstart 改写**（运维演练 Blocker 1）：鉴权路径按 §3.1.2 固定序列「render → up → 自检」重写，并加粗警告「先 up 后 render 会以无鉴权静默启动」。
-- **新增「升级」小节**：拉新版本 → `docker compose pull` → `up -d`；迁移在 migrate 服务启动时自动跑（账本按文件名幂等）；auth 相关变更（rqlite 版本升级）前先备份 + 确认 auth.json 兼容。
-- **新增 auth.json 丢失恢复 runbook**（运维演练 Medium）：分两种情形——①文件仍在磁盘但误删内容 → 从 §3.1.2 渲染脚本重新渲染（凭据在 `.env`，节点 recreate 即可）；②节点 recreate 且 `.env` 丢失 → **数据仍在卷上但无人能连**，唯一出路是从同源备份的 auth.json / 凭据管理器恢复 `.env`；都没有则只能放弃实例数据重建。强调：rqlite 不热加载 auth，任何凭据变更 = 全节点 recreate。
+- **新增「升级」小节**：`git pull` → `docker compose build` → `up -d`（镜像是本地 build，无 registry 可 pull）；迁移在 migrate 服务启动时自动跑（账本按文件名幂等）；auth 相关变更（rqlite 版本升级）前先备份 + 确认 auth.json 兼容。
+- **新增 auth.json 丢失恢复 runbook**（运维演练 Medium）：分两种情形——①文件仍在磁盘但误删内容 → 从 §3.1.2 渲染脚本重新渲染（凭据在 `.env`，节点 recreate 即可）；②节点 recreate 且 `.env` 丢失 → **数据仍在卷上**；auth.json 只是 rqlite 启动时加载的 HTTP Basic 用户文件（不进 Raft、不写数据卷），所以**设一组全新的 `RQLITE_*` 三变量**重新渲染 + 全节点 recreate 即可恢复访问，无需旧值，**不要删卷**（实现更正 2026-10-21：原文「只能放弃实例数据重建」是错的）。强调：rqlite 不热加载 auth，任何凭据变更 = 全节点 recreate。
 - **回滚清理 checklist**（段 1 回滚时执行，运维演练 Medium）：`.env` 中 `RQLITE_USERNAME/PASSWORD/JOIN_PASSWORD` 删除；宿主磁盘上 `deploy/selfhost/.rqlite-auth.json`（明文密码）删除；确认 `.dockerignore` 回退不会把 auth.json 再泄进镜像层；rqlite 数据卷无需清理（数据本身无敏感情形由部署者判断）。
 
 #### 3.1.6 镜像泄漏面（评审 H3）
@@ -253,7 +253,7 @@ CREATE INDEX IF NOT EXISTS idx_rate_limit_hits_at ON rate_limit_hits(hit_at);
 
 - 单测（mock D1）：单语句 INSERT...SELECT 的 changes 分支（超限拒绝）、执行异常分支（fail-open + warn 日志）、SQL 侧窗口参数、双键（含 IPv6 /64 归并）、超限时 `current === maxRequests`、清理阈值。
 - **真机验证项（必须做，非可选）**：
-  1. `LOGIN_RATE_LIMIT_BACKEND=rqlite` 下连续登录失败 6 次 → 第 6 次被拒、`retryAfter` 合理、另一 IP 正常登录（双键互不误伤）
+  1. `LOGIN_RATE_LIMIT_BACKEND=rqlite` 下连续登录失败超过 `LOGIN_RATE_LIMIT`（10 次/60s）后下一次被拒、`retryAfter` 合理、另一 IP 正常登录（双键互不误伤）
   2. `meta.changes` 经 `/db/request` 的实际返回值（§3.2 上述疑问）——**2026-10-18 已实测**：真实 rqlite 10.5.3 下插入 1 行返回 `rows_affected: 1`，插入 0 行时该字段省略（adapter 的 `?? 0` 兜底 → 拒绝）。字段路径与映射一致，回退方案无需启用。
   3. 清理概率触发时旧行确实被删（可用极短窗口 + 手动插老行验证）
 
@@ -280,7 +280,7 @@ README 新增「反向代理」小节，推荐形态：**Caddy 以 compose 服�
    ```
 
    `Caddyfile` 骨架：`<内网域名> { reverse_proxy web:7020 }`（单行正文 + `tls internal` 注释示例）。
-2. **Nginx**：除 XFF 覆写外**必须**——`proxy_set_header Host $host;`（默认 `$proxy_host` 会让 Auth.js 的 trustHost origin 校验失败、登录全挂，评审 B2）、`client_max_body_size 25m;`（worker 允许 `/ingest/details` 至 24MB，默认 1m 直接 413，评审 H1）、`X-Forwarded-Proto https`。**XFF 给出确切指令防误配（红队 5.1）**：`proxy_set_header X-Forwarded-For $remote_addr;`（覆写）——不是 `$proxy_add_x_forwarded_for`（追加，保留攻击者伪造段）。
+2. **Nginx**：除 XFF 覆写外**必须**——`proxy_set_header Host $host;`（默认 `$proxy_host` 会让生成的 URL/redirect 指向容器内地址；**登录不会因此失败**——`trustHost: true` 加上 `NEXTAUTH_URL` 锚定，Auth.js 的 action URL 取自 `NEXTAUTH_URL`，不参与 Origin-vs-Host 校验，实现更正 2026-10-21，与 deploy/selfhost/README.md 的反代小节一致）、`client_max_body_size 25m;`（worker 允许 `/ingest/details` 至 24MB，默认 1m 直接 413，评审 H1）、`X-Forwarded-Proto https`。**XFF 给出确切指令防误配（红队 5.1）**：`proxy_set_header X-Forwarded-For $remote_addr;`（覆写）——不是 `$proxy_add_x_forwarded_for`（追加，保留攻击者伪造段）。
 3. **硬约束清单**（升级为硬约束的标 ★）：
    - ★ web 的 7020 端口只绑 `127.0.0.1` 或不发布（直连可整体伪造 XFF 段，清洗形同虚设——`getClientIp` 取最后一段，但直连时最后一段就是攻击者自己写的）。**注意（红队 5.2）**：此约束防的是网络外直连；同宿主其他本地用户进程仍可达 127.0.0.1:7020（多租户宿主属部署者自担），compose 网络内攻击者本就绕过 web 直达数据层（7020 收紧不改变该模型）。
    - ★ `NEXTAUTH_URL` 必须与反代对外访问 URL **逐字符一致**（协议+域名+端口；`TRUSTED_ORIGIN` 永远 pinned 到它，不一致则重定向/回调指向错误主机）；CLI 侧 `PEW_HOST` 同步

@@ -220,6 +220,7 @@ rqlite 用 statement-based replication（语句复制到各副本各自执行）
 需新增一个生产可用的覆盖（如 `D1_BASE_URL`），不放在 `localD1BaseUrl` 的测试守卫分支内。
 
 **多节点与故障切换**：适配层维护节点地址池，遇 503 `leader not found` 或连接失败时轮换重试。rqlite 的 follower 会服务端透明转发写给 leader，客户端无需感知 leader 身份。
+> **实现更正 2026-10-21**：地址池与轮换重试**尚未实现**——`packages/web/src/lib/d1.ts` 只读单个 `D1_BASE_URL`，d1-http 只读单个 `RQLITE_URL`，无 pool/retry/503 分支。原文以完成时态描述，实际交付为单地址；多节点部署下 follower 故障或 leader 切换时写路径会直接报错。
 
 **读一致性（实测修正）**：原以为 rqlite 默认 `weak` 可能读到陈旧数据，**实测不成立**——`weak`/`strong` 在 follower 上都**转发给 leader** 应答（`X-Rqlite-Served-By` 实证），只有 `level=none` 才是本地读。因此规定：
 
@@ -307,7 +308,7 @@ CREATE TABLE kv_cache (
 > `deploy/selfhost/README.md` 的「登录与初始化」。
 >
 > 与本节规格的差异（实现期定稿）：密码重置表名为 `password_resets`（规格写作
-> `password_reset_tokens`）；令牌有效期 60 分钟；邮件自助重置未做（无 SMTP），
+> `password_resets（实现定稿名）`）；令牌有效期 60 分钟；邮件自助重置未做（无 SMTP），
 > 改为管理员线下交付令牌 + 破窗脚本两条路径。
 
 **为什么不能复用现有邀请闸门（复核新发现，原草案判断错误）**
@@ -582,7 +583,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 3. **单→3 在线扩容**（§4.6）：**已实测支持，关闭**。向已运行的单节点 `-join` 是 rqlite 支持的路径：`-bootstrap-expect 1` 单节点写入数据后，起两个新节点 `-join s1:4002`（**不带** `-bootstrap-expect`）→ 集群 3 节点全部 voter/reachable，新节点上能查到单节点时期写入的行。注意 `-join` 与 compose 的 cluster profile 是**两条互斥路线**：切 profile 起的是空集群，数据要靠「备份 → `.restore`」带过去，见 `deploy/selfhost/README.md`「集群模式」一节。
 4. **手工 SQL 规约**（§4.1 专项五）：解冻后若有人手工 INSERT 省略时间列（多节点下有分叉风险），需写进开发规约——属实现阶段产物。
 5. **向导的实例选项范围**（§4.4）：已决——向导省略步骤 3，实例选项走管理后台（见 §4.4 实现更正）。
-6. **密码重置的令牌形态**（§4.4）：一次性令牌存库表结构（`password_reset_tokens`）、有效期、单次使用语义在实现阶段定稿；邮件自助重置是否本期做需决策。
+6. **密码重置的令牌形态**（§4.4）：一次性令牌存库表结构（`password_resets（实现定稿名）`）、有效期、单次使用语义在实现阶段定稿；邮件自助重置是否本期做需决策。
 7. **JWT 会话失效增强**（§4.4）：`pwd_v` 比对（改密后旧 token 立即失效）属增强项，本期是否随 `session.maxAge` 收紧一起做需决策。
 
 （已按决策关闭的待决项：**rqlite 节点数**——架构同时支持单节点与扩展规模，默认 profile 单节点、扩容走 cluster profile，两种模式共用同一套代码路径；**多节点 DDL 非确定性**——配置③三副本收敛，实测关闭；**首个管理员引导**——首个注册用户即管理员 + 专用 `/setup` 向导，不再需要插库脚本。）
@@ -658,6 +659,9 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | `CF_D1_API_TOKEN` | **真实密钥**（d1-http 的 Bearer 校验，见 §4.1 专项三）；**仅 `d1-http`/`web` 两个服务持有**——`read`/`ingest`/`scheduler` 直连 rqlite、不经 d1-http，不需要也不应拿到它；构建期用占位值。（实现更正 2026-10-17：原文写"`migrate`/`d1-http`/`web` 三个"——交付 compose 的 `migrate` 只注入 `RQLITE_*`，不持有该 token，与 §4.1 的实现更正一致。） |
 | `COMPOSE_PROFILES` | compose profile 默认值：`single`（单节点，默认）或 `cluster`（3 节点）。放 compose 目录 `.env`，使裸 `docker compose up -d` 起单节点 |
 | `DAILY_INTERVAL_MS` | scheduler 定价同步间隔（ms），默认 86400000（24h）；由 compose 透传给 `scheduler` 容器 |
+| `RQLITE_USERNAME` / `RQLITE_PASSWORD` / `RQLITE_JOIN_PASSWORD` | rqlite 鉴权（docs/55 §3.1）：**三个必须同时设置或同时留空**。半填时渲染脚本删除 auth.json，migrate 的 `assertCredentialConsistency` 会 fail-closed 拒绝启动。留空 = 无鉴权（默认） |
+| `LOGIN_RATE_LIMIT_BACKEND` | `memory`（默认）或 `rqlite`（多副本共享登录限速，docs/55 §3.2） |
+| `WEB_PORT` | web 发布到宿主的端口，默认 7020（反代 overlay 会移除该发布） |
 
 ## 12. 超出本设计范围
 

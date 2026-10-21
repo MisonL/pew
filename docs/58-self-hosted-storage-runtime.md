@@ -3,7 +3,7 @@
 
 **状态：已交付（任务全部实现并验证）。** Goal: 让 pew 脱离 Cloudflare 运行——用 rqlite 承载数据、用 Node 进程承载两个 Worker，Web 仍走原有逻辑，用一套 compose 在本机/内网跑起完整可用的 pew。
 
-> **勾选回填 2026-10-20**：本计划的 Implementation Plan checkbox 按实际交付物与测试回填，不是当时的 TDD 执行流水。核实方式：逐个 Task 的产物文件均存在（`lib/d1.ts` 的 `D1_BASE_URL`、`d1-adapter`、`kv-adapter`、`node-runtime`、`migrate`、031 迁移、030 触发器、`verify-migrations`、`d1-http`、Dockerfile 与 compose）；`vitest.config.ts` 收集 `deploy/**/*.test.ts`；对应 9 个测试文件 `145 passed`；`upstream/main` 已是本分支祖先（Task 11 无待合并提交）；README 有「合并上游」节。
+> **勾选回填 2026-10-20**：本计划的 Implementation Plan checkbox 按实际交付物与测试回填，不是当时的 TDD 执行流水。核实方式：逐个 Task 的产物文件均存在（`lib/d1.ts` 的 `D1_BASE_URL`、`d1-adapter`、`kv-adapter`、`node-runtime`、`migrate`、031 迁移、030 触发器、`verify-migrations`、`d1-http`、Dockerfile 与 compose）；`vitest.config.ts` 收集 `deploy/**/*.test.ts`；对应 9 个测试文件 `145 passed`（2026-10-20 回填数字；现为 15 个测试文件，以实际运行为准）；`upstream/main` 已是本分支祖先（Task 11 无待合并提交）；README 有「合并上游」节。
 
 
 **Architecture:** 不重写任何业务逻辑。新增 `deploy/selfhost/` 目录，内含三个适配层（D1 形状、KV 形状、node:http 宿主）与一个 d1-http 服务；`packages/worker` 与 `packages/worker-read` 的 `fetch` 处理器原样运行。Web 侧只改两处上游文件：`lib/d1.ts`（让写路径指向自建 d1-http）与 `vitest.config.ts`（让 vitest 收集 `deploy/**` 下的测试）。Web 容器用**仓库根 `Dockerfile`** 构建（Next standalone），适配层服务用新增的 `deploy/selfhost/Dockerfile` 构建——两套镜像，见 Task 10。

@@ -27,10 +27,10 @@ import type { JWT } from "next-auth/jwt";
 import type { Session, User } from "next-auth";
 
 /**
- * Login brute-force guard: 10 attempts / 60s. The default in-memory limiter
- * keys per-email only (single web replica; spec §4.4 known limitation); set
- * LOGIN_RATE_LIMIT_BACKEND=rqlite for dual-key (email + IP) limiting shared
- * across replicas.
+ * Login brute-force guard: 10 attempts / 60s per email. Both backends also
+ * apply an IP bucket — memory uses LOGIN_IP_RATE_LIMIT (30/60s, per process),
+ * rqlite shares both keys across replicas at 10/60s. Set
+ * LOGIN_RATE_LIMIT_BACKEND=rqlite for cross-replica limiting.
  */
 export const LOGIN_RATE_LIMIT: RateLimitConfig = {
   maxRequests: 10,

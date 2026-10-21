@@ -44,8 +44,8 @@ fallback）。
 **必须严格按以下三步的顺序执行：**
 
 1. **先渲染 auth.json**（读 `.env` 三个变量，产出 `deploy/selfhost/.rqlite-auth.json`，
-   umask 077 / 权限 600——明文密码，同宿主其他用户不可读）。需要宿主机有 `jq`（脚本
-   启动即检查，缺失时报错退出）。注意：脚本读的是**进程
+   umask 077 / 权限 600——明文密码，同宿主其他用户不可读）。启用鉴权时需要宿主机有 `jq`（脚本在
+   三个变量齐全后才检查，缺失时报错退出；全空部署不需要）。注意：脚本读的是**进程
    环境变量**，`.env` 不会被 compose 之外的命令自动导出，必须先 source：
 
    ```bash
@@ -140,9 +140,10 @@ migrate 启动时的对账自检会显式报错（「credentials configured but 
    改密后旧会话自动失效（JWT 携带密码版本号，不匹配即判无效）。
 
 **限速**：登录限速默认**进程内**（`inMemoryRateLimiter`），多 `web` 副本时退化为按副本
-计。默认路径按**邮箱单键**限流（`login:<email>`，无 IP 维度）；只有
-`LOGIN_RATE_LIMIT_BACKEND=rqlite` 时才启用邮箱 + IP 双键。**登录侧**的 `X-Forwarded-For`
-信任只在该后端下存在；auth-code 生成/校验与 CLI 登录的 IP 限速桶**无条件**使用
+计。两个后端都是**邮箱 + IP 双键**：memory 后端先查 `login:ip:<ipv6/64>`（30 次/60s），
+再查 `login:<email>`（10 次/60s）；`LOGIN_RATE_LIMIT_BACKEND=rqlite` 时两键都走共享表
+（各 10 次/60s）。**登录侧的 XFF 信任在两种后端下都存在**——memory 的 IP 桶同样用
+`getClientIp`；auth-code 生成/校验与 CLI 登录的 IP 限速桶**无条件**使用
 `getClientIp`（ingest 的 300/min 桶按 userId 计，仅在 userId 为空时回退到 IP——正常
 路径不可达）——下文反代小节的"反代必须覆写 XFF"硬约束对这些桶同样必要，不限于登录。
 
@@ -175,7 +176,7 @@ rqlite 后端写异常时**降级到进程内限速器**（不再 fail-open 放�
 
 **这一步不能跳过**：`--host` / `PEW_HOST` 只存在于本分支。npm 上的 `@nocoo/pew`
 （与本分支**同包名**）是上游版本，没有这两个参数；npm 最新是 3.3.0，本分支是未发布的
-3.3.3。
+3.3.3（版本号核对于 2026-10-21，会随上游发版漂移）。
 
 ⚠️ **危险的不是报错，而是静默回落**：CLI 用的 citty 是 `strict: false`，未识别的参数
 会被**忽略并继续执行**（实测 `pew sync --bogus` 返回 0）。所以用上游 CLI 跑
@@ -509,16 +510,16 @@ server {
   属部署者自担），compose 网络内攻击者本就绕过 web 直达数据层，7020 收紧不改变该模型。
 - ★ **`NEXTAUTH_URL` 必须与反代对外访问 URL 逐字符一致**（协议+域名+端口；`TRUSTED_ORIGIN`
   永远 pinned 到它，不一致则重定向/回调指向错误主机）。CLI 侧 `PEW_HOST` 同步——且
-  这个 host 串同时决定凭据文件名（`config.<host[:port]>.json`），所以换了写法（加尾斜杠
-  无所谓，改端口或 http/https 不影响——文件名只取 `host:port`）就等于换了另一个登录态。
+  这个 host 串同时决定凭据文件名（`config.<host[:port]>.json`）。**文件名含端口**：
+  改端口（`7020` → `7021`）会换到另一个文件，等于另一套登录态，需要重新 `pew login`；
+  尾斜杠、大小写、以及 http↔https（默认端口 80/443 等价）都不影响。
 - ★ **反代必须覆写 `X-Forwarded-For`**（`getClientIp` 取**最后一段**——自己代理追加的那个；客户端可注入前面的段，覆写型配置是硬要求而非建议），同时覆写 `X-Real-IP`、清空
   `CF-Connecting-IP`（`getClientIp` 依次信任三者）。Caddy ≥ 2.5 默认满足；Nginx 按上面
   `$remote_addr` 覆写。
-- **漏配 XFF 的后果**（`LOGIN_RATE_LIMIT_BACKEND=rqlite` 时）：`X-Forwarded-For` 缺失时所有
-  登录请求都落到 `login:ip:unknown` **共享限速桶**，攻击者打满该桶即造成**全员登录 DoS**
-  （fail-closed 方向）。默认的 `memory` 后端登录只按邮箱单键（`login:<email>`，无 IP 桶），
-  但 auth-code 生成/校验与 CLI 登录的 IP 桶**无条件**存在，同样依赖这一覆写——这是上面
-  XFF 覆写为硬约束的直接原因。
+- **漏配 XFF 的后果**：`X-Forwarded-For` 缺失时所有登录请求都落到 `login:ip:unknown`
+  **共享限速桶**（两个后端都有 IP 桶），攻击者打满该桶即造成**全员登录 DoS**
+  （fail-closed 方向）。auth-code 生成/校验与 CLI 登录的 IP 桶**无条件**存在，同样依赖
+  这一覆写——这是上面 XFF 覆写为硬约束的直接原因。
 
 ### Cookie 与 USE_SECURE_COOKIES
 
@@ -604,7 +605,7 @@ docker compose exec -T \
 > `tsc -b deploy/selfhost/tsconfig.json` lane 编译期校验（project references 指向 core 与两个
 > worker 的 composite 声明构建 `tsconfig.build.json`），适配层与上游 `D1Database`/`KVNamespace`
 > 的类型兼容性由此获得保证；入口是 `bun run lint:typecheck`（`bun run typecheck` 本身只覆盖
-> `packages/*` 与 e2e 清单，不含 deploy/）。运行时另由 deploy/selfhost 的 15 个 vitest 测试文件覆盖（用例数随交付增长，以 `bunx vitest run deploy/selfhost` 实际输出为准）。
+> `packages/*` 与 e2e 清单，不含 deploy/）。运行时另由 deploy/selfhost 的 15 个 vitest 测试文件覆盖（用例数随交付增长，以 `./node_modules/.bin/vitest run deploy/selfhost` 实际输出为准）。
 
 
 ## 备份
@@ -655,7 +656,7 @@ bash deploy/selfhost/backup.sh /var/backups/pew/pew.db
 
 注意事项：
 
-- **成功时日志只有一行 `backup written to <路径>`**。REPL 的转录（banner、`Connected to ...`、
+- **成功时日志通常只有一行 `backup written to <路径>`**（503 冷池重试成功时会多一行 `retrying once`，仍属成功）。REPL 的转录（banner、`Connected to ...`、
   成功行）只在**失败**时打到 stderr——成功路径上重复打印这段噪声会把 timer 日志里真正
   的失败淹没，所以脚本只在需要人看诊断时输出它。期望每次 cron 日志都极短；看到多行输出
   即意味着有失败要排查。
@@ -856,14 +857,23 @@ docker compose up -d --force-recreate rqlite   # cluster: rqlite-1 rqlite-2 rqli
 
 ### 情形 ②：节点/卷 recreate 且 `.env` 丢失
 
-**数据仍在卷上但无人能连**（rqlite 开着 `-auth` 而全部凭据丢失）：
+**数据仍在卷上，且不需要旧凭据就能恢复访问。** auth.json 只是 rqlite 的 HTTP Basic
+用户文件（启动时加载，不进 Raft、不写数据卷），所以凭据全丢时**设一组全新的**
+`RQLITE_USERNAME`/`RQLITE_PASSWORD`/`RQLITE_JOIN_PASSWORD`（不必与旧值相同）即可：
 
-1. 从同源备份恢复 `.env`：备份的 auth.json（明文含密码，可直接反推）或部署者的凭据
-   管理器。把 `RQLITE_USERNAME`/`RQLITE_PASSWORD`/`RQLITE_JOIN_PASSWORD` 找回来，
-   再走情形 ①。
-2. 都没有 → **只能放弃实例数据重建**：删卷重建（数据仍在但永久不可读），走 Quickstart
-   固定序列重新初始化，再从 SQLite 备份文件经 `.restore` 恢复数据（备份产物是标准
-   SQLite，不依赖 auth.json）。
+```bash
+cd deploy/selfhost
+# 1) 在 .env 里写入三个新值（或从同源备份反推旧值——auth.json 是明文 JSON）
+# 2) 重新渲染并用新凭据重建全部 rqlite 节点
+set -a; . ./.env; set +a; bash render-rqlite-auth.sh
+docker compose up -d --force-recreate rqlite   # cluster: rqlite-1 rqlite-2 rqlite-3 全部 recreate
+# 3) 自检（见「启用鉴权」第 3 步）："auth":"enabled" 且匿名查询 401
+```
+
+数据卷完全不受影响。**不要删卷**——只有当数据卷本身损坏、或要从备份回滚到某个时间点
+时才走 `.restore`（备份产物是标准 SQLite，不依赖 auth.json）。旧凭据如果是从备份里
+反推出来的，注意它可能对应备份时间点的状态；改密后记得把 `.env` 纳入每日凭据备份
+（见「备份」小节）。
 
 ## 回滚清理 checklist（回退 Plan 3 鉴权/限速提交时执行）
 
@@ -947,7 +957,7 @@ read/ingest 的探针（`/api/live`）都会对 rqlite 执行真实 `SELECT 1`�
 发 `live.ping`（对 rqlite 执行 `SELECT 1`），失败时返回 503 → web 也转 unhealthy。因此
 rqlite 宕机时**四个应用服务全部 unhealthy**；`web` 保持 healthy 的例外场景只有
 **d1-http（写后端）单独故障**——读路径（read 服务）不经它，rqlite 正常时 web 页面读仍可用，
-唯一症状是所有写操作失败。排查先看 `docker compose logs rqlite`。
+唯一症状是所有写操作失败。排查先看 `docker compose logs d1-http`。
 注：宿主磁盘满时读探针通常仍能应答（SQLite 读不需新空间），健康门可能全绿——磁盘满的标准
 症状是**所有写路径 500**，见下一段。
 
@@ -1029,7 +1039,7 @@ Credentials 放行分支与库内管理员判定仍在；若上游改到 `packag
 
 **最近一次回归（2026-10-20）**：`git fetch upstream main` 后 `git rev-list --count HEAD..upstream/main`
 = **0**（上游 main 仍停在 v3.3.3 的 `28144795`，已是本分支 `0d46434d` 的父之一），**没有新
-`git merge` 需要执行**；本分支领先上游 93 个提交。检查清单逐项复核（读码为证）：
+`git merge` 需要执行**；本分支领先上游的提交数用 `git rev-list --count upstream/main..HEAD` 现查（会随同步变化，不写死）。检查清单逐项复核（读码为证）：
 `d1.ts:100` 仍是 `D1_BASE_URL → localD1BaseUrl` 优先、`vitest.config.ts:19` 仍含
 `deploy/**/*.test.ts`、`auth.ts:308` Credentials 放行在、`admin.ts` `isAdmin/isAdminInDb/
 resolveAdmin/isAdminUser` 齐、`worker/src/index.ts:184-201` secureCompare 零填充定长比较在。
