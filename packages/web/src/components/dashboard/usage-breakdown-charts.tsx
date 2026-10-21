@@ -44,8 +44,11 @@ export function UsageBreakdownCharts({ records, from, to, start, end, tzOffset, 
   onDimensionChange: (dimension: UsageDimension) => void;
 }) {
   // Only `devices` and `timeline` feed these charts; the per-(device,source,
-  // model) drill-down rows are ~1/3 of the response and unused here.
-  const devices = useDeviceData({ from, to, includeDetails: false });
+  // model) drill-down rows are ~1/3 of the response and unused here, and the
+  // accounting annotations are another ~99% — for an all-time window the two
+  // together are 15.6 MB of a 15.6 MB response. Without them the server
+  // returns the same counted values already split, so the charts are identical.
+  const devices = useDeviceData({ from, to, includeDetails: false, includeAccounting: false });
   const breakdown = useMemo(() => toUsageBreakdown(records, devices.data?.timeline ?? [], dimension, { start, end }, tzOffset),
     [records, devices.data, dimension, start, end, tzOffset]);
   const labels = useMemo(() => buildDeviceLabelMap(devices.data?.devices ?? []), [devices.data]);

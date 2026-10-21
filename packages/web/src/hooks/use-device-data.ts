@@ -23,6 +23,12 @@ interface UseDeviceDataOptions {
    * `timeline` only, so they pass false to skip ~1/3 of the payload.
    */
   includeDetails?: boolean;
+  /**
+   * Fetch the accounting annotations. They are the bulk of an all-time
+   * response and only the pages that split billed vs legacy counters need
+   * them; the dashboard breakdown charts read labels and totals only.
+   */
+  includeAccounting?: boolean;
 }
 
 interface UseDeviceDataResult {
@@ -39,7 +45,7 @@ interface UseDeviceDataResult {
 export function useDeviceData(
   options: UseDeviceDataOptions = {}
 ): UseDeviceDataResult {
-  const { from: fromDate, to: toDate, granularity, includeDetails = true } = options;
+  const { from: fromDate, to: toDate, granularity, includeDetails = true, includeAccounting = true } = options;
   const tzOffset = useTzOffset();
 
   const url = useMemo(() => {
@@ -48,11 +54,12 @@ export function useDeviceData(
     if (toDate) params.set("to", toDate);
     if (granularity) params.set("granularity", granularity);
     if (!includeDetails) params.set("includeDetails", "0");
+    if (!includeAccounting) params.set("includeAccounting", "0");
     params.set("tzOffset", String(tzOffset));
 
     const qs = params.toString();
     return `/api/usage/by-device${qs ? `?${qs}` : ""}`;
-  }, [fromDate, toDate, granularity, includeDetails, tzOffset]);
+  }, [fromDate, toDate, granularity, includeDetails, includeAccounting, tzOffset]);
 
   const result = useFetchData<ByDeviceResponse>(url);
   const data = useMemo(() => result.data ? toDeviceDisplayData(result.data) : null, [result.data]);

@@ -11,7 +11,7 @@
  *   - timeline: token counts per device for charting (day or half-hour granularity)
  */
 
-import { estimateUsageCost } from "@/lib/accounting";
+import { estimateUsageCost, displayCounters } from "@/lib/accounting";
 import { NextResponse } from "next/server";
 import { sumCounts } from "@pew/core";
 import { resolveUser } from "@/lib/auth-helpers";
@@ -79,6 +79,14 @@ export async function GET(request: Request) {
   // `timeline` only — pass includeDetails=0. Measured: 15.6 MB -> 10.4 MB for
   // an all-time window before compression.
   const includeDetails = url.searchParams.get("includeDetails") !== "0";
+  // The accounting annotations are reconciliation evidence: accounting for the
+  // split between billed and legacy counters. On a large all-time window they
+  // ARE the payload — a single device's annotation is 5.4 MB and the timeline's
+  // another 5.4 MB, against 6 KB of actual counters. The dashboard's breakdown
+  // charts read only device labels and timeline totals and pass
+  // includeAccounting=0. Default stays true: /devices and /hourly-usage need
+  // the annotations to split counters client-side.
+  const includeAccounting = url.searchParams.get("includeAccounting") !== "0";
   const tzOffset = parseBoundedInt(tzOffsetParam, {
     min: -840,
     max: 840,
@@ -134,34 +142,45 @@ export async function GET(request: Request) {
         complete: (previous?.complete ?? true) && cost.complete });
     }
 
-    // 6. Assemble response
-    const devices = summaryRows.map((row) => ({
-      device_id: row.device_id,
-      alias: row.alias,
-      first_seen: row.first_seen,
-      last_seen: row.last_seen,
-      total_tokens: row.total_tokens,
-      input_tokens: row.input_tokens,
-      output_tokens: row.output_tokens,
-      cached_input_tokens: row.cached_input_tokens,
-      reasoning_output_tokens: row.reasoning_output_tokens,
-      estimated_cost: costByDevice.get(row.device_id)?.total ?? 0,
-      estimated_cost_complete: costByDevice.get(row.device_id)?.complete ?? row.total_tokens === 0,
-      ...(row.accounting ? { accounting: row.accounting } : {}),
-      sources: row.sources ? row.sources.split(",") : [],
-      models: row.models ? row.models.split(",") : [],
-    }));
+    // 6. Assemble response. When the annotations are omitted the counters are
+    // returned already projected through displayCounters(), so a client that
+    // skips them still charts the same split billed-vs-legacy partition it
+    // would have derived locally — displayCounters() is idempotent on its own
+    // output (a row without annotations projects to itself), so clients that
+    // run it unconditionally are unaffected.
+    const devices = summaryRows.map((row) => {
+      const counters = includeAccounting ? row : displayCounters(row);
+      return {
+        device_id: row.device_id,
+        alias: row.alias,
+        first_seen: row.first_seen,
+        last_seen: row.last_seen,
+        total_tokens: counters.total_tokens,
+        input_tokens: counters.input_tokens,
+        output_tokens: counters.output_tokens,
+        cached_input_tokens: counters.cached_input_tokens,
+        reasoning_output_tokens: counters.reasoning_output_tokens,
+        estimated_cost: costByDevice.get(row.device_id)?.total ?? 0,
+        estimated_cost_complete: costByDevice.get(row.device_id)?.complete ?? row.total_tokens === 0,
+        ...(row.accounting && includeAccounting ? { accounting: row.accounting } : {}),
+        sources: row.sources ? row.sources.split(",") : [],
+        models: row.models ? row.models.split(",") : [],
+      };
+    });
 
-    const timeline = timelineRows.map((row) => ({
-      date: row.date,
-      device_id: row.device_id,
-      total_tokens: row.total_tokens,
-      input_tokens: row.input_tokens,
-      output_tokens: row.output_tokens,
-      cached_input_tokens: row.cached_input_tokens,
-      reasoning_output_tokens: row.reasoning_output_tokens ?? 0,
-      ...(row.accounting ? { accounting: row.accounting } : {}),
-    }));
+    const timeline = timelineRows.map((row) => {
+      const counters = includeAccounting ? row : displayCounters(row);
+      return {
+        date: row.date,
+        device_id: row.device_id,
+        total_tokens: counters.total_tokens,
+        input_tokens: counters.input_tokens,
+        output_tokens: counters.output_tokens,
+        cached_input_tokens: counters.cached_input_tokens,
+        reasoning_output_tokens: counters.reasoning_output_tokens ?? 0,
+        ...(row.accounting && includeAccounting ? { accounting: row.accounting } : {}),
+      };
+    });
 
     // 7. Map cost detail rows for client-side drill-down charts
     const deviceDetails = includeDetails ? costRows.map((row) => {

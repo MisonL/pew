@@ -76,6 +76,34 @@ describe("GET /api/usage/by-device", () => {
     expect(body.devices[0].estimated_cost).toBeGreaterThanOrEqual(0);
   });
 
+  it("omits the annotation payload when includeAccounting=0 and pre-splits the counters", async () => {
+    // The dashboard breakdown charts pass includeAccounting=0: on an all-time
+    // window the annotations are 10.8 MB of an 11 MB response. The counters
+    // must still be the same display split the client would have derived.
+    vi.mocked(resolveUser).mockResolvedValue({ userId: "u1", email: "test@example.com" });
+    const r = accountingFixture();
+    const accounting = [{ status: "matched", basis: r.basis, groups: [r.groups[0]!] }];
+    const row = { ...r.basis, source: r.source, model: r.model, device_id: r.device_id, accounting };
+    mockDbRead.getDeviceSummary.mockResolvedValue([{ ...row, alias: null, first_seen: r.hour_start, last_seen: r.hour_start,
+      sources: r.source, models: r.model }]);
+    mockDbRead.getDeviceCostDetails.mockResolvedValue([row]);
+    mockDbRead.getDeviceTimeline.mockResolvedValue([{ ...row, date: "2026-09-01" }]);
+
+    const full = await (await GET(makeGetRequest("/api/usage/by-device", { from: "2026-09-01", to: "2026-09-02" }))).json();
+    const lean = await (await GET(makeGetRequest("/api/usage/by-device", { from: "2026-09-01", to: "2026-09-02", includeAccounting: "0" }))).json();
+
+    expect(full.devices[0].accounting).toBeDefined();
+    expect(full.timeline[0].accounting).toBeDefined();
+    expect(lean.devices[0].accounting).toBeUndefined();
+    expect(lean.timeline[0].accounting).toBeUndefined();
+    // Same counted values, only the evidence annotations are gone.
+    for (const field of ["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"]) {
+      expect(lean.devices[0][field]).toBe(full.devices[0][field]);
+      expect(lean.timeline[0][field]).toBe(full.timeline[0][field]);
+    }
+    expect(lean.devices[0].estimated_cost).toBe(full.devices[0].estimated_cost);
+  });
+
   describe("authentication", () => {
     it("should reject unauthenticated requests", async () => {
       vi.mocked(resolveUser).mockResolvedValueOnce(null);
