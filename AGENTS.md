@@ -115,12 +115,18 @@ npm publication of `@nocoo/pew` follows the full procedure; it is an authorized 
 7. Verify with `npx @nocoo/pew@latest --help`.
 8. Watch CI: after push, check `gh run list --limit 5` within a few minutes; local pre-push does not catch every failure mode (workspace links, deploy pipeline).
 
-Web deploys go through `git push` (Railway auto-deploy); never `railway up`, which bypasses the git-based gates. Any Worker code or schema change requires `wrangler deploy` plus a real verification request before the feature counts as complete. See [Retrospective.md](Retrospective.md) for the shipped-bug narratives behind these rules.
+Successful main push CI now triggers the pinned Docker CD workflow, publishing
+`ghcr.io/nocoo/pew` and deploying one immutable-digest container to `/opt/pew` on
+jp2. All hooks remain enabled; never use `railway up` or manual image rebuilding
+to bypass the proven-source deployment chain. Any Worker code or schema change
+still requires `wrangler deploy` plus a real verification request.
 
-The [jp2 migration](docs/52-jp2-migration.md) is in preparation, not cut over.
-Keep Railway running and all DNS unchanged; resolve Railway's main-trigger
-handling before pushing migration commits. Shared Caddy changes require validated
-hot reload, never a proxy restart. Runtime values must come unchanged from Railway.
+The [jp2 migration](docs/52-jp2-migration.md) is privately staged, not publicly
+cut over. Railway still serves `pew.md`; only its main auto-deploy trigger was
+removed. Keep Railway running and DNS/TLS/AOP unchanged until separate owner
+approval. `DEPLOY_PHASE=precutover` remains explicit. Shared Caddy uses validated
+`SIGUSR1` hot reload, never a proxy restart. Runtime values remain unchanged from
+Railway. See [Retrospective.md](Retrospective.md) for the operational lessons.
 
 ## Ponytail audit
 

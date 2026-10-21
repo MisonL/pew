@@ -1,5 +1,34 @@
 # Retrospective
 
+### 2026-10-22: A historical replay is not a harmless upload probe
+
+Independent review rejected an unexecuted production-acceptance script that
+selected an old D1 bucket and replayed it through the CLI. Age does not establish
+immutability: a concurrent correction could be overwritten, and an equal
+post-read would then falsely certify the stale value. The revised design uses
+the real CLI state lock and genuine pending usage, with original queue/cursor
+bytes retained. A temporary collector is not automatically safe either: upgrades,
+lost cursors and internal replay can rebuild incomplete history. Abort every
+warning/replay/rescan path and verify complete monotonic baselines plus a genuine
+increment before any POST. If the preconditions fail, report unverified instead
+of manufacturing a passing production write. No rejected script was executed.
+
+The same review required explicit `rejectUnauthorized: true` rather than relying
+on environment defaults, and moved secret-bearing initialization inside sanitized
+error handling. A failure after POST can follow a committed write; local cleanup
+must never be described as a production rollback.
+
+### 2026-10-22: Acceptance wrappers must preserve route and shell contracts
+
+An extra private-origin check expected 200 from the protected `/leaderboard`
+page. Its legitimate 307 to canonical login caused an AssertionError even though
+health, data and image paths worked. The corrected check asserts that redirect;
+the independent CLI E2E lane passed all 13 cases. A follow-up zsh loop also used
+the special `path` variable, changing that child shell's executable search path.
+Renaming it to `urlPath` restored the probe; no service configuration changed.
+Inspect actual route authorization and avoid zsh's special parameter names in
+operational wrappers instead of treating wrapper failures as application faults.
+
 ### 2026-10-22: A Docker gateway is not an SSH-only identity
 
 The initial Caddy staging candidate trusted the edge bridge gateway to identify
