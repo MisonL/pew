@@ -245,14 +245,16 @@ export default function ByDevicePage() {
   // Deep Dive: time-series data for selected device (reuse usage.get with deviceId filter).
   // Gated on a selection: until devices load there is nothing to filter by, and
   // the unfiltered fetch this used to fire first was a duplicate multi-MB
-  // download discarded the moment the device arrived. The annotations stay:
-  // the trend and model-mix charts rank by accountedTotal(), whose display
-  // split can differ from the raw counters when a row reports a total_mismatch.
+  // download discarded the moment the device arrived. "project" drops the
+  // annotations: both consumers here rank by accountedTotal(), and the
+  // server-side displayCounters() projection returns exactly those numbers,
+  // so every rendered value stays the same on a payload ~98% smaller.
   const { data: deviceUsage, error: deviceUsageError } = useUsageData({
     from,
     ...(to ? { to } : {}),
     ...(effectiveDevice ? { deviceId: effectiveDevice } : {}),
     granularity: "day",
+    includeAccounting: "project",
     enabled: Boolean(effectiveDevice),
   });
 

@@ -13,6 +13,7 @@
 
 import { NextResponse } from "next/server";
 import { sumCounts, VALID_SOURCES } from "@pew/core";
+import { displayCounters } from "@/lib/accounting";
 import { resolveUser } from "@/lib/auth-helpers";
 import { unauthorizedResponse } from "@/lib/api-responses";
 import { jsonResponse } from "@/lib/json-response";
@@ -49,10 +50,15 @@ export async function GET(request: Request) {
   const tzOffsetParam = url.searchParams.get("tzOffset");
   // Per-row accounting annotations are reconciliation evidence and on a large
   // window they dominate the payload (~98% of the body). Pages that only read
-  // counters pass includeAccounting=0; the records then come back already
-  // projected through displayCounters(), so their numbers are unchanged.
-  // Default stays true for API compatibility.
-  const includeAccounting = url.searchParams.get("includeAccounting") !== "0";
+  // counters pass includeAccounting=0; the records then come back with their
+  // raw counters untouched, so a consumer that ranked raw totals before ranks
+  // identically now. Callers whose charts rank by accountedTotal() pass
+  // includeAccounting=project instead: the counters come back already
+  // projected through displayCounters(), which is what those charts computed
+  // locally from the annotations anyway. Default stays true for API
+  // compatibility.
+  const accountingMode = url.searchParams.get("includeAccounting");
+  const includeAccounting = accountingMode !== "0" && accountingMode !== "project";
   // Some callers only read the summary (e.g. sessions' efficiency stat). The
   // records are the multi-MB part; the summary is computed here either way.
   const summaryOnly = url.searchParams.get("summaryOnly") === "1";
@@ -158,13 +164,13 @@ export async function GET(request: Request) {
     const approximateTokens = records.reduce((n, r) => sumCounts(n, r.approximate_tokens ?? 0), 0);
     // The summary stays the sum of the raw legacy counters regardless of the
     // annotation mode: it is the documented reconciliation basis, not a display
-    // aggregate. Records likewise keep their raw counters when the annotations
-    // are dropped — unlike by-device, this endpoint's callers that opt out
-    // (sessions' peak detection) rank by the raw total, so projecting through
-    // displayCounters() here would move their numbers.
+    // aggregate. Plain opt-out records keep their raw counters too — sessions'
+    // peak detection ranks by the raw total, so projecting there would move its
+    // numbers. "project" is for the display-side consumers whose accountedTotal()
+    // ranking the projection reproduces exactly.
     const projected = includeAccounting ? records : records.map((r) => {
       const { accounting: _accounting, ...row } = r;
-      return row;
+      return accountingMode === "project" ? { ...row, ...displayCounters(r) } : row;
     });
     return jsonResponse(request, { records: summaryOnly ? [] : projected, summary: evidenceTokens > 0
       ? { ...summary, evidence_tokens: evidenceTokens, approximate_tokens: approximateTokens }

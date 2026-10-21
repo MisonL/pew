@@ -3,6 +3,7 @@ import { GET } from "@/app/api/usage/route";
 import * as dbModule from "@/lib/db";
 import { createMockDbRead, loadMockedAuthHelpers, makeGetRequest } from "./test-utils";
 import { accountingFixture } from "../../../core/src/__test-helpers__/accounting";
+import { displayCounters } from "@/lib/accounting";
 
 // Mock DB
 vi.mock("@/lib/db", () => ({
@@ -219,6 +220,25 @@ describe("GET /api/usage", () => {
       for (const field of counters) expect(lean.records[0][field]).toBe(full.records[0][field]);
       // The summary stays the raw legacy reconciliation basis in both modes.
       expect(lean.summary).toEqual(full.summary);
+    });
+
+    it("returns displayCounters-projected counters when includeAccounting=project", async () => {
+      // The devices page's trend and model-mix charts rank by accountedTotal(),
+      // i.e. displayCounters().total_tokens. Projecting server-side reproduces
+      // those numbers exactly while dropping the annotations from the payload.
+      const r = accountingFixture();
+      const accounting = [{ status: "matched" as const, basis: r.basis, groups: [r.groups[0]!] }];
+      const row = { ...r.basis, source: r.source, model: r.model, hour_start: r.hour_start, accounting };
+      mockDbRead.getUsageRecords.mockResolvedValue([row]);
+
+      const full = await (await GET(makeGetRequest("/api/usage"))).json();
+      const projected = await (await GET(makeGetRequest("/api/usage", { includeAccounting: "project" }))).json();
+
+      expect(projected.records[0].accounting).toBeUndefined();
+      const counters = ["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"] as const;
+      const expected = displayCounters(full.records[0] as Parameters<typeof displayCounters>[0]);
+      for (const field of counters) expect(projected.records[0][field]).toBe(expected[field]);
+      expect(projected.summary).toEqual(full.summary);
     });
 
     it("returns the summary without records when summaryOnly=1", async () => {

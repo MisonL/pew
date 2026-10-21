@@ -48,11 +48,12 @@ interface UseUsageDataOptions {
    */
   enabled?: boolean;
   /**
-   * Drop the per-row accounting annotations. Annotations are ~98% of a large
-   * response; the server returns the counters already split, so pages that
-   * only chart totals can skip them without changing a single number.
+   * false drops the per-row accounting annotations and keeps the raw legacy
+   * counters; "project" also returns the counters already projected through
+   * displayCounters(), for charts that rank by accountedTotal(). Annotations
+   * are ~98% of a large response.
    */
-  includeAccounting?: boolean;
+  includeAccounting?: boolean | "project";
   /** Fetch the summary only, with an empty record list. */
   summaryOnly?: boolean;
 }
@@ -97,7 +98,8 @@ export function useUsageData(
     if (granularity === "day") {
       params.set("tzOffset", String(tzOffset));
     }
-    if (!includeAccounting) params.set("includeAccounting", "0");
+    if (includeAccounting === false) params.set("includeAccounting", "0");
+    else if (includeAccounting === "project") params.set("includeAccounting", "project");
     if (summaryOnly) params.set("summaryOnly", "1");
 
     return `/api/usage?${params.toString()}`;
