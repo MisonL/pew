@@ -222,10 +222,26 @@ about its certificate.
 
 ## Rollback Procedure
 
-Before public cutover, no routing rollback is needed: Railway remains the public
-origin. The private jp2 service can remain staged while problems are investigated.
+At this handoff, neither DNS nor Cloudflare TLS/AOP has changed, so no routing or
+settings rollback is needed. The private jp2 service can remain staged.
 
-For a failed approved cutover:
+If an approved attempt fails before changing the apex CNAME, including a failed
+or partially successful TLS/AOP update in step 3:
+
+1. Restore the TLS/AOP settings changed by that attempt to their captured values
+   (`ssl=full`, `tls_client_auth=off`; custom AOP remains false). Do not require
+   public Railway health before restoring settings that may have caused its
+   failure. DNS still points to Railway; no DNS change or propagation wait is
+   needed.
+2. Recheck the original public Railway endpoint and its deployment identity after
+   restoring the settings. If it remains unhealthy, stop and diagnose; do not
+   restart, redeploy or stop Railway.
+3. If Pew's public Caddy block was already changed, restore only its deny/private
+   configuration with validation and `SIGUSR1`. Keep `DEPLOY_PHASE=precutover`.
+   Do not restart shared Caddy or alter other sites.
+
+If the apex CNAME has been changed to jp2, including a later monitoring failure
+after `DEPLOY_PHASE` was set to `production`:
 
 1. Confirm the retained Railway deployment above is healthy using its canonical
    Host/SNI and normal TLS validation; do not rebuild or redeploy it while it is
@@ -240,7 +256,11 @@ For a failed approved cutover:
    jp2's require-and-verify listener. Restore only
    Pew's deny/private Caddy blocks with validation and `SIGUSR1`; never restore
    unrelated historical routes wholesale or restart the proxy.
-4. Check database-backed reads and intended public authentication before resuming
+4. Restore `DEPLOY_PHASE=precutover` before allowing any subsequent release,
+   retaining `DEPLOY_URL=https://pew.md` and `DEPLOY_ORIGIN_MARKER=jp2`. Otherwise
+   the next CD would replace the jp2 container and then incorrectly require a
+   public jp2 marker from Railway; that workflow has no automatic rollback.
+5. Check database-backed reads and intended public authentication before resuming
    normal writes. Keep the other origin private. Do not claim zero interruption
    from sparse probes or assume routing rollback reverses database writes.
 
@@ -250,6 +270,8 @@ its full source SHA with the same raw runtime env. Compose still requires
 only `web` with `--no-deps`; verify image identity, health and database afterward.
 The shared workflow has no automatic rollback. No schema/data migration is part
 of this task; do not restore a database snapshot to roll back application hosting.
+An image-only rollback that keeps the public origin on jp2 retains
+`DEPLOY_PHASE=production`; it must not use the routing-rollback phase change.
 
 ## Private Receipts and Stop Boundary
 
