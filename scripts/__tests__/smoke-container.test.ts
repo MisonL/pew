@@ -15,6 +15,13 @@ function fixture(overrides: Record<string, unknown> = {}) {
   return { expectedVersion: version, fetchImpl, sleep: vi.fn(), ...overrides };
 }
 
+function assertIsolatedArgs(args: string[]) {
+  for (const arg of args) {
+    expect(arg).not.toMatch(/^(?:--env-file|--publish|-p)(?:=|$)/);
+    expect(arg).not.toMatch(/^(?:(?:--env|-e)=)?NODE_OPTIONS(?:=|$)/);
+  }
+}
+
 describe("clean Linux image smoke", () => {
   it("tests native/startup without any network, published port or production secrets", () => {
     const run = vi.fn();
@@ -22,9 +29,24 @@ describe("clean Linux image smoke", () => {
     const args = run.mock.calls[0][1] as string[];
     expect(args).toEqual(expect.arrayContaining(["run", "--rm", "--network", "none", "--pull", "never", "--platform", "linux/amd64", "--entrypoint", "node", "--inside"]));
     expect(args).toContain("AUTH_SECRET=pew-container-smoke-not-a-production-secret");
-    expect(args).not.toEqual(expect.arrayContaining(["--env-file", "--publish", "-p", "NODE_OPTIONS"]));
+    assertIsolatedArgs(args);
     expect(run.mock.calls[0][2]).toEqual(expect.objectContaining({ timeout: 120_000, stdio: "pipe" }));
     expect(run.mock.calls[1][1]).toEqual(["rm", "--force", args[args.indexOf("--name") + 1]]);
+  });
+
+  it.each([
+    ["--env-file", ".env.runtime"], ["--env-file=.env.runtime"],
+    ["--publish", "17020:7020"], ["--publish=17020:7020"],
+    ["-p", "17020:7020"], ["-p=17020:7020"],
+    ["NODE_OPTIONS"], ["NODE_OPTIONS=--max-old-space-size=8192"],
+    ["--env=NODE_OPTIONS=--max-old-space-size=8192"],
+    ["-e=NODE_OPTIONS=--max-old-space-size=8192"],
+  ])("rejects an isolated forbidden argument mutation: %s", (...mutation) => {
+    const run = vi.fn();
+    smokeContainer("pew-precutover:local", run);
+    const args = run.mock.calls[0][1] as string[];
+    expect(() => assertIsolatedArgs(args)).not.toThrow();
+    expect(() => assertIsolatedArgs([...args, ...mutation])).toThrow();
   });
 
   it("cleans up its own container on failure and reports no Docker output", () => {
