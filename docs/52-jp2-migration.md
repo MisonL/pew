@@ -3,8 +3,9 @@
 Status, 2026-10-22 (Asia/Shanghai): **public cutover completed after the owner's
 07:10 approval**. Public `pew.md` uses jp2, Full (strict) and shared AOP;
 `DEPLOY_PHASE=production`. The temporary internal listener was removed at 07:24.
-The original Railway instance remains running for rollback. Workers, D1 schema,
-KV, R2 and application secrets are unchanged.
+Railway's runtime was stopped at 07:44 after separate 07:40 approval; its project,
+service, variables, deployment record and rollback image reference remain.
+Workers, D1 schema, KV, R2 and application secrets are unchanged.
 The owner explicitly waived the fresh Google login test; it is not a passed test.
 
 ## Deployed Identity and Rollback Images
@@ -21,12 +22,13 @@ The owner explicitly waived the fresh Google login test; it is not a passed test
 | Runtime state | Running/healthy, zero restarts/OOM; started `2026-10-21T21:59:31.29189512Z` |
 | Railway deployment | `1f593cdc-398c-473f-a78c-9d934b019bf2`, source `6c68c6637e1e72506dcc057c03e3a8643427956a` |
 | Railway rollback image | `sha256:33ad82409ec299399ea54b3b13ce062d86b596303171aef800be9daf9b9c416d` |
-| Railway retained instance | `c43d9a3e-c28d-404b-8c66-00a73dbab99a`, RUNNING; `deploymentStopped=false`, restore capability flags true |
+| Railway stopped runtime | Instance `c43d9a3e-c28d-404b-8c66-00a73dbab99a` and the deployment above are REMOVED; zero active deployments, `deploymentStopped=true`, `canRedeploy=true`, `canRollback=true` |
 
 This is the first jp2 Pew deployment, so there is no earlier jp2 digest. The
 accepted jp2 image above is the baseline for subsequent image rollback. Never
-substitute `latest` or rebuild a rollback image. Railway remains running, not
-merely theoretically redeployable.
+substitute `latest` or rebuild a rollback image. Railway must now be restored and
+verified before routing traffic back. Capability flags are not a guarantee of
+indefinite registry retention or proof of a future successful restore.
 
 ## Implementation and Authorization
 
@@ -58,8 +60,9 @@ At 05:24 Beijing time the owner approved removing only Railway's verified main
 trigger and issuing/installing a certificate covering only `pew.md`:
 
 - Removed trigger `1266b86e-07d4-4267-8f79-6179a58fe20a`; re-query confirmed the
-  original deployment/instance and repository source unchanged. No Railway
-  restart, redeploy, domain detach, environment mutation or stop occurred.
+  original deployment/instance and repository source unchanged. That preparation
+  did not restart, redeploy, detach domains, mutate variables or stop Railway;
+  the later separately approved runtime stop is recorded below.
 - Transferred all 17 application variables from Railway unchanged. The private
   raw env file and running container compare equal to Railway. No values were
   printed; all 17 variable names are absent from the baked image environment.
@@ -168,8 +171,9 @@ observation, not a concurrency/image-processing stress-test certification.
 ## Approved Cutover Procedure
 
 The owner approved this exact procedure at 07:10 Beijing time on 2026-10-22.
-It has been executed; results follow the checklist. This approval does not
-authorize stopping, restarting, redeploying or deleting Railway.
+It has been executed; results follow the checklist. The 07:10 approval did not
+include Railway lifecycle changes. A separate 07:40 approval covered only the
+runtime stop recorded below; project/service deletion is still not authorized.
 
 ### Records and Settings
 
@@ -282,11 +286,43 @@ about its certificate.
 All required acceptance gates passed and no routing rollback was invoked. These
 bounded probes do not establish zero interruption or a load-test guarantee.
 
+## Railway Runtime Stopped
+
+At 07:40 Beijing time the owner approved stopping Pew's Railway runtime without
+deleting its project, service, variables, image reference or deployment record.
+Before stopping, fresh public health proved jp2, HTTP 200, version 3.4.0 and
+connected D1. Both latest and active Railway deployment IDs matched the retained
+deployment and exact rollback digest above; its main trigger was still absent.
+
+Used Firefly's verified `railway down` approach, explicitly scoping project
+`5355f331-824a-4679-9c13-930d42de8306`, service
+`271ef038-2d88-431e-915e-c721fbdf7922` and environment
+`72cb9637-87fa-41e7-bf5b-c6b1ae00bf3d`. This removes the runtime, not those resources.
+At 07:44, re-query confirmed zero active deployments, the old instance/deployment
+status REMOVED, `deploymentStopped=true`, and both restore capability flags true.
+The original deployment remains queryable with its exact image digest. All 17
+application variables compared equal in memory before/after; values were not
+printed or stored in the receipt. Project/service/source and the absent trigger
+were also preserved. No replica configuration or image rebuild was introduced.
+
+After stopping, public health remained jp2/200/3.4.0 with connected D1. A strict-TLS
+CLI bearer check returned its expected 307 callback, preserved the existing token
+and did not follow the redirect. Unauthenticated ingest remained 401. Real config
+bytes stayed unchanged and the temporary CLI lock was released. This post-stop
+check did not upload usage; the earlier real public upload remains the write-path
+receipt and is not relabeled as a new post-stop write. No jp2, DNS, TLS/AOP, Worker
+or shared-Caddy configuration changed during the stop.
+
+Scoped before/after records and sanitized `stop-receipt.json` and `cli-health.json`
+are retained at `/opt/pew/railway-stop-20261022T0740/`, with matching transfer
+checksums. No restore was executed merely to test rollback.
+
 ## Rollback Procedure
 
 The current public deployment uses the post-DNS branch below if rollback becomes
 necessary. The pre-DNS branch remains for an approved future attempt starting
-from the retained Railway route; it describes no rollback needed at present.
+from an already restored and verified Railway origin; no rollback is currently
+needed.
 
 If an approved attempt fails before changing the apex CNAME, including a failed
 or partially successful TLS/AOP update in step 3:
@@ -306,9 +342,10 @@ or partially successful TLS/AOP update in step 3:
 If the apex CNAME has been changed to jp2, including a later monitoring failure
 after `DEPLOY_PHASE` was set to `production`:
 
-1. Confirm the retained Railway deployment above is healthy using its canonical
-   Host/SNI and normal TLS validation; do not rebuild or redeploy it while it is
-   already running.
+1. Restore Railway first if it is still stopped, using the recovery procedure
+   below. Require a running instance, the retained digest, connected D1 and normal
+   canonical Host/SNI TLS validation before changing DNS. If Railway is already
+   running and healthy, do not redeploy it unnecessarily.
 2. Restore only the apex CNAME to `ry32rpn0.up.railway.app`, preserving proxy/TTL.
    Initially retain strict/shared-AOP settings while traffic returns: the old
    Railway certificate was verified, and prematurely disabling AOP could break
@@ -326,6 +363,38 @@ after `DEPLOY_PHASE` was set to `production`:
 5. Check database-backed reads and intended public authentication before resuming
    normal writes. Keep the other origin private. Do not claim zero interruption
    from sparse probes or assume routing rollback reverses database writes.
+
+### Restore the Stopped Railway Deployment
+
+Only during an authorized recovery, query retained deployment
+`1f593cdc-398c-473f-a78c-9d934b019bf2` and confirm `canRedeploy` and its recorded
+image digest. Use the inspected Railway GraphQL operation, as in Firefly:
+
+```graphql
+mutation {
+  deploymentRedeploy(
+    id: "1f593cdc-398c-473f-a78c-9d934b019bf2"
+    usePreviousImageTag: true
+  ) {
+    id
+  }
+}
+```
+
+Record the returned deployment ID and poll that deployment, not just the mutation
+acknowledgment. Require a RUNNING instance, `deploymentStopped=false` and image
+digest `sha256:33ad82409ec299399ea54b3b13ce062d86b596303171aef800be9daf9b9c416d`.
+Verify retained application variables and the canonical domain attachment, then
+request `https://pew.md/api/live` through
+`--connect-to pew.md:443:ry32rpn0.up.railway.app:443` with normal CA checking.
+Require 200, version 3.4.0 and connected D1 before proceeding to routing rollback.
+Keep DNS on jp2 while restoring; do not enable Railway's main trigger, use
+`railway up`, rebuild current source, select `latest` or weaken TLS to force a
+passing result. If the old image has expired or restoration fails, stop and report
+the blocker rather than silently substituting another image. The flags observed
+at stop time do not certify future restoration or the platform's retention period.
+
+### Image-only Rollback on jp2
 
 For image rollback, use an accepted `ghcr.io/nocoo/pew@sha256:...` reference and
 its full source SHA with the same raw runtime env. Compose still requires
@@ -359,9 +428,9 @@ The completion receipt was copied with a matching SHA256 and mode 0600. The
 deployed image is still the `fcdf6e07` digest recorded above; this operation did
 not build an image, push commits, publish npm or change versions.
 
-Keep `DEPLOY_PHASE=production`, strict/shared AOP and Railway running. Before
-pushing the two local precutover documentation commits and this completion record,
+Keep `DEPLOY_PHASE=production`, strict/shared AOP and Railway stopped with its
+recovery resources retained. Before pushing the local migration documentation,
 plan for normal hooks and a new CI/CD deployment. Recheck the exact new SHA,
 GHCR digest, public origin/version/database and retained rollback image afterward;
-the current image receipt cannot certify a future rebuild. Railway shutdown or
+the current image receipt cannot certify a future rebuild. Railway project/service
 deletion and fresh Google login testing remain outside this operation's scope.

@@ -123,9 +123,12 @@ still requires `wrangler deploy` plus a real verification request.
 
 The [jp2 migration](docs/52-jp2-migration.md) completed public cutover on 2026-10-22.
 `pew.md` uses jp2 with Full (strict), shared AOP and `DEPLOY_PHASE=production`;
-the temporary internal listener is removed. Railway remains running for rollback,
-with its main auto-deploy trigger removed; do not stop or delete it without
-separate approval. Shared Caddy uses validated `SIGUSR1` hot reload, never a proxy
+the temporary internal listener is removed. Railway's runtime is stopped under
+the owner's 2026-10-22 approval; its project, service, variables and old deployment
+record remain for recovery, with the main trigger removed. Do not delete those
+resources. An authorized Railway recovery must reuse the recorded old image and
+verify its running instance, digest and health before routing back. Shared Caddy
+uses validated `SIGUSR1` hot reload, never a proxy
 restart. Runtime values remain unchanged from Railway. A routing rollback to
 Railway must restore `DEPLOY_PHASE=precutover` before later releases; an image-only
 rollback on jp2 retains production. See [Retrospective.md](Retrospective.md) for
