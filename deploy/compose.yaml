@@ -1,0 +1,37 @@
+services:
+  web:
+    image: ghcr.io/nocoo/pew:${IMAGE_SHA:?IMAGE_SHA is required}
+    container_name: pew-app
+    restart: unless-stopped
+    init: true
+    env_file:
+      - path: .env.runtime
+        required: true
+        format: raw
+    environment:
+      PORT: "7020"
+      HOSTNAME: 0.0.0.0
+    ports:
+      - 127.0.0.1:17020:7020
+    mem_limit: 8000000000
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:7020/api/live', {redirect:'error',headers:{Host:'pew.md','X-Forwarded-Proto':'https'}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    networks:
+      - edge
+
+networks:
+  edge:
+    external: true

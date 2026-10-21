@@ -9,7 +9,7 @@ on:
 
 jobs:
   quality:
-    uses: nocoo/base-ci/.github/workflows/quality.yml@0394178ebcff0418c442d84a84119220f31f8987 # v2026.9
+    uses: nocoo/base-ci/.github/workflows/quality.yml@0394178ebcff0418c442d84a84119220f31f8987  # v2026.9
     with:
       runtime-version: "1.4.0"
       install-policy: "blocked"
@@ -24,7 +24,7 @@ jobs:
   api-e2e:
     name: "L2 API E2E"
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    uses: nocoo/base-ci/.github/workflows/test-job.yml@0394178ebcff0418c442d84a84119220f31f8987 # v2026.9
+    uses: nocoo/base-ci/.github/workflows/test-job.yml@0394178ebcff0418c442d84a84119220f31f8987  # v2026.9
     with:
       runtime-version: "1.4.0"
       install-policy: "blocked"
@@ -35,7 +35,7 @@ jobs:
   browser-e2e:
     name: "L3 Browser E2E"
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    uses: nocoo/base-ci/.github/workflows/test-job.yml@0394178ebcff0418c442d84a84119220f31f8987 # v2026.9
+    uses: nocoo/base-ci/.github/workflows/test-job.yml@0394178ebcff0418c442d84a84119220f31f8987  # v2026.9
     with:
       runtime-version: "1.4.0"
       install-policy: "blocked"
@@ -43,3 +43,22 @@ jobs:
       timeout-minutes: 20
       pre-command: "bun run build"
       command: "bun run test:e2e:ui"
+
+  container-smoke:
+    name: "Linux Image Native and Startup Smoke"
+    uses: nocoo/base-ci/.github/workflows/test-job.yml@0394178ebcff0418c442d84a84119220f31f8987  # v2026.9
+    with:
+      runtime: "none"
+      node-version: "22"
+      timeout-minutes: 25
+      command: |
+        docker build --platform linux/amd64 --tag pew-ci:${{ github.sha }} .
+        node scripts/smoke-container.mjs pew-ci:${{ github.sha }}
+
+  release-smoke:
+    name: "Release Workflow Smoke"
+    uses: nocoo/base-ci/.github/workflows/workflow-lint.yml@0394178ebcff0418c442d84a84119220f31f8987  # v2026.9
+    with:
+      files: ".github/workflows/ci.yml .github/workflows/release.yml"
+      required-reusable-workflow: "nocoo/base-ci/.github/workflows/deploy-docker.yml"
+      yamllint: true
