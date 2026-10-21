@@ -1,6 +1,6 @@
 # Railway to jp2 Migration
 
-Status: implementation started on 2026-10-22 (Asia/Shanghai); **not deployed**.
+Status: staging preparation on 2026-10-22 (Asia/Shanghai); **not deployed yet**.
 The owner authorized staging on jp2, not DNS changes or a Railway shutdown.
 Baseline: `6c68c6637e1e72506dcc057c03e3a8643427956a`, Web `3.4.0`.
 CLI/core/Workers remain `3.3.3`; this task does not publish npm or synchronize versions.
@@ -13,9 +13,9 @@ retrospective, Dockerfile, Compose and CD caller. Reuse its inspected shared
 `0394178ebcff0418c442d84a84119220f31f8987`, not a new deployment system.
 
 - Keep Workers, D1, KV, R2, schema, credentials and canonical URLs unchanged.
-- Keep Railway running. Do not push main until its automatic deployment trigger
-  is inspected and the owner approves how to avoid replacing the live deployment.
-  Firefly disconnected its trigger; that is not permission to change Pew's.
+- Keep Railway running. The owner approved removing only the main deployment
+  trigger at 05:24 Beijing time; it has been removed and the original instance
+  remains running. Main pushes must not restore the Railway trigger.
 - No DNS, Cloudflare TLS/AOP or Railway domain changes during preparation.
 - No CLI reset, queue clearing, source-log changes or synthetic production data.
 - Validate shared Caddy, then hot reload with `SIGUSR1`. Never restart the proxy
@@ -42,22 +42,22 @@ Observed at approximately `2026-10-21T20:21Z`:
 | Origin TLS | Existing SANs cover hexly.ai, nocoo.cloud, tongji.net and lizheng.blog families, **not pew.md** |
 | Railway API | CLI login expired; current deployment, trigger and variables could not be reverified |
 
-The valid public edge certificate does not prove origin TLS. Obtain owner
-confirmation before provisioning a dedicated `pew.md` Origin CA certificate.
-Generate and retain its private key on jp2, mode 0600; do not copy it locally.
+The valid public edge certificate does not prove origin TLS. The owner approved
+a dedicated `pew.md` Origin CA certificate at 05:24 Beijing time. It is installed
+on jp2; the private key was generated there and remains root-owned, mode 0600.
 
 ## Planned Deployment
 
 Target: `ghcr.io/nocoo/pew`, environment `pew / production`, directory `/opt/pew`,
 Compose service `web`, container `pew-app`, one Node process on 7020. Stage on
 `127.0.0.1:17020`, attach `edge`, proxy to `pew-app:7020` and add
-`X-Pew-Origin: jp2` only on the Pew Caddy route. Determine the memory ceiling
-from Railway's actual limit and `NODE_OPTIONS`; do not impose an unverified 1 GiB cap.
+`X-Pew-Origin: jp2` only on the Pew Caddy route. Railway's verified memory ceiling
+is 8,000,000,000 bytes; no `NODE_OPTIONS` is configured. Preserve that ceiling
+rather than imposing an unverified 1 GiB cap.
 
 Remaining implementation:
 
-1. Restore Railway authentication, record deployment/source/image before-images,
-   and obtain approval for main-trigger handling before pushing anything.
+1. Railway authentication, before-images and approved trigger removal are complete.
 2. Add the pinned Firefly CD caller after successful same-repository main push
    CI. Preserve existing quality/API/browser lanes and all hooks; add a clean
    Linux container lane. Use caller-visible deployment controls separately from
@@ -173,7 +173,48 @@ routes. Routing/image rollback does not undo database writes; no schema changes
 are part of this migration.
 
 No previous jp2 Pew digest exists: this would be its first deployment. The Railway
-rollback image digest and current deployment identity are **unverified** until
-authentication is restored. There are no migration CI/CD/PR receipts, no GHCR
-image and no jp2 service. No secrets were exported; no remote config, certificate,
-DNS, Railway service or real CLI state was changed.
+rollback deployment is `1f593cdc-398c-473f-a78c-9d934b019bf2`, source
+`6c68c6637e1e72506dcc057c03e3a8643427956a`, image digest
+`sha256:33ad82409ec299399ea54b3b13ce062d86b596303171aef800be9daf9b9c416d`.
+Its original instance `c43d9a3e-c28d-404b-8c66-00a73dbab99a` is still RUNNING,
+with `deploymentStopped=false` and both restore capability flags true.
+
+## Authorized Staging Preparation
+
+The 05:24 Beijing approval permits removing only the verified main trigger and
+issuing/installing a certificate covering only `pew.md`. DNS, Cloudflare TLS/AOP
+settings and Railway shutdown remain separate hard stops.
+
+- Removed trigger `1266b86e-07d4-4267-8f79-6179a58fe20a`. Re-query proved identical
+  active deployment/instance state and unchanged repository source. No restart,
+  redeploy, domain detach or service stop was requested.
+- Stored Railway rollback metadata at `/opt/pew/railway-rollback.json`; DNS,
+  SSL/AOP, Caddy and certificate receipts are in `/opt/pew/precutover-20261022/`.
+  The deployment directory and runtime file are private (0700/0600).
+- All 17 application values were transferred from Railway and compared equal
+  against `/opt/pew/.env.runtime`, without printing values. The 11 platform-managed
+  `RAILWAY_*` values were not copied. There are no E2E flags. Equality against
+  the running container is still pending until deployment.
+- Certificate SAN is exactly `pew.md`, valid until 2041-10-17. Public certificate
+  and private key are `/opt/proxy/certs/pew-origin.pem` and `pew-origin.key`;
+  matching public keys were verified without exporting the private key.
+- Configured `pew / production` deployment credentials and repository controls
+  `DEPLOY_PHASE=precutover`, `DEPLOY_URL=https://pew.md`, `DEPLOY_ORIGIN_MARKER=jp2`.
+
+`deploy/Caddyfile.staging` proposes two distinct listeners: the public 443 Pew
+host only denies requests; the actual staging route uses container-internal TLS
+port 17443, which must not be published to the host. An SSH forward targets the
+verified Caddy edge IP and that internal port. Do not use Docker gateway-IP
+allowlisting: userland-proxy can collapse externally arriving source addresses.
+Before claiming privacy, verify loaded routes, Docker port mappings, host
+listeners and external denial; these checks remain pending until the candidate
+is applied. Origin CA validates the certificate for explicitly trusting test
+clients; no local trust-store changes are required. This is not production
+Cloudflare ingress or AOP proof. At a separately approved cutover, replace the
+public denial with Firefly's shared-CA client authentication and application
+upstream, remove the private listener and coordinate zone TLS/AOP settings.
+
+At this preparation checkpoint there is still no GHCR image or running jp2 Pew
+container. Certificate installation and runtime-file transfer do not prove
+deployment or authenticated acceptance. DNS, TLS/AOP, the running Railway
+deployment, existing proxy routes and real CLI state remain unchanged.

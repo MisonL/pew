@@ -1,0 +1,11 @@
+pew.md {
+	tls /etc/caddy/certs/pew-origin.pem /etc/caddy/certs/pew-origin.key
+	respond "Staging origin is private" 403
+}
+
+https://pew.md:17443 {
+	tls /etc/caddy/certs/pew-origin.pem /etc/caddy/certs/pew-origin.key
+	encode zstd gzip
+	header X-Pew-Origin jp2
+	reverse_proxy pew-app:7020
+}

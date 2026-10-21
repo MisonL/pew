@@ -1,5 +1,24 @@
 # Retrospective
 
+### 2026-10-22: A Docker gateway is not an SSH-only identity
+
+The initial Caddy staging candidate trusted the edge bridge gateway to identify
+SSH-forwarded requests. Review caught that Docker userland-proxy can map other
+traffic to that address, particularly IPv6-to-IPv4 connections. Before applying
+anything, the candidate was changed to an unpublished container-internal TLS
+listener; the public Pew listener only denies requests. Verify socket exposure
+and actual external behavior, not just a source-IP matcher or intended topology.
+The runbook now distinguishes proposed privacy controls from verified receipts.
+
+### 2026-10-22: Pass PEM requests through the CLI JSON body
+
+The first Origin CA request supplied a PEM CSR as a separate `--csr` argument.
+The CLI interpreted its leading dashes as options and rejected it before sending
+an API request. Inspection of a dry run established that no certificate had been
+created. Passing the public CSR through the documented JSON body succeeded; the
+private key never left jp2. When an operation reports failure, distinguish local
+argument parsing from a remote failure before retrying a certificate issuance.
+
 ### 2026-10-22: Resolve traced native modules from their runtime consumer
 
 The first secretless Docker smoke check assumed standalone output retained
