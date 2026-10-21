@@ -81,17 +81,40 @@ describe("createWorkerServer", () => {
 });
 
 describe("runScheduled", () => {
+  it("runs once immediately at startup, before the first interval elapses", async () => {
+    // setInterval does not fire until one full period has elapsed. With the
+    // production DAILY_INTERVAL_MS (24h) that meant the first pricing sync and
+    // kv_cache sweep landed a day after every restart — and a container
+    // recreated more often than the interval never ran them at all (verified
+    // on the live deployment: 3h uptime, zero ticks, expired cache rows left).
+    vi.useFakeTimers();
+    try {
+      const scheduled = vi.fn().mockResolvedValue(undefined);
+      const handle = runScheduled({ scheduled }, {}, 86_400_000);
+      expect(scheduled).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(scheduled).toHaveBeenCalledTimes(1);
+      // The immediate run must not shorten the interval cadence.
+      await vi.advanceTimersByTimeAsync(86_400_000);
+      expect(scheduled).toHaveBeenCalledTimes(2);
+      handle.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("invokes scheduled on the interval and stops on demand", async () => {
     vi.useFakeTimers();
     try {
       const scheduled = vi.fn().mockResolvedValue(undefined);
       const scheduledHandle = runScheduled({ scheduled }, { A: 1 }, 1000);
       await vi.advanceTimersByTimeAsync(3500);
-      expect(scheduled).toHaveBeenCalledTimes(3);
+      // 1 immediate run + 3 interval ticks.
+      expect(scheduled).toHaveBeenCalledTimes(4);
       expect(scheduled.mock.calls[0][1]).toEqual({ A: 1 });
       scheduledHandle.stop();
       await vi.advanceTimersByTimeAsync(3000);
-      expect(scheduled).toHaveBeenCalledTimes(3);
+      expect(scheduled).toHaveBeenCalledTimes(4);
     } finally {
       vi.useRealTimers();
     }
@@ -103,8 +126,33 @@ describe("runScheduled", () => {
       const scheduled = vi.fn().mockRejectedValue(new Error("upstream down"));
       const scheduledHandle = runScheduled({ scheduled }, {}, 1000);
       await vi.advanceTimersByTimeAsync(2500);
-      expect(scheduled).toHaveBeenCalledTimes(2);
+      // 1 immediate run + 2 interval ticks.
+      expect(scheduled).toHaveBeenCalledTimes(3);
       scheduledHandle.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("survives a handler that throws synchronously", async () => {
+    // The immediate run executes outside a timer callback, so a synchronous
+    // throw would otherwise reject the module-level call and crash the
+    // scheduler container before any tick is ever scheduled.
+    vi.useFakeTimers();
+    try {
+      const scheduled = vi.fn(() => {
+        throw new Error("boom");
+      });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const handle = runScheduled({ scheduled }, {}, 1000);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(scheduled).toHaveBeenCalledTimes(2);
+        expect(errorSpy).toHaveBeenCalled();
+        handle.stop();
+      } finally {
+        errorSpy.mockRestore();
+      }
     } finally {
       vi.useRealTimers();
     }
@@ -125,8 +173,8 @@ describe("runScheduled", () => {
     try {
       let finish!: () => void;
       const scheduled = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
-      const handle = runScheduled({ scheduled }, {}, 1000);
-      await vi.advanceTimersByTimeAsync(1000);
+      const handle = runScheduled({ scheduled }, {}, 86_400_000);
+      // The immediate startup run is already in flight.
       expect(scheduled).toHaveBeenCalledTimes(1);
       let drained = false;
       const drain = handle.drain().then(() => { drained = true; });

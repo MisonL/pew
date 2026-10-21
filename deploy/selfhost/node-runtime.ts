@@ -140,15 +140,33 @@ export function runScheduled<E>(
   // Track the in-flight tick so shutdown can wait for it: a pricing sync killed
   // between its D1 and KV writes would leave the cache half-updated.
   let inFlight: Promise<void> | null = null;
-  const timer = setInterval(() => {
-    inFlight = handler({ scheduledTime: Date.now() }, env)
-      .catch((error: unknown) => {
-        console.error("scheduled run failed", error);
-      })
-      .finally(() => {
-        inFlight = null;
-      });
-  }, intervalMs);
+  const tick = (): void => {
+    // try/catch around the CALL, not just .catch on the returned promise: the
+    // handler body runs synchronously up to its first await, so a throw there
+    // would escape and — for the startup run below — crash the process before
+    // any timer is armed. setInterval has the same hazard for every later tick.
+    try {
+      inFlight = Promise.resolve(handler({ scheduledTime: Date.now() }, env))
+        .catch((error: unknown) => {
+          console.error("scheduled run failed", error);
+        })
+        .finally(() => {
+          inFlight = null;
+        });
+    } catch (error) {
+      console.error("scheduled run failed", error);
+      inFlight = null;
+    }
+  };
+  // Run once at startup: setInterval fires only after a full period, so with
+  // the production 24h DAILY_INTERVAL_MS the first pricing sync and kv_cache
+  // sweep would land a day after every restart — and a container recreated
+  // more often than the interval would never run them at all (verified on the
+  // live deployment: hours of uptime, zero ticks, expired cache rows left).
+  // The upstream Cloudflare deployment does not have this gap: its cron
+  // expression fires at wall-clock time regardless of deploy time.
+  tick();
+  const timer = setInterval(tick, intervalMs);
   // Deliberately NOT unref'd: the scheduler container's only work is this
   // timer, and an unref'd timer does not hold the event loop — a Node process
   // whose only handle is unref'd exits immediately with code 0 before the

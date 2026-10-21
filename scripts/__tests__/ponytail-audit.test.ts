@@ -6,13 +6,20 @@ import { join, resolve } from "node:path";
 import { auditPew, readAuditInputs, type AuditDatabase } from "../ponytail-audit";
 
 const root = resolve(import.meta.dirname, "../..");
-const run = (files = readAuditInputs(root)) => {
+// readAuditInputs walks and reads 766 files (~20 s on a loaded machine) and
+// every case asked for it again — eleven identical full-repo parses per run,
+// which is what pushed individual cases past the timeout under load. Cache the
+// repository scan once; mutate() still hands each case its own copy, so one
+// case's edit can never leak into another.
+let repoInputs: Map<string, string> | undefined;
+const inputs = () => (repoInputs ??= readAuditInputs(root));
+const run = (files = inputs()) => {
   const db = new DatabaseSync(":memory:");
   try { return auditPew(files, db as unknown as AuditDatabase); }
   finally { db.close(); }
 };
 const mutate = (path: string, change: (text: string) => string) => {
-  const files = readAuditInputs(root);
+  const files = new Map(inputs());
   files.set(path, change(files.get(path) ?? ""));
   return files;
 };
@@ -42,7 +49,7 @@ describe("Pew ponytail readonly audit", { timeout: 60_000 }, () => {
   });
 
   it("covers every accounting layer and produces deterministic JSON without reading test caches", () => {
-    const files = readAuditInputs(root);
+    const files = new Map(inputs());
     const first = run(files);
     expect(first.exitCode).toBe(0);
     expect(first.readOnly).toBe(true);
@@ -67,7 +74,7 @@ describe("Pew ponytail readonly audit", { timeout: 60_000 }, () => {
   });
 
   it("finds legacy-only read queries in any API source while ignoring comments", () => {
-    const files = readAuditInputs(root);
+    const files = new Map(inputs());
     const path = "packages/web/src/app/api/audit-fixture/route.ts";
     files.set(path, "// SELECT * FROM usage_records\nexport const n = 1;");
     expect(run(files).exitCode).toBe(0);
@@ -130,7 +137,7 @@ describe("Pew ponytail readonly audit", { timeout: 60_000 }, () => {
   });
 
   it("fails closed for missing test evidence, skipped tests and missing UI timing disclosure", () => {
-    const files = readAuditInputs(root);
+    const files = new Map(inputs());
     files.delete("packages/cli/src/__tests__/pi-compaction.test.ts");
     expect(hasError(run(files), "tests.required-suites")).toBe(true);
     const skipped = run(mutate("packages/cli/src/__tests__/hermes-auxiliary-usage.test.ts", (s) => s.replace('it("captures', 'it.skip("captures')));
