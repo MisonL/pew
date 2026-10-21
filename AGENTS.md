@@ -117,6 +117,11 @@ npm publication of `@nocoo/pew` follows the full procedure; it is an authorized 
 
 Web deploys go through `git push` (Railway auto-deploy); never `railway up`, which bypasses the git-based gates. Any Worker code or schema change requires `wrangler deploy` plus a real verification request before the feature counts as complete. See [Retrospective.md](Retrospective.md) for the shipped-bug narratives behind these rules.
 
+The [jp2 migration](docs/52-jp2-migration.md) is in preparation, not cut over.
+Keep Railway running and all DNS unchanged; resolve Railway's main-trigger
+handling before pushing migration commits. Shared Caddy changes require validated
+hot reload, never a proxy restart. Runtime values must come unchanged from Railway.
+
 ## Ponytail audit
 
 For `ponytail-audit`, read `.agents/skills/ponytail-audit/SKILL.md`. Its pew-specific scope extends the global complexity audit to parser → cursor → spool → upload → Worker UPSERT → API/UI correctness, privacy, timestamps and compatibility. Run `sh scripts/ponytail-audit.sh` for deterministic JSON on stdout; the audit must not write reports or touch real logs, state, queues or services. Full tests and independent reviews stay separate from this read-only audit.
