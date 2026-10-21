@@ -20,6 +20,7 @@ import { NextResponse } from "next/server";
 import { sumCounts, VALID_SOURCES } from "@pew/core";
 import { getDbRead, type DbRead } from "@/lib/db";
 import { resolveUser } from "@/lib/auth-helpers";
+import { jsonResponse } from "@/lib/json-response";
 import { isAdmin, isAdminInDb } from "@/lib/admin";
 
 // ---------------------------------------------------------------------------
@@ -193,7 +194,7 @@ export async function GET(
       // Non-critical — graceful fallthrough
     }
 
-    return NextResponse.json({
+    return jsonResponse(request, {
       user: {
         name: user.name,
         image: user.image,

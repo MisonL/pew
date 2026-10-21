@@ -13,6 +13,7 @@
 import { NextResponse } from "next/server";
 import { sumCounts, VALID_SOURCES } from "@pew/core";
 import { resolveUser } from "@/lib/auth-helpers";
+import { jsonResponse } from "@/lib/json-response";
 import { getDbRead } from "@/lib/db";
 
 // ---------------------------------------------------------------------------
@@ -123,7 +124,9 @@ export async function GET(request: Request) {
       },
     );
 
-    return NextResponse.json({ records, summary });
+    // A month of sessions is ~2 MB of JSON; Next's built-in compression does
+    // not cover route-handler bodies, so this endpoint gzips its own.
+    return jsonResponse(request, { records, summary });
   } catch (err) {
     console.error("Failed to query sessions:", err);
     return NextResponse.json(
