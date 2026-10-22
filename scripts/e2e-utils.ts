@@ -110,6 +110,54 @@ export function assertNoLocalEnv(): void {
   }
 }
 
+const WARMUP_SEGMENT = "e2e-warmup";
+const WARMUP_TIMEOUT_MS = 120_000;
+
+/**
+ * Map every `route.*` file under an `src/app/api` tree to the URL a warmup
+ * GET should hit. Dynamic segments are replaced with a placeholder: Next
+ * compiles the concrete route module for any request to it, while a literal
+ * `[slug]` path would match no route and compile nothing.
+ */
+export function apiRouteWarmupPaths(apiDir: string): string[] {
+  const paths: string[] = [];
+  const walk = (dir: string, url: string): void => {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    if (entries.some((entry) => entry.isFile() && /^route\.(?:ts|tsx|js|jsx|mjs)$/.test(entry.name))) paths.push(url);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      // Any dynamic form — `[slug]`, `[...nextauth]`, `[[...slug]]`.
+      const segment = entry.name.startsWith("[") ? WARMUP_SEGMENT : entry.name;
+      walk(join(dir, entry.name), `${url}/${segment}`);
+    }
+  };
+  walk(apiDir, "/api");
+  return paths.sort();
+}
+
+async function warmApiRoutes(port: string, signal: AbortSignal): Promise<void> {
+  const paths = apiRouteWarmupPaths(resolve("packages/web/src/app/api"));
+  // A path no route matches makes Next compile its not-found boundary, which
+  // the retired-endpoint tests hit first and would otherwise pay for inside
+  // their per-test timeout.
+  paths.push(`/api/${WARMUP_SEGMENT}-not-found`);
+  const started = Date.now();
+  for (const path of paths) {
+    signal.throwIfAborted();
+    try {
+      // The response status is irrelevant — a 401/404/405 still proves the
+      // route compiled. Only a network failure or a timeout is fatal: a
+      // wedged server must fail here with one clear message instead of
+      // timing out test by test for the rest of the lane.
+      await fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(WARMUP_TIMEOUT_MS)]) });
+    } catch (error) {
+      signal.throwIfAborted();
+      throw new Error(`API route warmup failed for ${path} (no answer within ${WARMUP_TIMEOUT_MS / 1000}s)`, { cause: error });
+    }
+  }
+  console.log(`API route warmup: ${paths.length} routes in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+}
+
 export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Promise<number> {
   assertNoLocalEnv();
   const port = tier === "api" ? process.env.E2E_PORT ?? "17020" : process.env.E2E_UI_PORT ?? "27020";
@@ -229,6 +277,16 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
     // spawned against a dead server and the interrupt would surface as
     // connection errors instead of "E2E interrupted".
     abort.signal.throwIfAborted();
+    if (tier === "api") {
+      // `next dev` compiles each route on the first request to it; a cold
+      // compile takes 25-35s under machine load and blew past the lane's 30s
+      // per-test timeout (the recurring single-test timeout flakes on
+      // /api/auth/cli, /api/users and the retired 404s: always the first hit,
+      // always followed by fast responses). Warm every route before the test
+      // clock starts — the same reasoning that has the ui tier pre-build — so
+      // the 30s timeout stays a hang detector.
+      await warmApiRoutes(port, abort.signal);
+    }
     tests = Bun.spawn(tier === "api"
       ? [process.execPath, "--no-env-file", "test", "packages/web/src/__tests__/e2e", "--timeout", "30000"]
       : ["node", resolve("node_modules/@playwright/test/cli.js"), "test", "--config", "packages/web/e2e/playwright.config.ts", ...args],

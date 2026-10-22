@@ -4,7 +4,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import { ensurePortFree, runLocalE2e, startLocalBindings } from "../e2e-utils";
+import { apiRouteWarmupPaths, ensurePortFree, runLocalE2e, startLocalBindings } from "../e2e-utils";
 
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
@@ -20,6 +20,59 @@ async function freePort(): Promise<string> {
   await new Promise<void>((done) => probe.close(() => done()));
   return String(port);
 }
+
+describe("apiRouteWarmupPaths", () => {
+  // The module-level fs mock exists for the runner tests; the walker reads a
+  // real temp tree, so restore the passthrough implementation here.
+  async function withRealReaddir<T>(body: () => T): Promise<T> {
+    vi.mocked((await import("node:fs")).readdirSync).mockRestore();
+    return body();
+  }
+
+  it("maps route files to warmup URLs and replaces dynamic segments", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pew-warmup-paths-"));
+    try {
+      const routes = [
+        ["live"],
+        ["usage", "by-device"],
+        ["users", "[slug]"],
+        ["auth", "[...nextauth]"],
+        ["nested", "deep", "[id]"],
+      ];
+      for (const segments of routes) {
+        mkdirSync(join(root, ...segments), { recursive: true });
+        writeFileSync(join(root, ...segments, "route.ts"), "");
+      }
+      // Neither of these is a route: a stray file and a directory without one.
+      mkdirSync(join(root, "notes"), { recursive: true });
+      writeFileSync(join(root, "notes", "readme.md"), "");
+      mkdirSync(join(root, "empty"), { recursive: true });
+
+      await withRealReaddir(() => {
+        expect(apiRouteWarmupPaths(root)).toEqual([
+          "/api/auth/e2e-warmup",
+          "/api/live",
+          "/api/nested/deep/e2e-warmup",
+          "/api/usage/by-device",
+          "/api/users/e2e-warmup",
+        ]);
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns nothing for an empty tree", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pew-warmup-empty-"));
+    try {
+      await withRealReaddir(() => {
+        expect(apiRouteWarmupPaths(root)).toEqual([]);
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("E2E process isolation", () => {
   it.each(["api", "ui"] as const)("tolerates missing %s output without hiding other cleanup errors", async (tier) => {
