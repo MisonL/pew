@@ -1,5 +1,6 @@
 import { gzip as gzipCallback } from "node:zlib";
 import type { ZlibOptions } from "node:zlib";
+import { createHash } from "node:crypto";
 
 /**
  * JSON responses for the large read endpoints, gzip-compressed when the
@@ -24,6 +25,32 @@ import type { ZlibOptions } from "node:zlib";
 /** Below this size the gzip header overhead outweighs the saving. */
 const COMPRESS_MIN_BYTES = 1024;
 
+/**
+ * Next keeps SWR-mounted data alive across client navigations, but a remount
+ * revalidates: `/api/usage` answers a 2020-start all-time query with ~5 MB,
+ * and the analytics pages share that one query, so every hop between
+ * /dashboard, /agents and /models re-downloaded an identical body. A content
+ * ETag turns that revalidation into a 304 with no body.
+ *
+ * The tag names the encoding it was computed for, so a client that switches
+ * between gzip and identity never revalidates against a validator that
+ * belongs to the other representation — the same reason `Vary:
+ * accept-encoding` is set. The digest itself is taken over the JSON, so a
+ * revalidation can be answered without compressing the body at all: the gzip
+ * of a 5.7 MB body costs more than the digest does.
+ */
+function etagFor(json: string, encoded: boolean): string {
+  const digest = createHash("sha1").update(json).digest("base64url").slice(0, 22);
+  return `"${digest}-${encoded ? "gzip" : "id"}"`;
+}
+
+/** Matches the If-None-Match grammar, weak validators and `*` included. */
+function matchesEtag(header: string | null, etag: string): boolean {
+  if (header === null) return false;
+  const tags = header.split(",").map((t) => t.trim());
+  return tags.includes("*") || tags.some((t) => t.replace(/^W\//, "") === etag);
+}
+
 function gzipAsync(input: string): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
     const options: ZlibOptions = {};
@@ -42,11 +69,28 @@ export async function jsonResponse(
   // The response varies on Accept-Encoding, so any cache in front of it must
   // key on that header.
   headers.set("vary", "accept-encoding");
+  // These bodies are per-user and must never be served from a shared cache.
+  // `private, no-cache` stores them in the browser but forces revalidation,
+  // which is what lets the ETag below turn a remount into an empty 304.
+  // Callers that need different semantics (e.g. the public pricing map's
+  // max-age) pass their own Cache-Control.
+  if (!headers.has("cache-control")) headers.set("cache-control", "private, no-cache");
 
   const acceptsGzip = /\bgzip\b/i.test(request.headers.get("accept-encoding") ?? "");
   const status = init.status ?? 200;
+  const encoded = acceptsGzip && Buffer.byteLength(json) >= COMPRESS_MIN_BYTES;
 
-  if (acceptsGzip && Buffer.byteLength(json) >= COMPRESS_MIN_BYTES) {
+  // A conditional request that already holds this body gets the headers and
+  // no payload. Nothing is compressed for it.
+  const etag = etagFor(json, encoded);
+  headers.set("etag", etag);
+  if (status === 200 && matchesEtag(request.headers.get("if-none-match"), etag)) {
+    headers.delete("content-length");
+    headers.delete("content-encoding");
+    return new Response(null, { status: 304, headers });
+  }
+
+  if (encoded) {
     // Async: a 6 MB payload takes tens of milliseconds to deflate, and the web
     // app is a single process — a sync call here would stall every concurrent
     // request.
@@ -63,6 +107,7 @@ export async function jsonResponse(
     return new Response(bytes, { status, headers });
   }
 
-  headers.set("content-length", String(Buffer.byteLength(json)));
-  return new Response(json, { status, headers });
+  const bytes = Buffer.from(json, "utf8");
+  headers.set("content-length", String(bytes.byteLength));
+  return new Response(bytes, { status, headers });
 }

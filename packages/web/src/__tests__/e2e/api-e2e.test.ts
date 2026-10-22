@@ -500,6 +500,28 @@ describe("GET /api/usage", () => {
     expect(body.records.length).toBe(0);
     expect(body.summary.total_tokens).toBe(0);
   });
+
+  it("answers a revalidation with a bodyless 304 and a changed window with 200", async () => {
+    const url = `${BASE_URL}/api/usage?from=2026-03-01&to=2026-03-02`;
+    const first = await fetch(url);
+    expect(first.status).toBe(200);
+    const etag = first.headers.get("etag");
+    expect(etag).toBeTruthy();
+    expect(first.headers.get("cache-control")).toBe("private, no-cache");
+
+    const second = await fetch(url, { headers: { "if-none-match": etag! } });
+    expect(second.status).toBe(304);
+    expect(second.headers.get("etag")).toBe(etag);
+    expect(await second.text()).toBe("");
+
+    // The same window at another granularity is a different body, so the
+    // validator from the first request does not apply to it.
+    const other = await fetch(`${BASE_URL}/api/usage?from=2026-03-01&to=2026-03-02&granularity=day`, {
+      headers: { "if-none-match": etag! },
+    });
+    expect(other.status).toBe(200);
+    expect((await other.json()).records.length).toBeGreaterThan(0);
+  });
 });
 
 // ===========================================================================
