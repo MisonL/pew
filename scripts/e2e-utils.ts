@@ -112,6 +112,12 @@ export function assertNoLocalEnv(): void {
 
 const WARMUP_SEGMENT = "e2e-warmup";
 const WARMUP_TIMEOUT_MS = 120_000;
+// Concurrent warmup requests: `next dev` compiles each route in its own
+// worker, so a few in flight at once overlap the compiles instead of paying
+// them end to end. Kept small — the lane runs beside the ui tier's production
+// build, and a wide fan-out would trade the compile wall-clock for CPU
+// contention on an already-loaded machine.
+const WARMUP_CONCURRENCY = 4;
 
 /**
  * Map every `route.*` file under an `src/app/api` tree to the URL a warmup
@@ -135,26 +141,35 @@ export function apiRouteWarmupPaths(apiDir: string): string[] {
   return paths.sort();
 }
 
-async function warmApiRoutes(port: string, signal: AbortSignal): Promise<void> {
+export async function warmApiRoutes(port: string, signal: AbortSignal): Promise<void> {
   const paths = apiRouteWarmupPaths(resolve("packages/web/src/app/api"));
   // A path no route matches makes Next compile its not-found boundary, which
   // the retired-endpoint tests hit first and would otherwise pay for inside
   // their per-test timeout.
   paths.push(`/api/${WARMUP_SEGMENT}-not-found`);
   const started = Date.now();
-  for (const path of paths) {
-    signal.throwIfAborted();
-    try {
-      // The response status is irrelevant — a 401/404/405 still proves the
-      // route compiled. Only a network failure or a timeout is fatal: a
-      // wedged server must fail here with one clear message instead of
-      // timing out test by test for the rest of the lane.
-      await fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(WARMUP_TIMEOUT_MS)]) });
-    } catch (error) {
+  let next = 0;
+  // A wedged server must fail the lane with one clear message instead of
+  // timing out test by test for the rest of the run, so the first failure
+  // aborts its siblings and wins over whatever they would report.
+  let failure: unknown;
+  const worker = async (): Promise<void> => {
+    while (failure === undefined && next < paths.length) {
+      const path = paths[next++] as string;
       signal.throwIfAborted();
-      throw new Error(`API route warmup failed for ${path} (no answer within ${WARMUP_TIMEOUT_MS / 1000}s)`, { cause: error });
+      try {
+        // The response status is irrelevant — a 401/404/405 still proves the
+        // route compiled.
+        await fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(WARMUP_TIMEOUT_MS)]) });
+      } catch (error) {
+        failure ??= new Error(`API route warmup failed for ${path} (no answer within ${WARMUP_TIMEOUT_MS / 1000}s)`, { cause: error });
+        return;
+      }
     }
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(WARMUP_CONCURRENCY, paths.length) }, worker));
+  signal.throwIfAborted();
+  if (failure !== undefined) throw failure;
   console.log(`API route warmup: ${paths.length} routes in ${((Date.now() - started) / 1000).toFixed(1)}s`);
 }
 

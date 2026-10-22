@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
-import { apiRouteWarmupPaths, ensurePortFree, runLocalE2e, startLocalBindings } from "../e2e-utils";
+import { apiRouteWarmupPaths, ensurePortFree, runLocalE2e, startLocalBindings, warmApiRoutes } from "../e2e-utils";
 
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
@@ -21,14 +21,13 @@ async function freePort(): Promise<string> {
   return String(port);
 }
 
-describe("apiRouteWarmupPaths", () => {
-  // The module-level fs mock exists for the runner tests; the walker reads a
-  // real temp tree, so restore the passthrough implementation here.
-  async function withRealReaddir<T>(body: () => T): Promise<T> {
-    vi.mocked((await import("node:fs")).readdirSync).mockRestore();
-    return body();
-  }
+// The module-level fs mock exists for the runner tests; the warmup walker
+// reads the real route tree, so restore the passthrough implementation first.
+async function realReaddir(): Promise<void> {
+  vi.mocked((await import("node:fs")).readdirSync).mockRestore();
+}
 
+describe("apiRouteWarmupPaths", () => {
   it("maps route files to warmup URLs and replaces dynamic segments", async () => {
     const root = mkdtempSync(join(tmpdir(), "pew-warmup-paths-"));
     try {
@@ -48,15 +47,14 @@ describe("apiRouteWarmupPaths", () => {
       writeFileSync(join(root, "notes", "readme.md"), "");
       mkdirSync(join(root, "empty"), { recursive: true });
 
-      await withRealReaddir(() => {
-        expect(apiRouteWarmupPaths(root)).toEqual([
-          "/api/auth/e2e-warmup",
-          "/api/live",
-          "/api/nested/deep/e2e-warmup",
-          "/api/usage/by-device",
-          "/api/users/e2e-warmup",
-        ]);
-      });
+      await realReaddir();
+      expect(apiRouteWarmupPaths(root)).toEqual([
+        "/api/auth/e2e-warmup",
+        "/api/live",
+        "/api/nested/deep/e2e-warmup",
+        "/api/usage/by-device",
+        "/api/users/e2e-warmup",
+      ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -65,11 +63,85 @@ describe("apiRouteWarmupPaths", () => {
   it("returns nothing for an empty tree", async () => {
     const root = mkdtempSync(join(tmpdir(), "pew-warmup-empty-"));
     try {
-      await withRealReaddir(() => {
-        expect(apiRouteWarmupPaths(root)).toEqual([]);
-      });
+      await realReaddir();
+      expect(apiRouteWarmupPaths(root)).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("warmApiRoutes", () => {
+  /** A fetch that answers after a macrotask, recording in-flight count and
+   * every requested path — enough to prove coverage, no duplicates and the
+   * concurrency bound without depending on worker scheduling order. */
+  function trackingFetch(options: { failOn?: (path: string) => boolean } = {}) {
+    let inFlight = 0;
+    const state = { maxInFlight: 0, paths: [] as string[] };
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const path = String(url).replace("http://127.0.0.1:17020", "");
+      state.paths.push(path);
+      inFlight += 1;
+      state.maxInFlight = Math.max(state.maxInFlight, inFlight);
+      await new Promise((done) => setTimeout(done, 0));
+      inFlight -= 1;
+      if (options.failOn?.(path)) throw new Error("synthetic connection refused");
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return state;
+  }
+
+  it("covers every route plus the not-found boundary, once each, within the concurrency bound", async () => {
+    await realReaddir();
+    const routes = apiRouteWarmupPaths(resolve("packages/web/src/app/api"));
+    // Guard the guard: a tree with a couple of routes would not exercise the
+    // fan-out or the duplicate check meaningfully.
+    expect(routes.length).toBeGreaterThan(10);
+
+    const state = trackingFetch();
+    try {
+      await expect(warmApiRoutes("17020", new AbortController().signal)).resolves.toBeUndefined();
+      expect([...state.paths].sort()).toEqual([...routes, "/api/e2e-warmup-not-found"].sort());
+      expect(new Set(state.paths).size).toBe(state.paths.length);
+      expect(state.maxInFlight).toBeGreaterThan(1);
+      expect(state.maxInFlight).toBeLessThanOrEqual(4);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("names the route and stops warming after the first failure", async () => {
+    await realReaddir();
+    const routes = apiRouteWarmupPaths(resolve("packages/web/src/app/api"));
+    const doomed = routes[0] as string;
+    const state = trackingFetch({ failOn: (path) => path === doomed });
+    try {
+      const rejection = await warmApiRoutes("17020", new AbortController().signal)
+        .then(() => undefined, (error: unknown) => error);
+      expect(rejection).toBeInstanceOf(Error);
+      const error = rejection as Error;
+      expect(error.message).toBe(`API route warmup failed for ${doomed} (no answer within 120s)`);
+      expect((error.cause as Error).message).toContain("synthetic connection refused");
+      // Four workers each hold at most one path, so a failure can leave at
+      // most four requests made — not the whole list.
+      expect(state.paths.length).toBeLessThanOrEqual(4);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reports the abort instead of a warmup failure when the run is interrupted", async () => {
+    await realReaddir();
+    const abort = new AbortController();
+    const state = trackingFetch();
+    try {
+      const pending = warmApiRoutes("17020", abort.signal);
+      abort.abort(new Error("E2E interrupted"));
+      await expect(pending).rejects.toThrow("E2E interrupted");
+      expect(state.paths.length).toBeLessThanOrEqual(4);
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });
