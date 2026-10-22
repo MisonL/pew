@@ -910,7 +910,9 @@ describe("POST /api/ingest/sessions", () => {
 
     const response = await fetch(`${BASE_URL}/api/sessions?source=${source}&kind=human&from=2026-09-13&to=2026-09-13`);
     expect(response.status).toBe(200);
-    const { snapshot_at: _snapshot, ...expected } = record;
+    // The response drops the session id, the last-message timestamp and the
+    // project hash: no page reads them (see the route's comment).
+    const { snapshot_at: _snapshot, session_key: _key, last_message_at: _last, project_ref: _project, ...expected } = record;
     expect(await response.json()).toEqual({
       records: [expected],
       summary: {

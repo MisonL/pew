@@ -166,29 +166,23 @@ describe("GET /api/sessions", () => {
     it("should return session records", async () => {
       mockDbRead.getSessionRecords.mockResolvedValueOnce([
         {
-          session_key: "claude-code:abc",
           source: "claude-code",
           kind: "human",
           started_at: "2026-03-08T10:00:00Z",
-          last_message_at: "2026-03-08T10:30:00Z",
           duration_seconds: 1800,
           user_messages: 12,
           assistant_messages: 10,
           total_messages: 25,
-          project_ref: "a1b2",
           model: "claude-sonnet-4-20250514",
         },
         {
-          session_key: "opencode:def",
           source: "opencode",
           kind: "human",
           started_at: "2026-03-08T11:00:00Z",
-          last_message_at: "2026-03-08T11:45:00Z",
           duration_seconds: 2700,
           user_messages: 8,
           assistant_messages: 7,
           total_messages: 18,
-          project_ref: null,
           model: "o3",
         },
       ]);
@@ -202,7 +196,7 @@ describe("GET /api/sessions", () => {
       expect(body.records[1].source).toBe("opencode");
     });
 
-    it("should include summary stats", async () => {
+    it("omits the columns no page reads", async () => {
       mockDbRead.getSessionRecords.mockResolvedValueOnce([
         {
           session_key: "claude-code:abc",
@@ -217,17 +211,43 @@ describe("GET /api/sessions", () => {
           project_ref: "a1b2",
           model: "claude-sonnet-4-20250514",
         },
+      ]);
+
+      const res = await GET(makeGetRequest("/api/sessions"));
+      const body = await res.json();
+
+      expect(body.records[0]).toEqual({
+        source: "claude-code",
+        kind: "human",
+        started_at: "2026-03-08T10:00:00Z",
+        duration_seconds: 1800,
+        user_messages: 12,
+        assistant_messages: 10,
+        total_messages: 25,
+        model: "claude-sonnet-4-20250514",
+      });
+    });
+
+    it("should include summary stats", async () => {
+      mockDbRead.getSessionRecords.mockResolvedValueOnce([
         {
-          session_key: "opencode:def",
+          source: "claude-code",
+          kind: "human",
+          started_at: "2026-03-08T10:00:00Z",
+          duration_seconds: 1800,
+          user_messages: 12,
+          assistant_messages: 10,
+          total_messages: 25,
+          model: "claude-sonnet-4-20250514",
+        },
+        {
           source: "opencode",
           kind: "human",
           started_at: "2026-03-08T11:00:00Z",
-          last_message_at: "2026-03-08T11:45:00Z",
           duration_seconds: 2700,
           user_messages: 8,
           assistant_messages: 7,
           total_messages: 18,
-          project_ref: null,
           model: "o3",
         },
       ]);

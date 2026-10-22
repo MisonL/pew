@@ -15,16 +15,13 @@ import {
 
 function makeSession(overrides: Partial<SessionRow> = {}): SessionRow {
   return {
-    session_key: "claude-code:test-session",
     source: "claude-code",
     kind: "human",
     started_at: "2026-03-08T10:00:00Z",
-    last_message_at: "2026-03-08T10:30:00Z",
     duration_seconds: 1800,
     user_messages: 12,
     assistant_messages: 10,
     total_messages: 25,
-    project_ref: null,
     model: "claude-sonnet-4-20250514",
     ...overrides,
   };

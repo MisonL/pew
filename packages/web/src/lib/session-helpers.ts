@@ -5,18 +5,21 @@
 import { toLocalDateStr } from "@/lib/usage-helpers";
 import { sumBy } from "@/lib/array-helpers";
 
-/** Shape of a row returned by GET /api/sessions */
+/**
+ * Shape of a row returned by GET /api/sessions.
+ *
+ * The endpoint omits `session_key`, `last_message_at` and `project_ref`:
+ * no dashboard view reads them, and they were the bulk of a month's
+ * response. The values below are everything the charts are derived from.
+ */
 export type SessionRow = {
-  session_key: string;
   source: string;
   kind: string;
   started_at: string;
-  last_message_at: string;
   duration_seconds: number;
   user_messages: number;
   assistant_messages: number;
   total_messages: number;
-  project_ref: string | null;
   model: string | null;
 };
 
