@@ -5,7 +5,7 @@ Bun-workspaces monorepo tracking token usage from local AI coding tools. Human o
 - `packages/core` — shared TypeScript types (`@pew/core`, private, zero runtime deps)
 - `packages/cli` — CLI tool (`@nocoo/pew`, published to npm, citty + consola + picocolors)
 - `packages/web` — SaaS dashboard (`@pew/web`, private, Next.js 16 + App Router)
-- `packages/worker` — D1 ingest-write handler (`@pew/worker`, private): runs as a Cloudflare Worker in the hosted deployment, and as a Node service over rqlite via `deploy/selfhost/` (docs 52–56)
+- `packages/worker` — D1 ingest-write handler (`@pew/worker`, private): runs as a Cloudflare Worker in the hosted deployment, and as a Node service over rqlite via `deploy/selfhost/` (docs 57–61)
 - `packages/worker-read` — D1 read-query handler (`@pew/worker-read`, private): same dual runtime
 
 Supported tools (9): Antigravity CLI, Claude Code, Codex, GitHub Copilot CLI, Grok, Hermes, OpenCode, OpenClaw, Pi.
