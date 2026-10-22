@@ -91,19 +91,19 @@ describe("real D1 lifecycle", () => {
     // Beneath the coverage suite this spawn can take well over 100s; the
     // timeout budget is deliberately generous (the old 120s ceiling failed
     // for reasons unrelated to the migration itself).
-    const result = spawnSync("bun", ["--no-env-file", "scripts/test-local-e2e.ts"], { encoding: "utf8", timeout: 240_000, env: { ...process.env, CI: "true", PEW_SYNTHETIC_PARENT_SECRET: "must-not-forward" } });
+    const result = spawnSync("bun", ["--no-env-file", "scripts/test-local-e2e.ts"], { encoding: "utf8", timeout: 900_000, env: { ...process.env, CI: "true", PEW_SYNTHETIC_PARENT_SECRET: "must-not-forward" } });
     expect(result.status, result.stdout + result.stderr).toBe(0);
-  }, 300_000);
+  }, 900_000);
   it.each(["THIS IS NOT SQL;", "CREATE TABLE duplicate(id TEXT); CREATE TABLE duplicate(id TEXT);"])("fails invalid or duplicate SQL and cleans only fresh state: %s", (sql) => {
     const migrations = mkdtempSync(join(tmpdir(), "pew-invalid-migration-"));
     const before = new Set(readdirSync(tmpdir()).filter((name) => name.startsWith("pew-e2e-")));
     try {
       writeFileSync(join(migrations, "0001.sql"), sql);
-      const result = spawnSync("bun", ["--no-env-file", "-e", 'import {localIsolatedEnv} from "./scripts/local-e2e-bindings.ts"; await localIsolatedEnv(process.argv[1]);', migrations], { encoding: "utf8", timeout: 20_000 });
+      const result = spawnSync("bun", ["--no-env-file", "-e", 'import {localIsolatedEnv} from "./scripts/local-e2e-bindings.ts"; await localIsolatedEnv(process.argv[1]);', migrations], { encoding: "utf8", timeout: 120_000 });
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("migrations failed");
       expect(new Set(readdirSync(tmpdir()).filter((name) => name.startsWith("pew-e2e-")))).toEqual(before);
       expect(existsSync(migrations)).toBe(true);
     } finally { rmSync(migrations, { recursive: true }); }
-  }, 30_000);
+  }, 300_000);
 });

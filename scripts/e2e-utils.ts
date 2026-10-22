@@ -25,13 +25,14 @@ async function settleWithin(promise: Promise<unknown>, milliseconds: number): Pr
 }
 
 // timeoutMs is the local-bindings STARTUP budget. The default is deliberately
-// well above observed cold-start time: the deadline exists to catch a wedged
-// child, not to enforce a performance budget. Pre-push runs this lane in
-// parallel with the browser E2E's production build and the security scan, and
-// a 60s budget produced false "startup timed out" failures under that load
-// (timing is explicitly not part of the gate contract). Disposal is instead
-// capped at 30s (see disposeTimeoutMs below).
-export async function startLocalBindings(signal: AbortSignal, timeoutMs = 180_000, readiness = false) {
+// far above any observed cold-start time: the deadline exists to catch a
+// wedged child, not to enforce a performance budget. Pre-push runs this lane in
+// parallel with the browser E2E's production build and the security scan on a
+// heavily loaded machine; timing is explicitly not part of the gate contract,
+// so a slow start must never fail the lane. Disposal is instead capped at 30s
+// (see disposeTimeoutMs below) because a child that ignores IPC will not
+// start responding sooner just because startup was given a long budget.
+export async function startLocalBindings(signal: AbortSignal, timeoutMs = 900_000, readiness = false) {
   signal.throwIfAborted();
   let receive: (value: { env: Record<string, string>; state: string }) => void;
   const ready = new Promise<{ env: Record<string, string>; state: string }>((done) => { receive = done; });
@@ -48,9 +49,9 @@ export async function startLocalBindings(signal: AbortSignal, timeoutMs = 180_00
   });
   // Dispose deadlines are capped independently of the (load-tolerant) startup
   // budget: a child that ignores IPC will not start responding sooner just
-  // because startup was given 180s. The cap keeps the failure path short while
-  // still honoring a caller that passes a smaller explicit budget (the no-IPC
-  // regression passes 20ms and expects disposal bounded by it).
+  // because startup was given a long budget. The cap keeps the failure path
+  // short while still honoring a caller that passes a smaller explicit budget
+  // (the no-IPC regression passes 20ms and expects disposal bounded by it).
   const disposeTimeoutMs = Math.min(timeoutMs, 30_000);
   const dispose = async () => {
     let code: number;
@@ -111,7 +112,11 @@ export function assertNoLocalEnv(): void {
 }
 
 const WARMUP_SEGMENT = "e2e-warmup";
-const WARMUP_TIMEOUT_MS = 120_000;
+// Per-request budget. A hang detector, not a performance budget: the lane
+// runs beside the ui tier's production build, where a cold compile of the
+// not-found boundary has been observed past 120s. Only a server that never
+// answers trips it.
+export const WARMUP_TIMEOUT_MS = 600_000;
 // Concurrent warmup requests: `next dev` compiles each route in its own
 // worker, so a few in flight at once overlap the compiles instead of paying
 // them end to end. Kept small — the lane runs beside the ui tier's production
@@ -143,10 +148,12 @@ export function apiRouteWarmupPaths(apiDir: string): string[] {
 
 export async function warmApiRoutes(port: string, signal: AbortSignal): Promise<void> {
   const paths = apiRouteWarmupPaths(resolve("packages/web/src/app/api"));
-  // A path no route matches makes Next compile its not-found boundary, which
-  // the retired-endpoint tests hit first and would otherwise pay for inside
-  // their per-test timeout.
-  paths.push(`/api/${WARMUP_SEGMENT}-not-found`);
+  // First, not last: a path no route matches makes Next compile its not-found
+  // boundary — the single most expensive compile here (120s+ observed beside
+  // the ui build) — and the retired-endpoint tests hit it first. Putting it
+  // in the initial batch overlaps it with three route compiles instead of
+  // paying for it alone at the end.
+  const warmups = [`/api/${WARMUP_SEGMENT}-not-found`, ...paths];
   const started = Date.now();
   let next = 0;
   // A wedged server must fail the lane with one clear message instead of
@@ -154,8 +161,8 @@ export async function warmApiRoutes(port: string, signal: AbortSignal): Promise<
   // aborts its siblings and wins over whatever they would report.
   let failure: unknown;
   const worker = async (): Promise<void> => {
-    while (failure === undefined && next < paths.length) {
-      const path = paths[next++] as string;
+    while (failure === undefined && next < warmups.length) {
+      const path = warmups[next++] as string;
       signal.throwIfAborted();
       try {
         // The response status is irrelevant — a 401/404/405 still proves the
@@ -167,10 +174,10 @@ export async function warmApiRoutes(port: string, signal: AbortSignal): Promise<
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(WARMUP_CONCURRENCY, paths.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(WARMUP_CONCURRENCY, warmups.length) }, worker));
   signal.throwIfAborted();
   if (failure !== undefined) throw failure;
-  console.log(`API route warmup: ${paths.length} routes in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+  console.log(`API route warmup: ${warmups.length} routes in ${((Date.now() - started) / 1000).toFixed(1)}s`);
 }
 
 export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Promise<number> {
@@ -227,6 +234,10 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
       E2E_ADMIN_BYPASS: tier === "ui" ? "true" : "false",
       E2E_PORT: port,
       E2E_UI_PORT: port,
+      // The lane's requests run beside a production build on a loaded machine;
+      // the in-app watchdogs (leaderboard RPC today) are production values and
+      // must not turn load into a harness failure.
+      LEADERBOARD_RPC_TIMEOUT_MS: "300000",
       PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH ?? join(homedir(), process.platform === "darwin" ? "Library/Caches/ms-playwright" : ".cache/ms-playwright"),
     };
     if (tier === "ui") {
@@ -258,7 +269,7 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
       build = Bun.spawn(["node", resolve("packages/web/node_modules/next/dist/bin/next"), "build"], {
         cwd: "packages/web", env, stdout: "inherit", stderr: "inherit",
       });
-      const buildCode = await deadline(Promise.race([build.exited, interrupted]), 600_000, "next build");
+      const buildCode = await deadline(Promise.race([build.exited, interrupted]), 1_800_000, "next build");
       // Await exit before the finally rmSync races a still-writing process.
       await build.exited.catch(() => {
         // A rejected exited promise (killed mid-build) must not fail the run.
@@ -283,7 +294,7 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
       // wedged server, not slow load. The api tier boots `next dev`, whose
       // first compile can exceed a minute when the gate runs beside the
       // browser lane's production build.
-      if (Date.now() - started > 180_000) throw new Error("E2E server readiness timed out");
+      if (Date.now() - started > 900_000) throw new Error("E2E server readiness timed out");
       await Bun.sleep(200);
     }
     await verifyLocalMarker(env);
@@ -303,7 +314,7 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
       await warmApiRoutes(port, abort.signal);
     }
     tests = Bun.spawn(tier === "api"
-      ? [process.execPath, "--no-env-file", "test", "packages/web/src/__tests__/e2e", "--timeout", "30000"]
+      ? [process.execPath, "--no-env-file", "test", "packages/web/src/__tests__/e2e", "--timeout", "120000"]
       : ["node", resolve("node_modules/@playwright/test/cli.js"), "test", "--config", "packages/web/e2e/playwright.config.ts", ...args],
     { env, stdout: "inherit", stderr: "inherit" });
     exitCode = await tests.exited;

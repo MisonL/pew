@@ -25,8 +25,10 @@ const mutate = (path: string, change: (text: string) => string) => {
 };
 const hasError = (report: ReturnType<typeof run>, id: string) => report.findings.some((f) => f.id === id && f.severity === "error");
 
-// Cases parse the whole repository several times; shared CI CPUs need headroom.
-describe("Pew ponytail readonly audit", { timeout: 60_000 }, () => {
+// Cases parse the whole repository several times; shared CI CPUs need headroom,
+// and the first case also pays for the one-time repository walk. A hang
+// detector, not a performance budget.
+describe("Pew ponytail readonly audit", { timeout: 300_000 }, () => {
   let temporary: string | undefined;
   afterEach(() => { if (temporary) rmSync(temporary, { recursive: true, force: true }); });
 

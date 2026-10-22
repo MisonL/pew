@@ -35,7 +35,7 @@ if [ "$FAILURE" = "$2" ] || [ "$FAILURE" = "all" ]; then exit 23; fi
       cwd: root,
       env: { PATH: `${bin}:/usr/bin:/bin`, HOME: root, TMPDIR: root, FAILURE: failure },
       encoding: "utf8",
-      timeout: 5000,
+      timeout: 120_000,
     });
   } finally {
     rmSync(root, { recursive: true, force: true });

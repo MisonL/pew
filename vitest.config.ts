@@ -13,6 +13,15 @@ export default defineConfig({
     globals: true,
     pool: "threads",
     isolate: true,
+    // Hang detectors, not performance budgets: the pre-commit gate runs the
+    // whole suite beside everything else on the maintainer machine, and the
+    // vitest defaults (5s/10s) failed child-process cases under load even
+    // though the work itself completes. A genuinely wedged test still fails;
+    // a slow one no longer does. Individual tests may still override.
+    testTimeout: 120_000,
+    hookTimeout: 120_000,
+    // A worker killed mid-test must be replaced, not silently drop its file.
+    teardownTimeout: 60_000,
     include: [
       "packages/*/src/**/*.test.{ts,tsx}",
       "scripts/**/*.test.{ts,tsx}",

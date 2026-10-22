@@ -25,7 +25,7 @@ export async function verifyLocalMarker(env: Record<string, string>): Promise<vo
     redirect: "error",
     headers: { Authorization: `Bearer ${env.CF_D1_API_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({ sql: "SELECT key,value FROM _test_marker ORDER BY key" }),
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(120_000),
   });
   const data = await response.json() as { success?: boolean; result?: Array<{ results?: Array<{ key: string; value: string }> }> };
   const rows = data.result?.[0]?.results;

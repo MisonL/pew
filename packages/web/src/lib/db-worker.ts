@@ -55,6 +55,13 @@ import type {
 } from "./rpc-types";
 import type { DynamicPricingEntry } from "./pricing";
 
+// The leaderboard snapshot query is the heaviest RPC. 15s is the production
+// watchdog (a hung read Worker must not pin the route open); the E2E harness
+// raises it through the environment because that lane runs the same query
+// beside a production build on a loaded machine, where 15s is a timing
+// accident, not a hang.
+const LEADERBOARD_RPC_TIMEOUT_MS = Number(process.env.LEADERBOARD_RPC_TIMEOUT_MS) || 15_000;
+
 export function createWorkerDbRead(): DbRead {
   const url = process.env.WORKER_READ_URL;
   const secret = process.env.WORKER_READ_SECRET;
@@ -725,11 +732,11 @@ export function createWorkerDbRead(): DbRead {
     // -------------------------------------------------------------------------
 
     async getLeaderboardRevision(): Promise<string> {
-      return rpc<string>({ method: "leaderboard.getRevision" }, AbortSignal.timeout(15_000));
+      return rpc<string>({ method: "leaderboard.getRevision" }, AbortSignal.timeout(LEADERBOARD_RPC_TIMEOUT_MS));
     },
 
     async getLeaderboardSnapshot(options: LeaderboardFilters): Promise<LeaderboardSnapshot> {
-      return rpc<LeaderboardSnapshot>({ method: "leaderboard.getSnapshot", ...options }, AbortSignal.timeout(15_000));
+      return rpc<LeaderboardSnapshot>({ method: "leaderboard.getSnapshot", ...options }, AbortSignal.timeout(LEADERBOARD_RPC_TIMEOUT_MS));
     },
 
     // -------------------------------------------------------------------------

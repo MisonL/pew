@@ -8,6 +8,7 @@ export default defineConfig({
   test: {
     globals: true,
     include: ["packages/cli/src/__tests__/e2e/**/*.test.ts"],
-    testTimeout: 30_000,
+    // Hang detector, not a performance budget — these cases spawn the CLI.
+    testTimeout: 120_000,
   },
 });
