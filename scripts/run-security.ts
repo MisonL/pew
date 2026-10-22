@@ -21,13 +21,20 @@ const noCache = process.env.PEW_G2_NO_CACHE === "1";
 
 // Cache successful osv-scanner runs keyed by bun.lock hash + tool version.
 // Stored under .git/info (gitignored by default). Skips network on no-op pushes.
+//
+// The lock hash alone is not a safe key: advisories get disclosed against
+// versions that are already locked, so an unchanged bun.lock can turn from
+// clean to vulnerable without the hash moving. Entries therefore also expire,
+// and a stale entry forces a fresh scan.
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CACHE_DIR = resolve(REPO_ROOT, ".git/info");
 const CACHE_FILE = resolve(CACHE_DIR, "g2-cache.json");
+const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 interface G2Cache {
   osvLockHash?: string;
   osvToolVersion?: string;
+  osvCheckedAt?: number;
 }
 
 function readCache(): G2Cache {
@@ -145,16 +152,20 @@ const jobs: { job: ScanJob; promise: Promise<{ output: string; status: number }>
 const cache = readCache();
 const lockPath = resolve(REPO_ROOT, "bun.lock");
 const lockHash = hashFile(lockPath);
+const osvNow = Date.now();
 
 // osv-scanner
 const hasOsv = requireTool("osv-scanner");
 if (hasOsv) {
   const osvVer = toolVersion("osv-scanner");
+  const cacheAge = osvNow - (cache.osvCheckedAt ?? 0);
   const cacheHit =
     !noCache &&
     lockHash !== null &&
     cache.osvLockHash === lockHash &&
-    cache.osvToolVersion === osvVer;
+    cache.osvToolVersion === osvVer &&
+    cacheAge >= 0 &&
+    cacheAge < CACHE_MAX_AGE_MS;
 
   if (cacheHit) {
 const lockHashShort = lockHash ? lockHash.slice(0, 12) : "unknown";
@@ -162,6 +173,9 @@ const lockHashShort = lockHash ? lockHash.slice(0, 12) : "unknown";
       `⚡ osv-scanner: cached clean for bun.lock ${lockHashShort} (set PEW_G2_NO_CACHE=1 to force)`,
     );
   } else {
+    if (lockHash !== null && cache.osvLockHash === lockHash && !cacheHit) {
+      console.log("🔍 osv-scanner: cached result is older than 24h, rescanning...");
+    }
     const job: ScanJob = {
       label: "osv-scanner",
       cmd: "osv-scanner",
@@ -220,6 +234,7 @@ for (let i = 0; i < jobs.length; i++) {
         ...cache,
         osvLockHash: lockHash,
         osvToolVersion: toolVersion("osv-scanner"),
+        osvCheckedAt: osvNow,
       });
     }
   }
