@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v3.4.1
+
+### Changed
+- Upgrade the Web dashboard to Basalt 3.2.1, including its focus and container-boundary refinements.
+- Move Web deployment to the pinned shared Docker CD workflow: successful main CI builds GHCR images and deploys an immutable digest to jp2.
+- Complete the pew.md cutover with Full (strict), shared authenticated origin pulls and validated Caddy hot reloads; retain the stopped Railway service and its recovery records.
+- Document private and public acceptance, native Cloudflare-edge IPv6 checks, and phase-aware routing and stopped-Railway recovery procedures.
+- Keep CLI, core and Workers at their independent 3.3.3 versions; this Web-only release does not publish npm or redeploy Workers.
+
+### Fixed
+- Build the standalone Web image without application credentials and inject the unchanged application variables only at runtime.
+- Verify image digest, source revision, runtime version and database health during deployment, with credential-free native/startup container smoke checks.
+- Reject isolated unsafe Docker smoke-test arguments and NODE_OPTIONS assignments with independent mutation controls.
+
 ## v3.4.0
 
 ### Changed

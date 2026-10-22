@@ -8,7 +8,13 @@ service, variables, deployment record and rollback image reference remain.
 Workers, D1 schema, KV, R2 and application secrets are unchanged.
 The owner explicitly waived the fresh Google login test; it is not a passed test.
 
-## Deployed Identity and Rollback Images
+## Cutover Identity and Rollback Images
+
+This table records the accepted cutover baseline, not the latest image forever.
+Subsequent releases, starting with Web v3.4.1, have their own exact-SHA CI/CD runs
+and `/opt/pew/.base-ci-releases/<SHA>.json` manifests. Verify those records and
+fresh public health before treating a new image as accepted. Keep the original
+Railway digest and the accepted cutover image as distinct rollback references.
 
 | Item | Verified value |
 | --- | --- |
@@ -51,10 +57,10 @@ It does not automatically roll back after failed remote verification.
 All five commits were pushed through normal hooks from an env-free task clone.
 Independent `max` source review approved the final code after all P0-P3 findings
 were resolved. Approval of source does not itself prove deployment or OAuth.
-The precutover documentation commits `ac8fe8db` and `3cb57812`, plus this cutover
-record, remain local, not pushed, to avoid rebuilding the already accepted image.
-They do not change deployed source.
-Any later push must complete normal hooks/CI/CD and revalidate its new digest.
+The precutover documentation commits `ac8fe8db` and `3cb57812`, subsequent cutover
+and Railway-stop records, and the Basalt 3.2.1 upgrade were held locally until the
+owner requested Web v3.4.1. That release includes them through normal hooks/CI/CD;
+the new digest requires its own verification rather than the cutover receipt.
 
 At 05:24 Beijing time the owner approved removing only Railway's verified main
 trigger and issuing/installing a certificate covering only `pew.md`:
@@ -425,12 +431,12 @@ host's precutover directory; neither contains credentials or source records.
 Cutover before-images and the sanitized `cutover-complete.json`, public CLI,
 native IPv6 and post-cleanup receipts are in `/opt/pew/cutover-20261022T0710/`.
 The completion receipt was copied with a matching SHA256 and mode 0600. The
-deployed image is still the `fcdf6e07` digest recorded above; this operation did
-not build an image, push commits, publish npm or change versions.
+image accepted by that operation was the `fcdf6e07` digest recorded above. The
+cutover itself did not build an image, push commits, publish npm or change versions.
 
 Keep `DEPLOY_PHASE=production`, strict/shared AOP and Railway stopped with its
-recovery resources retained. Before pushing the local migration documentation,
-plan for normal hooks and a new CI/CD deployment. Recheck the exact new SHA,
+recovery resources retained. Each later release requires normal hooks and a new
+CI/CD deployment. Recheck the exact new SHA,
 GHCR digest, public origin/version/database and retained rollback image afterward;
 the current image receipt cannot certify a future rebuild. Railway project/service
 deletion and fresh Google login testing remain outside this operation's scope.
