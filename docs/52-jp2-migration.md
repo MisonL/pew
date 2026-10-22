@@ -41,7 +41,7 @@ indefinite registry retention or proof of a future successful restore.
 Followed Firefly's migration/development/retrospective/handbook and inspected its
 exact Docker deployment chain. The caller pins
 `nocoo/base-ci/.github/workflows/deploy-docker.yml` at
-`0394178ebcff0418c442d84a84119220f31f8987`; no new release system was introduced.
+`ac635753a869cb85fad1f52aae4ccbd6119f3cae`; no new release system was introduced.
 Successful same-repository main push CI triggers GHCR build and digest deployment.
 The shared workflow rechecks source proof and records `.base-ci-releases/<SHA>.json`.
 It does not automatically roll back after failed remote verification.
