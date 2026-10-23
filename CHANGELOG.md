@@ -26,6 +26,16 @@
   their `.tmp` staging file) and backup archives at any depth, so they no
   longer enter image layers.
 
+### Changed
+- Pin the container's Node.js base image to `22.23.4` instead of a floating
+  `22`: a build beside a Docker cache older than the 2026-10-21 security
+  release shipped Node 22.23.3, which carries CVE-2026-111497 (Brotli decoder
+  out-of-bounds write permitting remote code execution). A regression test now
+  requires an exact patch version so the default cannot drift back.
+- Move the pinned Bun runtime from 1.4.0 to 1.4.3 in CI, both Dockerfiles and
+  the docs, so local development, CI and the images run the same patch. Same
+  1.4.x minor: `bun.lock` is unchanged and `--frozen-lockfile` passes.
+
 ### Fixed
 - Tighten session maxAge to 7 days and reject placeholder AUTH_SECRET values
   at first auth use (session-forgery hardening)
