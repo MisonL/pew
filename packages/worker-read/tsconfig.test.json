@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "emitDeclarationOnly": false,
+    "noEmit": true,
+    // Tests import @pew/core helpers from ../../core/src/..., which the
+    // declaration build's rootDir=src rejects. No emit, so rootDir is inert.
+    "rootDir": "../.."
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}

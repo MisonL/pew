@@ -12,13 +12,26 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 /** Reserve and release a loopback port, so a stubbed E2E_PORT cannot collide
- * with a real lane (17020/27020) running in parallel. */
+ * with a real lane (17020/27020) running in parallel.
+ *
+ * listen(0) hands back a port from the OS ephemeral range (49152+), which is
+ * exactly the pool every other process on the machine draws from — so releasing
+ * it and then letting runLocalE2e re-bind races anything that grabs it in the
+ * gap (measured: one EADDRINUSE in six full runs, reported as "expected E2E
+ * interrupted"). Draw from a private range instead and verify the port is
+ * actually bindable before returning it. */
 async function freePort(): Promise<string> {
-  const probe = createServer();
-  await new Promise<void>((done) => probe.listen(0, "127.0.0.1", () => done()));
-  const port = (probe.address() as { port: number }).port;
-  await new Promise<void>((done) => probe.close(() => done()));
-  return String(port);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const candidate = 21_000 + Math.floor(Math.random() * 3_000);
+    const probe = createServer();
+    const bound = await new Promise<boolean>((done) => {
+      probe.once("error", () => done(false));
+      probe.listen(candidate, "127.0.0.1", () => done(true));
+    });
+    await new Promise<void>((done) => (bound ? probe.close(() => done()) : done()));
+    if (bound) return String(candidate);
+  }
+  throw new Error("could not find a free port in 21000-23999");
 }
 
 // The module-level fs mock exists for the runner tests; the warmup walker

@@ -22,6 +22,15 @@ describe("production container", () => {
     expect(dockerfile.match(/^ARG NODE_VERSION=(.+)$/m)?.[1]).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
+  it("pins the Bun runtime in the selfhost image to the same patch as the root one", () => {
+    // The selfhost Dockerfile is the only image the adapter services run, and
+    // it pins Bun independently. Letting the two drift means the images build
+    // under different runtimes than CI tests.
+    const rootBun = dockerfile.match(/^COPY --from=(oven\/bun:\S+)/m)?.[1];
+    const selfhost = source("deploy/selfhost/Dockerfile").match(/^FROM (oven\/bun:\S+)/m)?.[1];
+    expect(selfhost).toBe(rootBun);
+  });
+
   it("preserves standalone assets and SWC helpers with writable non-root caches", () => {
     expect(dockerfile).toContain("scripts/fix-standalone-swc-helpers.ts --required");
     for (const [from, to] of [

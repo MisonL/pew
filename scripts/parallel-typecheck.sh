@@ -23,6 +23,16 @@ PIDS+=($!)
 tsc -b packages/worker-read/tsconfig.build.json &
 PIDS+=($!)
 
+# Test files are excluded from every declaration build above (they cannot be
+# part of a composite emit: they import helpers across package roots), so
+# without these lanes no test file under the worker packages is typechecked at
+# all — vitest transpiles with esbuild and never checks types. The root
+# tsconfig's `**/*.test.ts` exclusion does not reach worker-read, whose own
+# config is standalone, but it does reach the others, so each package that
+# ships tests needs its own noEmit config.
+tsc --noEmit -p packages/worker-read/tsconfig.test.json &
+PIDS+=($!)
+
 tsc -b deploy/selfhost/tsconfig.json &
 PIDS+=($!)
 
