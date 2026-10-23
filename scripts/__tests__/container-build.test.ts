@@ -15,6 +15,13 @@ describe("production container", () => {
     expect(dockerfile).toContain("node ./node_modules/.bin/next build");
   });
 
+  it("pins the Node.js base image to a patch release, not a floating major", () => {
+    // A floating major (node:22-slim) resolves to whatever the local cache
+    // holds. A build beside a pre-security-release cache shipped Node 22.23.3,
+    // which carries CVE-2026-111497 (Brotli decoder OOB write).
+    expect(dockerfile.match(/^ARG NODE_VERSION=(.+)$/m)?.[1]).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
   it("preserves standalone assets and SWC helpers with writable non-root caches", () => {
     expect(dockerfile).toContain("scripts/fix-standalone-swc-helpers.ts --required");
     for (const [from, to] of [

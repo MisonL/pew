@@ -1,4 +1,8 @@
-ARG NODE_VERSION=22
+# Pin patch, not major: floating node:22-slim resolves to whatever digest the
+# local cache holds, and a build beside a pre-security-release cache (verified:
+# 22.23.3 built a runtime with CVE-2026-111497, fixed in 22.23.4) ships the
+# vulnerable decoder into an exposed container.
+ARG NODE_VERSION=22.23.4
 FROM node:${NODE_VERSION}-slim AS base
 
 # Keep Bun for workspace installs/build scripts while pinning every Node.js
