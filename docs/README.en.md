@@ -59,7 +59,7 @@ Antigravity CLI usage and sessions come from `~/.gemini/antigravity-cli/conversa
 
 ## Development
 
-The repository uses Bun workspaces. Use Bun 1.4.0 to match the current CI and Dockerfile, with Node.js 24 or newer.
+The repository uses Bun workspaces. Use Bun 1.4.3 to match the current CI and Dockerfile, with Node.js 24 or newer.
 
 ```bash
 git clone https://github.com/nocoo/pew.git

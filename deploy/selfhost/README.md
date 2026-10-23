@@ -190,7 +190,7 @@ rqlite 后端写异常时**降级到进程内限速器**（不再 fail-open 放�
 ```bash
 git clone --branch feat/self-hosted-deployment --single-branch <本仓库地址> pew
 cd pew
-bun --version                   # ★ 必须与仓库固定的 1.4.0 同次版本
+bun --version                   # ★ 必须与仓库固定的 1.4.3 同次版本
 bun install --frozen-lockfile
 bun run build                    # 先构建 @pew/core（web 与 CLI 都依赖）
 bun run --cwd packages/cli build # 产出 packages/cli/dist/bin.js
@@ -198,17 +198,17 @@ node packages/cli/dist/bin.js --version   # 自检：应打印 3.3.3
 node packages/cli/dist/bin.js sync --help | grep -- --host   # 自检：必须能看到 --host
 ```
 
-★ **Bun 需与仓库固定的 1.4.0 同一次版本**：两个 Dockerfile 都 pin 了 `oven/bun:1.4.0`
-（根 `Dockerfile:6` 的注释写明「floating `oven/bun:1` broke frozen-lockfile across Bun
+★ **Bun 需与仓库固定的 1.4.3 同一次版本**：两个 Dockerfile 都 pin 了 `oven/bun:1.4.3`
+（根 `Dockerfile` 的注释写明「floating `oven/bun:1` broke frozen-lockfile across Bun
 minors」）。**实测 1.3.14 必失败**（`lockfile had changes, but lockfile is frozen`），
-1.4.0 通过；1.4.3 亦通过（同一 1.4.x 次版本内 lockfile 兼容）。换主版本前先跑一次
+1.4.x 内各补丁版本通过（同一 1.4.x 次版本内 lockfile 兼容）。换主版本前先跑一次
 `bun install --frozen-lockfile --dry-run` 确认。系统已有旧版时装一份用户级副本，不要
 覆盖系统那份（可能被其它项目依赖）：
 
 ```bash
-curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.0"   # 装到 ~/.bun/bin/bun
+curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.3"   # 装到 ~/.bun/bin/bun
 export PATH="$HOME/.bun/bin:$PATH"                          # 仅本步骤需要；写进 shell rc 则全局生效
-bun --version                                               # 确认 1.4.0 后再执行上面的 install
+bun --version                                               # 确认 1.4.3 后再执行上面的 install
 ```
 
 （只跑 `bun run build` / `bun run --cwd packages/cli build` 时用哪个 bun 都行，

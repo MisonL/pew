@@ -11,7 +11,7 @@ describe("production container", () => {
       .toEqual(["NODE_VERSION"]);
     expect(dockerfile).not.toMatch(/CF_|AUTH_|WORKER_|E2E_|TOKEN|SECRET|--mount=type=secret/);
     expect(dockerfile).toContain("RUN bun install --frozen-lockfile");
-    expect(dockerfile).toContain("COPY --from=oven/bun:1.4.0");
+    expect(dockerfile).toContain("COPY --from=oven/bun:1.4.3");
     expect(dockerfile).toContain("node ./node_modules/.bin/next build");
   });
 

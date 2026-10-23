@@ -5,7 +5,7 @@
 #
 # This is NOT the image for `web` — web is a Next.js standalone build and uses
 # the repo-root Dockerfile (see compose: web's build points at ./Dockerfile).
-FROM oven/bun:1.4.0 AS build
+FROM oven/bun:1.4.3 AS build
 
 WORKDIR /app
 

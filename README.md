@@ -59,7 +59,7 @@ Antigravity CLI 从 `~/.gemini/antigravity-cli/conversations/*.db` 收集用量�
 
 ## 开发
 
-仓库使用 Bun workspaces。使用与当前 CI / Dockerfile 一致的 Bun 1.4.0，并准备 Node.js 24 或更新版本。
+仓库使用 Bun workspaces。使用与当前 CI / Dockerfile 一致的 Bun 1.4.3，并准备 Node.js 24 或更新版本。
 
 ```bash
 git clone https://github.com/nocoo/pew.git
