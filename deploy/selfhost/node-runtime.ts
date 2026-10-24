@@ -197,11 +197,17 @@ export function runScheduled<E>(
 export function registerShutdownSignals(close: () => Promise<void>): void {
   const shutdown = (signal: string): void => {
     console.log(`received ${signal}, shutting down gracefully`);
-    const forced = setTimeout(() => {
+    // Hard timeout guards against a wedged close (e.g. keep-alive never ends).
+    // The timer is deliberately NOT unref()'d: a suspended drain that holds no
+    // other live handles (e.g. awaiting a promise with no timer/socket behind
+    // it) would otherwise empty the event loop and exit 0 — a silent scheduler
+    // death with a "success" code, before the forced exit could fire. Keeping
+    // it referenced holds the loop open, and close() returning normally exits
+    // via process.exit(0) regardless.
+    setTimeout(() => {
       console.error("graceful shutdown timed out; forcing exit");
       process.exit(1);
     }, 10_000);
-    forced.unref();
     close()
       .then(() => process.exit(0))
       .catch((error: unknown) => {

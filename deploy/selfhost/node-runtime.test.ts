@@ -270,6 +270,37 @@ describe("registerShutdownSignals", () => {
       exitSpy.mockRestore();
     }
   });
+
+  it("keeps the forced-exit timer referenced so a suspended drain still exits 1", async () => {
+    // The forced timer must NOT be unref'd: a hung drain that holds no event
+    // loop handles (e.g. awaiting a promise with no timer/socket) would empty
+    // the loop and exit 0 before the timer fired, and the scheduler container
+    // would die silently with a "success" code. Referenced, the timer itself
+    // keeps the loop alive and forces exit 1.
+    vi.useFakeTimers();
+    const close = vi.fn(() => new Promise<void>(() => {}));
+    const handlers: Record<string, () => void> = {};
+    const onSpy = vi
+      .spyOn(process, "on")
+      .mockImplementation(((signal: string | symbol, handler: (...args: unknown[]) => void) => {
+        handlers[String(signal)] = handler as () => void;
+        return process;
+      }) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      registerShutdownSignals(close);
+      handlers.SIGTERM!();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(errSpy).toHaveBeenCalledWith("graceful shutdown timed out; forcing exit");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      vi.useRealTimers();
+      onSpy.mockRestore();
+      exitSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+  });
 });
 
 describe("createWorkerServer.listen", () => {

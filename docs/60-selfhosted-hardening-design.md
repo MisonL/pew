@@ -286,7 +286,7 @@ README 新增「反向代理」小节，推荐形态：**Caddy 以 compose 服�
    - ★ `NEXTAUTH_URL` 必须与反代对外访问 URL **逐字符一致**（协议+域名+端口；`TRUSTED_ORIGIN` 永远 pinned 到它，不一致则重定向/回调指向错误主机）；CLI 侧 `PEW_HOST` 同步
    - ★ 反代覆写 `X-Forwarded-For`（pew 取**最后一段**，即自己代理追加的那一跳），同时覆写 `X-Real-IP`、清空 `CF-Connecting-IP`（`getClientIp` 依次信任三者，见 `lib/rate-limit.ts:186-198`）
      > **实现更正 2026-10-15：** `getClientIp` 交付时取 XFF 的**最后一段**，客户端在 XFF 前段注入的伪造地址被无害化；X-Real-IP / CF-Connecting-IP 的信任顺序与「反代必须覆写 XFF」的结论不变。
-   - cookie 四格矩阵：https+`USE_SECURE_COOKIES=true` ✓；**https+false → 可登录但无 `__Secure-` 前缀（降级可用，不是「浏览器丢弃」）**；**http+true → `__Secure-` cookie 被 http origin 拒收 → 登录坏**；http+false ✓。（实现更正 2026-10-17：交付的 `.env.example`/compose 默认为**空值**而非 false——空值由 `auth.ts:45-55` 推导，production 下结果为 true；故 **http 部署必须显式填 `false`**，https 部署留空即可，勿按本行旧的"默认 false"理解。）
+   - cookie 四格矩阵：https+`USE_SECURE_COOKIES=true` ✓；**https+false → 可登录但无 `__Secure-` 前缀（降级可用，不是「浏览器丢弃」）**；**http+true → `__Secure-` cookie 被 http origin 拒收 → 登录坏**；http+false ✓。（实现更正 2026-10-17：交付的 `.env.example`/compose 默认为**空值**而非 false——空值由 `auth.ts:45-55` 推导，production 下结果为 true；故 **http 部署必须显式填 `false`**，https 部署留空即可，勿按本行旧的"默认 false"理解。**更新 2026-10-24：`.env.example` 默认改为 `false`**（与示例的 http `NEXTAUTH_URL` 匹配，照抄即安全），https 部署应显式填 `true`，见 deploy/selfhost/README.md「Cookie 与 USE_SECURE_COOKIES」。）
    - `TRUSTED_ORIGIN` 由 `NEXTAUTH_URL` 推导，无需单独配置（proxy.ts 已实现）
 4. **`docker-compose.proxy.yml` 覆盖文件**：`ports: !override ["127.0.0.1:${WEB_PORT:-7020}:7020"]`——**普通追加合并下两条映射并存或端口冲突**（compose ports 唯一键含 ip，`!override` 需 Compose ≥ v2.24.4，评审 B1）；文档写明显式 `-f docker-compose.yml -f docker-compose.proxy.yml` 调用与 `docker compose config` 冒烟核对。
 

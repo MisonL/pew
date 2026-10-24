@@ -20,7 +20,7 @@
 - 开关名全文唯一：`LOGIN_RATE_LIMIT_BACKEND`（不是 `RATE_LIMIT_BACKEND`）。
 - 迁移 DDL 带 `?norwtime&norwrandom`、DML 不带（副本一致性，既有约定）。
 - 凭据不得进任何 error message / 日志输出。
-- 镜像运行 `NODE_ENV=production`（web 侧 secure cookie 默认真；`.env.example` 的 `USE_SECURE_COOKIES` 默认**空值**，由 `auth.ts` 推导——http 部署必须显式填 `false`）。
+- 镜像运行 `NODE_ENV=production`（web 侧 secure cookie 默认真；`.env.example` 的 `USE_SECURE_COOKIES` 交付时默认**空值**，由 `auth.ts` 推导——http 部署必须显式填 `false`。更新 2026-10-24：`.env.example` 默认已改为 `false`，与示例的 http `NEXTAUTH_URL` 匹配；https 部署应显式填 `true`）。
 - 真机验证统一用 `rqlite/rqlite:10.5.3`；实验容器用完即删。
 
 ## Review Focus
