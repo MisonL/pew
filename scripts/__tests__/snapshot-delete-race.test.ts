@@ -31,7 +31,10 @@ describe("account deletion concurrent with snapshot generation", () => {
         INSERT INTO usage_records(user_id,source,model,hour_start,input_tokens,total_tokens) VALUES ('owner','codex','m','2026-01-15T00:00:00.000Z',40,40),('deleted','codex','m','2026-01-15T00:00:00.000Z',100,100);
         CREATE VIEW usage_totals AS SELECT * FROM usage_records;
         INSERT INTO season_snapshots(id,season_id,team_id,rank,total_tokens,input_tokens) VALUES ('ss','s1','t1',1,140,140);
-        INSERT INTO season_member_snapshots(id,season_id,team_id,user_id,total_tokens,input_tokens) VALUES ('ms1','s1','t1','owner',40,40),('ms2','s1','t1','deleted',100,100);`);
+        INSERT INTO season_member_snapshots(id,season_id,team_id,user_id,total_tokens,input_tokens) VALUES ('ms1','s1','t1','owner',40,40),('ms2','s1','t1','deleted',100,100);
+        -- The deleted user is the bootstrap admin: the delete batch must clear
+        -- the instance_setup claim row (id=1) along with the account.
+        INSERT INTO instance_setup(id,admin_user_id,completed_at) VALUES (1,'deleted',datetime('now'));`);
       for (const name of ["usage_details", "usage_evidence", "session_records", "device_aliases", "organization_members", "auth_codes"]) {
         sqlite.exec(`CREATE TABLE IF NOT EXISTS ${name}(user_id TEXT REFERENCES users(id))`);
       }
@@ -72,6 +75,9 @@ describe("account deletion concurrent with snapshot generation", () => {
       expect(sqlite.prepare("SELECT total_tokens FROM season_snapshots WHERE team_id='t1'").get()?.total_tokens).toBe(40);
       expect(sqlite.prepare("SELECT SUM(total_tokens) AS n FROM season_member_snapshots WHERE team_id='t1'").get()?.n).toBe(40);
       expect(sqlite.prepare("SELECT id FROM users WHERE id='deleted'").get()).toBeUndefined();
+      // The setup claim row was cleared (or survives a rollback) along with the
+      // account, so a later /setup can re-bootstrap.
+      expect(sqlite.prepare("SELECT id FROM instance_setup").get()).toBeUndefined();
       if (response.ok) expect(sqlite.prepare("SELECT total_tokens FROM season_snapshots WHERE team_id='zero'").get()?.total_tokens).toBe(0);
       expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally { sqlite.close(); }
