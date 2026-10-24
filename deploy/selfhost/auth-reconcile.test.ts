@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { assertAuthReconciled, assertCredentialConsistency } from "./migrate-cli";
+import {
+  assertAuthReconciled,
+  assertCredentialConsistency,
+  waitForRqlite,
+} from "./migrate-cli";
 
 const URL = "http://rqlite:4001";
 
@@ -74,5 +78,59 @@ describe("assertAuthReconciled (expectAuth=true)", () => {
     const f = vi.fn();
     await expect(assertAuthReconciled(f, URL, false)).resolves.toBeUndefined();
     expect(f).not.toHaveBeenCalled();
+  });
+});
+
+describe("waitForRqlite", () => {
+  const noDelay = async () => {};
+
+  it("resolves as soon as /readyz answers 200", async () => {
+    const f = vi.fn(async () => new Response("ready", { status: 200 }));
+    await expect(waitForRqlite(60_000, { baseUrl: URL, fetchImpl: f, delay: noDelay })).resolves.toBeUndefined();
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails fast with an auth diagnosis on 401 instead of burning the timeout", async () => {
+    // With auth enabled and a broken auth.json (missing the '*' status/ready
+    // entry), /readyz answers 401 forever. The old loop treated that as
+    // "not up yet", retried for the whole timeout and finally reported
+    // "did not become ready" — pointing the operator at the wrong problem.
+    const f = vi.fn(async () => new Response("unauthorized", { status: 401 }));
+    await expect(waitForRqlite(60_000, { baseUrl: URL, fetchImpl: f, delay: noDelay }))
+      .rejects.toThrow(/401 on \/readyz: auth is enabled/);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails fast on 403 for the same reason", async () => {
+    const f = vi.fn(async () => new Response("forbidden", { status: 403 }));
+    await expect(waitForRqlite(60_000, { baseUrl: URL, fetchImpl: f, delay: noDelay }))
+      .rejects.toThrow(/403 on \/readyz: auth is enabled/);
+  });
+
+  it("retries through connection errors and 5xx until the deadline", async () => {
+    let calls = 0;
+    const f = vi.fn(async () => {
+      calls++;
+      if (calls < 3) throw new Error("connect ECONNREFUSED");
+      return new Response("not ready", { status: 503 });
+    });
+    await expect(
+      waitForRqlite(10_000, {
+        baseUrl: URL,
+        fetchImpl: f,
+        // Never-ending retry loop with a no-op delay: cut it off manually.
+        delay: async () => {
+          if (calls >= 3) throw new Error("stop");
+        },
+      })
+    ).rejects.toThrow("stop");
+    expect(calls).toBe(3);
+  });
+
+  it("reports readiness (not auth) when the deadline passes on genuine unavailability", async () => {
+    const f = vi.fn(async () => new Response("", { status: 503 }));
+    await expect(
+      waitForRqlite(50, { baseUrl: URL, fetchImpl: f, delay: async () => {} })
+    ).rejects.toThrow(/did not become ready/);
   });
 });

@@ -70,9 +70,20 @@ export async function assertAuthReconciled(
   }
 }
 
-async function waitForRqlite(timeoutMs = 60_000): Promise<void> {
+export async function waitForRqlite(
+  timeoutMs = 60_000,
+  deps: {
+    baseUrl?: string;
+    fetchImpl?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+    delay?: (ms: number) => Promise<void>;
+  } = {}
+): Promise<void> {
+  const baseUrl = deps.baseUrl ?? BASE_URL;
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const delay = deps.delay ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    let status: number | undefined;
     try {
       // Probe /readyz, not /status. In the cluster profile rqlite-1 is started
       // with -bootstrap-expect 3 and a full -join list; /status returns HTTP
@@ -80,14 +91,27 @@ async function waitForRqlite(timeoutMs = 60_000): Promise<void> {
       // /status probe would let migrate run before a leader exists and fail.
       // /readyz only turns 200 once a leader is up. /readyz is also right for
       // the single profile (-bootstrap-expect 1 elects immediately).
-      const res = await fetch(`${BASE_URL}/readyz`);
+      const res = await fetchImpl(`${baseUrl}/readyz`);
       if (res.ok) return;
+      status = res.status;
     } catch {
       // not up yet
     }
-    await new Promise((r) => setTimeout(r, 1000));
+    // A 401/403 is not "still starting": rqlite is up and answering, but auth
+    // is enabled and this unauthenticated probe is refused. The rendered
+    // auth.json must grant status/ready to '*'; without that entry every retry
+    // burns the full timeout and the final message wrongly blames readiness.
+    // Fail fast with the actual cause instead.
+    if (status === 401 || status === 403) {
+      throw new Error(
+        `rqlite at ${baseUrl} answered ${status} on /readyz: auth is enabled but this probe ` +
+          `is unauthenticated. The rendered auth.json must grant status/ready to '*' ` +
+          `(and the data users must match RQLITE_USERNAME/RQLITE_PASSWORD).`
+      );
+    }
+    await delay(1000);
   }
-  throw new Error(`rqlite at ${BASE_URL} did not become ready`);
+  throw new Error(`rqlite at ${baseUrl} did not become ready`);
 }
 
 async function main(): Promise<void> {

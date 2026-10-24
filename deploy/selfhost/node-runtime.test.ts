@@ -188,6 +188,42 @@ describe("runScheduled", () => {
       vi.useRealTimers();
     }
   });
+
+  it("drain waits for every overlapping tick, not only the newest", async () => {
+    // A run that outlasts the interval overlaps the next tick. Tracking a
+    // single "latest promise" let drain() resolve as soon as the newest tick
+    // settled, while older runs were still writing D1/KV.
+    vi.useFakeTimers();
+    try {
+      const finishes: Array<() => void> = [];
+      const scheduled = vi.fn(() => new Promise<void>((resolve) => { finishes.push(resolve); }));
+      const handle = runScheduled({ scheduled }, {}, 1000);
+      await vi.advanceTimersByTimeAsync(2500);
+      // 1 startup run + 2 interval ticks, all still pending.
+      expect(scheduled).toHaveBeenCalledTimes(3);
+
+      let drained = false;
+      const drain = handle.drain().then(() => { drained = true; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(drained).toBe(false);
+
+      // Settle the NEWEST tick first: the older two must still hold drain.
+      finishes[2]!();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(drained).toBe(false);
+
+      finishes[0]!();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(drained).toBe(false);
+
+      finishes[1]!();
+      await drain;
+      expect(drained).toBe(true);
+      handle.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("registerShutdownSignals", () => {

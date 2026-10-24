@@ -137,25 +137,31 @@ export function runScheduled<E>(
     return { stop: () => { /* nothing to stop */ }, drain: async () => { /* nothing to drain */ } };
   }
   const handler = worker.scheduled.bind(worker);
-  // Track the in-flight tick so shutdown can wait for it: a pricing sync killed
-  // between its D1 and KV writes would leave the cache half-updated.
-  let inFlight: Promise<void> | null = null;
+  // Track every in-flight tick so shutdown can wait for all of them: a run
+  // that outlasts the interval overlaps the next tick, and a single "latest
+  // promise" reference let drain() resolve while older runs were still
+  // writing D1/KV. A pricing sync killed between its D1 and KV writes would
+  // leave the cache half-updated.
+  const inFlight = new Set<Promise<void>>();
+  const track = (run: Promise<void>): void => {
+    inFlight.add(run);
+    void run.finally(() => {
+      inFlight.delete(run);
+    });
+  };
   const tick = (): void => {
     // try/catch around the CALL, not just .catch on the returned promise: the
     // handler body runs synchronously up to its first await, so a throw there
     // would escape and — for the startup run below — crash the process before
     // any timer is armed. setInterval has the same hazard for every later tick.
     try {
-      inFlight = Promise.resolve(handler({ scheduledTime: Date.now() }, env))
-        .catch((error: unknown) => {
+      track(
+        Promise.resolve(handler({ scheduledTime: Date.now() }, env)).catch((error: unknown) => {
           console.error("scheduled run failed", error);
         })
-        .finally(() => {
-          inFlight = null;
-        });
+      );
     } catch (error) {
       console.error("scheduled run failed", error);
-      inFlight = null;
     }
   };
   // Run once at startup: setInterval fires only after a full period, so with
@@ -175,7 +181,7 @@ export function runScheduled<E>(
   return {
     stop: () => clearInterval(timer),
     drain: async () => {
-      await inFlight;
+      await Promise.allSettled([...inFlight]);
     },
   };
 }
