@@ -17,7 +17,7 @@ vi.mock("@/auth", () => ({ shouldUseSecureCookies: () => false }));
 
 import { POST } from "@/app/api/auth/register/route";
 import { getDbRead, getDbWrite } from "@/lib/db";
-import { inMemoryRateLimiter } from "@/lib/rate-limit";
+import { AUTH_REGISTER_RATE_LIMIT, inMemoryRateLimiter } from "@/lib/rate-limit";
 
 const mockGetDbWrite = getDbWrite as unknown as ReturnType<typeof vi.fn>;
 const mockGetDbRead = getDbRead as unknown as ReturnType<typeof vi.fn>;
@@ -134,5 +134,24 @@ describe("POST /api/auth/register", () => {
     const res = await post({ email: "n@x.y", password: "password123", inviteCode: "ABCD2345" });
     expect(res.status).toBe(500);
     expect((await res.json()).error).toBe("Registration failed");
+  });
+
+  it("returns 429 once the per-IP bucket is exhausted, before any DB or password work", async () => {
+    // A public endpoint that runs scrypt synchronously needs an IP cap that
+    // trips before the work starts; otherwise it is an anonymous CPU sink.
+    mockQuery.mockResolvedValue({ results: [{ n: 1 }] });
+    const statuses: number[] = [];
+    for (let i = 0; i < AUTH_REGISTER_RATE_LIMIT.maxRequests + 1; i++) {
+      const res = await post({ email: "n@x.y", password: "password123" });
+      statuses.push(res.status);
+    }
+    expect(statuses.slice(0, -1).every((s) => s !== 429)).toBe(true);
+    expect(statuses.at(-1)).toBe(429);
+    const limited = await post({ email: "n@x.y", password: "password123" });
+    expect(limited.headers.get("Retry-After")).toBeTruthy();
+    // The limiter ran before the body was even parsed: a malformed body from
+    // the same exhausted bucket is still 429, never 400.
+    const malformed = await post("{not json");
+    expect(malformed.status).toBe(429);
   });
 });

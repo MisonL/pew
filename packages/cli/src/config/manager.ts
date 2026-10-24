@@ -16,8 +16,17 @@ const DEV_CONFIG = "config.dev.json";
  *
  * Distinct hosts must not share a token file (spec §4.5): logging into one
  * intranet instance must not overwrite credentials for another. Derives a
- * stable stem from host[:port] and hashes the rest so unusual characters or
- * long paths cannot escape the config directory.
+ * stable stem from host[:port], escaping anything a filesystem or the dev/prod
+ * name mapping could confuse, and hashes the tail of an over-long stem.
+ *
+ * The mapping must be INJECTIVE. A plain "replace every unsafe char with _"
+ * is not: the port separator, a literal "_" and the brackets of an IPv6
+ * literal all collapsed onto the same character, so `a.b:7020` and `a.b_7020`
+ * (or `[::1]` and `___1_`) shared one credential file. Only ":" — the port
+ * separator, which every ordinary host:port needs — maps to a bare "_"; every
+ * other non-alphanumeric, non-dot, non-hyphen character is escaped, so a stem
+ * containing "_x…" can only come from such an escape and never from a literal
+ * "_".
  */
 export function hostConfigStem(host: string | undefined): string | undefined {
   if (!host) return undefined;
@@ -28,14 +37,38 @@ export function hostConfigStem(host: string | undefined): string | undefined {
   } catch {
     // Not a parseable URL — fall back to the raw string.
   }
-  let safe = key
-    .replace(/\.\./g, "_") // no parent-directory traversal
-    .replace(/[^a-z0-9.-]/gi, "_"); // no separators or other unsafe chars
+  const chars = [...key];
+  const isLiteral = (char: string | undefined): boolean => char !== undefined && /[a-z0-9-]/i.test(char);
+  let safe = "";
+  for (const [index, char] of chars.entries()) {
+    if (char === ".") {
+      // Keep a dot only when it sits between two hostname characters, so the
+      // stem can never contain ".." or a leading/trailing dot (all of which
+      // could re-form a traversal component or a confusing filename). Every
+      // legitimate `host.tld:port` keeps its dots, so existing credential
+      // file names are byte-identical; anything else is escaped.
+      if (isLiteral(chars[index - 1]) && isLiteral(chars[index + 1])) {
+        safe += ".";
+        continue;
+      }
+      safe += "_x002e";
+      continue;
+    }
+    if (/[a-z0-9-]/i.test(char)) safe += char;
+    else if (char === ":") safe += "_"; // port separator: keeps existing names
+    else {
+      // Escape sequences are the only source of "_x…" in a stem, which is what
+      // keeps the mapping injective; a literal "_" (impossible in a WHATWG
+      // URL host anyway) would also escape here.
+      safe += `_x${char.codePointAt(0)?.toString(16).padStart(4, "0") ?? ""}`;
+    }
+  }
   // A host literally named "dev" would produce config.dev.json — the built-in
   // dev SaaS credential file. A custom instance's token would then live in the
-  // dev file, and `pew sync --dev` would send it to pew.dev.hexly.ai. Prefix
-  // the one colliding stem (prod is config.json, which no stem can equal).
-  if (safe === "dev") safe = "host-dev";
+  // dev file, and `pew sync --dev` would send it to pew.dev.hexly.ai. The
+  // replacement starts with "_dev", which no real host can produce (a literal
+  // "_" always escapes to "_x005f"). Prod is config.json, which no stem equals.
+  if (safe === "dev") safe = "_dev";
   // Keep the whole filename within NAME_MAX (255 bytes on ext4/APFS): a long
   // host would otherwise fail the credential write with ENAMETOOLONG. Trim to
   // a budget that leaves room for "config." + ".json", then fold the dropped

@@ -113,15 +113,36 @@ describe("ConfigManager", () => {
     // config.dev.json is the built-in dev SaaS file. Without the reserved-stem
     // guard, an instance whose host is "dev" would write its token there, and
     // a later `pew sync --dev` would ship it to pew.dev.hexly.ai.
-    expect(hostConfigStem("http://dev")).toBe("config.host-dev.json");
+    expect(hostConfigStem("http://dev")).toBe("config._dev.json");
     expect(new ConfigManager(tempDir, true, "http://dev").configPath).toBe(
-      join(tempDir, "config.host-dev.json")
+      join(tempDir, "config._dev.json")
     );
     expect(new ConfigManager(tempDir, true).configPath).toBe(join(tempDir, "config.dev.json"));
+    // The reserved-name rewrite must not collide with a real host that is
+    // literally named host-dev (the old "host-dev" prefix did).
+    expect(hostConfigStem("http://host-dev")).toBe("config.host-dev.json");
+    expect(hostConfigStem("http://dev")).not.toBe(hostConfigStem("http://host-dev"));
+  });
+
+  it("maps distinct host strings to distinct files (the sanitizer is injective)", () => {
+    // Replacing every unsafe character with "_" merged the port separator, a
+    // literal underscore and the brackets of an IPv6 literal onto one
+    // character, so these pairs used to share a single credential file.
+    const collisions = [
+      ["http://a.b:7020", "http://a.b_7020"],
+      ["http://[::1]", "http://___1_"],
+      ["http://dev", "http://host-dev"],
+    ];
+    for (const [a, b] of collisions) {
+      expect(hostConfigStem(a)).not.toBe(hostConfigStem(b));
+    }
+    // Ordinary host:port names stay byte-identical: existing deployments keep
+    // reading the credential file they already wrote.
+    expect(hostConfigStem("http://172.16.81.4:7020")).toBe("config.172.16.81.4_7020.json");
   });
 
   it("sanitizes characters that would escape the config directory", () => {
-    // A crafted host must not introduce path separators.
+    // A crafted host must not introduce path separators or a ".." component.
     expect(hostConfigStem("http://../../etc/passwd")).not.toContain("/");
     expect(hostConfigStem("http://../../etc/passwd")).not.toContain("..");
   });

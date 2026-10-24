@@ -1074,9 +1074,12 @@ const updateCommand = defineCommand({
       if (result.forced) {
         // A forced install ignores the version gate: it can replace a local
         // or self-hosted build with a published package that does not know
-        // --host, which silently ships the queue to the SaaS.
+        // --host. Do NOT suggest running `sync --host ...` as the check —
+        // on a binary without --host, citty parses the flag away and the sync
+        // runs against the SaaS host, which is the incident path itself.
+        // `sync --help` is the safe probe.
         log.warn(
-          `Installed without the version check (--force). If this build was a local or self-hosted one, verify that ${pc.cyan("pew sync --host <your-instance>")} still targets your own instance.`,
+          `Installed without the version check (--force). If this build was a local or self-hosted one, check that the new binary still understands --host: ${pc.cyan("pew sync --help | grep -- --host")}`,
         );
       }
       log.success("pew has been updated to the latest version.");

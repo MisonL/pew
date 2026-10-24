@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockDbWrite } from "./test-utils";
-import { inMemoryRateLimiter } from "@/lib/rate-limit";
+import { AUTH_RESET_RATE_LIMIT, inMemoryRateLimiter } from "@/lib/rate-limit";
 
 vi.mock("@/lib/db", () => ({
   getDbRead: vi.fn(),
@@ -96,5 +96,21 @@ describe("POST /api/auth/reset-password", () => {
     const res = await post({ token: "good-token", password: "newpassword" });
     expect(res.status).toBe(500);
     expect((await res.json()).error).toMatch(/failed/i);
+  });
+
+  it("returns 429 once the per-IP bucket is exhausted, before any DB work", async () => {
+    // Token consumption is a write against the shared DB; the IP cap must
+    // trip before the token lookup, not after.
+    const statuses: number[] = [];
+    for (let i = 0; i < AUTH_RESET_RATE_LIMIT.maxRequests + 1; i++) {
+      const res = await post({ token: "t", password: "newpassword" });
+      statuses.push(res.status);
+    }
+    expect(statuses.slice(0, -1).every((s) => s !== 429)).toBe(true);
+    expect(statuses.at(-1)).toBe(429);
+    // An exhausted bucket gets 429 even for a body that would otherwise 400.
+    const malformed = await post("{oops");
+    expect(malformed.status).toBe(429);
+    expect(malformed.headers.get("Retry-After")).toBeTruthy();
   });
 });
