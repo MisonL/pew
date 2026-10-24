@@ -117,6 +117,20 @@ export async function handleInviteGate(
 
   if (existingUser) return true;
 
+  // An account row is not the only way a user can exist: credentials signups
+  // (email + password) create a `users` row without any `accounts` row. When
+  // such a user later tries to sign in with Google using the same email, the
+  // account lookup above misses them and the gate would demand (and then
+  // burn) an invite code for a user who already exists. Auth.js itself
+  // refuses to link the OAuth identity (dangerous email linking stays
+  // disabled), so allowing them through here only avoids the wrong error —
+  // it never merges the two identities.
+  const email = account.email?.trim().toLowerCase();
+  if (email) {
+    const existingByEmail = await dbRead.getUserByEmail(email);
+    if (existingByEmail) return true;
+  }
+
   // Check if invite code is required (default: true)
   const requireInviteSetting = await dbRead.getAppSetting("require_invite_code");
   const requireInviteCode = requireInviteSetting !== "false";

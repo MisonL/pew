@@ -12,7 +12,7 @@
 import { randomBytes, scrypt as scryptCallback, scryptSync, timingSafeEqual } from "node:crypto";
 import type { ScryptOptions } from "node:crypto";
 import { getD1Client } from "./d1";
-import { getDbWrite } from "./db";
+import { getDbRead, getDbWrite } from "./db";
 import { validateInviteCode } from "./invite";
 
 function scryptAsync(
@@ -162,6 +162,13 @@ export async function findCredentialUser(email: string): Promise<CredentialUser 
  *
  * Invite codes are created by an admin AFTER the first /setup, so this path is
  * never used to bootstrap — bootstrapAdmin() does that.
+ *
+ * The admin's "require_invite_code" setting governs this path too. Reading it
+ * only in the OAuth gate (lib/invite.ts) left the two halves disagreeing: an
+ * admin who turned invitations off was told "anyone can register" while
+ * credential signups still demanded a code, and a code typed in that state was
+ * burned for nothing. `inviteCode` is therefore optional when the setting is
+ * "false".
  */
 export async function registerWithInvite(input: {
   email: string;
@@ -171,23 +178,31 @@ export async function registerWithInvite(input: {
 }): Promise<{ userId: string }> {
   const { email, name, password, inviteCode } = input;
 
-  if (!validateInviteCode(inviteCode)) {
+  const dbRead = await getDbRead();
+  const requireInvite = (await dbRead.getAppSetting("require_invite_code")) !== "false";
+
+  if (requireInvite && !validateInviteCode(inviteCode)) {
+    throw new Error("A valid invite code is required to register");
+  }
+  if (inviteCode && !validateInviteCode(inviteCode)) {
     throw new Error("A valid invite code is required to register");
   }
 
   const dbWrite = await getDbWrite();
   const userId = crypto.randomUUID();
 
-  // Consume the invite first: if this returns changes === 0 the code was
-  // invalid or already used, and we must not create the user.
-  const consumed = await dbWrite.execute(
-    `UPDATE invite_codes
-     SET used_by = ?, used_at = datetime('now')
-     WHERE code = ? AND used_by IS NULL`,
-    [userId, inviteCode]
-  );
-  if (consumed.changes === 0) {
-    throw new Error("Invalid or already used invite code");
+  if (requireInvite) {
+    // Consume the invite first: if this returns changes === 0 the code was
+    // invalid or already used, and we must not create the user.
+    const consumed = await dbWrite.execute(
+      `UPDATE invite_codes
+       SET used_by = ?, used_at = datetime('now')
+       WHERE code = ? AND used_by IS NULL`,
+      [userId, inviteCode]
+    );
+    if (consumed.changes === 0) {
+      throw new Error("Invalid or already used invite code");
+    }
   }
 
   try {
@@ -199,14 +214,16 @@ export async function registerWithInvite(input: {
   } catch (err) {
     // The user INSERT failed (e.g. duplicate email): release the invite so it
     // is not burned. Best-effort — the admin can also issue a fresh code.
-    try {
-      await dbWrite.execute(
-        `UPDATE invite_codes SET used_by = NULL, used_at = NULL
-         WHERE code = ? AND used_by = ?`,
-        [inviteCode, userId]
-      );
-    } catch {
-      // Ignore: the original error is what matters.
+    if (requireInvite) {
+      try {
+        await dbWrite.execute(
+          `UPDATE invite_codes SET used_by = NULL, used_at = NULL
+           WHERE code = ? AND used_by = ?`,
+          [inviteCode, userId]
+        );
+      } catch {
+        // Ignore: the original error is what matters.
+      }
     }
     throw err;
   }

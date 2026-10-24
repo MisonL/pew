@@ -87,6 +87,51 @@ describe("handleInviteGate", () => {
     expect(mockDbWrite.execute).not.toHaveBeenCalled();
   });
 
+  it("lets an existing email user (e.g. credentials signup) through without consuming an invite code", async () => {
+    // A user who registered with email+password has no OAuth account row, so
+    // the account lookup misses; the email lookup must still recognize them
+    // as existing instead of demanding (and then burning) an invite code.
+    // Auth.js then reports its own accurate OAuthAccountNotLinked error
+    // because dangerous email linking stays disabled.
+    mockDbRead.getUserByOAuthAccount.mockResolvedValueOnce(null);
+    mockDbRead.getAppSetting.mockResolvedValueOnce("true");
+    mockDbRead.getUserByEmail.mockResolvedValueOnce({ id: "user-cred-1" } as never);
+
+    const result = await handleInviteGate(
+      makeReq({ "pew-invite-code": "A3K9X2M4" }),
+      GOOGLE_ACCOUNT,
+      mockDbRead,
+      mockDbWrite
+    );
+    expect(result).toBe(true);
+    expect(mockDbRead.getUserByEmail).toHaveBeenCalledWith("user@example.com");
+    expect(mockDbWrite.execute).not.toHaveBeenCalled();
+  });
+
+  it("normalizes the profile email before the existing-user lookup", async () => {
+    mockDbRead.getUserByOAuthAccount.mockResolvedValueOnce(null);
+    mockDbRead.getAppSetting.mockResolvedValueOnce("true");
+    mockDbRead.getUserByEmail.mockResolvedValueOnce({ id: "user-cred-1" } as never);
+
+    await handleInviteGate(
+      makeReq(),
+      { ...GOOGLE_ACCOUNT, email: "User@Example.COM" },
+      mockDbRead,
+      mockDbWrite
+    );
+    expect(mockDbRead.getUserByEmail).toHaveBeenCalledWith("user@example.com");
+  });
+
+  it("still gates a genuinely new email", async () => {
+    mockDbRead.getUserByOAuthAccount.mockResolvedValueOnce(null);
+    mockDbRead.getAppSetting.mockResolvedValueOnce("true");
+    mockDbRead.getUserByEmail.mockResolvedValueOnce(null);
+
+    const result = await handleInviteGate(makeReq(), GOOGLE_ACCOUNT, mockDbRead, mockDbWrite);
+    expect(typeof result).toBe("string");
+    expect(result).toContain("/login?error=InviteRequired");
+  });
+
   it("should reject new user without invite cookie", async () => {
     // getUserByAccount returns null → new user
     vi.mocked(mockDbRead.getUserByOAuthAccount).mockResolvedValueOnce(null);

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createMockDbWrite } from "./test-utils";
+import { createMockDbRead, createMockDbWrite } from "./test-utils";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -25,9 +25,10 @@ vi.mock("@/auth", () => ({
 }));
 
 import { findCredentialUser, registerWithInvite } from "@/lib/credentials";
-import { getDbWrite } from "@/lib/db";
+import { getDbRead, getDbWrite } from "@/lib/db";
 
 const mockGetDbWrite = getDbWrite as unknown as ReturnType<typeof vi.fn>;
+const mockGetDbRead = getDbRead as unknown as ReturnType<typeof vi.fn>;
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -65,15 +66,48 @@ describe("findCredentialUser", () => {
 
 describe("registerWithInvite", () => {
   let dbWrite: ReturnType<typeof createMockDbWrite>;
+  let dbRead: ReturnType<typeof createMockDbRead>;
 
   beforeEach(() => {
     dbWrite = createMockDbWrite();
+    dbRead = createMockDbRead();
     mockGetDbWrite.mockResolvedValue(dbWrite);
+    mockGetDbRead.mockResolvedValue(dbRead);
+    // Default: invitations required (the upstream default is "true").
+    dbRead.getAppSetting.mockResolvedValue("true");
   });
 
   it("rejects a malformed invite code before touching the database", async () => {
     await expect(
       registerWithInvite({ email: "n@x.y", name: "N", password: "password123", inviteCode: "bad!" })
+    ).rejects.toThrow(/invite/i);
+    expect(dbWrite.execute).not.toHaveBeenCalled();
+  });
+
+  it("registers without an invite code when the admin disabled invitations", async () => {
+    // The admin toggle must govern this path too: the OAuth gate already
+    // honours it, and the UI promises "anyone can register" once it is off.
+    dbRead.getAppSetting.mockResolvedValue("false");
+    dbWrite.execute.mockResolvedValueOnce({ changes: 1, duration: 0 });
+
+    const { userId } = await registerWithInvite({
+      email: "open@x.y",
+      name: "Open",
+      password: "password123",
+      inviteCode: "",
+    });
+
+    expect(userId).toBeTruthy();
+    expect(dbWrite.execute).toHaveBeenCalledTimes(1);
+    const [sql] = dbWrite.execute.mock.calls[0]!;
+    expect(sql).toMatch(/INSERT INTO users/);
+    // No invite row was touched.
+    expect(sql).not.toMatch(/invite_codes/);
+  });
+
+  it("still rejects a malformed code when invitations are required", async () => {
+    await expect(
+      registerWithInvite({ email: "n@x.y", name: "N", password: "password123", inviteCode: "" })
     ).rejects.toThrow(/invite/i);
     expect(dbWrite.execute).not.toHaveBeenCalled();
   });

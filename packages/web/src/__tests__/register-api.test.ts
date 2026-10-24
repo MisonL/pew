@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createMockDbWrite } from "./test-utils";
+import { createMockDbRead, createMockDbWrite } from "./test-utils";
 
 vi.mock("@/lib/db", () => ({
   getDbRead: vi.fn(),
@@ -16,9 +16,11 @@ vi.mock("@/lib/d1", () => ({
 vi.mock("@/auth", () => ({ shouldUseSecureCookies: () => false }));
 
 import { POST } from "@/app/api/auth/register/route";
-import { getDbWrite } from "@/lib/db";
+import { getDbRead, getDbWrite } from "@/lib/db";
+import { inMemoryRateLimiter } from "@/lib/rate-limit";
 
 const mockGetDbWrite = getDbWrite as unknown as ReturnType<typeof vi.fn>;
+const mockGetDbRead = getDbRead as unknown as ReturnType<typeof vi.fn>;
 
 function post(body: unknown): Promise<Response> {
   return POST(
@@ -32,11 +34,16 @@ function post(body: unknown): Promise<Response> {
 
 describe("POST /api/auth/register", () => {
   let dbWrite: ReturnType<typeof createMockDbWrite>;
+  let dbRead: ReturnType<typeof createMockDbRead>;
 
   beforeEach(() => {
+    inMemoryRateLimiter.reset();
     mockQuery.mockReset();
     dbWrite = createMockDbWrite();
+    dbRead = createMockDbRead();
     mockGetDbWrite.mockResolvedValue(dbWrite);
+    mockGetDbRead.mockResolvedValue(dbRead);
+    dbRead.getAppSetting.mockResolvedValue("true");
   });
 
   it("rejects invalid JSON", async () => {
