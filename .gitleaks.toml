@@ -35,6 +35,17 @@ useDefault = true
   ]
 
 [[allowlists]]
+  description = "fake CLI-login redirect keys asserted in cli-auth tests"
+  # The redirect contract under test literally reads `?api_key=<value>`, so the
+  # keyword cannot be renamed away. gitleaks compares allowlist regexes against
+  # the captured SECRET (the value after `api_key=`), not the whole line, so
+  # these anchored dummy names are the only values the assertions allow.
+  regexes = [
+    '''existing-key-[a-z0-9]{3}''',
+    '''key-xyz''',
+  ]
+
+[[allowlists]]
   description = "fake cloud tokens in d1-test-guard tests"
   regexes = [
     '''tok-prod-xxx''',
