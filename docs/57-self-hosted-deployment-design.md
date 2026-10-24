@@ -428,6 +428,8 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 **实现更正 2026-10-20（凭据隔离只做了一半，已补齐）**：上面这条只落到 `login`（写入侧）。读取侧漏了——`commands/upload-engine.ts` 用 `new ConfigManager(stateDir, dev)` 读 `config.json`，`commands/logout.ts` 同样。后果有两个方向：`pew sync` 对自建实例报 "Not logged in"；或用户同时登录了 SaaS，自建采集的数据会**带着 SaaS token 上传到 pew.md**。此外 `sync` 只认 `PEW_HOST` 环境变量，没有 `--host` 参数（原「影响点」只列了 `cli.ts:389,556` 两处调用，实际 `sync` 那条不接 override）。现统一为 `config/manager.ts` 导出的 `credentialHostScope(apiUrl)`：归一化 URL，对内置 SaaS host 返回 `undefined`（文件名不变），其余返回该 host——`login`、`upload-engine`、`logout` 共用同一条规则；`sync` 与 `logout` 补上 `--host`（优先级高于 `PEW_HOST`）；`login` 的「Token saved to」改印真实路径。设备身份不受影响：base-cli 的 `ensureDeviceId()` 用独立的 `device.json`，不随 host 分文件——这是刻意的，多设备去重需要同一 ID。
 
+> **再更正 2026-10-21/24**：`credentialHostScope` 对内置 SaaS host 已**不再返回 `undefined`**，而是返回归一化 origin，由 `ConfigManager` 映射回历史文件名（`config/manager.ts` 的注释解释了原因：若塌缩成「无 scope」，文件选择就退回 `--dev` 开关，`pew login --host https://pew.dev.hexly.ai`（不带 `--dev`）会把 dev token 写进 `config.json`，下一次普通 `pew sync` 就把它发往 pew.md）。另外 `hostConfigStem` 的清洗映射现已改为**单射**（`:97` 的 `_xNNNN` 转义方案）：旧的「非字母数字一律替换成 `_`」会把端口分隔符、字面下划线与 IPv6 括号并成一个字符，`a.b:7020` 与 `a.b_7020` 曾共享同一凭据文件；普通 host:port 的文件名逐字节不变，存量部署不受影响。
+
 **登录流程本身无需改动**：浏览器流程经 `/api/auth/cli`（`route.ts`）——要求浏览器已有会话，然后下发 `pk_` 前缀的 `api_key`（`route.ts:104-113`）。凭据登录建立的会话同样满足，流程照旧。注意 `/api/auth/cli` 的回调 origin 取自 `NEXTAUTH_URL`（`route.ts:31-37`），自建下必须正确设置。限速 `AUTH_CLI_RATE_LIMIT`（10 次/时/IP）沿用。
 
 ### 4.6 部署编排
