@@ -31,6 +31,17 @@ describe("executeLogout", () => {
     expect(result.alreadyLoggedOut).toBe(true);
   });
 
+  it("still reports the scope when already logged out", async () => {
+    // The CLI prints "Not logged in to <host>." from this field: without it,
+    // a multi-host operator cannot tell WHICH store the command checked.
+    const result = await executeLogout({
+      configDir: tempDir,
+      host: "http://pew.corp:7020",
+    });
+    expect(result.alreadyLoggedOut).toBe(true);
+    expect(result.scope).toBe("http://pew.corp:7020");
+  });
+
   it("clears token from config", async () => {
     await writeFile(
       join(tempDir, "config.json"),

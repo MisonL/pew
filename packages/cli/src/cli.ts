@@ -664,7 +664,14 @@ const logoutCommand = defineCommand({
     });
 
     if (result.alreadyLoggedOut) {
-      log.info("Not logged in.");
+      // Name the store even here: with no --host/PEW_HOST this target is the
+      // default SaaS file, so a self-hosted-only user must not read "Not
+      // logged in." as "nothing is logged in anywhere".
+      log.info(
+        result.scope
+          ? `Not logged in to ${result.scope}.`
+          : "Not logged in.",
+      );
       return;
     }
 
