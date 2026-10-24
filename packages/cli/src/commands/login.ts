@@ -85,19 +85,6 @@ export function resolveHost(dev: boolean, override?: string): string {
   return parsed.origin;
 }
 
-/**
- * Parse `--host=<url>` / `--host <url>` from argv, for callers that do not
- * route through the command-arg parser.
- */
-export function parseHostArg(argv: string[]): string | undefined {
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === "--host") return argv[i + 1];
-    if (arg?.startsWith("--host=")) return arg.slice("--host=".length);
-  }
-  return undefined;
-}
-
 // Pew accent color (green)
 const PEW_ACCENT_COLOR = "#22c55e";
 

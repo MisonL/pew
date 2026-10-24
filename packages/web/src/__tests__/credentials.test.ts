@@ -22,6 +22,7 @@ import {
   createPasswordReset,
   consumePasswordReset,
   passwordVersion,
+  scryptInFlightCount,
   RESET_TOKEN_TTL_MINUTES,
 } from "../lib/credentials";
 import { getDbWrite } from "@/lib/db";
@@ -64,6 +65,24 @@ describe("password hashing (scrypt)", () => {
 
   it("verifyPasswordDummy resolves without throwing", async () => {
     await expect(verifyPasswordDummy("anything")).resolves.toBeUndefined();
+  });
+
+  it("fails closed once the concurrent-derivation cap is reached, and recovers after", async () => {
+    // Each scrypt costs ~33 MiB and runs on the libuv threadpool. The cap is
+    // what stops unauthenticated login POSTs from queueing unbounded work, so
+    // it must reject (not queue) and must release its slots afterwards.
+    const stored = hashPassword("p@ssw0rd");
+    expect(scryptInFlightCount()).toBe(0);
+
+    const inFlight = Array.from({ length: 8 }, () => verifyPassword("p@ssw0rd", stored));
+    expect(scryptInFlightCount()).toBeLessThanOrEqual(8);
+    // The 9th concurrent attempt is refused outright.
+    expect(await verifyPassword("p@ssw0rd", stored)).toBe(false);
+    await Promise.all(inFlight);
+
+    // All slots released: the next attempt succeeds again.
+    expect(scryptInFlightCount()).toBe(0);
+    expect(await verifyPassword("p@ssw0rd", stored)).toBe(true);
   });
 });
 

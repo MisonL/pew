@@ -52,4 +52,13 @@ describe("GET /api/auth/login-options", () => {
     const res = await GET();
     expect(await res.json()).toMatchObject({ setupNeeded: false });
   });
+
+  it("is never cached: the answer flips as soon as the instance is set up", async () => {
+    // This response tells an anonymous visitor whether /setup is still open.
+    // A cached copy would keep advertising (or hiding) the wizard after the
+    // first admin exists.
+    mockQuery.mockResolvedValueOnce({ results: [{ n: 0 }] });
+    const res = await GET();
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+  });
 });

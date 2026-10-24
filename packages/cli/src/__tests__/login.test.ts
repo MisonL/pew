@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { join } from "node:path";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { executeLogin, resolveHost, parseHostArg, DEFAULT_HOST, DEV_HOST } from "../commands/login.js";
+import { executeLogin, resolveHost, DEFAULT_HOST, DEV_HOST } from "../commands/login.js";
 
 // ---------------------------------------------------------------------------
 // resolveHost
@@ -83,17 +83,6 @@ describe("resolveHost", () => {
     expect(resolveHost(false)).toBe(DEFAULT_HOST);
     process.env = { ...ORIGINAL_ENV, PEW_HOST: "  " };
     expect(() => resolveHost(false)).toThrow(/Invalid host/);
-  });
-});
-
-describe("parseHostArg", () => {
-  it("parses --host=<url> and --host <url>", () => {
-    expect(parseHostArg(["--host=https://a.b"])).toBe("https://a.b");
-    expect(parseHostArg(["login", "--host", "https://a.b"])).toBe("https://a.b");
-  });
-
-  it("returns undefined when absent", () => {
-    expect(parseHostArg(["login", "--force"])).toBeUndefined();
   });
 });
 
