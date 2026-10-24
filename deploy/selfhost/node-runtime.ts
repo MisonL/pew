@@ -195,7 +195,17 @@ export function runScheduled<E>(
  * that never ends): after 10s we exit regardless.
  */
 export function registerShutdownSignals(close: () => Promise<void>): void {
+  // A second signal (SIGTERM then SIGINT from a hurried operator, or a
+  // supervisor escalation) must not start a second shutdown: the first
+  // close() may already have released the server, and re-running it would
+  // reject with ERR_SERVER_NOT_RUNNING and exit 1 — racing the success exit.
+  let shuttingDown = false;
   const shutdown = (signal: string): void => {
+    if (shuttingDown) {
+      console.log(`received ${signal} while already shutting down; ignoring`);
+      return;
+    }
+    shuttingDown = true;
     console.log(`received ${signal}, shutting down gracefully`);
     // Hard timeout guards against a wedged close (e.g. keep-alive never ends).
     // The timer is deliberately NOT unref()'d: a suspended drain that holds no

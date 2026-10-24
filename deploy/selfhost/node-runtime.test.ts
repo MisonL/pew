@@ -271,6 +271,31 @@ describe("registerShutdownSignals", () => {
     }
   });
 
+  it("ignores a second signal while the first shutdown is still running", async () => {
+    // compose escalates (or an operator sends Ctrl-C after SIGTERM). A second
+    // close() on an already-closed server rejects with ERR_SERVER_NOT_RUNNING
+    // and would exit 1, racing the success exit of the first one.
+    const close = vi.fn(() => new Promise<void>(() => {}));
+    const handlers: Record<string, () => void> = {};
+    const onSpy = vi
+      .spyOn(process, "on")
+      .mockImplementation(((signal: string | symbol, handler: (...args: unknown[]) => void) => {
+        handlers[String(signal)] = handler as () => void;
+        return process;
+      }) as never);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      registerShutdownSignals(close);
+      handlers.SIGTERM!();
+      handlers.SIGINT!();
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("already shutting down"));
+    } finally {
+      onSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+
   it("keeps the forced-exit timer referenced so a suspended drain still exits 1", async () => {
     // The forced timer must NOT be unref'd: a hung drain that holds no event
     // loop handles (e.g. awaiting a promise with no timer/socket) would empty
