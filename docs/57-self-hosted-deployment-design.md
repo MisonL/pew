@@ -412,7 +412,9 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 
 **HTTP 内网 cookie（必须处理）**
 
-`shouldUseSecureCookies()`（`auth.ts:21-27`）在 production 下返回 true，镜像硬编码 production（Next standalone 生成的 `server.js` 写入 `process.env.NODE_ENV='production'`）→ 内网 http 下浏览器丢弃 `__Secure-` cookie → 登录态丢失。`USE_SECURE_COOKIES` 目前只能往「开」覆盖，需增加 `USE_SECURE_COOKIES === "false"` → 返回 false 的显式关闭分支。
+`shouldUseSecureCookies()` 在 production 下返回 true，镜像硬编码 production（Next standalone 生成的 `server.js` 写入 `process.env.NODE_ENV='production'`）→ 内网 http 下浏览器丢弃 `__Secure-` cookie → 登录态丢失。`USE_SECURE_COOKIES` 当时只能往「开」覆盖，需要 `USE_SECURE_COOKIES === "false"` → 返回 false 的显式关闭分支。
+
+> **实现更正（Plan 2 已交付）**：该显式关闭分支已实现（`packages/web/src/auth.ts` 的 `shouldUseSecureCookies()` 先读 `USE_SECURE_COOKIES === "false"`，再谈 production 推导）。`.env.example` 现默认 `false`（与其 http 的 `NEXTAUTH_URL` 示例一致），https 部署显式填 `true`。
 
 **更正**：原草案称「需同步调整 `proxy.ts` 的 origin 推导」——**不成立**。`proxy.ts` 不依赖 cookie 名，只依赖 `NEXTAUTH_URL`（`proxy.ts:13-24` 的 `TRUSTED_ORIGIN`，协议取自 `NEXTAUTH_URL`，`buildRedirectUrl` 不读 `X-Forwarded-Proto`）。只要 `NEXTAUTH_URL` 设为实际访问地址（含 `http://`）即可，`proxy.ts` 无需改动。
 
@@ -647,7 +649,7 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 |---|---|
 | `AUTH_SECRET` | 会话加密密钥，**运行期注入**，不入版本库 |
 | `NEXTAUTH_URL` | 外部访问基址（`http://` 或 `https://`，决定 cookie 前缀；`TRUSTED_ORIGIN` 由它推导，无需单独配置） |
-| `USE_SECURE_COOKIES` | 内网 http 部署设 `false`。**注意**：读取该值 `==="false"` 的分支属 Plan 2，Plan 1 下此变量暂不生效（实现更正 2026-10-17：Plan 2 已交付，`auth.ts:45-55` 已实现显式 false 分支；`.env.example`/compose 默认**空值**，由 auth.ts 推导——production 下即 true，**http 部署必须显式填 `false`**） |
+| `USE_SECURE_COOKIES` | 内网 http 部署设 `false`。**注意**：读取该值 `==="false"` 的分支属 Plan 2，Plan 1 下此变量暂不生效（实现更正 2026-10-17：Plan 2 已交付，`auth.ts:45-55` 已实现显式 false 分支；`.env.example` 默认**空值**，由 auth.ts 推导——production 下即 true，**http 部署必须显式填 `false`**。更新 2026-10-24：`.env.example` 默认改为 `false`，与示例的 http `NEXTAUTH_URL` 匹配；https 部署应显式填 `true`） |
 | `D1_BASE_URL` | 指向 `d1-http` 的地址（新增的写路径覆盖） |
 | `WORKER_READ_URL` / `WORKER_READ_SECRET` | 读路径（`read` 容器服务名 + 密钥） |
 | `WORKER_INGEST_URL` / `WORKER_SECRET` | 写路径（`ingest` 容器服务名 + 密钥）。**实现更正 2026-10-18**：四条 ingest 路由统一经 `resolveIngestUrl()` 推导——变量带不带 `/ingest` 后缀、带不带尾斜杠都可；此前 token 路由直接使用原值，自托管默认值（无后缀）会让每次 token 上传打到 worker 根路径并 404（E2E 注入的是带后缀形态，掩盖了该缺陷） |

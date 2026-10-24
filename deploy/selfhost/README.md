@@ -9,9 +9,9 @@ cd deploy/selfhost
 cp .env.example .env
 chmod 600 .env        # 含明文密钥；同宿主其他用户不应能读（目录是 755 时 644 的 .env 谁都能读）
 # 编辑 .env：至少填 AUTH_SECRET、NEXTAUTH_URL、三个密钥
-# 纯 http 访问（本 Quickstart 默认）必须再填 USE_SECURE_COOKIES=false，
-# 否则 __Secure- 前缀 cookie 被浏览器丢弃、登录全线失效（见「Cookie 与
-# USE_SECURE_COOKIES」小节的四格表；https 部署留空即可）
+# USE_SECURE_COOKIES 在 .env.example 里已是 false，正好对应这里的 http 默认；
+# 若改成 https 访问，把它改回 true（或留空，production 下推导为 true）。
+# 见「Cookie 与 USE_SECURE_COOKIES」小节的四格表
 # .env 里 COMPOSE_PROFILES=single（默认），等价于 --profile single
 docker compose up -d --build
 ```
@@ -398,9 +398,9 @@ voter/reachable，且新节点能读到扩容前写入的数据。这条路把�
 ④ `NEXTAUTH_URL` 逐字符等于对外域名（含协议，**不要带端口号**除非非标端口）。
 CLI 侧 `PEW_HOST` 同步指向该域名。
 
-**内网 http 部署不要留空 `USE_SECURE_COOKIES`**：空值在 production 下推导为 true，
-`__Secure-` cookie 会被 http origin 拒收、登录全线失效——必须显式填 `false`（见
-「Cookie 与 USE_SECURE_COOKIES」小节的四格表）。这与上面公网行正好相反，别混。
+**内网 http 部署的 `USE_SECURE_COOKIES` 必须是 `false`**（`.env.example` 的默认值就是它，
+照抄即可）：空值在 production 下推导为 true，`__Secure-` cookie 会被 http origin 拒收、
+登录全线失效（见「Cookie 与 USE_SECURE_COOKIES」小节的四格表）。这与上面公网行正好相反，别混。
 
 ### Caddy（推荐）
 
@@ -436,7 +436,7 @@ EOF
 
 # 3) .env 按公网拓扑调整
 #    NEXTAUTH_URL=https://pew.example.com     ← 逐字符等于对外 URL，不带尾斜杠
-#    USE_SECURE_COOKIES=                       ← https 下留空（推导为 true，正确）
+#    USE_SECURE_COOKIES=true                   ← https 下用 true（.env.example 默认 false 是给 http 的）
 #    LOGIN_RATE_LIMIT_BACKEND=rqlite           ← 多副本时登录限速才共享
 #    PEW_HOST=https://pew.example.com          ← CLI 侧同步
 #    WEB_PORT=7020                             ← 仅容器内端口；Caddy overlay 会移除它的宿主发布
@@ -523,20 +523,20 @@ server {
 
 ### Cookie 与 USE_SECURE_COOKIES
 
-镜像以 `NODE_ENV=production` 运行，secure cookie **默认开启**：`.env.example` 与 compose 的
-`USE_SECURE_COOKIES` 默认都是**空值**，空值交给 `packages/web/src/auth.ts` 推导，production
-下结果为 true（`auth.ts:45-55` 只在显式 `false` 时才关闭）。因此：
+镜像以 `NODE_ENV=production` 运行。`.env.example` 现在默认写 **`USE_SECURE_COOKIES=false`**：
+它自带的 `NEXTAUTH_URL=http://localhost:7020` 是 http 协议，留空会被 production 推导成
+true，导致 `__Secure-` cookie 被 http origin 拒收、登录全线失效。compose 的默认值仍是空值
+（compose 只在变量缺失时兜底，`.env` 里显式写的值优先）。
 
-- **纯 http 内网部署必须显式填 `USE_SECURE_COOKIES=false`**，否则 `__Secure-` cookie 被
-  http origin 拒收，登录全线失效。
-- **https 部署留空即可**（默认已安全）；显式填 `true` 与留空等价。
+- **纯 http 内网部署保持 `USE_SECURE_COOKIES=false`**（`.env.example` 的默认值）。
+- **https 部署把它改成 `true`**（推荐）；留空等价于 true（production 推导）。
 
 | 部署协议 | USE_SECURE_COOKIES | 结果 |
 |---|---|---|
-| https | 留空（默认）或 true | ✓ 正常（`__Secure-` 前缀 cookie） |
+| https | true（推荐）或留空（默认） | ✓ 正常（`__Secure-` 前缀 cookie） |
 | https | false | 可登录，但无 `__Secure-` 前缀（**降级可用**，不是浏览器丢弃） |
+| http | false（`.env.example` 默认） | ✓ 正常（**http 部署必须显式填 false**） |
 | http | 留空（默认）或 true | **登录坏**——`__Secure-` cookie 被 http origin 拒收（空值在 production 下的推导结果就是 true） |
-| http | false | ✓ 正常（**http 部署必须显式填 false**） |
 
 `TRUSTED_ORIGIN` 由 `NEXTAUTH_URL` 推导，无需单独配置。
 
