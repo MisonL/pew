@@ -16,7 +16,7 @@ All date/time valuesfollow a strict UTC-in, local-out pattern:
 ## CLI state and source data
 
 - Original AI logs/SQLite are read-only. Sources remain independent; `ON CONFLICT` uploads replace identical snapshots idempotently, never sum duplicates.
-- CLI state lives under `~/.config/pew/`: `config.json` (production credentials), `config.dev.json` (development credentials), `cursors.json` (shared cursors), `queue.jsonl` and `queue.state.json`. Tests use temporary directories and synthetic data, never this real state.
+- CLI state lives under `~/.config/pew/`: `config.json` (production credentials), `config.dev.json` (development credentials), `config.<host>.json` (self-hosted instance credentials — one file per host, so logging into an intranet instance never overwrites the SaaS token), `cursors.json` (shared cursors), `queue.jsonl` and `queue.state.json`. Tests use temporary directories and synthetic data, never this real state.
 - Reset validates retained queues and upload state, invalidates token/session cursors, then rebuilds active-source queues. Retired token/session history and its pending intent remain locally; Antigravity baselines remain for correction/deletion tombstones, and accounting history remains readable. Retired sessions retain the existing acknowledged-prefix byte offset, not unused dirty keys. Exact retired uploads are acknowledged and ignored, never stored, while mixed batches still accept active records. Historical usage continues to count toward rankings.
 - `sync --no-upload` still updates the local queue. `init`/`uninstall` modify selected tool configuration and must be within the requested scope.
 - Root build covers core and Web only. Build the CLI explicitly before publication: `bun run --filter '@nocoo/pew' build`.

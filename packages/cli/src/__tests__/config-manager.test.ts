@@ -126,6 +126,18 @@ describe("ConfigManager", () => {
     expect(hostConfigStem("http://../../etc/passwd")).not.toContain("..");
   });
 
+  it("caps the stem length so a long host cannot exceed filesystem name limits", () => {
+    // A 300-char IP-literal-ish host (IPv6 with zone/padding, or a crafted
+    // value) would exceed the 255-byte NAME_MAX once the prefix/suffix are
+    // added, failing the write with ENAMETOOLONG instead of a clear error.
+    const longHost = `http://${"a".repeat(300)}.corp:7020`;
+    const stem = hostConfigStem(longHost)!;
+    expect(Buffer.byteLength(stem, "utf8")).toBeLessThanOrEqual(255);
+    // Still deterministic and still unique per host[:port].
+    expect(hostConfigStem(longHost)).toBe(stem);
+    expect(hostConfigStem(`http://${"a".repeat(301)}.corp:7020`)).not.toBe(stem);
+  });
+
   it("getToken() returns undefined when no config exists", () => {
     const manager = new ConfigManager(tempDir);
     expect(manager.getToken()).toBeUndefined();

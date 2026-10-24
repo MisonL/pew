@@ -68,6 +68,9 @@ describe("executeLogout", () => {
 
     expect(result.success).toBe(true);
     expect(result.alreadyLoggedOut).toBeUndefined();
+    // The CLI message names the scope so an operator with several instances
+    // can tell WHICH set of credentials was cleared.
+    expect(result.scope).toBe("http://pew.corp:7020");
     const saved = JSON.parse(
       await readFile(join(tempDir, "config.pew.corp_7020.json"), "utf-8"),
     ) as { token?: string };

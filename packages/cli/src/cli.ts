@@ -12,6 +12,7 @@ import { executeSessionSync } from "./commands/session-sync.js";
 import { executeStatus } from "./commands/status.js";
 import { executeLogin, resolveHost } from "./commands/login.js";
 import { executeLogout } from "./commands/logout.js";
+import { DEFAULT_HOST, DEV_HOST } from "./config/manager.js";
 import { executeUpload } from "./commands/upload.js";
 import { executeSessionUpload } from "./commands/session-upload.js";
 import { executeNotify } from "./commands/notify.js";
@@ -668,7 +669,16 @@ const logoutCommand = defineCommand({
     }
 
     if (result.success) {
-      log.success("Logged out successfully.");
+      // Name the scope when it is a self-hosted instance: credentials for
+      // other hosts (pew.md, the dev SaaS, other intranet boxes) stay on
+      // disk, and "Logged out successfully" alone reads as "everywhere".
+      const scoped =
+        result.scope && result.scope !== DEFAULT_HOST && result.scope !== DEV_HOST;
+      log.success(
+        scoped
+          ? `Logged out of ${result.scope}. Credentials for other hosts are untouched.`
+          : "Logged out successfully.",
+      );
     } else {
       log.error(`Logout failed: ${result.error}`);
       process.exitCode = 1;
@@ -1061,6 +1071,14 @@ const updateCommand = defineCommand({
         log.text(pc.dim(result.output));
       }
       log.blank();
+      if (result.forced) {
+        // A forced install ignores the version gate: it can replace a local
+        // or self-hosted build with a published package that does not know
+        // --host, which silently ships the queue to the SaaS.
+        log.warn(
+          `Installed without the version check (--force). If this build was a local or self-hosted one, verify that ${pc.cyan("pew sync --host <your-instance>")} still targets your own instance.`,
+        );
+      }
       log.success("pew has been updated to the latest version.");
     } else {
       log.error(`Update failed: ${result.error}`);

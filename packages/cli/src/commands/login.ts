@@ -64,6 +64,19 @@ export function resolveHost(dev: boolean, override?: string): string {
       `Invalid host "${trimmed}": remove the user:password part (credentials in the URL are not supported)`,
     );
   }
+  // origin would silently drop a path/query/fragment, so
+  // `--host http://pew.corp:7020/ingest` would "work" while pointing the CLI
+  // at an address the operator did not write. Every API path is appended to
+  // the host, so any of these means the value is wrong — say so.
+  if (
+    (parsed.pathname && parsed.pathname !== "/") ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error(
+      `Invalid host "${trimmed}": pass only the scheme, host and port (no path, query or fragment)`,
+    );
+  }
   // Return the normalized origin, not the raw input: `--host pew.corp:7020`
   // (no scheme) passed the old validation (which parsed with an https://
   // prefix) but was then returned verbatim, so every fetch died with

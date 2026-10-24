@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { QueueRecord, Source } from "@pew/core";
+import { RETIRED_SOURCES as CORE_RETIRED_SOURCES, SOURCES as CORE_SOURCES } from "@pew/core";
 import { executeNotify } from "../commands/notify.js";
 import { executeReset } from "../commands/reset.js";
 import { executeSync } from "../commands/sync.js";
@@ -15,7 +16,7 @@ import { executeSessionUpload } from "../commands/session-upload.js";
 import { executeSessionSync } from "../commands/session-sync.js";
 import { executeStatus } from "../commands/status.js";
 import { SessionCursorStore } from "../storage/session-cursor-store.js";
-import { isRetiredCursorPath } from "../utils/retired-sources.js";
+import { RETIRED_SOURCES as CLI_RETIRED_SOURCES, isRetiredCursorPath } from "../utils/retired-sources.js";
 import { ConfigManager, DEFAULT_HOST } from "../config/manager.js";
 
 const retired: Source[] = ["gemini-cli", "kosmos", "omp", "zcode", "pmstudio", "vscode-copilot"];
@@ -28,6 +29,18 @@ describe("retired sources", () => {
   let stateDir: string;
   beforeEach(async () => { stateDir = await mkdtemp(join(tmpdir(), "pew-retired-")); });
   afterEach(async () => { await rm(stateDir, { recursive: true, force: true }); });
+
+  it("keeps every retired-source copy in parity with core's authoritative list", () => {
+    // Three copies exist (core constants, the CLI module, the local fixture
+    // list driving the cases below). Any drift between them means a retired
+    // identity gets collected or treated as active on one side only.
+    const sorted = (list: readonly string[]) => [...list].sort();
+    expect(sorted(CLI_RETIRED_SOURCES)).toEqual(sorted(CORE_RETIRED_SOURCES));
+    expect(sorted(retired)).toEqual(sorted(CORE_RETIRED_SOURCES));
+    // A retired identity must never also be active.
+    const active = new Set<string>(CORE_SOURCES);
+    expect(CORE_RETIRED_SOURCES.filter((s) => active.has(s))).toEqual([]);
+  });
 
   it("does not install retired notifiers", () => {
     expect(getAllDrivers().map((d) => d.source)).not.toEqual(expect.arrayContaining(["gemini-cli"]));

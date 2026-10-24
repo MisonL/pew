@@ -64,6 +64,19 @@ describe("resolveHost", () => {
     }
   });
 
+  it("rejects a host that carries a path, query or fragment", () => {
+    // origin silently drops them, so `--host http://pew.corp:7020/ingest`
+    // used to "work" while pointing the CLI at an unintended address. The
+    // operator's value is wrong; say so instead of guessing.
+    for (const bad of [
+      "http://pew.corp:7020/api",
+      "https://pew.corp/?x=1",
+      "https://pew.corp/#frag",
+    ]) {
+      expect(() => resolveHost(false, bad)).toThrow(/path|query|fragment/i);
+    }
+  });
+
   it("treats an unset override as absent but an empty PEW_HOST as an error", () => {
     process.env = { ...ORIGINAL_ENV };
     delete process.env.PEW_HOST;

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { ConfigManager as BaseConfigManager } from "@nocoo/base-cli";
 import type { PewConfig } from "@pew/core";
 
@@ -35,6 +36,15 @@ export function hostConfigStem(host: string | undefined): string | undefined {
   // dev file, and `pew sync --dev` would send it to pew.dev.hexly.ai. Prefix
   // the one colliding stem (prod is config.json, which no stem can equal).
   if (safe === "dev") safe = "host-dev";
+  // Keep the whole filename within NAME_MAX (255 bytes on ext4/APFS): a long
+  // host would otherwise fail the credential write with ENAMETOOLONG. Trim to
+  // a budget that leaves room for "config." + ".json", then fold the dropped
+  // characters into a short hash so distinct hosts keep distinct files.
+  const BUDGET = 200;
+  if (safe.length > BUDGET) {
+    const digest = createHash("sha256").update(safe).digest("hex").slice(0, 16);
+    safe = `${safe.slice(0, BUDGET)}-${digest}`;
+  }
   return `config.${safe}.json`;
 }
 

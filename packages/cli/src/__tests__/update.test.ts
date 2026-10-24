@@ -151,6 +151,18 @@ describe("executeUpdate", () => {
     expect(askedLatest).toBe(false);
     expect(ranInstall).toBe(true);
     expect(result.success).toBe(true);
+    // The caller must be able to warn: a forced install can replace a local
+    // build with a published one that does not know --host.
+    expect(result.forced).toBe(true);
+  });
+
+  it("does not mark a normal update as forced", async () => {
+    const result = await executeUpdate({
+      currentVersion: "1.0.0",
+      latestVersionFn: async () => "1.1.0",
+      execFn: ok(),
+    });
+    expect(result.forced).toBe(false);
   });
 
   it("should execute a valid update command string", async () => {

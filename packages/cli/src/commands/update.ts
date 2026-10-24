@@ -31,6 +31,12 @@ export interface UpdateResult {
   skipped?: boolean;
   /** The published version the gate compared against. */
   latestVersion?: string;
+  /**
+   * The install ran with the version gate bypassed (`--force`). The CLI warns
+   * about it: a forced install can replace a local/self-hosted build with a
+   * published package that does not know `--host`.
+   */
+  forced?: boolean;
 }
 
 function defaultExec(cmd: string): Promise<{ stdout: string; stderr: string }> {
@@ -120,7 +126,7 @@ export async function executeUpdate(opts: UpdateOptions): Promise<UpdateResult> 
   try {
     const { stdout, stderr } = await exec(command);
     const output = (stdout + stderr).trim();
-    return { success: true, output };
+    return { success: true, output, forced: opts.force === true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { success: false, output: "", error: message };

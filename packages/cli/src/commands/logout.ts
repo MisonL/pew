@@ -28,6 +28,12 @@ export interface LogoutOptions {
 export interface LogoutResult {
   success: boolean;
   alreadyLoggedOut?: boolean;
+  /**
+   * Which host's credentials the call targeted (normalized origin). The CLI
+   * prints it so an operator holding tokens for several instances can tell
+   * that only this one was signed out.
+   */
+  scope?: string;
   error?: string;
 }
 
@@ -39,17 +45,18 @@ export async function executeLogout(options: LogoutOptions): Promise<LogoutResul
   const { configDir, dev = false, host } = options;
 
   try {
-    const configManager = new ConfigManager(configDir, dev, credentialHostScope(host));
+    const scope = credentialHostScope(host);
+    const configManager = new ConfigManager(configDir, dev, scope);
     const config = await configManager.load();
 
     if (!config.token) {
-      return { success: true, alreadyLoggedOut: true };
+      return { success: true, alreadyLoggedOut: true, scope };
     }
 
     // Clear the token
     configManager.write({ ...config, token: undefined });
 
-    return { success: true };
+    return { success: true, scope };
   } catch (err) {
     return {
       success: false,
