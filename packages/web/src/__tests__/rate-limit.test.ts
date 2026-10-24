@@ -5,6 +5,13 @@ import {
   type RateLimitConfig,
 } from "@/lib/rate-limit";
 
+// The rqlite-backed limiter needs a controllable DB client; every other
+// describe block in this file never touches @/lib/d1.
+vi.mock("@/lib/d1", () => ({
+  getD1Client: vi.fn(),
+  resetD1Client: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // InMemoryRateLimiter
 // ---------------------------------------------------------------------------
@@ -159,5 +166,63 @@ describe("getClientIp", () => {
   it("returns 'unknown' when no proxy headers present", () => {
     const req = new Request("http://localhost");
     expect(getClientIp(req)).toBe("unknown");
+  });
+});
+
+describe("rqliteRateLimiter", () => {
+  // The real class against a mocked d1 client: the fallback behavior cannot
+  // be seen through the auth.ts mocks, and it is where quota leaks hide.
+  let mockQuery: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    inMemoryRateLimiter.reset();
+    const d1 = await import("@/lib/d1");
+    mockQuery = vi.fn();
+    vi.mocked(d1.getD1Client).mockReturnValue({ query: mockQuery, execute: vi.fn(), batch: vi.fn() } as never);
+  });
+
+  const CFG = { maxRequests: 3, windowSeconds: 60 };
+
+  it("mirrors accepted DB attempts into the in-memory fallback bucket", async () => {
+    const { rqliteRateLimiter } = await import("@/lib/rate-limit");
+    // Two DB-healthy allows.
+    mockQuery.mockResolvedValue({ meta: { changes: 1 } });
+    expect((await rqliteRateLimiter.check("login:ip:1.2.3.4", CFG)).allowed).toBe(true);
+    expect((await rqliteRateLimiter.check("login:ip:1.2.3.4", CFG)).allowed).toBe(true);
+
+    // Now the DB dies. The memory fallback must already carry the two mirrored
+    // attempts: only ONE more is allowed, then the bucket is at max.
+    mockQuery.mockRejectedValue(new Error("leader election"));
+    expect((await rqliteRateLimiter.check("login:ip:1.2.3.4", CFG)).allowed).toBe(true);
+    expect((await rqliteRateLimiter.check("login:ip:1.2.3.4", CFG)).allowed).toBe(false);
+
+    // The pre-fix behavior was a fresh bucket at degradation time, granting a
+    // whole extra maxRequests allowance exactly when guessing is cheapest.
+    mockQuery.mockResolvedValue({ meta: { changes: 1 } });
+    expect((await rqliteRateLimiter.check("login:ip:9.9.9.9", CFG)).allowed).toBe(true);
+    expect(inMemoryRateLimiter.size()).toBe(2);
+  });
+
+  it("an over-limit DB decision does not consume a memory slot", async () => {
+    const { rqliteRateLimiter } = await import("@/lib/rate-limit");
+    mockQuery.mockResolvedValue({ meta: { changes: 0 } });
+    const denied = await rqliteRateLimiter.check("login:email:a@b.c", CFG);
+    expect(denied.allowed).toBe(false);
+    expect(inMemoryRateLimiter.size()).toBe(0);
+  });
+
+  it("falls back to memory when the first attempt already finds the DB down", async () => {
+    const { rqliteRateLimiter } = await import("@/lib/rate-limit");
+    mockQuery.mockRejectedValue(new Error("connection refused"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (let i = 0; i < CFG.maxRequests; i++) {
+        expect((await rqliteRateLimiter.check("login:ip:5.6.7.8", CFG)).allowed).toBe(true);
+      }
+      expect((await rqliteRateLimiter.check("login:ip:5.6.7.8", CFG)).allowed).toBe(false);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("degraded"));
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

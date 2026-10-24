@@ -271,6 +271,13 @@ class RqliteRateLimiter {
         // Over-limit: the DB is healthy, the bucket is full. Not an error.
         return { allowed: false, current: config.maxRequests, limit: config.maxRequests, retryAfter: config.windowSeconds };
       }
+      // Mirror the accepted attempt into the in-memory bucket WITHOUT
+      // consulting it: when the DB later degrades, the fallback bucket already
+      // carries these counts instead of starting fresh — otherwise a partial
+      // outage would hand every active key a whole additional allowance
+      // exactly when guessing is most attractive. (The mirror's own result is
+      // irrelevant here; the DB decided.)
+      inMemoryRateLimiter.check(key, config);
       this.maybeCleanup(db);
       return { allowed: true, current: 1, limit: config.maxRequests, retryAfter: 0 };
     } catch (error) {
