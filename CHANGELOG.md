@@ -137,6 +137,22 @@
 - Worker bearer comparison pads both inputs before comparing, matching
   worker-read (the old early return on a length mismatch leaked the secret's
   length).
+- CLI `sync` warns when a pending backlog goes to a different host than the
+  last successful drain: the token and session queues are shared across
+  hosts, so a stray `PEW_HOST` or a dropped `--host` could re-route data with
+  only the "Uploading to …" line saying so. Queue state records
+  `lastUploadTarget`; an empty queue switches silently and a failed upload
+  never rewrites it.
+- Each rqlite readiness probe gets its own 5s timeout: Node's `fetch` has no
+  default, so a connection that accepted TCP and then went silent could run a
+  single attempt past the 60s deadline and turn `migrate` into a long hang.
+- Selfhost shutdown ignores a second SIGTERM/SIGINT while the first drain is
+  still running; a repeated `close()` on an already-closed server rejected with
+  `ERR_SERVER_NOT_RUNNING` and exited 1, racing the success exit.
+- The coordinator integration test no longer releases the first sync after
+  fixed sleeps: under a loaded suite the lock had not been acquired yet, the
+  release was a no-op, and the test hung to its 120s timeout (the recurring
+  pre-commit flake).
 
 ## v3.4.1
 
