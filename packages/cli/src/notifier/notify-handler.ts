@@ -59,6 +59,12 @@ export function computeInstanceId(
 }
 
 export function buildNotifyHandler(opts: BuildNotifyHandlerOptions): string {
+  // NOTE: the generated hook embeds a literal copy of the retired-source list
+  // (its own runtime cannot import @pew/core, which is types-only). The parity
+  // test in __tests__/retired-sources.test.ts reads that line back against
+  // core's list, so a retirement that misses this template fails the gate.
+  // Keep the hook body byte-stable otherwise: repairRetiredNotifyHandler only
+  // rewrites an installed hook that matches this generator exactly.
   const { stateDir, pewBin } = opts;
   const platform = opts.platform ?? process.platform;
   const instanceId = computeInstanceId(stateDir, platform);

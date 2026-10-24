@@ -15,6 +15,18 @@ export function isRetiredCursorPath(path: string, activePaths: ReadonlyArray<str
   return /(?:^|[/\\])(?:\.gemini[/\\]tmp|\.omp|\.zcode|kosmos-app|pm-studio-app|Code(?: - Insiders)?[/\\]User)(?:[/\\]|$)/.test(path);
 }
 
+/**
+ * Retired-source paths the session/token collectors still scan on disk.
+ *
+ * IMPORTANT: this file is embedded into two generated copies — the notify hook
+ * template (notifier/notify-handler.ts) and the CLI's own isSource/accounting
+ * validators each carry their own copy of one of these lists. When a source is
+ * retired or a collector path changes, update every consumer; the parity test
+ * in __tests__/retired-sources.test.ts only pins the constants, not these
+ * consumers.
+ */
+export const RETIRED_COLLECTOR_PATHS = [".gemini/tmp", ".omp", ".zcode", "kosmos-app", "pm-studio-app", "Code/User"] as const;
+
 export async function readRetainedQueueState(stateDir: string, file: string): Promise<QueueState> {
   let raw: string;
   try { raw = await readFile(join(stateDir, file), "utf8"); }

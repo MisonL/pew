@@ -1,6 +1,7 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { QueueRecord, Source } from "@pew/core";
 import { RETIRED_SOURCES as CORE_RETIRED_SOURCES, SOURCES as CORE_SOURCES } from "@pew/core";
@@ -20,6 +21,23 @@ import { RETIRED_SOURCES as CLI_RETIRED_SOURCES, isRetiredCursorPath } from "../
 import { ConfigManager, DEFAULT_HOST } from "../config/manager.js";
 
 const retired: Source[] = ["gemini-cli", "kosmos", "omp", "zcode", "pmstudio", "vscode-copilot"];
+const sortedList = (list: readonly string[]) => [...list].sort();
+const allSources = (): string[] => [...CORE_SOURCES, ...CORE_RETIRED_SOURCES];
+
+/**
+ * Runtime copies of the source lists that cannot import @pew/core (types-only
+ * devDependency — absent from published npm installs, so runtime value imports
+ * break there). These are read as literal text from the source files, so the
+ * parity check catches a rename that only touched core.
+ */
+const cliSrc = join(dirname(fileURLToPath(import.meta.url)), "..");
+/** Extract the first `["a", "b", …]` string-list literal matched by the regex. */
+async function readLiterals(file: string, regex: RegExp): Promise<string[]> {
+  const text = await readFile(join(cliSrc, file), "utf8");
+  const match = text.match(regex);
+  if (!match) throw new Error(`No source list literal found in ${file}`);
+  return [...(match[1] ?? match[0]).matchAll(/"([^"]+)"/g)].map((m) => m[1] as string);
+}
 const row = (source: Source, device_id = "old-device"): QueueRecord => ({ source, device_id, model: "historic-model",
   hour_start: "2026-01-01T00:00:00.000Z", input_tokens: 100, cached_input_tokens: 900,
   output_tokens: 40, reasoning_output_tokens: 60, total_tokens: 1100 });
@@ -34,12 +52,35 @@ describe("retired sources", () => {
     // Three copies exist (core constants, the CLI module, the local fixture
     // list driving the cases below). Any drift between them means a retired
     // identity gets collected or treated as active on one side only.
-    const sorted = (list: readonly string[]) => [...list].sort();
-    expect(sorted(CLI_RETIRED_SOURCES)).toEqual(sorted(CORE_RETIRED_SOURCES));
-    expect(sorted(retired)).toEqual(sorted(CORE_RETIRED_SOURCES));
+    expect(sortedList(CLI_RETIRED_SOURCES)).toEqual(sortedList(CORE_RETIRED_SOURCES));
+    expect(sortedList(retired)).toEqual(sortedList(CORE_RETIRED_SOURCES));
     // A retired identity must never also be active.
     const active = new Set<string>(CORE_SOURCES);
     expect(CORE_RETIRED_SOURCES.filter((s) => active.has(s))).toEqual([]);
+  });
+
+  it("keeps runtime-embedded source lists in parity with core", async () => {
+    // @pew/core cannot be value-imported at runtime (types-only devDependency),
+    // so several modules embed literal copies. The notify hook template must
+    // know every retired identity, and the CLI's own isSource plus the
+    // accounting-ledger validator must know every active+retired identity.
+    const notifyRetired = await readLiterals(
+      join("notifier", "notify-handler.ts"),
+      /if \(\[([^\]]*)\]\.includes\(source\)\)/,
+    );
+    expect(sortedList(notifyRetired)).toEqual(sortedList(CORE_RETIRED_SOURCES));
+
+    const cliIsSource = await readLiterals(
+      "cli.ts",
+      /return \[([^\]]*)\]\.includes\(value\)/,
+    );
+    expect(sortedList(cliIsSource)).toEqual(sortedList(allSources()));
+
+    const ledgerSources = await readLiterals(
+      join("storage", "accounting-queue.ts"),
+      /\[([^\]]*)\]\.includes\(value\.source\)/,
+    );
+    expect(sortedList(ledgerSources)).toEqual(sortedList(allSources()));
   });
 
   it("does not install retired notifiers", () => {
