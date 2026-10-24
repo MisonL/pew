@@ -973,6 +973,8 @@ async function runSessionUpload(stateDir: string, apiUrl: string, dev: boolean):
     },
   });
 
+  if (uploadResult.warning) log.warn(uploadResult.warning);
+
   if (!uploadResult.success && uploadResult.error?.match(/not logged in/i)) {
     // Already shown by token upload — skip redundant message
     return;

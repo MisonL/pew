@@ -44,6 +44,14 @@ export interface UploadEngineConfig<T> {
   validateResponse?: (body: unknown, batch: T[]) => string | null;
   maxBatchSize?: number;
   maxBatchBytes?: number;
+  /**
+   * Persist the upload origin in queue state and warn when pending records
+   * are sent to a different origin than the last successful drain. Enable
+   * for the user-facing token/session queues only: the queue files are
+   * shared across hosts, so a stray PEW_HOST or a dropped --host would
+   * otherwise re-route a pending backlog with no line of output saying so.
+   */
+  trackUploadTarget?: boolean;
 }
 
 export interface UploadExecuteOptions {
@@ -128,7 +136,8 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
     }
 
     // 2. Determine upload mode: dirty-keys vs legacy offset-based
-    const dirtyKeys = recordKey ? await queue.loadDirtyKeys() : undefined;
+    const queueState = await queue.loadState();
+    const dirtyKeys = recordKey ? queueState.dirtyKeys : undefined;
     const useDirtyKeys = recordKey && dirtyKeys !== undefined;
 
     // 2a. If dirtyKeys is an empty array, nothing to upload
@@ -174,6 +183,11 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
 
     // 2b. Pre-process (aggregate for tokens, dedup for sessions)
     const records = preprocess(rawRecords);
+
+    // Only warn when something is actually about to ship: an empty backlog
+    // cannot be re-routed, and a first-ever upload has no previous target.
+    const previousTarget = config.trackUploadTarget ? queueState.lastUploadTarget : undefined;
+    const targetChanged = previousTarget !== undefined && previousTarget !== apiUrl;
 
     // 3. Split into batches
     const batchSize = Math.max(1, Math.min(requestedBatchSize, config.maxBatchSize ?? DEFAULT_BATCH_SIZE));
@@ -234,6 +248,9 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
     if (useDirtyKeys) {
       await queue.saveDirtyKeys([]);
     }
+    if (config.trackUploadTarget) {
+      await queue.saveLastUploadTarget(apiUrl);
+    }
 
     onProgress?.({
       phase: "done",
@@ -245,6 +262,11 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
       success: true,
       uploaded: totalUploaded,
       batches: batchesCompleted,
+      ...(targetChanged
+        ? {
+            warning: `Last successful upload went to ${previousTarget}; this run sent pending ${entityName} to ${apiUrl}.`,
+          }
+        : {}),
     };
   }
 

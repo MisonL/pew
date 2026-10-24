@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -1017,6 +1017,171 @@ describe("upload-engine", () => {
       // dirtyKeys should be cleared (the upload "succeeded" with 0 records)
       const keys = await queue.loadDirtyKeys();
       expect(keys).toEqual([]);
+    });
+  });
+
+  // =========================================================================
+  // Upload target tracking (host-switch warning)
+  // =========================================================================
+
+  describe("upload target tracking", () => {
+    function createTrackingEngine(testDir: string) {
+      const queue = new BaseQueue<TestRecord>(
+        testDir,
+        "test.jsonl",
+        "test.state.json",
+      );
+      const config: UploadEngineConfig<TestRecord> = {
+        queue,
+        endpoint: "/api/test-ingest",
+        entityName: "test records",
+        preprocess: (records) => records,
+        trackUploadTarget: true,
+      };
+      return { queue, config };
+    }
+
+    it("warns when pending records are sent to a different origin than the last drain", async () => {
+      const { queue, config } = createTrackingEngine(dir);
+      await new ConfigManager(dir).save({ token: "pk_saas" });
+      await new ConfigManager(dir, false, "http://pew.corp:7020").save({ token: "pk_selfhosted" });
+
+      // First drain establishes the baseline target.
+      await queue.append(makeRecord(1));
+      const engine = createUploadEngine(config);
+      const first = await engine.execute({
+        stateDir: dir,
+        apiUrl: "http://pew.corp:7020",
+        fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }]).fetchFn,
+      });
+      expect(first.success).toBe(true);
+      expect(first.warning).toBeUndefined();
+
+      // A pending backlog re-targeted at another origin is the 2026-10-20
+      // incident shape: the queue is shared, so the URL decides everything.
+      await queue.append(makeRecord(2));
+      const second = await engine.execute({
+        stateDir: dir,
+        apiUrl: DEFAULT_HOST,
+        fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }]).fetchFn,
+      });
+      expect(second.success).toBe(true);
+      expect(second.warning).toContain("http://pew.corp:7020");
+      expect(second.warning).toContain(DEFAULT_HOST);
+
+      // The recording follows the drain, so the next run is quiet again.
+      await queue.append(makeRecord(3));
+      const third = await engine.execute({
+        stateDir: dir,
+        apiUrl: DEFAULT_HOST,
+        fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }]).fetchFn,
+      });
+      expect(third.success).toBe(true);
+      expect(third.warning).toBeUndefined();
+    });
+
+    it("does not warn when the target is unchanged", async () => {
+      const { queue, config } = createTrackingEngine(dir);
+      const cm = new ConfigManager(dir);
+      await cm.save({ token: "pk_test" });
+
+      await queue.append(makeRecord(1));
+      const engine = createUploadEngine(config);
+      const first = await engine.execute({
+        stateDir: dir,
+        apiUrl: DEFAULT_HOST,
+        fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }]).fetchFn,
+      });
+      expect(first.warning).toBeUndefined();
+
+      await queue.append(makeRecord(2));
+      const second = await engine.execute({
+        stateDir: dir,
+        apiUrl: DEFAULT_HOST,
+        fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }]).fetchFn,
+      });
+      expect(second.success).toBe(true);
+      expect(second.warning).toBeUndefined();
+    });
+
+    it("does not warn when the queue is empty, even on a host switch", async () => {
+      // Nothing pending means nothing can be re-routed; the recorded target
+      // must survive so a later backlog against the other host still warns.
+      const { queue, config } = createTrackingEngine(dir);
+      await new ConfigManager(dir).save({ token: "pk_saas" });
+      await new ConfigManager(dir, false, "http://pew.corp:7020").save({ token: "pk_selfhosted" });
+
+      await queue.append(makeRecord(1));
+      const engine = createUploadEngine(config);
+      await engine.execute({
+        stateDir: dir,
+        apiUrl: "http://pew.corp:7020",
+        fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }]).fetchFn,
+      });
+
+      const empty = await engine.execute({
+        stateDir: dir,
+        apiUrl: DEFAULT_HOST,
+        fetch: createMockFetch([]).fetchFn,
+      });
+      expect(empty.success).toBe(true);
+      expect(empty.warning).toBeUndefined();
+
+      const state = JSON.parse(await readFile(join(dir, "test.state.json"), "utf-8"));
+      expect(state.lastUploadTarget).toBe("http://pew.corp:7020");
+    });
+
+    it("keeps the recorded target when an upload to a new origin fails", async () => {
+      // The warning describes the last SUCCESSFUL drain; a failed attempt
+      // shipped nothing, so it must not rewrite the baseline.
+      const { queue, config } = createTrackingEngine(dir);
+      await new ConfigManager(dir).save({ token: "pk_saas" });
+      await new ConfigManager(dir, false, "http://pew.corp:7020").save({ token: "pk_selfhosted" });
+
+      await queue.append(makeRecord(1));
+      const engine = createUploadEngine(config);
+      await engine.execute({
+        stateDir: dir,
+        apiUrl: "http://pew.corp:7020",
+        fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }]).fetchFn,
+      });
+
+      await queue.append(makeRecord(2));
+      const failed = await engine.execute({
+        stateDir: dir,
+        apiUrl: DEFAULT_HOST,
+        fetch: createMockFetch([
+          { status: 500, body: { error: "Server Error" } },
+          { status: 500, body: { error: "Server Error" } },
+          { status: 500, body: { error: "Server Error" } },
+        ]).fetchFn,
+        maxRetries: 2,
+        retryDelayMs: 0,
+      });
+      expect(failed.success).toBe(false);
+
+      const state = JSON.parse(await readFile(join(dir, "test.state.json"), "utf-8"));
+      expect(state.lastUploadTarget).toBe("http://pew.corp:7020");
+    });
+
+    it("does not track the target when the option is off", async () => {
+      // The supplemental evidence/accounting engines share the same upload
+      // flow; without the opt-in they must not write state or warn.
+      const { queue, config } = createTestEngine(dir);
+      const cm = new ConfigManager(dir);
+      await cm.save({ token: "pk_test" });
+
+      await queue.append(makeRecord(1));
+      const engine = createUploadEngine(config);
+      const result = await engine.execute({
+        stateDir: dir,
+        apiUrl: DEFAULT_HOST,
+        fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }]).fetchFn,
+      });
+      expect(result.success).toBe(true);
+
+      const state = JSON.parse(await readFile(join(dir, "test.state.json"), "utf-8"));
+      expect(state.lastUploadTarget).toBeUndefined();
     });
   });
 

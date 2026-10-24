@@ -510,6 +510,36 @@ describe("executeUpload", () => {
     expect(result.error).toMatch(/429|rate.?limit|too many|retry|failed/i);
     expect(calls).toHaveLength(3);
   });
+
+  // ----- Cross-host queue warning -----
+
+  it("surfaces the host-switch warning even though the supplemental stages merge the result", async () => {
+    // executeUpload merges evidence/accounting results into the token result;
+    // the token stage is the only one tracking the upload target, so a naive
+    // spread would drop the one line telling the operator the pending
+    // backlog went to a different instance than the last drain.
+    await new ConfigManager(dir).save({ token: "pk_saas" });
+    await new ConfigManager(dir, false, "http://pew.corp:7020").save({ token: "pk_selfhosted" });
+
+    const queue = new LocalQueue(dir);
+    await queue.appendBatch([makeRecord()]);
+    await executeUpload({
+      stateDir: dir,
+      apiUrl: "http://pew.corp:7020",
+      fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }]).fetchFn,
+    });
+
+    await queue.appendBatch([makeRecord({ model: "second" })]);
+    const result = await executeUpload({
+      stateDir: dir,
+      apiUrl: DEFAULT_HOST,
+      fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }]).fetchFn,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.warning).toContain("http://pew.corp:7020");
+    expect(result.warning).toContain(DEFAULT_HOST);
+  });
 });
 
 // ---------------------------------------------------------------------------

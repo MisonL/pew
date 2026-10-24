@@ -18,6 +18,13 @@ export interface QueueState {
    * - `["source|model|hour|device", ...]` → only these buckets need uploading.
    */
   dirtyKeys?: string[];
+  /**
+   * Origin the queue was last drained to. The queue and this state file are
+   * shared across hosts, so a pending backlog goes to whichever host the next
+   * upload names; recording the previous target lets a host switch be
+   * surfaced as a warning instead of silently re-routing pending records.
+   */
+  lastUploadTarget?: string;
 }
 
 /**
@@ -141,6 +148,8 @@ export class BaseQueue<T> {
         offset: state.offset ?? 0,
         // Preserve undefined vs [] distinction for legacy detection
         dirtyKeys: state.dirtyKeys,
+        lastUploadTarget:
+          typeof state.lastUploadTarget === "string" ? state.lastUploadTarget : undefined,
       };
     } catch {
       return { offset: 0 };
@@ -187,5 +196,12 @@ export class BaseQueue<T> {
   async loadDirtyKeys(): Promise<string[] | undefined> {
     const state = await this.loadState();
     return state.dirtyKeys;
+  }
+
+  /** Record the origin the queue was last drained to (preserves offset/dirtyKeys). */
+  async saveLastUploadTarget(target: string): Promise<void> {
+    const state = await this.loadState();
+    state.lastUploadTarget = target;
+    await this.saveState(state);
   }
 }

@@ -90,6 +90,7 @@ async function sessionUploadLocked(
     endpoint: "/api/ingest/sessions",
     entityName: "session records",
     preprocess: deduplicateSessionRecords,
+    trackUploadTarget: true,
   });
 
   return engine.execute(opts);

@@ -101,17 +101,22 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
     entityName: "records",
     preprocess: aggregateRecords,
     recordKey: (r) => `${r.source}|${r.model}|${r.hour_start}|${r.device_id}`,
+    trackUploadTarget: true,
   });
 
   const main = await engine.execute(opts);
   if (!main.success) return main;
+  // Keep the token stage's warning (a host switch) when merging: the spread
+  // below takes the supplemental result, which has no idea a re-route
+  // happened and would otherwise swallow the only line telling the operator.
+  const warnings = [main.warning];
   const supplemental = await createUploadEngine<EvidenceRecord>({
     queue: new EvidenceQueue(opts.stateDir), endpoint: "/api/ingest/evidence",
     entityName: "usage evidence", preprocess: (records) => records,
     recordKey: evidenceKey,
   }).execute(opts);
   const usage = { ...supplemental, uploaded: main.uploaded + supplemental.uploaded, batches: main.batches + supplemental.batches };
-  if (!supplemental.success) return usage;
+  if (!supplemental.success) return { ...usage, ...mergeWarnings(warnings) };
   const details = await createUploadEngine<AccountingRecord>({
     queue: new AccountingQueue(opts.stateDir), endpoint: "/api/ingest/details", entityName: "accounting details",
     preprocess: (records) => records, recordKey: accountingKey, maxBatchSize: 25, maxBatchBytes: 600_000,
@@ -126,6 +131,12 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
       return null;
     },
   }).execute(opts);
+  if (!details.success) warnings.push(`Accounting details pending: ${details.error}`);
   return { ...usage, uploaded: usage.uploaded + details.uploaded, batches: usage.batches + details.batches,
-    ...(!details.success ? { warning: `Accounting details pending: ${details.error}` } : {}) };
+    ...mergeWarnings(warnings) };
+}
+
+function mergeWarnings(warnings: Array<string | undefined>): { warning?: string } {
+  const present = warnings.filter((w): w is string => Boolean(w));
+  return present.length > 0 ? { warning: present.join(" ") } : {};
 }
