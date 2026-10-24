@@ -133,4 +133,20 @@ describe("waitForRqlite", () => {
       waitForRqlite(50, { baseUrl: URL, fetchImpl: f, delay: async () => {} })
     ).rejects.toThrow(/did not become ready/);
   });
+
+  it("caps each probe with its own timeout so a silent connection cannot outlast the deadline", async () => {
+    // Node's fetch has no default timeout: a rqlite that accepts TCP but never
+    // answers would let one attempt run for minutes and blow past the loop
+    // deadline. Every probe must carry a signal.
+    const signals: Array<AbortSignal | undefined> = [];
+    const f = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      signals.push(init?.signal ?? undefined);
+      throw new Error("aborted");
+    });
+    await expect(
+      waitForRqlite(50, { baseUrl: URL, fetchImpl: f, delay: async () => {} })
+    ).rejects.toThrow(/did not become ready/);
+    expect(signals.length).toBeGreaterThan(0);
+    for (const signal of signals) expect(signal).toBeInstanceOf(AbortSignal);
+  });
 });

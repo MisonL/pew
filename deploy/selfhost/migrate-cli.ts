@@ -70,6 +70,15 @@ export async function assertAuthReconciled(
   }
 }
 
+/**
+ * Per-attempt probe budget. Node's fetch has no default timeout (the
+ * d1-adapter comment makes the same point), so a rqlite that accepts TCP but
+ * never answers would let ONE attempt run past the 60s deadline and turn the
+ * loop into a five-minute hang. Each attempt is capped well below the poll
+ * interval so a stuck connection is retried rather than waited on.
+ */
+const PROBE_TIMEOUT_MS = 5_000;
+
 export async function waitForRqlite(
   timeoutMs = 60_000,
   deps: {
@@ -91,11 +100,13 @@ export async function waitForRqlite(
       // /status probe would let migrate run before a leader exists and fail.
       // /readyz only turns 200 once a leader is up. /readyz is also right for
       // the single profile (-bootstrap-expect 1 elects immediately).
-      const res = await fetchImpl(`${baseUrl}/readyz`);
+      const res = await fetchImpl(`${baseUrl}/readyz`, {
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      });
       if (res.ok) return;
       status = res.status;
     } catch {
-      // not up yet
+      // not up yet (connection refused, or this attempt's own timeout)
     }
     // A 401/403 is not "still starting": rqlite is up and answering, but auth
     // is enabled and this unauthenticated probe is refused. The rendered
