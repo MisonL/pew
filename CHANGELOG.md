@@ -37,6 +37,23 @@
   1.4.x minor: `bun.lock` is unchanged and `--frozen-lockfile` passes.
 
 ### Fixed
+- Per-host credential filenames are now injective: the old sanitizer mapped
+  the port separator, a literal underscore and IPv6 brackets onto the same
+  character, so `a.b:7020` and `a.b_7020` (or `dev` and `host-dev`) shared one
+  credential file and the second login overwrote the first token. Ordinary
+  `host:port` names are unchanged, so existing deployments keep their files.
+- A degraded rqlite rate-limit backend no longer hands out a fresh allowance:
+  accepted DB attempts are mirrored into the in-memory fallback bucket, which
+  previously started empty exactly when guessing becomes cheapest.
+- The selfhost shutdown forced-exit timer is no longer `unref()`'d; a drain
+  that hangs without holding any event-loop handle used to let the process
+  exit 0 (silent scheduler death) instead of forcing exit 1.
+- The `update --force` warning recommends `sync --help | grep -- --host` as
+  its self-check; running `sync --host …` on a replaced binary silently
+  ignored the flag and was the incident path itself.
+- Retired-source parity covers the runtime-embedded copies (notify hook
+  template, `isSource`, accounting-ledger validator), which cannot import the
+  types-only `@pew/core` and could drift unnoticed.
 - Raise the `undici` override to 7.30.1 (GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685,
   GHSA-f72v-6w45-q472: response-queue poisoning, cookie handling and an unhandled
   exception, all fixed in 7.30.1).
