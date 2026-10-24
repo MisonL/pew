@@ -57,8 +57,12 @@ describe("concurrent coordinatedSync serialization", () => {
       lockTimeoutMs: 10000,
     });
 
-    // Give process 1 time to acquire lock and start sync
-    await new Promise((r) => setTimeout(r, 50));
+    // Wait until process 1 actually acquired the lock and entered its sync.
+    // A fixed sleep is not enough: under a loaded suite (the pre-commit gate
+    // runs the whole repo in parallel) the lock acquisition can take longer,
+    // and releasing before resolveFirst exists silently does nothing — the
+    // first sync then waits forever and the test times out at 120s.
+    await vi.waitFor(() => expect(events).toContain("start-1"), { timeout: 10_000 });
 
     const promise2 = coordinatedSync(trigger, {
       stateDir,
@@ -66,9 +70,19 @@ describe("concurrent coordinatedSync serialization", () => {
       lockTimeoutMs: 10000,
     });
 
+    // Process 2 cannot take the lock; it must have appended its signal before
+    // process 1 finishes its first cycle, or the follow-up would be lost.
+    await vi.waitFor(
+      async () => {
+        const signal = await stat(join(stateDir, "notify.signal")).catch(() => null);
+        expect(signal?.size ?? 0).toBeGreaterThan(0);
+      },
+      { timeout: 10_000 },
+    );
+
     // Let process 1 finish
-    await new Promise((r) => setTimeout(r, 100));
-    resolveFirst?.();
+    expect(resolveFirst).not.toBeNull();
+    resolveFirst!();
 
     const [result1, result2] = await Promise.all([promise1, promise2]);
 
