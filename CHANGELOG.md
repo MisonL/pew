@@ -37,6 +37,9 @@
   1.4.x minor: `bun.lock` is unchanged and `--frozen-lockfile` passes.
 
 ### Fixed
+- Raise the `undici` override to 7.30.1 (GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685,
+  GHSA-f72v-6w45-q472: response-queue poisoning, cookie handling and an unhandled
+  exception, all fixed in 7.30.1).
 - Credentials registration and OAuth sign-in now agree on who may join: the
   register path honors the `require_invite_code` setting (previously every
   credentials signup demanded a code even when invitations were disabled), and
