@@ -15,6 +15,11 @@ import { NextResponse } from "next/server";
 import { BodyTooLargeError, MAX_AUTH_BODY_BYTES, readBoundedJson } from "@pew/core";
 import { getD1Client } from "@/lib/d1";
 import { bootstrapAdmin, registerWithInvite } from "@/lib/credentials";
+import {
+  AUTH_REGISTER_RATE_LIMIT,
+  getClientIp,
+  inMemoryRateLimiter,
+} from "@/lib/rate-limit";
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -26,6 +31,17 @@ async function instanceIsEmpty(): Promise<boolean> {
 }
 
 export async function POST(request: Request) {
+  // Rate limit before any password work: an anonymous caller otherwise turns
+  // every request into a synchronous scrypt derivation on the event loop.
+  const ip = getClientIp(request);
+  const rl = inMemoryRateLimiter.check(`auth-register:${ip}`, AUTH_REGISTER_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again later." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
+    );
+  }
+
   let body: Record<string, unknown>;
   try {
     body = (await readBoundedJson(request, MAX_AUTH_BODY_BYTES)) as Record<string, unknown>;

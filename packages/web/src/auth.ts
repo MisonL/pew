@@ -27,10 +27,12 @@ import type { JWT } from "next-auth/jwt";
 import type { Session, User } from "next-auth";
 
 /**
- * Login brute-force guard: 10 attempts / 60s per email. Both backends also
- * apply an IP bucket — memory uses LOGIN_IP_RATE_LIMIT (30/60s, per process),
- * rqlite shares both keys across replicas at 10/60s. Set
- * LOGIN_RATE_LIMIT_BACKEND=rqlite for cross-replica limiting.
+ * Login brute-force guard: 10 attempts / 60s per email, plus a per-IP bucket
+ * (30/60s) that closes email rotation behind NAT. Both limiter backends use
+ * the same key names, config pairing and check order — switching
+ * LOGIN_RATE_LIMIT_BACKEND must not silently change the policy. The memory
+ * backend is per process; the rqlite backend shares the buckets across
+ * replicas (and falls back to per-process limiting while rqlite is degraded).
  */
 export const LOGIN_RATE_LIMIT: RateLimitConfig = {
   maxRequests: 10,
@@ -84,8 +86,9 @@ export async function authorizeCredentials(input: {
   if (!email || !password) return null;
 
   // Docstring fix: this function previously claimed per-IP limiting but only
-  // ever keyed per-email (auth.ts:68). The IP dimension arrives with the
-  // rqlite backend, which the NextAuth(req) closure feeds via getClientIp.
+  // ever keyed per-email (auth.ts:68). Both backends now apply the same two
+  // buckets in the same order: per-IP first (it closes email rotation and is
+  // the cheaper rejection), then per-email.
   if (process.env.LOGIN_RATE_LIMIT_BACKEND === "rqlite") {
     const limiter = await import("@/lib/rate-limit").then((m) => m.rqliteRateLimiter);
     const ipKey = `login:ip:${input.ip ? ipv6PrefixKey(input.ip) : "unknown"}`;
@@ -93,10 +96,10 @@ export async function authorizeCredentials(input: {
     // the rqlite backend persists one row per attempt, so an unbounded key
     // turns each login POST into a storage write of attacker-chosen size.
     const emailKey = `login:email:${email.slice(0, 254)}`;
-    for (const key of [emailKey, ipKey]) {
-      const result = await limiter.check(key, LOGIN_RATE_LIMIT);
-      if (!result.allowed) return null;
-    }
+    const ipLimit = await limiter.check(ipKey, LOGIN_IP_RATE_LIMIT);
+    if (!ipLimit.allowed) return null;
+    const limit = await limiter.check(emailKey, LOGIN_RATE_LIMIT);
+    if (!limit.allowed) return null;
   } else {
     // The memory backend used to key per-email only, so an attacker rotating
     // emails had no limit at all and each attempt burned a full scrypt. Check
@@ -109,7 +112,7 @@ export async function authorizeCredentials(input: {
     );
     if (!ipLimit.allowed) return null;
     const limit = inMemoryRateLimiter.check(
-      `login:${(input.rateKey ?? email).slice(0, 254)}`,
+      `login:email:${(input.rateKey ?? email).slice(0, 254)}`,
       LOGIN_RATE_LIMIT
     );
     if (!limit.allowed) return null;

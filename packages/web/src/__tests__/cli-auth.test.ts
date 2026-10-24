@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { GET, getPublicOrigin } from "@/app/api/auth/cli/route";
 import {
   createMockDbRead,
@@ -6,7 +6,7 @@ import {
   loadMockedAuthHelpers,
 } from "./test-utils";
 import * as dbModule from "@/lib/db";
-import { inMemoryRateLimiter } from "@/lib/rate-limit";
+import { AUTH_CLI_RATE_LIMIT, inMemoryRateLimiter } from "@/lib/rate-limit";
 
 // Mock db
 vi.mock("@/lib/db", async (importOriginal) => {
@@ -44,6 +44,8 @@ describe("GET /api/auth/cli", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     inMemoryRateLimiter.reset();
+    delete process.env.E2E_SKIP_AUTH;
+    delete process.env.RESOURCE_ENV;
     mockDbRead = createMockDbRead();
     mockDbWrite = createMockDbWrite();
     vi.mocked(dbModule.getDbRead).mockResolvedValue(
@@ -52,6 +54,58 @@ describe("GET /api/auth/cli", () => {
     vi.mocked(dbModule.getDbWrite).mockResolvedValue(
       mockDbWrite as unknown as dbModule.DbWrite
     );
+  });
+
+  describe("e2e warmup probe", () => {
+    // The L2 runner's route warmup (scripts/e2e-utils.ts) appends
+    // ?pew-warmup=1 so its compile probe does not burn one of the ten
+    // auth-cli slots before the real tests run. The marker is only honored
+    // inside the isolated E2E environment — never in production.
+    function makeWarmupRequest(): Request {
+      return new Request("http://localhost:7020/api/auth/cli?pew-warmup=1");
+    }
+
+    afterEach(() => {
+      delete process.env.E2E_SKIP_AUTH;
+      delete process.env.RESOURCE_ENV;
+    });
+
+    it("skips rate-limit accounting inside the isolated e2e environment", async () => {
+      process.env.E2E_SKIP_AUTH = "true";
+      process.env.RESOURCE_ENV = "test";
+      vi.mocked(resolveUser).mockResolvedValue(null);
+
+      for (let i = 0; i < AUTH_CLI_RATE_LIMIT.maxRequests + 5; i++) {
+        const res = await GET(makeWarmupRequest());
+        expect(res.status).not.toBe(429);
+      }
+      expect(inMemoryRateLimiter.size()).toBe(0);
+    });
+
+    it("still counts a normal request inside the e2e environment", async () => {
+      process.env.E2E_SKIP_AUTH = "true";
+      process.env.RESOURCE_ENV = "test";
+      vi.mocked(resolveUser).mockResolvedValue(null);
+
+      for (let i = 0; i < AUTH_CLI_RATE_LIMIT.maxRequests; i++) {
+        await GET(makeRequest());
+      }
+      const res = await GET(makeRequest());
+      expect(res.status).toBe(429);
+    });
+
+    it("ignores the warmup marker outside the e2e environment", async () => {
+      // No RESOURCE_ENV/E2E_SKIP_AUTH: production-like process must treat the
+      // marker as an ordinary request and keep counting.
+      vi.mocked(resolveUser).mockResolvedValue(null);
+
+      for (let i = 0; i < AUTH_CLI_RATE_LIMIT.maxRequests; i++) {
+        await GET(makeWarmupRequest());
+      }
+      const res = await GET(makeWarmupRequest());
+      expect(res.status).toBe(429);
+      expect(inMemoryRateLimiter.size()).toBe(1);
+    });
   });
 
   describe("getPublicOrigin", () => {

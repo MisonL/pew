@@ -193,11 +193,12 @@ describe("login limiter backend switch", () => {
     const keys = spy.mock.calls.map((c) => c[0]);
     expect(keys).toContain("login:email:a@b.c");
     expect(keys).toContain("login:ip:203.0.113.9");
-    // The limiter must be called with the imported LOGIN_RATE_LIMIT itself,
-    // not a locally-copied config that could drift from auth.ts.
-    for (const config of spy.mock.calls.map((c) => c[1])) {
-      expect(config).toBe(LOGIN_RATE_LIMIT);
-    }
+    // The limiter must be called with the imported config objects themselves,
+    // not locally-copied values that could drift from auth.ts. Both backends
+    // use the same pairing: per-email 10/60s, per-IP 30/60s.
+    const checks = spy.mock.calls.map((c) => [c[0], c[1]]);
+    expect(checks).toContainEqual(["login:email:a@b.c", LOGIN_RATE_LIMIT]);
+    expect(checks).toContainEqual(["login:ip:203.0.113.9", LOGIN_IP_RATE_LIMIT]);
   });
 
   it("clamps the email-derived key so a huge request-body email cannot inflate rqlite rows", async () => {
@@ -224,9 +225,10 @@ describe("login limiter backend switch", () => {
     mockFindCredentialUser.mockResolvedValue(null);
     await authorizeCredentials({ email: "anchor@b.c", password: "x", ip: "198.51.100.7" });
     // IP bucket first (closes email rotation), then the per-email bucket.
+    // Key shapes are identical across both limiter backends.
     expect(spy.mock.calls[0]?.[0]).toBe("login:ip:198.51.100.7");
     expect(spy.mock.calls[0]?.[1]).toBe(LOGIN_IP_RATE_LIMIT);
-    expect(spy.mock.calls[1]?.[0]).toBe("login:anchor@b.c");
+    expect(spy.mock.calls[1]?.[0]).toBe("login:email:anchor@b.c");
     expect(spy.mock.calls[1]?.[1]).toBe(LOGIN_RATE_LIMIT);
   });
 

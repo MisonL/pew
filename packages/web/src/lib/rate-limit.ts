@@ -164,6 +164,18 @@ export const INGEST_RATE_LIMIT: RateLimitConfig = {
   windowSeconds: 60,
 };
 
+/** Rate limit for credential registration: 20 per hour per IP */
+export const AUTH_REGISTER_RATE_LIMIT: RateLimitConfig = {
+  maxRequests: 20,
+  windowSeconds: 3600, // 1 hour
+};
+
+/** Rate limit for password-reset consumption: 20 per hour per IP */
+export const AUTH_RESET_RATE_LIMIT: RateLimitConfig = {
+  maxRequests: 20,
+  windowSeconds: 3600, // 1 hour
+};
+
 // ---------------------------------------------------------------------------
 // Client IP extraction
 // ---------------------------------------------------------------------------

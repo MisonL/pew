@@ -9,10 +9,24 @@
 import { NextResponse } from "next/server";
 import { BodyTooLargeError, MAX_AUTH_BODY_BYTES, readBoundedJson } from "@pew/core";
 import { consumePasswordReset } from "@/lib/credentials";
+import {
+  AUTH_RESET_RATE_LIMIT,
+  getClientIp,
+  inMemoryRateLimiter,
+} from "@/lib/rate-limit";
 
 const MIN_PASSWORD_LENGTH = 8;
 
 export async function POST(request: Request) {
+  const ip = getClientIp(request);
+  const rl = inMemoryRateLimiter.check(`auth-reset:${ip}`, AUTH_RESET_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again later." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
+    );
+  }
+
   let body: Record<string, unknown>;
   try {
     body = (await readBoundedJson(request, MAX_AUTH_BODY_BYTES)) as Record<string, unknown>;

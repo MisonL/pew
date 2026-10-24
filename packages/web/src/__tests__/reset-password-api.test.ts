@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockDbWrite } from "./test-utils";
+import { inMemoryRateLimiter } from "@/lib/rate-limit";
 
 vi.mock("@/lib/db", () => ({
   getDbRead: vi.fn(),
@@ -34,6 +35,7 @@ describe("POST /api/auth/reset-password", () => {
   let dbWrite: ReturnType<typeof createMockDbWrite>;
 
   beforeEach(() => {
+    inMemoryRateLimiter.reset();
     mockQuery.mockReset();
     dbWrite = createMockDbWrite();
     mockGetDbWrite.mockResolvedValue(dbWrite);

@@ -13,6 +13,7 @@
 import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
 import { getDbRead, getDbWrite } from "@/lib/db";
+import { isE2EMode } from "@/lib/e2e-mode";
 import {
   AUTH_CLI_RATE_LIMIT,
   getClientIp,
@@ -37,20 +38,32 @@ export function getPublicOrigin(_request: Request): string {
 }
 
 export async function GET(request: Request) {
+  const url = new URL(request.url);
+
+  // The L2 runner's route warmup (scripts/e2e-utils.ts) probes every route
+  // module to pay Next's compile cost outside the test clock. On this route
+  // the probe would also burn one of the ten per-hour auth-cli slots before
+  // the real tests run, so inside the isolated E2E environment a marked
+  // probe skips the limiter. Outside that environment the marker is just an
+  // ordinary request — production never runs with the E2E env vars set.
+  const isWarmupProbe =
+    isE2EMode() && url.searchParams.get("pew-warmup") === "1";
+
   // Rate limit: 10 CLI auth attempts per hour per IP
-  const ip = getClientIp(request);
-  const rl = inMemoryRateLimiter.check(
-    `auth-cli:${ip}`,
-    AUTH_CLI_RATE_LIMIT,
-  );
-  if (!rl.allowed) {
-    return NextResponse.json(
-      { error: "Too many requests. Please try again later." },
-      { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
+  if (!isWarmupProbe) {
+    const ip = getClientIp(request);
+    const rl = inMemoryRateLimiter.check(
+      `auth-cli:${ip}`,
+      AUTH_CLI_RATE_LIMIT,
     );
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again later." },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
+      );
+    }
   }
 
-  const url = new URL(request.url);
   const callback = url.searchParams.get("callback");
   const state = url.searchParams.get("state");
 
