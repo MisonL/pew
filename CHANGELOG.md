@@ -37,6 +37,39 @@
   1.4.x minor: `bun.lock` is unchanged and `--frozen-lockfile` passes.
 
 ### Fixed
+- Credentials registration and OAuth sign-in now agree on who may join: the
+  register path honors the `require_invite_code` setting (previously every
+  credentials signup demanded a code even when invitations were disabled), and
+  the OAuth gate recognizes an existing email+password user instead of
+  treating them as new and burning an invite code.
+- `POST /api/auth/register` and `/api/auth/reset-password` are now per-IP rate
+  limited before any scrypt work; both are public endpoints and each request
+  previously ran a full synchronous derivation.
+- The two login limiter backends apply one policy: the rqlite backend used a
+  10/60s per-IP cap and a different key namespace than the in-memory backend's
+  30/60s, so switching `LOGIN_RATE_LIMIT_BACKEND` silently changed the limit.
+- Deleting the bootstrap admin clears its `instance_setup` row; the stale row
+  collided on the single-row primary key and made every later `/setup` roll
+  back, leaving the instance impossible to set up again.
+- Selfhost scheduler shutdown drains every overlapping tick (it tracked only
+  the newest promise, so an older run could still be writing D1/KV when the
+  process exited), and `migrate` reports rqlite's 401/403 on `/readyz` as an
+  auth problem instead of retrying for a minute and blaming readiness.
+- `.env.example` ships `USE_SECURE_COOKIES=false`: its example `NEXTAUTH_URL`
+  is http, and the image's production `NODE_ENV` made a verbatim copy derive
+  Secure cookies and break login.
+- CLI: `--host` values carrying a path, query or fragment are rejected
+  instead of being silently truncated to their origin; long-host credential
+  filenames are capped below the filesystem name limit; `logout` names the
+  host whose credentials it cleared; `update --force` warns that a forced
+  install can replace a self-hosted build with one that ignores `--host`.
+- E2E harness: the HOME/XDG_CONFIG_HOME redirect is restored after cleanup
+  (it used to outlive the run and point at a deleted directory), route
+  warmup treats `(group)`/`@slot` folders as no URL segment instead of
+  probing a literal path, and per-worker port slices stop the parallel
+  suite from colliding on its own free-port picks.
+- The G2 security gate fails closed when `bun.lock` is missing or is not a
+  Bun lockfile, so a "clean" osv-scanner result always means a real scan.
 - Tighten session maxAge to 7 days and reject placeholder AUTH_SECRET values
   at first auth use (session-forgery hardening)
 - Parse password-reset expiry SQL-side (UTC) instead of local-time Date parsing
