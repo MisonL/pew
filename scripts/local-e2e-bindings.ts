@@ -38,6 +38,13 @@ export async function verifyLocalMarker(env: Record<string, string>): Promise<vo
 
 export async function localIsolatedEnv(migrations = resolve("scripts/migrations"), signal?: AbortSignal, readiness = false) {
   const state = mkdtempSync(join(tmpdir(), "pew-e2e-"));
+  // Redirect HOME/XDG_CONFIG_HOME for the whole lane so wrangler and any CLI
+  // state writes land in the throwaway dir. The previous values are restored
+  // in dispose(): the state dir is deleted there, and leaving these pointing
+  // at a removed directory breaks every later HOME-relative path in this
+  // process (a second tier in the same runner, vitest workers after the run).
+  const previousHome = process.env.HOME;
+  const previousXdgConfig = process.env.XDG_CONFIG_HOME;
   process.env.HOME = state;
   process.env.XDG_CONFIG_HOME = state;
   process.env.WRANGLER_SEND_METRICS = "false";
@@ -80,6 +87,12 @@ export async function localIsolatedEnv(migrations = resolve("scripts/migrations"
     } catch (error) { errors.push(error); }
     server?.stop(true);
     try { await proxy?.dispose(); } catch (error) { errors.push(error); }
+    // Restore the parent's HOME/XDG_CONFIG_HOME before the state dir goes
+    // away: the redirection must not outlive the lane.
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousXdgConfig === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previousXdgConfig;
     try {
       if (!errors.length) rmSync(state, { recursive: true });
     } catch (error) { errors.push(error); }

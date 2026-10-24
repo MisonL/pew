@@ -87,6 +87,34 @@ describe("real D1 lifecycle", () => {
     }
   });
 
+  it("restores HOME and XDG_CONFIG_HOME after cleanup", async () => {
+    // The lane points HOME/XDG_CONFIG_HOME at its throwaway state dir so the
+    // run cannot touch real CLI state. Leaving them pointing there after
+    // dispose deletes that dir breaks every later HOME-relative path in the
+    // process (vitest workers, a second tier in the same process).
+    vi.stubEnv("HOME", "/original/home");
+    vi.stubEnv("XDG_CONFIG_HOME", "/original/xdg-config");
+    const spawn = vi.fn((_args: string[], _options: { env: Record<string, string> }) => ({
+      stdout: new Response("").body,
+      stderr: new Response("synthetic migration failure").body,
+      exited: Promise.resolve(1),
+    }));
+    vi.stubGlobal("Bun", { spawn });
+    try {
+      await expect(localIsolatedEnv()).rejects.toThrow("synthetic migration failure");
+      // Non-vacuous: the child really ran with the redirected HOME.
+      const childEnv = spawn.mock.calls[0]?.[1] as { env: Record<string, string> };
+      expect(childEnv.env.HOME).toContain("pew-e2e-");
+      expect(childEnv.env.HOME).not.toBe("/original/home");
+      // ...and the parent's environment is put back afterwards.
+      expect(process.env.HOME).toBe("/original/home");
+      expect(process.env.XDG_CONFIG_HOME).toBe("/original/xdg-config");
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("preserves full fresh schema, native Worker RPC and failure cleanup", () => {
     // Beneath the coverage suite this spawn can take well over 100s; the
     // timeout budget is deliberately generous (the old 120s ceiling failed

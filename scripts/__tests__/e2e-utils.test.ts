@@ -19,10 +19,19 @@ vi.mock("node:fs", async (importOriginal) => {
  * it and then letting runLocalE2e re-bind races anything that grabs it in the
  * gap (measured: one EADDRINUSE in six full runs, reported as "expected E2E
  * interrupted"). Draw from a private range instead and verify the port is
- * actually bindable before returning it. */
+ * actually bindable before returning it.
+ *
+ * Random picks within that range still collided across the suite's parallel
+ * workers (a full run produced listen EADDRINUSE from ensurePortFree). Give
+ * each vitest worker its own 100-port slice of the range and walk it
+ * sequentially, so two workers never hand the same port to their lanes. */
+const PORT_SLICE_BASE =
+  21_000 + ((Number(process.env.VITEST_WORKER_ID ?? process.pid) || 1) % 100) * 100;
+let nextPort = PORT_SLICE_BASE;
+
 async function freePort(): Promise<string> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const candidate = 21_000 + Math.floor(Math.random() * 3_000);
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const candidate = nextPort++;
     const probe = createServer();
     const bound = await new Promise<boolean>((done) => {
       probe.once("error", () => done(false));
@@ -31,7 +40,7 @@ async function freePort(): Promise<string> {
     await new Promise<void>((done) => (bound ? probe.close(() => done()) : done()));
     if (bound) return String(candidate);
   }
-  throw new Error("could not find a free port in 21000-23999");
+  throw new Error(`could not find a free port in the worker's slice from ${PORT_SLICE_BASE}`);
 }
 
 // The module-level fs mock exists for the runner tests; the warmup walker
@@ -68,6 +77,24 @@ describe("apiRouteWarmupPaths", () => {
         "/api/usage/by-device",
         "/api/users/e2e-warmup",
       ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("treats route groups and slots as no URL segment instead of a literal path", async () => {
+    // `(group)` and `@slot` folders are organizational only: probing them as a
+    // literal URL segment would compile the not-found boundary and leave the
+    // actual route cold for the tests.
+    const root = mkdtempSync(join(tmpdir(), "pew-warmup-groups-"));
+    try {
+      mkdirSync(join(root, "(dashboard)", "usage"), { recursive: true });
+      writeFileSync(join(root, "(dashboard)", "usage", "route.ts"), "");
+      mkdirSync(join(root, "@modal", "live"), { recursive: true });
+      writeFileSync(join(root, "@modal", "live", "route.ts"), "");
+
+      await realReaddir();
+      expect(apiRouteWarmupPaths(root)).toEqual(["/api/live", "/api/usage"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -115,11 +142,15 @@ describe("warmApiRoutes", () => {
     const state = trackingFetch();
     try {
       await expect(warmApiRoutes("17020", new AbortController().signal)).resolves.toBeUndefined();
-      expect([...state.paths].sort()).toEqual([...routes, "/api/e2e-warmup-not-found"].sort());
-      expect(new Set(state.paths).size).toBe(state.paths.length);
+      // Every probe carries the marker so quota-charging routes (auth/cli)
+      // recognize it as a warmup and skip accounting inside the E2E env.
+      expect(state.paths.every((path) => path.endsWith("?pew-warmup=1"))).toBe(true);
+      const bare = state.paths.map((path) => path.replace("?pew-warmup=1", ""));
+      expect([...bare].sort()).toEqual([...routes, "/api/e2e-warmup-not-found"].sort());
+      expect(new Set(bare).size).toBe(bare.length);
       // The not-found boundary compiles the slowest, so it must be in the
       // first wave rather than serialized at the end.
-      expect(state.paths.slice(0, 4)).toContain("/api/e2e-warmup-not-found");
+      expect(bare.slice(0, 4)).toContain("/api/e2e-warmup-not-found");
       expect(state.maxInFlight).toBeGreaterThan(1);
       expect(state.maxInFlight).toBeLessThanOrEqual(4);
     } finally {
@@ -131,7 +162,7 @@ describe("warmApiRoutes", () => {
     await realReaddir();
     const routes = apiRouteWarmupPaths(resolve("packages/web/src/app/api"));
     const doomed = routes[0] as string;
-    const state = trackingFetch({ failOn: (path) => path === doomed });
+    const state = trackingFetch({ failOn: (path) => path.startsWith(`${doomed}?`) });
     try {
       const rejection = await warmApiRoutes("17020", new AbortController().signal)
         .then(() => undefined, (error: unknown) => error);

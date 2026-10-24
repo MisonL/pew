@@ -157,6 +157,20 @@ const osvNow = Date.now();
 // osv-scanner
 const hasOsv = requireTool("osv-scanner");
 if (hasOsv) {
+  // Fail closed when the scan target is absent or not a real Bun lockfile:
+  // osv-scanner's exit code for "no package sources found" has varied across
+  // releases, and a silent pass here would report a dependency scan that
+  // never looked at anything.
+  let lockLooksReal = false;
+  try {
+    lockLooksReal = readFileSync(lockPath, "utf-8").includes("lockfileVersion");
+  } catch {
+    lockLooksReal = false;
+  }
+  if (!lockLooksReal) {
+    console.error(`❌ osv-scanner: ${lockPath} is missing or not a Bun lockfile — cannot scan dependencies.`);
+    process.exit(1);
+  }
   const osvVer = toolVersion("osv-scanner");
   const cacheAge = osvNow - (cache.osvCheckedAt ?? 0);
   const cacheHit =

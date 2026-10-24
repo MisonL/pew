@@ -137,6 +137,14 @@ export function apiRouteWarmupPaths(apiDir: string): string[] {
     if (entries.some((entry) => entry.isFile() && /^route\.(?:ts|tsx|js|jsx|mjs)$/.test(entry.name))) paths.push(url);
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      // Route groups `(group)` and named slots `@slot` are organizational
+      // folders: they contribute no URL segment, so probing them under a
+      // literal name would compile the not-found boundary instead of the
+      // route and leave it cold for the tests. Recurse at the same URL.
+      if (/^\(.+\)$/.test(entry.name) || entry.name.startsWith("@")) {
+        walk(join(dir, entry.name), url);
+        continue;
+      }
       // Any dynamic form — `[slug]`, `[...nextauth]`, `[[...slug]]`.
       const segment = entry.name.startsWith("[") ? WARMUP_SEGMENT : entry.name;
       walk(join(dir, entry.name), `${url}/${segment}`);
@@ -154,6 +162,12 @@ export async function warmApiRoutes(port: string, signal: AbortSignal): Promise<
   // in the initial batch overlaps it with three route compiles instead of
   // paying for it alone at the end.
   const warmups = [`/api/${WARMUP_SEGMENT}-not-found`, ...paths];
+  // Mark every probe: routes that would otherwise charge the caller (e.g.
+  // /api/auth/cli's per-IP limiter) recognize the marker inside the isolated
+  // E2E environment and skip accounting, so warming up cannot consume the
+  // quota the tests themselves rely on.
+  const probeUrl = (path: string): string =>
+    `${path}${path.includes("?") ? "&" : "?"}pew-warmup=1`;
   const started = Date.now();
   let next = 0;
   // A wedged server must fail the lane with one clear message instead of
@@ -167,7 +181,7 @@ export async function warmApiRoutes(port: string, signal: AbortSignal): Promise<
       try {
         // The response status is irrelevant — a 401/404/405 still proves the
         // route compiled.
-        await fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(WARMUP_TIMEOUT_MS)]) });
+        await fetch(`http://127.0.0.1:${port}${probeUrl(path)}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(WARMUP_TIMEOUT_MS)]) });
       } catch (error) {
         failure ??= new Error(`API route warmup failed for ${path} (no answer within ${WARMUP_TIMEOUT_MS / 1000}s)`, { cause: error });
         return;

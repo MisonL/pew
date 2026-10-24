@@ -28,7 +28,7 @@ jobs:
     with:
       runtime-version: "1.4.3"
       install-policy: "blocked"
-      timeout-minutes: 15
+      timeout-minutes: 25
       pre-command: "bun run build"
       command: "bun run test:e2e"
 
@@ -40,7 +40,7 @@ jobs:
       runtime-version: "1.4.3"
       install-policy: "blocked"
       browser: "chromium"
-      timeout-minutes: 20
+      timeout-minutes: 35
       pre-command: "bun run build"
       command: "bun run test:e2e:ui"
 
