@@ -16,7 +16,10 @@ describe("account deletion concurrent with snapshot generation", () => {
   it.each(["before-member-read", "after-member-read", "after-snapshot-write"])("does not restore erased contributions: %s", async (when) => {
     const sqlite = new DatabaseSync(":memory:");
     try {
-      for (const name of ["001-init", "006b-seasons", "007b-season-team-members", "008-snapshot-ready"]) {
+      // 032 is part of every real deployment's schema and the delete batch
+      // clears the bootstrap-admin row there (instance_setup has no FK to
+      // users, so a stale row would wedge every later /setup).
+      for (const name of ["001-init", "006b-seasons", "007b-season-team-members", "008-snapshot-ready", "032-auth-credentials"]) {
         sqlite.exec(readFileSync(`scripts/migrations/${name}.sql`, "utf8"));
       }
       sqlite.exec(`PRAGMA foreign_keys=ON;

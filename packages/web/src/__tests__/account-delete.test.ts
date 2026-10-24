@@ -148,7 +148,9 @@ describe("DELETE /api/account/delete", () => {
           INSERT INTO season_snapshots VALUES ('s1', 't1', 1, 100, 60, 30, 10), ('s1', 't2', 2, 40, 20, 15, 5);
           INSERT INTO season_member_snapshots VALUES ('s1', 't1', 'u1', 100, 60, 30, 10), ('s1', 't2', 'u2', 40, 20, 15, 5);
           CREATE TABLE invite_codes (created_by TEXT REFERENCES users(id), used_by TEXT);
-          INSERT INTO invite_codes VALUES ('u1', NULL), ('u2', 'u1');`);
+          INSERT INTO invite_codes VALUES ('u1', NULL), ('u2', 'u1');
+          CREATE TABLE instance_setup (id INTEGER PRIMARY KEY, admin_user_id TEXT, completed_at TEXT);
+          INSERT INTO instance_setup VALUES (1, 'u1', '2026-01-01T00:00:00Z');`);
         const tables = ["usage_details", "usage_evidence", "usage_records", "session_records", "team_members",
           "season_team_members", "device_aliases", "sessions", "accounts", "organization_members", "auth_codes"];
         for (const table of tables) db.exec(`CREATE TABLE ${table} (user_id TEXT REFERENCES users(id)); INSERT INTO ${table} VALUES ('u1'), ('u2')`);
@@ -174,6 +176,9 @@ describe("DELETE /api/account/delete", () => {
         for (const table of tables) expect(db.prepare(`SELECT user_id FROM ${table} ORDER BY user_id`).all()).toEqual(fail ? [{ user_id: "u1" }, { user_id: "u2" }] : [{ user_id: "u2" }]);
         expect(db.prepare("SELECT * FROM invite_codes WHERE created_by = 'u2'").get()).toEqual({ created_by: "u2", used_by: fail ? "u1" : "deleted-user" });
         expect(db.prepare("SELECT COUNT(*) AS n FROM invite_codes WHERE used_by IS NULL").get()!.n).toBe(fail ? 1 : 0);
+        // Deleting the bootstrap admin must clear instance_setup so a later
+        // /setup can re-bootstrap; a partial rollback keeps it.
+        expect(db.prepare("SELECT COUNT(*) AS n FROM instance_setup").get()!.n).toBe(fail ? 1 : 0);
         expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
       } finally { db.close(); }
     });

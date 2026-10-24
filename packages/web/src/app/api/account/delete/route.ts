@@ -107,6 +107,13 @@ export async function DELETE(request: Request) {
       { sql: "DELETE FROM accounts WHERE user_id = ?", params: [userId] },
       { sql: "DELETE FROM invite_codes WHERE created_by = ?", params: [userId] },
       { sql: "UPDATE invite_codes SET used_by = 'deleted-user' WHERE used_by = ?", params: [userId] },
+      // instance_setup has no foreign key to users, so deleting the bootstrap
+      // admin would leave a row pointing at a missing id. bootstrapAdmin
+      // inserts with a hardcoded id=1, so that stale row makes every later
+      // /setup attempt collide on the primary key and roll back its users
+      // INSERT too — the instance could never be set up again. Clearing it
+      // here lets the next /setup re-bootstrap a fresh admin.
+      { sql: "DELETE FROM instance_setup WHERE admin_user_id = ?", params: [userId] },
       { sql: "DELETE FROM users WHERE id = ?", params: [userId] },
     ]);
 
