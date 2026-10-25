@@ -20,20 +20,19 @@ import { jsonResponse } from "@/lib/json-response";
 import { parseBoundedInt } from "@/lib/query-params";
 import { getDbRead } from "@/lib/db";
 import { loadPricingMap } from "@/lib/load-pricing-map";
+import { dateParamToIso, isBareDate, isDateParam } from "@/lib/date-params";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}/;
 
 function parseDateRange(fromParam: string | null, toParam: string | null) {
   let fromDate: string;
   let toDate: string;
 
   if (fromParam) {
-    if (!DATE_RE.test(fromParam)) return null;
-    fromDate = new Date(fromParam).toISOString();
+    if (!isDateParam(fromParam)) return null;
+    fromDate = dateParamToIso(fromParam);
   } else {
     const d = new Date();
     d.setUTCDate(d.getUTCDate() - 30);
@@ -41,10 +40,10 @@ function parseDateRange(fromParam: string | null, toParam: string | null) {
   }
 
   if (toParam) {
-    if (!DATE_RE.test(toParam)) return null;
+    if (!isDateParam(toParam)) return null;
     // Bare date "YYYY-MM-DD" → inclusive: bump +1 UTC day for `< toDate`
     const toD = new Date(toParam);
-    if (toParam.length === 10) {
+    if (isBareDate(toParam)) {
       toD.setUTCDate(toD.getUTCDate() + 1);
     }
     toDate = toD.toISOString();

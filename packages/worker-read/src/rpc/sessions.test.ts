@@ -306,6 +306,36 @@ describe("sessions RPC handlers", () => {
       expect(db.prepare).toHaveBeenCalled();
     });
 
+    it("applies an explicit limit and caps it", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      const base = {
+        method: "sessions.getRecords" as const,
+        userId: "u1",
+        fromDate: "2026-01-01T00:00:00Z",
+        toDate: "2026-02-01T00:00:00Z",
+      };
+
+      await handleSessionsRpc({ ...base, limit: 1000 }, db);
+      expect(String(db.prepare.mock.calls[0]?.[0])).toContain("LIMIT ?");
+      expect(db.bind).toHaveBeenCalledWith("u1", base.fromDate, base.toDate, 1000);
+
+      db.prepare.mockClear();
+      db.bind.mockClear();
+      await handleSessionsRpc({ ...base, limit: 10_000_000 }, db);
+      expect(db.bind).toHaveBeenCalledWith("u1", base.fromDate, base.toDate, 5000);
+    });
+
+    it("omits LIMIT when no limit is asked for, so a window summary stays complete", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      await handleSessionsRpc({
+        method: "sessions.getRecords", userId: "u1",
+        fromDate: "2026-01-01T00:00:00Z", toDate: "2026-02-01T00:00:00Z",
+      }, db);
+
+      expect(String(db.prepare.mock.calls[0]?.[0])).not.toContain("LIMIT");
+      expect(db.bind).toHaveBeenCalledWith("u1", "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z");
+    });
+
     it("should return 400 when required params missing", async () => {
       const request = {
         method: "sessions.getRecords",

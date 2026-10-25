@@ -15,14 +15,13 @@ import { sumCounts, VALID_SOURCES } from "@pew/core";
 import { resolveUser } from "@/lib/auth-helpers";
 import { jsonResponse } from "@/lib/json-response";
 import { getDbRead } from "@/lib/db";
+import { dateParamToIso, isBareDate, isDateParam } from "@/lib/date-params";
 
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
 
 const VALID_KINDS = new Set(["human", "automated"]);
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}/;
 
 // ---------------------------------------------------------------------------
 // Route handler
@@ -64,21 +63,21 @@ export async function GET(request: Request) {
   let toDate: string;
 
   if (fromParam) {
-    if (!DATE_RE.test(fromParam)) {
+    if (!isDateParam(fromParam)) {
       return NextResponse.json(
         { error: "Invalid from date format" },
         { status: 400 },
       );
     }
-    fromDate = new Date(fromParam).toISOString();
+    fromDate = dateParamToIso(fromParam);
   } else {
     const d = new Date();
-    d.setDate(d.getDate() - 30);
+    d.setUTCDate(d.getUTCDate() - 30);
     fromDate = d.toISOString();
   }
 
   if (toParam) {
-    if (!DATE_RE.test(toParam)) {
+    if (!isDateParam(toParam)) {
       return NextResponse.json(
         { error: "Invalid to date format" },
         { status: 400 },
@@ -86,7 +85,7 @@ export async function GET(request: Request) {
     }
     // Bare date "YYYY-MM-DD" → inclusive: bump +1 UTC day for `< toDate`
     const toD = new Date(toParam);
-    if (toParam.length === 10) {
+    if (isBareDate(toParam)) {
       toD.setUTCDate(toD.getUTCDate() + 1);
     }
     toDate = toD.toISOString();

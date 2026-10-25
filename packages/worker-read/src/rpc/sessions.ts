@@ -6,6 +6,9 @@
 
 import type { D1Database } from "@cloudflare/workers-types";
 
+/** Upper bound for an explicit `sessions.getRecords` limit. */
+const GET_SESSION_RECORDS_MAX_LIMIT = 5000;
+
 // ---------------------------------------------------------------------------
 // Response Types
 // ---------------------------------------------------------------------------
@@ -80,6 +83,12 @@ export interface GetSessionRecordsRequest {
   toDate: string;
   source?: string;
   kind?: string;
+  /**
+   * Row cap. The dashboard asks for 1000 to summarise a whole month, so an
+   * omitted limit means "all rows in the window" rather than a small default —
+   * silently truncating would make the summary disagree with the list.
+   */
+  limit?: number;
 }
 
 export type SessionsRpcRequest =
@@ -230,6 +239,13 @@ async function handleGetSessionRecords(
     params.push(req.kind);
   }
 
+  // An explicit limit is honoured but bounded so one caller cannot ask for an
+  // unbounded response; omitting it keeps the previous "everything in the
+  // window" behavior the dashboard depends on for whole-month summaries.
+  const limit = Number.isInteger(req.limit) && (req.limit as number) > 0
+    ? Math.min(req.limit as number, GET_SESSION_RECORDS_MAX_LIMIT)
+    : undefined;
+
   const sql = `
     SELECT
       sr.session_key,
@@ -245,10 +261,10 @@ async function handleGetSessionRecords(
       sr.model
     FROM session_records sr
     WHERE ${conditions.join(" AND ")}
-    ORDER BY sr.started_at DESC
+    ORDER BY sr.started_at DESC${limit === undefined ? "" : "\n    LIMIT ?"}
   `;
 
-  const results = await db.prepare(sql).bind(...params).all<SessionRecordRow>();
+  const results = await db.prepare(sql).bind(...params, ...(limit === undefined ? [] : [limit])).all<SessionRecordRow>();
 
   return Response.json({ result: results.results });
 }

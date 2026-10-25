@@ -124,7 +124,7 @@ async function handleGetUsage(
   const granularity = req.granularity ?? "half-hour";
   const rawTz = req.tzOffset ?? 0;
   const tzOffset =
-    Number.isFinite(rawTz) && Math.abs(rawTz) <= 840 ? rawTz : 0;
+    Number.isInteger(rawTz) && Math.abs(rawTz) <= 840 ? rawTz : 0;
 
   let timeColumn: string;
   let groupBy: string;
@@ -273,7 +273,7 @@ async function handleGetDeviceTimeline(
   const granularity = req.granularity ?? "day";
   const rawTz = req.tzOffset ?? 0;
   const tzOffset =
-    Number.isFinite(rawTz) && Math.abs(rawTz) <= 840 ? rawTz : 0;
+    Number.isInteger(rawTz) && Math.abs(rawTz) <= 840 ? rawTz : 0;
 
   let dateExpr: string;
   let groupBy: string;

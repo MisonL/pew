@@ -148,7 +148,7 @@ export async function GET(
       days = parsed;
     }
     fromDate = new Date();
-    fromDate.setDate(fromDate.getDate() - days);
+    fromDate.setUTCDate(fromDate.getUTCDate() - days);
     toDate = new Date(); // Default to now
   }
 
