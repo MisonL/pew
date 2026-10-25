@@ -36,6 +36,9 @@ export async function readRetainedQueueState(stateDir: string, file: string): Pr
     const offset = state.offset ?? 0;
     if (!Number.isSafeInteger(offset) || offset < 0 || state.dirtyKeys !== undefined &&
       (!Array.isArray(state.dirtyKeys) || state.dirtyKeys.some((key: unknown) => typeof key !== "string"))) throw new Error();
-    return { offset, dirtyKeys: state.dirtyKeys };
+    // lastUploadTarget survives reset: `reset && sync` is the whole-history
+    // replay path, the one place a wrong host sends everything at once.
+    const lastUploadTarget = typeof state.lastUploadTarget === "string" ? state.lastUploadTarget : undefined;
+    return { offset, dirtyKeys: state.dirtyKeys, lastUploadTarget };
   } catch { throw new Error("Cannot verify retained queue upload state"); }
 }

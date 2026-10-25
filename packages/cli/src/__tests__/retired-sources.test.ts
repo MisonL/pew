@@ -123,6 +123,22 @@ describe("retired sources", () => {
     expect(await queue.loadDirtyKeys()).toEqual([key(history[2])]);
   });
 
+  it("preserves the recorded upload target across a reset that retains a backlog", async () => {
+    // `reset && sync` is the whole-history replay path, and the rebuild used
+    // to drop lastUploadTarget — exactly the run where a wrong host would
+    // send everything at once, so the cross-host warning must survive.
+    const queue = new LocalQueue(stateDir);
+    const history = retired.map((s) => row(s));
+    await queue.overwrite(history);
+    await queue.saveState({ offset: 0, dirtyKeys: [], lastUploadTarget: "http://pew.corp:7020" });
+    await executeReset({ stateDir });
+    expect(await queue.loadState()).toEqual({
+      offset: 0,
+      dirtyKeys: [],
+      lastUploadTarget: "http://pew.corp:7020",
+    });
+  });
+
   it("discards obsolete default cursors before checking schema replay", async () => {
     await new CursorStore(stateDir).save({ version: 1, updatedAt: null, files: {
       "/home/test/.gemini/tmp/id/chats/session-1.json": { inode: 1, mtimeMs: 0, size: 0, updatedAt: "2026-01-01" } as never,

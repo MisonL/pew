@@ -83,11 +83,15 @@ async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
     const pending = state.dirtyKeys ?? (await queue.readFromOffset(state.offset)).records.map((r) =>
       "session_key" in r ? r.session_key : tokenRecordKey(r));
     const keys = new Set(records.map((r) => recordKey(r as QueueRecord & SessionQueueRecord)));
+    // Carry lastUploadTarget through the rebuild: reset keeps the retained
+    // backlog pending, so the next sync must still be able to warn when it
+    // goes to a different host than the last drain.
+    const saved = { offset: 0, lastUploadTarget: state.lastUploadTarget };
     preserved.push(async () => {
-      await queue.saveState(names[0] === "session-queue.jsonl" ? { offset: 0 }
-        : { offset: 0, dirtyKeys: pending.filter((key) => keys.has(key)) });
+      await queue.saveState(names[0] === "session-queue.jsonl" ? saved
+        : { ...saved, dirtyKeys: pending.filter((key) => keys.has(key)) });
       await queue.overwrite(records as QueueRecord[] & SessionQueueRecord[]);
-      if (names[0] === "session-queue.jsonl") await queue.saveState({ offset: sessionOffset });
+      if (names[0] === "session-queue.jsonl") await queue.saveState({ ...saved, offset: sessionOffset });
     });
     for (const name of names) keep.add(name);
   }
