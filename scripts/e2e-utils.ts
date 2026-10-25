@@ -319,12 +319,13 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
     abort.signal.throwIfAborted();
     if (tier === "api") {
       // `next dev` compiles each route on the first request to it; a cold
-      // compile takes 25-35s under machine load and blew past the lane's 30s
+      // compile takes 25-35s under machine load and blew past the lane's
       // per-test timeout (the recurring single-test timeout flakes on
       // /api/auth/cli, /api/users and the retired 404s: always the first hit,
-      // always followed by fast responses). Warm every route before the test
-      // clock starts — the same reasoning that has the ui tier pre-build — so
-      // the 30s timeout stays a hang detector.
+      // always followed by fast responses; the per-test budget is 120s, raised
+      // from 30s for the same reason). Warm every route before the test clock
+      // starts — the same reasoning that has the ui tier pre-build — so the
+      // per-test timeout stays a hang detector.
       await warmApiRoutes(port, abort.signal);
     }
     tests = Bun.spawn(tier === "api"
@@ -340,7 +341,7 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
     // would replace the in-flight failure (Biome noUnsafeFinally, and the
     // masking this block exists to prevent). Surfaced after the finally.
     const cleanupErrors: unknown[] = [];
-    // build is included deliberately: if the 600s build deadline (or any
+    // build is included deliberately: if the 1800s build deadline (or any
     // error after spawn) fires, build is still running here, and letting it
     // outlive the run would race the dist-dir rmSync below and leave an
     // orphan. The abort path kills it earlier via killChildren; killing a

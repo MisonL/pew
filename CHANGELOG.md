@@ -37,6 +37,74 @@
   1.4.x minor: `bun.lock` is unchanged and `--frozen-lockfile` passes.
 
 ### Fixed
+- Ingest timestamps are canonicalized at the trust boundary. `hour_start` and
+  the session timestamps were accepted in any ISO 8601 spelling (bare seconds,
+  milliseconds, microsecond precision from Grok summaries, or an offset like
+  `+08:00`); because the `usage_records` unique key, the session UPSERT guard
+  and every `hour_start` range predicate compare raw strings, one instant could
+  become several rows — double-counting an hour in `SUM(total_tokens)`, sorting
+  an older snapshot above a newer one, or bucketing into the wrong calendar
+  day. Every accepted value is now stored as `toISOString()` output, and token
+  records must satisfy `total_tokens = input + cached + output + reasoning` as
+  the evidence and details tables already require. Impossible calendar days
+  (`2026-02-30`) are rejected instead of being rolled over by `Date.parse`.
+- Session sync no longer advances the cursor for a file whose parse threw. The
+  cursor is what the next run compares against, so a single transient read
+  error used to skip that file — and every session in it — permanently.
+- `pew reset` and `pew sync` now survive the damage they exist to repair. A
+  torn tail line in a queue file, or a half-written state file, degrades to
+  defaults instead of aborting with "cannot verify"; retained retired and
+  Antigravity records that did parse are still carried through.
+- Queue state and cursor files are written tmp+rename. A direct write left a
+  torn file behind a crash, which reads back as "no state" — silently dropping
+  the upload offset, the dirty set and the recorded upload target, or turning
+  into a full re-scan of every source.
+- A `state.lock` left behind by a crashed run is reclaimed when its recorded
+  PID no longer exists. Previously every later sync, upload and reset failed
+  with "Pew state is busy" and nothing could clear it, so a crashed background
+  notify disabled automatic sync permanently. Reclamation is serialized behind
+  its own O_EXCL mutex so two reclaimers cannot delete a freshly acquired lock.
+- The evidence queue re-derives its pending keys from the persisted offset when
+  the state file is unreadable, matching the accounting ledger. Trusting the
+  resulting empty set stranded every already-observed record.
+- `live.*` and `admin.getSystemStats` compared ISO timestamps against
+  `datetime('now')` as strings; `'T'` sorts above a space, so a five-hour-old
+  row counted as "last hour" and any row from the same day counted as recent.
+  All comparisons now use `julianday` on both sides.
+- `sessions.getRecords` honours the caller's `limit` (bounded, and still
+  unbounded by default so whole-month summaries stay complete); it had been
+  silently dropped.
+- The usage routes validate `from`/`to` with an anchored pattern and a real
+  calendar check. `2026-03-99` or `2026-03-13garbage` used to pass and then
+  throw out of `toISOString()` — a 500 for a plainly invalid parameter.
+- Default date windows in `/api/usage`, `/api/sessions` and `/api/users/[slug]`
+  use UTC arithmetic like the rest of the codebase; across a DST change the
+  window had shifted by an hour.
+- `/api/auth/verify-invite` is rate limited (5/min per IP). It is public and
+  answers "does this code exist and is it unused?" without consuming the code,
+  and was the only auth route with no limit.
+- Registration only echoes the three known client-facing errors. Matching on
+  `/invite|already/` returned internal text such as `no such table:
+  invite_codes` to an unauthenticated caller.
+- gitleaks allowlist entries are anchored. As unanchored substrings, a real
+  credential whose value merely contained `shared-secret` or `test-secret` was
+  silently exempted (verified against gitleaks 8.30.1).
+- `~/.config/pew` is tightened to 0700 even when it already exists. `mkdir`'s
+  mode is ignored for an existing directory, so a state directory created by a
+  writer that passed no mode stayed 0755 — other local users could read
+  `session-cursors.json`, which lists absolute project paths.
+- Removed the four `leaderboard.getUsers/getTeams/getUserRank/getTeamRank`
+  handlers: they reference columns that no longer exist and have no caller.
+- `deploy/selfhost/migrate.ts` sorts migration files in byte order like the E2E
+  bindings; a locale-aware sort could apply the same set in a different order.
+- The host-switch warning also covers a run where only the evidence or
+  accounting backlog ships; the token stage stays silent when its own queue is
+  empty, so those queues were re-routed with no line of output.
+- `pew reset` reports a deliberately kept backlog file as `(kept)` instead of
+  `(not found)`.
+- Documentation drift corrected in the quality contract, the E2E isolation doc
+  and two stale harness comments (RPC and readiness timeouts, Playwright case
+  count, page inventory, the CLI state file list).
 - Per-host credential filenames are now injective: the old sanitizer mapped
   the port separator, a literal underscore and IPv6 brackets onto the same
   character, so `a.b:7020` and `a.b_7020` (or `dev` and `host-dev`) shared one

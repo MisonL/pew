@@ -284,9 +284,9 @@ server management.
 
 **`packages/web/e2e/playwright.config.ts`** (new):
 
-> 实现更正 2026-10-17：下面是计划时点片段；交付配置为 `testDir: "./bdd"`、
-> `timeout: 60_000`、`retries: 1`（`packages/web/e2e/playwright.config.ts`），
-> 以交付文件为准。
+> 实现更正 2026-10-17，超时于 2026-10-26 复核：下面是计划时点片段；交付配置为
+> `testDir: "./bdd"`、`timeout: 180_000`（探针预算，原 60s）、`retries: 1`
+> （`packages/web/e2e/playwright.config.ts`），以交付文件为准。
 ```ts
 import { defineConfig } from "@playwright/test";
 
