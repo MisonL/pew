@@ -135,6 +135,12 @@ services:
     build:
       context: ../..
       dockerfile: deploy/selfhost/Dockerfile
+      # Provenance only. Compose does not forward the shell environment to the
+      # Dockerfile unless the args are declared here, and without them the
+      # images keep the base image's OCI revision (oven/bun's commit).
+      args:
+        PEW_REVISION: ${PEW_REVISION:-}
+        PEW_VERSION: ${PEW_VERSION:-}
     image: pew-selfhost:local
     entrypoint: ["bun", "run", "deploy/selfhost/migrate-cli.ts"]
     environment:
@@ -277,6 +283,9 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
+      args:
+        PEW_REVISION: ${PEW_REVISION:-}
+        PEW_VERSION: ${PEW_VERSION:-}
     image: pew:standalone
     restart: unless-stopped
     environment:
