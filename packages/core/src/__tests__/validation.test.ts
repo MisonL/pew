@@ -107,6 +107,15 @@ describe("isValidISODate", () => {
     expect(isValidISODate("2026-03-07T10:30:00Z; --")).toBe(false);
   });
 
+  it("should reject calendar days that do not exist in the month", () => {
+    // Date.parse rolls these over (2026-02-30 -> 2026-03-02) instead of
+    // failing, so the day is checked against the month's real length.
+    expect(isValidISODate("2026-02-30T00:00:00Z")).toBe(false);
+    expect(isValidISODate("2026-04-31T00:00:00Z")).toBe(false);
+    expect(isValidISODate("2026-02-29T00:00:00Z")).toBe(false);
+    expect(isValidISODate("2024-02-29T00:00:00Z")).toBe(true);
+  });
+
   it("should reject non-string inputs", () => {
     expect(isValidISODate(null)).toBe(false);
     expect(isValidISODate(undefined)).toBe(false);
@@ -446,15 +455,114 @@ describe("validateSessionIngestRecord", () => {
 });
 
 
+describe("timestamp canonicalization at the ingest boundary", () => {
+  // The storage layer compares timestamps and groups by hour_start as raw
+  // strings, so one instant must have exactly one spelling. Grok session logs
+  // carry microsecond precision ("...T10:01:28.875231Z") and any client may
+  // send an offset form; both used to survive validation as distinct values,
+  // which split a single hour into two usage_records rows (SUM double-counts)
+  // and let a lexicographically larger but chronologically older snapshot
+  // overwrite a newer one.
+  it("canonicalizes token hour_start to the second-precision UTC form", () => {
+    const cases: Array<[string, string]> = [
+      ["2026-03-08T10:00:00Z", "2026-03-08T10:00:00.000Z"],
+      ["2026-03-08T10:30:00.000Z", "2026-03-08T10:30:00.000Z"],
+      ["2026-03-08T18:00:00+08:00", "2026-03-08T10:00:00.000Z"],
+      ["2026-03-08T05:00:00-05:00", "2026-03-08T10:00:00.000Z"],
+    ];
+    for (const [input, expected] of cases) {
+      const result = validateIngestRecord({ ...validTokenRecord(), hour_start: input }, 0);
+      expect(result.valid, input).toBe(true);
+      if (result.valid) expect(result.record.hour_start).toBe(expected);
+    }
+  });
+
+  it("floors sub-millisecond precision instead of keeping a sixth-digit variant", () => {
+    const result = validateIngestRecord(
+      { ...validTokenRecord(), hour_start: "2026-03-08T10:00:00.999999Z" },
+      0,
+    );
+    expect(result.valid).toBe(true);
+    if (result.valid) expect(result.record.hour_start).toBe("2026-03-08T10:00:00.999Z");
+  });
+
+  it("keeps grok's microsecond session timestamps and normalizes them to milliseconds", () => {
+    // The exact payload shape the grok parser emits from summary.json.
+    const rec = {
+      ...validSessionRecord(),
+      source: "grok",
+      started_at: "2026-09-17T10:01:28.875231Z",
+      last_message_at: "2026-09-17T10:01:49.421154Z",
+    };
+    const result = validateSessionIngestRecord(rec, 0);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.record.started_at).toBe("2026-09-17T10:01:28.875Z");
+      expect(result.record.last_message_at).toBe("2026-09-17T10:01:49.421Z");
+    }
+  });
+
+  it("normalizes offset-form session timestamps to UTC", () => {
+    const rec = {
+      ...validSessionRecord(),
+      started_at: "2026-03-08T18:00:00+08:00",
+      snapshot_at: "2026-03-09T14:00:00+08:00",
+    };
+    const result = validateSessionIngestRecord(rec, 0);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.record.started_at).toBe("2026-03-08T10:00:00.000Z");
+      expect(result.record.snapshot_at).toBe("2026-03-09T06:00:00.000Z");
+    }
+  });
+
+  it("still rejects unparseable timestamps after normalization exists", () => {
+    expect(validateIngestRecord({ ...validTokenRecord(), hour_start: "not-a-date" }, 0).valid).toBe(false);
+    expect(validateSessionIngestRecord({ ...validSessionRecord(), snapshot_at: "2026-02-30T00:00:00Z" }, 0).valid)
+      .toBe(false);
+  });
+});
+
+describe("token total invariant", () => {
+  // usage_evidence and usage_details both carry CHECK (total_tokens = input +
+  // cached + output + reasoning); usage_records had none, so a mismatched
+  // total would make SUM(total_tokens) rankings disagree with the per-field
+  // breakdown forever.
+  it("rejects a total that does not equal the component sum", () => {
+    const rec = { ...validTokenRecord(), total_tokens: 9999 };
+    const result = validateIngestRecord(rec, 0);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.error).toContain("total_tokens");
+  });
+
+  it("accepts an exactly matching total", () => {
+    const rec = validTokenRecord();
+    expect(validateIngestRecord(rec, 0).valid).toBe(true);
+  });
+
+  it("accepts a zero-token record only when the total is zero too", () => {
+    const zero = {
+      ...validTokenRecord(),
+      input_tokens: 0, cached_input_tokens: 0, output_tokens: 0,
+      reasoning_output_tokens: 0, total_tokens: 0,
+    };
+    expect(validateIngestRecord(zero, 0).valid).toBe(true);
+    expect(validateIngestRecord({ ...zero, total_tokens: 1 }, 0).valid).toBe(false);
+  });
+});
+
 describe("ingest privacy projection", () => {
   it("forwards only token schema fields", () => {
+    // The projected record carries the canonical hour_start: the boundary
+    // rewrites accepted ISO variants before anything reaches storage.
     const record = validTokenRecord();
-    expect(validateIngestRecord({ ...record, prompt: "PRIVATE", arbitrary: { large: "value" } }, 0))
+    expect(validateIngestRecord({ ...record, hour_start: "2026-03-07T10:30:00Z", prompt: "PRIVATE", arbitrary: { large: "value" } }, 0))
       .toEqual({ valid: true, record });
   });
-  it("forwards only session schema fields", () => {
-    const record = validSessionRecord();
-    expect(validateSessionIngestRecord({ ...record, transcript: "PRIVATE" }, 0))
+  it("forwards only session schema fields, with timestamps normalized", () => {
+    const raw = validSessionRecord();
+    const record = { ...raw, started_at: "2026-03-07T10:00:00.000Z", last_message_at: "2026-03-07T11:30:00.000Z", snapshot_at: "2026-03-09T06:00:00.000Z" };
+    expect(validateSessionIngestRecord({ ...raw, transcript: "PRIVATE" }, 0))
       .toEqual({ valid: true, record });
   });
 });

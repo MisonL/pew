@@ -12,21 +12,21 @@ const VALID_SESSION_RECORD = {
   session_key: "claude-code:abc123",
   source: "claude-code",
   kind: "human" as const,
-  started_at: "2026-03-08T10:00:00Z",
-  last_message_at: "2026-03-08T10:30:00Z",
+  started_at: "2026-03-08T10:00:00.000Z",
+  last_message_at: "2026-03-08T10:30:00.000Z",
   duration_seconds: 1800,
   user_messages: 12,
   assistant_messages: 10,
   total_messages: 25,
   project_ref: "a1b2c3",
   model: "claude-sonnet-4-20250514",
-  snapshot_at: "2026-03-08T11:00:00Z",
+  snapshot_at: "2026-03-08T11:00:00.000Z",
 };
 
 const VALID_TOKEN_RECORD = {
   source: "claude-code",
   model: "claude-sonnet-4-20250514",
-  hour_start: "2026-03-08T10:00:00Z",
+  hour_start: "2026-03-08T10:00:00.000Z",
   input_tokens: 1000,
   cached_input_tokens: 200,
   output_tokens: 500,
@@ -356,7 +356,7 @@ describe("Worker session ingest endpoint", () => {
       await worker.fetch(req, env);
 
       expect(env.DB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining("excluded.snapshot_at >= session_records.snapshot_at"),
+        expect.stringContaining("julianday(excluded.snapshot_at) >= julianday(session_records.snapshot_at)"),
       );
     });
 

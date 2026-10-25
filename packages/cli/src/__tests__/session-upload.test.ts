@@ -88,7 +88,28 @@ describe("deduplicateSessionRecords", () => {
     expect(result).toHaveLength(3);
   });
 
-  it("should keep only the latest snapshot_at for duplicate session_keys", () => {
+  it("orders snapshots by instant, not by string, when precision or offset differs", () => {
+    // "…15:00:00+08:00" sorts above "…12:00:00Z" as a string but is five
+    // hours earlier, so a string comparison would keep the older snapshot.
+    const records: SessionQueueRecord[] = [
+      makeSessionRecord({
+        session_key: "claude-code|aaa",
+        snapshot_at: "2026-03-09T12:00:00Z",
+        total_messages: 40,
+      }),
+      makeSessionRecord({
+        session_key: "claude-code|aaa",
+        snapshot_at: "2026-03-09T15:00:00+08:00",
+        total_messages: 10,
+      }),
+    ];
+
+    const result = deduplicateSessionRecords(records);
+    expect(result).toHaveLength(1);
+    expect(result[0].total_messages).toBe(40);
+  });
+
+  it("keeps only the latest snapshot_at for duplicate session_keys", () => {
     const records: SessionQueueRecord[] = [
       makeSessionRecord({
         session_key: "claude-code|aaa",

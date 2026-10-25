@@ -55,7 +55,7 @@ export type SessionUploadResult = UploadResult;
  *
  * This ensures idempotent uploads: re-scanning the same session
  * files produces the same final result after server-side monotonic
- * upsert (WHERE excluded.snapshot_at >= session_records.snapshot_at).
+ * upsert (WHERE julianday(excluded.snapshot_at) >= julianday(session_records.snapshot_at)).
  */
 export function deduplicateSessionRecords(
   records: SessionQueueRecord[],
@@ -65,7 +65,10 @@ export function deduplicateSessionRecords(
   const map = new Map<string, SessionQueueRecord>();
   for (const r of records) {
     const existing = map.get(r.session_key);
-    if (!existing || r.snapshot_at > existing.snapshot_at) {
+    // Compare instants, not strings: ISO variants of different precision and
+    // offset sort inconsistently ("...15:00:00+08:00" > "...12:00:00Z" despite
+    // being five hours earlier).
+    if (!existing || Date.parse(r.snapshot_at) > Date.parse(existing.snapshot_at)) {
       map.set(r.session_key, r);
     }
   }

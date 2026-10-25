@@ -102,7 +102,7 @@ ON CONFLICT (user_id, session_key) DO UPDATE SET
   model = excluded.model,
   snapshot_at = excluded.snapshot_at,
   updated_at = datetime('now')
-WHERE excluded.snapshot_at >= session_records.snapshot_at
+WHERE julianday(excluded.snapshot_at) >= julianday(session_records.snapshot_at)
   AND excluded.source = session_records.source`;
 
 // ---------------------------------------------------------------------------

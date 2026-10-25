@@ -54,14 +54,47 @@ export function isValidISODate(s: unknown): boolean {
 
   if (!ISO_STRICT_RE.test(s)) return false;
 
-  // Final semantic check: ensure the date actually parses
+  // Final semantic checks. Date.parse rolls an impossible calendar day over
+  // ("2026-02-30" becomes 2026-03-02), so the day-of-month is checked against
+  // the month's real length first; otherwise a typo would be silently shifted
+  // by days once the value is canonicalized.
+  const [, year, month, day] = /^(\d{4})-(\d{2})-(\d{2})/.exec(s) as RegExpExecArray;
+  if (Number(day) > daysInMonth(Number(year), Number(month))) return false;
+
   const ts = Date.parse(s);
   return Number.isFinite(ts);
+}
+
+/** Days in a Gregorian month (1-based month). */
+function daysInMonth(year: number, month: number): number {
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  return [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] as number;
 }
 
 /** Check if value is a non-negative integer */
 export function isNonNegativeInteger(n: unknown): n is number {
   return typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+}
+
+/**
+ * Normalize an ISO 8601 instant to its canonical UTC spelling.
+ *
+ * Returns `null` for anything `isValidISODate` rejects. Every persisted
+ * timestamp is compared and grouped as a raw string (the `usage_records`
+ * unique key, `excluded.snapshot_at >= session_records.snapshot_at`, the
+ * `hour_start` range predicates, `date(hour_start)` bucketing), and ISO
+ * variants do not sort consistently: `"10:00:00Z"` and `"10:00:00.000Z"`
+ * are different rows for the same hour, while `"...15:00:00+08:00"` sorts
+ * above `"...12:00:00Z"` even though it is five hours earlier. Collapsing
+ * every accepted form to `toISOString()` output keeps one instant equal to
+ * one string, which is what makes the string comparisons correct.
+ *
+ * Sub-millisecond precision is truncated because JavaScript dates carry
+ * milliseconds; sources such as Grok session summaries emit microseconds.
+ */
+export function canonicalUtcTimestamp(s: unknown): string | null {
+  if (!isValidISODate(s)) return null;
+  return new Date(s as string).toISOString();
 }
 
 /**
@@ -168,7 +201,8 @@ export function validateIngestRecord(
   if (!isNonEmptyString(rec.model)) {
     return { valid: false, error: `record[${index}]: model is required (non-empty string, max ${MAX_STRING_LENGTH} chars)` };
   }
-  if (!isValidISODate(rec.hour_start)) {
+  const hourStart = canonicalUtcTimestamp(rec.hour_start);
+  if (hourStart === null) {
     return { valid: false, error: `record[${index}]: invalid hour_start format (ISO 8601 required)` };
   }
 
@@ -194,9 +228,23 @@ export function validateIngestRecord(
     }
   }
 
+  // usage_evidence and usage_details both enforce this in the schema; without
+  // it here the legacy usage_records table could store a total that disagrees
+  // with its own component breakdown, making SUM(total_tokens) rankings and
+  // per-field charts describe different amounts.
+  const components =
+    (rec.input_tokens as number) + (rec.cached_input_tokens as number) +
+    (rec.output_tokens as number) + (rec.reasoning_output_tokens as number);
+  if (rec.total_tokens !== components) {
+    return {
+      valid: false,
+      error: `record[${index}]: total_tokens must equal input_tokens + cached_input_tokens + output_tokens + reasoning_output_tokens`,
+    };
+  }
+
   const record = rec as unknown as IngestRecord;
   return { valid: true, record: {
-    source: record.source, model: record.model, hour_start: record.hour_start,
+    source: record.source, model: record.model, hour_start: hourStart,
     ...(record.device_id !== undefined ? { device_id: record.device_id } : {}),
     input_tokens: record.input_tokens, cached_input_tokens: record.cached_input_tokens,
     output_tokens: record.output_tokens, reasoning_output_tokens: record.reasoning_output_tokens,
@@ -234,14 +282,19 @@ export function validateSessionIngestRecord(
     };
   }
 
-  // Date fields
-  if (!isValidISODate(rec.started_at)) {
+  // Date fields — canonicalized so one instant is one string. `snapshot_at`
+  // is compared lexicographically in the session UPSERT guard, so a
+  // non-canonical form must not reach the database.
+  const startedAt = canonicalUtcTimestamp(rec.started_at);
+  if (startedAt === null) {
     return { valid: false, error: `record[${index}]: invalid started_at format` };
   }
-  if (!isValidISODate(rec.last_message_at)) {
+  const lastMessageAt = canonicalUtcTimestamp(rec.last_message_at);
+  if (lastMessageAt === null) {
     return { valid: false, error: `record[${index}]: invalid last_message_at format` };
   }
-  if (!isValidISODate(rec.snapshot_at)) {
+  const snapshotAt = canonicalUtcTimestamp(rec.snapshot_at);
+  if (snapshotAt === null) {
     return { valid: false, error: `record[${index}]: invalid snapshot_at format` };
   }
 
@@ -274,9 +327,9 @@ export function validateSessionIngestRecord(
   const record = rec as unknown as SessionIngestRecord;
   return { valid: true, record: {
     session_key: record.session_key, source: record.source, kind: record.kind,
-    started_at: record.started_at, last_message_at: record.last_message_at,
+    started_at: startedAt, last_message_at: lastMessageAt,
     duration_seconds: record.duration_seconds, user_messages: record.user_messages,
     assistant_messages: record.assistant_messages, total_messages: record.total_messages,
-    project_ref: record.project_ref, model: record.model, snapshot_at: record.snapshot_at,
+    project_ref: record.project_ref, model: record.model, snapshot_at: snapshotAt,
   } };
 }
