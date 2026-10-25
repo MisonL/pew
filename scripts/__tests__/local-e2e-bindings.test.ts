@@ -123,15 +123,21 @@ describe("real D1 lifecycle", () => {
     expect(result.status, result.stdout + result.stderr).toBe(0);
   }, 900_000);
   it.each(["THIS IS NOT SQL;", "CREATE TABLE duplicate(id TEXT); CREATE TABLE duplicate(id TEXT);"])("fails invalid or duplicate SQL and cleans only fresh state: %s", (sql) => {
-    const migrations = mkdtempSync(join(tmpdir(), "pew-invalid-migration-"));
-    const before = new Set(readdirSync(tmpdir()).filter((name) => name.startsWith("pew-e2e-")));
+    // Scan a private root, not the shared tmpdir: real lanes and concurrent
+    // gate runs create their own `pew-e2e-*` siblings there, so a before/after
+    // set comparison across the whole tmpdir failed whenever a sibling lane
+    // started or finished during this spawn (the child reuses TMPDIR from
+    // this process, so the redirected root still exercises the cleanup).
+    const root = mkdtempSync(join(tmpdir(), "pew-invalid-root-"));
+    const migrations = mkdtempSync(join(root, "pew-invalid-migration-"));
+    const before = new Set(readdirSync(root).filter((name) => name.startsWith("pew-e2e-")));
     try {
       writeFileSync(join(migrations, "0001.sql"), sql);
-      const result = spawnSync("bun", ["--no-env-file", "-e", 'import {localIsolatedEnv} from "./scripts/local-e2e-bindings.ts"; await localIsolatedEnv(process.argv[1]);', migrations], { encoding: "utf8", timeout: 120_000 });
+      const result = spawnSync("bun", ["--no-env-file", "-e", 'import {localIsolatedEnv} from "./scripts/local-e2e-bindings.ts"; await localIsolatedEnv(process.argv[1]);', migrations], { encoding: "utf8", timeout: 120_000, env: { ...process.env, TMPDIR: root } });
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("migrations failed");
-      expect(new Set(readdirSync(tmpdir()).filter((name) => name.startsWith("pew-e2e-")))).toEqual(before);
+      expect(new Set(readdirSync(root).filter((name) => name.startsWith("pew-e2e-")))).toEqual(before);
       expect(existsSync(migrations)).toBe(true);
-    } finally { rmSync(migrations, { recursive: true }); }
+    } finally { rmSync(root, { recursive: true, force: true }); }
   }, 300_000);
 });

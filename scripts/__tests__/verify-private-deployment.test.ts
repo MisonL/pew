@@ -85,14 +85,21 @@ def build_opener(*handlers):
     assert any(isinstance(h, urllib.request.ProxyHandler) and h.proxies == {} for h in handlers)
     return Opener(next(h for h in handlers if isinstance(h, urllib.request.HTTPRedirectHandler)))
 urllib.request.build_opener = build_opener
-exec(compile(sys.stdin.read(), 'private-deployment-verifier', 'exec'))
+assert 'def verify' in sys.argv[2], 'verifier source was not delivered'
+exec(compile(sys.argv[2], 'private-deployment-verifier', 'exec'))
 if scenario == 'valid':
     assert all((path, 'POST') in seen for path in ['/api/ingest', '/api/ingest/sessions', '/api/ingest/evidence', '/api/ingest/details'])
     assert all((path, 'GET') in seen for path in ['/', '/login', '/privacy', '/logo-80.png', '/api/leaderboard?limit=1', '/api/devices'])
 `;
 
 function run(code: string, scenario: string) {
-  return spawnSync("python3", ["-c", fixture, scenario], { input: code, encoding: "utf8", timeout: 10_000 });
+  // The verifier travels as argv, not stdin. `spawnSync` delivers stdin from
+  // the parent's event loop, and a run that reached python with it empty made
+  // every case "fail" with status 0 — `compile("")` is a valid empty program,
+  // so the verifier finished green without performing one check. The fixture
+  // now asserts the source arrived, so an empty payload exits non-zero instead
+  // of masquerading as a pass.
+  return spawnSync("python3", ["-c", fixture, scenario, code], { encoding: "utf8", timeout: 10_000 });
 }
 
 describe("private deployment verifier behavior", () => {
