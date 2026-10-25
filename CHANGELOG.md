@@ -155,6 +155,13 @@
   fixed sleeps: under a loaded suite the lock had not been acquired yet, the
   release was a no-op, and the test hung to its 120s timeout (the recurring
   pre-commit flake).
+- The private-deployment verifier test hands its source to python over argv,
+  not `spawnSync` stdin. An empty stdin made `compile("")` — a valid empty
+  program — exit 0 without running a check, so all 33 cases failed in one
+  shape that looked like a fail-open verifier; the fixture now asserts the
+  source arrived. The invalid-migration case also scans a private TMPDIR root
+  instead of the shared one, where a concurrent lane's `pew-e2e-*` directory
+  changed the before/after set.
 
 ## v3.4.1
 
