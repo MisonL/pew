@@ -16,6 +16,7 @@ vi.mock("@/auth", () => ({
 
 import { POST } from "@/app/api/auth/verify-invite/route";
 import * as dbModule from "@/lib/db";
+import { inMemoryRateLimiter } from "@/lib/rate-limit";
 import { createMockDbRead } from "./test-utils";
 
 const { shouldUseSecureCookies } = (await import("@/auth")) as unknown as {
@@ -44,6 +45,9 @@ describe("POST /api/auth/verify-invite", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // The route is rate limited per IP; without a reset the earlier assertions
+    // in this file would consume the window and 429 a later one.
+    inMemoryRateLimiter.reset();
     mockDbRead = createMockDbRead();
     vi.mocked(dbModule.getDbRead).mockResolvedValue(
       mockDbRead as any
@@ -52,6 +56,18 @@ describe("POST /api/auth/verify-invite", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it("rate limits repeated checks by IP without consuming the code", async () => {
+    mockDbRead.checkInviteCodeExists.mockResolvedValue({ id: 42, used_by: null });
+    for (let i = 0; i < 5; i++) {
+      expect((await POST(makeRequest({ code: "A3K9X2M4" }))).status).toBe(200);
+    }
+    const limited = await POST(makeRequest({ code: "A3K9X2M4" }));
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("Retry-After")).toBeTruthy();
+    // The check itself is read-only, so a throttled caller never changes state.
+    expect(mockDbRead.checkInviteCodeExists).toHaveBeenCalledTimes(5);
   });
 
   it("should return valid=true for unused code", async () => {

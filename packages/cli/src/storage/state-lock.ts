@@ -1,7 +1,7 @@
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { acquireLock, readLockPid, releaseLock } from "../notifier/lockfile.js";
-import { SECURE_DIR_MODE } from "./secure-mkdir.js";
+import { ensureSecureDir } from "./secure-mkdir.js";
 
 const FS = { writeFile, unlink, readFile: (p: string) => readFile(p, "utf8") };
 
@@ -77,7 +77,7 @@ async function reclaimStaleLock(lockPath: string): Promise<void> {
 
 /** Serializes all Pew queue/cursor mutations, including direct CLI invocations. */
 export async function withStateLock<T>(stateDir: string, action: () => Promise<T>): Promise<T> {
-  await mkdir(stateDir, { recursive: true, mode: SECURE_DIR_MODE });
+  await ensureSecureDir(stateDir, { recursive: true });
   const path = join(stateDir, "state.lock");
   const opts = { fs: FS, process };
   if (!await acquireLock(path, opts)) {

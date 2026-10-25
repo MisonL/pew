@@ -27,11 +27,14 @@ useDefault = true
 
 [[allowlists]]
   description = "hardcoded test-secret / test-api-token dummy values"
+  # Anchored: an unanchored substring lets a real credential whose value
+  # merely CONTAINS "test-secret" be exempted (verified — a synthetic
+  # generic-api-key value with "shared-secret" embedded was silently ignored).
   regexes = [
-    '''test-secret-abc123''',
-    '''test-api-token''',
-    '''test-read-secret''',
-    '''test-secret''',
+    '''^test-secret-abc123$''',
+    '''^test-api-token$''',
+    '''^test-read-secret$''',
+    '''^test-secret$''',
   ]
 
 [[allowlists]]
@@ -41,14 +44,14 @@ useDefault = true
   # the captured SECRET (the value after `api_key=`), not the whole line, so
   # these anchored dummy names are the only values the assertions allow.
   regexes = [
-    '''existing-key-[a-z0-9]{3}''',
-    '''key-xyz''',
+    '''^existing-key-[a-z0-9]{3}$''',
+    '''^key-xyz$''',
   ]
 
 [[allowlists]]
   description = "fake cloud tokens in d1-test-guard tests"
   regexes = [
-    '''tok-prod-xxx''',
-    '''shared-secret''',
-    '''shared-read-secret''',
+    '''^tok-prod-xxx$''',
+    '''^shared-secret$''',
+    '''^shared-read-secret$''',
   ]

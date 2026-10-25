@@ -23,6 +23,17 @@ import {
 
 const MIN_PASSWORD_LENGTH = 8;
 
+/**
+ * The only messages from registerWithInvite that a caller may see verbatim.
+ * An explicit set, not a substring match: "no such table: invite_codes" and
+ * similar internal text contain the same words.
+ */
+const CLIENT_FACING_REGISTRATION_ERRORS = new Set([
+  "A valid invite code is required to register",
+  "Invalid or already used invite code",
+  "Instance is already set up",
+]);
+
 async function instanceIsEmpty(): Promise<boolean> {
   const { results } = await getD1Client().query<{ n: number }>(
     "SELECT COUNT(*) AS n FROM users"
@@ -89,11 +100,15 @@ export async function POST(request: Request) {
     if (bootstrapping && /UNIQUE constraint failed/i.test(message)) {
       return NextResponse.json({ error: "Instance is already set up" }, { status: 400 });
     }
-    // Invite problems and "already set up" are the caller's to act on (400);
-    // anything else is a server fault — log it but do not echo internals.
-    const clientError = /invite|already/i.test(message);
-    if (clientError) {
-      return NextResponse.json({ error: message }, { status: 400 });
+    // Only these two client-facing messages are echoed. Matching on a
+    // substring ("invite"/"already") let any internal error text containing
+    // those words through — e.g. "no such table: invite_codes" from an
+    // unmigrated database, which leaks schema details to an unauthenticated
+    // caller. Anything else is a server fault: log it, do not echo internals.
+    const clientMessage = err instanceof Error && CLIENT_FACING_REGISTRATION_ERRORS.has(err.message)
+      ? err.message : null;
+    if (clientMessage !== null) {
+      return NextResponse.json({ error: clientMessage }, { status: 400 });
     }
     console.error("Registration failed:", err);
     return NextResponse.json({ error: "Registration failed" }, { status: 500 });

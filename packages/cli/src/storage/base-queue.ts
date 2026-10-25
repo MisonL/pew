@@ -1,6 +1,6 @@
-import { readFile, writeFile, appendFile, rename, mkdir } from "node:fs/promises";
+import { readFile, writeFile, appendFile, rename } from "node:fs/promises";
 import { join } from "node:path";
-import { SECURE_DIR_MODE } from "./secure-mkdir.js";
+import { ensureSecureDir } from "./secure-mkdir.js";
 
 /** Optional callback invoked when a corrupted JSONL line is skipped */
 export type OnCorruptLine = (line: string, error: unknown) => void;
@@ -59,7 +59,7 @@ export class BaseQueue<T> {
 
   /** Ensure the directory exists with secure permissions */
   private async ensureDir(): Promise<void> {
-    await mkdir(this.dir, { recursive: true, mode: SECURE_DIR_MODE });
+    await ensureSecureDir(this.dir, { recursive: true });
   }
 
   /** Append a single record to the queue */

@@ -12,9 +12,29 @@ import { NextResponse } from "next/server";
 import { BodyTooLargeError, MAX_AUTH_BODY_BYTES, readBoundedJson } from "@pew/core";
 import { getDbRead } from "@/lib/db";
 import { validateInviteCode } from "@/lib/invite";
+import {
+  AUTH_VERIFY_INVITE_RATE_LIMIT,
+  getClientIp,
+  inMemoryRateLimiter,
+} from "@/lib/rate-limit";
 import { shouldUseSecureCookies } from "@/auth";
 
 export async function POST(request: Request) {
+  // Rate limit: 5 checks per minute per IP. This endpoint is public and answers
+  // "does this code exist and is it unused?" without consuming the code, so
+  // unlike every other auth route it could otherwise be queried without bound.
+  const ip = getClientIp(request);
+  const rl = inMemoryRateLimiter.check(
+    `auth-verify-invite:${ip}`,
+    AUTH_VERIFY_INVITE_RATE_LIMIT,
+  );
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { valid: false, error: "Too many requests. Please try again later." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
+    );
+  }
+
   let body: Record<string, unknown>;
   try {
     body = (await readBoundedJson(request, MAX_AUTH_BODY_BYTES)) as Record<string, unknown>;

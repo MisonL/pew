@@ -1,75 +1,41 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtempSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mkdirSecure, mkdirSecureSync, SECURE_DIR_MODE } from "../storage/secure-mkdir.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { ensureSecureDir } from "../storage/secure-mkdir.js";
+import { LocalQueue } from "../storage/local-queue.js";
 
-describe("secure-mkdir", () => {
-  let tempDir: string;
+describe("state directory permissions", () => {
+  let root: string;
 
-  beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "pew-secure-mkdir-test-"));
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it("tightens a pre-existing world-readable directory", async () => {
+    // The state directory is often created first by a writer that passes no
+    // mode (base-cli's ConfigManager), and mkdir({ mode }) is ignored for a
+    // directory that already exists — it stayed 0755, exposing cursor files
+    // that list absolute project paths to other local users.
+    root = mkdtempSync(join(tmpdir(), "pew-perm-"));
+    const state = join(root, "state");
+    mkdirSync(state, { mode: 0o755 });
+    expect(statSync(state).mode & 0o777).toBe(0o755);
+    await ensureSecureDir(state, { recursive: true });
+    expect(statSync(state).mode & 0o777).toBe(0o700);
   });
 
-  afterEach(async () => {
-    await rm(tempDir, { recursive: true, force: true });
+  it("creates a new directory restricted from the start", async () => {
+    root = mkdtempSync(join(tmpdir(), "pew-perm-"));
+    const state = join(root, "fresh");
+    await ensureSecureDir(state, { recursive: true });
+    expect(statSync(state).mode & 0o777).toBe(0o700);
   });
 
-  describe("SECURE_DIR_MODE", () => {
-    it("should be 0o700 (owner rwx only)", () => {
-      expect(SECURE_DIR_MODE).toBe(0o700);
-    });
-  });
-
-  describe("mkdirSecure()", () => {
-    it("should create directory with mode 0o700", async () => {
-      const testDir = join(tempDir, "secure-dir");
-
-      await mkdirSecure(testDir);
-
-      const stats = await stat(testDir);
-      // On Unix, mode includes file type bits; mask to get permission bits only
-      const permissions = stats.mode & 0o777;
-      expect(permissions).toBe(0o700);
-    });
-
-    it("should create nested directories with recursive option", async () => {
-      const testDir = join(tempDir, "nested", "deep", "dir");
-
-      await mkdirSecure(testDir, { recursive: true });
-
-      const stats = await stat(testDir);
-      const permissions = stats.mode & 0o777;
-      expect(permissions).toBe(0o700);
-    });
-
-    it("should not throw when directory already exists with recursive: true", async () => {
-      const testDir = join(tempDir, "existing-dir");
-
-      await mkdirSecure(testDir);
-      await expect(mkdirSecure(testDir, { recursive: true })).resolves.not.toThrow();
-    });
-  });
-
-  describe("mkdirSecureSync()", () => {
-    it("should create directory with mode 0o700", async () => {
-      const testDir = join(tempDir, "secure-dir-sync");
-
-      mkdirSecureSync(testDir);
-
-      const stats = await stat(testDir);
-      const permissions = stats.mode & 0o777;
-      expect(permissions).toBe(0o700);
-    });
-
-    it("should create nested directories with recursive option", async () => {
-      const testDir = join(tempDir, "nested", "deep", "dir-sync");
-
-      mkdirSecureSync(testDir, { recursive: true });
-
-      const stats = await stat(testDir);
-      const permissions = stats.mode & 0o777;
-      expect(permissions).toBe(0o700);
-    });
+  it("applies when a queue writes into an existing loose directory", async () => {
+    root = mkdtempSync(join(tmpdir(), "pew-perm-"));
+    const state = join(root, "loose");
+    mkdirSync(state, { mode: 0o755 });
+    expect(statSync(state).mode & 0o777).toBe(0o755);
+    await new LocalQueue(state).saveOffset(0);
+    expect(statSync(state).mode & 0o777).toBe(0o700);
   });
 });

@@ -152,6 +152,19 @@ export const AUTH_CODE_VERIFY_RATE_LIMIT: RateLimitConfig = {
   windowSeconds: 60,
 };
 
+/**
+ * Rate limit for the public invite-code check: 5 per minute per IP.
+ *
+ * Same bucket as `code/verify`: both answer "does this code exist and is it
+ * unused?" for an unauthenticated caller, and this one neither consumes nor
+ * invalidates the code on failure. Enumeration is infeasible (31^8 codes) but
+ * the endpoint is otherwise an unauthenticated read amplifier with no ceiling.
+ */
+export const AUTH_VERIFY_INVITE_RATE_LIMIT: RateLimitConfig = {
+  maxRequests: 5,
+  windowSeconds: 60,
+};
+
 /** Rate limit for CLI auth callback: 10 per hour per IP */
 export const AUTH_CLI_RATE_LIMIT: RateLimitConfig = {
   maxRequests: 10,

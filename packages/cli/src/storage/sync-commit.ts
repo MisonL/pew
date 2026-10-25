@@ -1,11 +1,11 @@
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AccountingRecord, CursorState, EvidenceRecord, QueueRecord, Source } from "@pew/core";
 import { AccountingQueue } from "./accounting-queue.js";
 import { EvidenceQueue } from "./evidence-queue.js";
 import { LocalQueue } from "./local-queue.js";
 import { CursorStore } from "./cursor-store.js";
-import { SECURE_DIR_MODE } from "./secure-mkdir.js";
+import { ensureSecureDir } from "./secure-mkdir.js";
 
 interface SyncCommit {
   version: 1;
@@ -43,7 +43,7 @@ export async function recoverSyncCommit(stateDir: string): Promise<void> {
 
 /** The single journal makes queue/detail/cursor replacement retryable after any partial write. */
 export async function commitSync(stateDir: string, commit: SyncCommit): Promise<void> {
-  await mkdir(stateDir, { recursive: true, mode: SECURE_DIR_MODE });
+  await ensureSecureDir(stateDir, { recursive: true });
   const path = join(stateDir, "sync-commit.json");
   await writeFile(`${path}.tmp`, JSON.stringify(commit), { mode: 0o600 });
   await rename(`${path}.tmp`, path);

@@ -136,6 +136,18 @@ describe("POST /api/auth/register", () => {
     expect((await res.json()).error).toBe("Registration failed");
   });
 
+  it("does not echo internal text that merely contains an allowlisted word", async () => {
+    // The old guard was /invite|already/i, so an unmigrated database leaking
+    // "no such table: invite_codes" was returned verbatim to an
+    // unauthenticated caller. Only the exact client-facing messages echo now.
+    mockQuery.mockResolvedValueOnce({ results: [{ n: 1 }] });
+    dbWrite.execute.mockRejectedValueOnce(new Error("no such table: invite_codes"));
+
+    const res = await post({ email: "n@x.y", password: "password123", inviteCode: "ABCD2345" });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Registration failed");
+  });
+
   it("returns 429 once the per-IP bucket is exhausted, before any DB or password work", async () => {
     // A public endpoint that runs scrypt synchronously needs an IP cap that
     // trips before the work starts; otherwise it is an anonymous CPU sink.
