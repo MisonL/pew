@@ -142,7 +142,9 @@
   hosts, so a stray `PEW_HOST` or a dropped `--host` could re-route data with
   only the "Uploading to …" line saying so. Queue state records
   `lastUploadTarget`; an empty queue switches silently and a failed upload
-  never rewrites it.
+  never rewrites it, and `pew reset` keeps the recorded target across its
+  retained-backlog rebuild (`reset && sync` is the whole-history replay, the
+  one run where a wrong host sends everything at once).
 - Each rqlite readiness probe gets its own 5s timeout: Node's `fetch` has no
   default, so a connection that accepted TCP and then went silent could run a
   single attempt past the 60s deadline and turn `migrate` into a long hang.
