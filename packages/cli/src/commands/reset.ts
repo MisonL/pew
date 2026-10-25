@@ -1,4 +1,4 @@
-import { readFile, unlink } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { QueueRecord, SessionQueueRecord } from "@pew/core";
 import { LocalQueue } from "../storage/local-queue.js";
@@ -30,6 +30,12 @@ export interface ResetOptions {
 interface ResetFileResult {
   file: string;
   deleted: boolean;
+  /**
+   * True when the file was removed and then rewritten with nothing but the
+   * recorded upload target. Reported separately so the CLI does not claim a
+   * file is gone while it sits on disk.
+   */
+  recreated?: boolean;
 }
 
 export interface ResetResult {
@@ -96,6 +102,16 @@ async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
     for (const name of names) keep.add(name);
   }
   const cursorNames = ["cursors.json", "session-cursors.json"];
+  // A queue state file this reset would DELETE still carries the recorded
+  // upload target, and a full reset makes the next sync replay everything
+  // through the queue — the run where a wrong host sends all history at once.
+  // Read the target before unlinking and restore it afterwards.
+  const restoreTargets = new Map<string, string>();
+  for (const name of ["queue.state.json", "session-queue.state.json"]) {
+    if (keep.has(name)) continue;
+    const retained = await readRetainedQueueState(opts.stateDir, name).catch(() => undefined);
+    if (retained?.lastUploadTarget) restoreTargets.set(name, retained.lastUploadTarget);
+  }
   for (const name of [...cursorNames, ...STATE_FILES.filter((n) => !cursorNames.includes(n))]) {
     if (keep.has(name)) { files.push({ file: name, deleted: false }); continue; }
     const path = join(opts.stateDir, name);
@@ -111,6 +127,13 @@ async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
     }
   }
   for (const persist of preserved) await persist();
+  // Rebuilt after the unlinks on purpose: offset 0 with no dirtyKeys is what
+  // every reader already treats as "nothing uploaded yet".
+  for (const [name, target] of restoreTargets) {
+    await writeFile(join(opts.stateDir, name), `${JSON.stringify({ offset: 0, lastUploadTarget: target })}\n`);
+    const entry = files.find((f) => f.file === name);
+    if (entry) entry.recreated = true;
+  }
 
   return { files: files.sort((a, b) => STATE_FILES.indexOf(a.file as typeof STATE_FILES[number]) - STATE_FILES.indexOf(b.file as typeof STATE_FILES[number])) };
 }

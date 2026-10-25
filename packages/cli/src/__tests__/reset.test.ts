@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, writeFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { executeReset } from "../commands/reset.js";
@@ -82,6 +82,35 @@ describe("executeReset", () => {
     // Config files must survive
     const remaining = await readdir(tempDir);
     expect(remaining.sort()).toEqual(["config.dev.json", "config.json"]);
+  });
+
+  it("keeps only the recorded upload target when a full reset deletes the queue state", async () => {
+    // A full reset deletes the queue, and the next sync replays everything
+    // through it — exactly the run where a wrong host sends all history at
+    // once. The target must survive even though offset/dirtyKeys do not.
+    await writeFile(join(tempDir, "queue.jsonl"), "\n");
+    await writeFile(join(tempDir, "queue.state.json"),
+      `${JSON.stringify({ offset: 0, dirtyKeys: [], lastUploadTarget: "http://pew.corp:7020" })}\n`);
+    await writeFile(join(tempDir, "session-queue.state.json"),
+      `${JSON.stringify({ offset: 0, lastUploadTarget: "http://pew.corp:7020" })}\n`);
+
+    const result = await executeReset({ stateDir: tempDir });
+
+    // Reported as recreated, not deleted: the CLI must not print a plain "✓"
+    // for a file that is still on disk.
+    expect(result.files.find((f) => f.file === "queue.state.json")).toMatchObject({
+      deleted: true,
+      recreated: true,
+    });
+    expect(JSON.parse(await readFile(join(tempDir, "queue.state.json"), "utf8"))).toEqual({
+      offset: 0,
+      lastUploadTarget: "http://pew.corp:7020",
+    });
+    expect(JSON.parse(await readFile(join(tempDir, "session-queue.state.json"), "utf8"))).toEqual({
+      offset: 0,
+      lastUploadTarget: "http://pew.corp:7020",
+    });
+    await expect(stat(join(tempDir, "queue.jsonl"))).rejects.toThrow();
   });
 
   it("should propagate non-ENOENT errors", async () => {

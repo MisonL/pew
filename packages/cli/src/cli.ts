@@ -1030,13 +1030,20 @@ const resetCommand = defineCommand({
 
     const result = await executeReset({ stateDir: paths.stateDir });
 
-    const deleted = result.files.filter((f) => f.deleted);
+    const deleted = result.files.filter((f) => f.deleted && !f.recreated);
+    const recreated = result.files.filter((f) => f.recreated);
     const skipped = result.files.filter((f) => !f.deleted);
 
     if (deleted.length > 0) {
       for (const f of deleted) {
         log.text(`${pc.green("✓")} ${f.file}`);
       }
+    }
+    // Not a plain deletion: the file is unlinked and rewritten with just the
+    // recorded upload target, so the next sync can still warn about a host
+    // switch on the full replay. Say so instead of printing "✓ <file>".
+    for (const f of recreated) {
+      log.text(`${pc.green("✓")} ${f.file} ${pc.dim("(reset to the recorded upload target)")}`);
     }
     if (skipped.length > 0) {
       for (const f of skipped) {
