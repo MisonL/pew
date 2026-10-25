@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SECURE_DIR_MODE } from "./secure-mkdir.js";
 
@@ -27,10 +27,14 @@ export class BaseCursorStore<T> {
     }
   }
 
-  /** Save cursor state to disk, creating the directory with secure permissions if needed. */
+  /** Save cursor state atomically (write tmp → rename), creating the directory if needed. */
   async save(state: T): Promise<void> {
     const dir = dirname(this.filePath);
     await mkdir(dir, { recursive: true, mode: SECURE_DIR_MODE });
-    await writeFile(this.filePath, `${JSON.stringify(state)}\n`);
+    // A torn cursor file reads back as emptyState(), so a crash mid-write
+    // would silently turn into a full re-scan of every source.
+    const tmpPath = `${this.filePath}.tmp`;
+    await writeFile(tmpPath, `${JSON.stringify(state)}\n`);
+    await rename(tmpPath, this.filePath);
   }
 }

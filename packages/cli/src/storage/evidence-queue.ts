@@ -47,7 +47,12 @@ export class EvidenceQueue extends BaseQueue<EvidenceRecord> {
   async merge(incoming: EvidenceRecord[], replay = false): Promise<void> {
     const { records } = await this.readFromOffset(0);
     const merged = new Map(records.map((r) => [evidenceKey(r), r]));
-    const dirty = new Set(await this.loadDirtyKeys());
+    const dirtyKeys = await this.loadDirtyKeys();
+    // Same fallback as the accounting ledger: a torn state file loses
+    // dirtyKeys (loadState returns defaults for any read/parse error), and
+    // trusting the resulting empty set would strand every record already in
+    // the ledger. Re-derive the pending set from the persisted offset instead.
+    const dirty = new Set(dirtyKeys ?? (await this.readFromOffset(await this.loadOffset())).records.map(evidenceKey));
     if (replay) for (const key of merged.keys()) dirty.add(key);
     let changed = false;
     for (const raw of incoming) {

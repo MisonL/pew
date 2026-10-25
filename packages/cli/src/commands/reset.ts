@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { QueueRecord, SessionQueueRecord } from "@pew/core";
 import { LocalQueue } from "../storage/local-queue.js";
 import { SessionQueue } from "../storage/session-queue.js";
-import { isRetiredSource, readRetainedQueueState } from "../utils/retired-sources.js";
+import { isRetiredSource, readIdempotentQueueRows, readIdempotentQueueState } from "../utils/retired-sources.js";
 import { tokenRecordKey, readAntigravityBaseline } from "../utils/antigravity-snapshot.js";
 import { recoverSyncCommit } from "../storage/sync-commit.js";
 import { withStateLock } from "../storage/state-lock.js";
@@ -31,6 +31,12 @@ interface ResetFileResult {
   file: string;
   deleted: boolean;
   /**
+   * True when the file was deliberately kept (a retained backlog and its
+   * state). Distinct from `deleted: false` because of ENOENT: reporting a kept
+   * file as "not found" told the operator the opposite of what happened.
+   */
+  kept?: boolean;
+  /**
    * True when the file was removed and then rewritten with nothing but the
    * recorded upload target. Reported separately so the CLI does not claim a
    * file is gone while it sits on disk.
@@ -54,29 +60,31 @@ async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
   await recoverSyncCommit(opts.stateDir);
   const unlinkFn = opts.unlinkFn ?? unlink;
   const files: ResetFileResult[] = [];
-  const tokens = await readAntigravityBaseline(opts.stateDir, true);
+  const tokens = await readAntigravityBaseline(opts.stateDir, true, { tolerant: true });
   let sessions: SessionQueueRecord[] = [];
   let sessionOffset = 0;
-  try {
-    const raw = await readFile(join(opts.stateDir, "session-queue.jsonl"), "utf8");
-    const rows = raw.split("\n").filter(Boolean).map((line) => JSON.parse(line) as SessionQueueRecord);
-    if (rows.some((r) => !r || typeof r !== "object" || typeof r.source !== "string")) throw new Error();
-    sessions = rows.filter((r) => isRetiredSource(r.source));
-    if (sessions.some((r) => typeof r.session_key !== "string" || !r.session_key ||
-      ![r.started_at, r.last_message_at, r.snapshot_at].every((t) => typeof t === "string" && Number.isFinite(Date.parse(t))) ||
-      ![r.duration_seconds, r.user_messages, r.assistant_messages, r.total_messages].every((n) => Number.isSafeInteger(n) && n >= 0))) throw new Error();
+  {
+    // Lenient on purpose: a torn tail line from a crashed append is exactly the
+    // damage this command exists to repair, so it must not refuse to run.
+    const rows = (await readIdempotentQueueRows<SessionQueueRecord>(opts.stateDir, "session-queue.jsonl"))
+      .filter((r) => r && typeof r === "object");
+    sessions = rows.filter((r) => typeof r.source === "string" && isRetiredSource(r.source) &&
+      typeof r.session_key === "string" && !!r.session_key &&
+      [r.started_at, r.last_message_at, r.snapshot_at].every((t) => typeof t === "string" && Number.isFinite(Date.parse(t))) &&
+      [r.duration_seconds, r.user_messages, r.assistant_messages, r.total_messages].every((n) => Number.isSafeInteger(n) && n >= 0));
     if (sessions.length) {
-      const state = await readRetainedQueueState(opts.stateDir, "session-queue.state.json");
+      const state = await readIdempotentQueueState(opts.stateDir, "session-queue.state.json");
       let offset = 0;
-      for (const line of raw.split("\n")) {
+      for (const line of (await readFile(join(opts.stateDir, "session-queue.jsonl"), "utf8")).split("\n")) {
         offset += Buffer.byteLength(line) + 1;
-        if (line && offset <= state.offset && isRetiredSource((JSON.parse(line) as SessionQueueRecord).source)) {
-          sessionOffset += Buffer.byteLength(`${JSON.stringify(JSON.parse(line))}\n`);
-        }
+        if (!line || offset > state.offset) continue;
+        try {
+          if (isRetiredSource((JSON.parse(line) as SessionQueueRecord).source)) {
+            sessionOffset += Buffer.byteLength(`${JSON.stringify(JSON.parse(line))}\n`);
+          }
+        } catch { /* torn line: not a retained record */ }
       }
     }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Cannot verify previous session queue");
   }
   const keep = new Set<string>();
   const preserved: Array<() => Promise<void>> = [];
@@ -85,7 +93,7 @@ async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
     [new SessionQueue(opts.stateDir), sessions, (r: SessionQueueRecord) => r.session_key, ["session-queue.jsonl", "session-queue.state.json"]],
   ] as const) {
     if (!records.length) continue;
-    const state = await readRetainedQueueState(opts.stateDir, names[1]);
+    const state = await readIdempotentQueueState(opts.stateDir, names[1]);
     const pending = state.dirtyKeys ?? (await queue.readFromOffset(state.offset)).records.map((r) =>
       "session_key" in r ? r.session_key : tokenRecordKey(r));
     const keys = new Set(records.map((r) => recordKey(r as QueueRecord & SessionQueueRecord)));
@@ -109,11 +117,11 @@ async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
   const restoreTargets = new Map<string, string>();
   for (const name of ["queue.state.json", "session-queue.state.json"]) {
     if (keep.has(name)) continue;
-    const retained = await readRetainedQueueState(opts.stateDir, name).catch(() => undefined);
+    const retained = await readIdempotentQueueState(opts.stateDir, name);
     if (retained?.lastUploadTarget) restoreTargets.set(name, retained.lastUploadTarget);
   }
   for (const name of [...cursorNames, ...STATE_FILES.filter((n) => !cursorNames.includes(n))]) {
-    if (keep.has(name)) { files.push({ file: name, deleted: false }); continue; }
+    if (keep.has(name)) { files.push({ file: name, deleted: false, kept: true }); continue; }
     const path = join(opts.stateDir, name);
     try {
       await unlinkFn(path);

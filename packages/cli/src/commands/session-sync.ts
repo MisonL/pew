@@ -249,9 +249,15 @@ async function sessionSyncLocked(
         continue;
       }
 
-      // Full-scan parse
+      // Full-scan parse. A failed parse must not advance the cursor: the
+      // cursor is what shouldSkip compares against, so recording it for a file
+      // that produced no snapshots would skip that file forever and silently
+      // drop every session in it. A transient read error (EACCES/EIO, file
+      // locked) must stay recoverable on the next run.
+      let parsed = true;
       const snapshots = await driver.parse(filePath).catch(
         (err: unknown) => {
+          parsed = false;
           onProgress?.({
             source: driver.source,
             phase: "warn",
@@ -260,6 +266,16 @@ async function sessionSyncLocked(
           return [] as SessionSnapshot[];
         },
       );
+
+      if (!parsed) {
+        onProgress?.({
+          source: driver.source,
+          phase: "parse",
+          current: i + 1,
+          total: files.length,
+        });
+        continue;
+      }
 
       // Build and persist cursor (cast narrows the registry's
       // SessionFileCursor | unknown union back to SessionFileCursor)

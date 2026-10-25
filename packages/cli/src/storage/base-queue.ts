@@ -156,10 +156,15 @@ export class BaseQueue<T> {
     }
   }
 
-  /** Atomically persist the full state object. */
+  /** Atomically persist the full state object (write tmp → rename). */
   async saveState(state: QueueState): Promise<void> {
     await this.ensureDir();
-    await writeFile(this.statePath, `${JSON.stringify(state)}\n`);
+    // Direct writeFile leaves a torn file behind a crash or ENOSPC, and
+    // loadState() treats any parse error as "no state" — which silently drops
+    // the offset, the dirty set and the recorded upload target.
+    const tmpPath = `${this.statePath}.tmp`;
+    await writeFile(tmpPath, `${JSON.stringify(state)}\n`);
+    await rename(tmpPath, this.statePath);
   }
 
   /** Save the upload byte offset (preserves dirtyKeys). */

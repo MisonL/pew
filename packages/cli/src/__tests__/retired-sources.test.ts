@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -215,15 +215,30 @@ describe("retired sources", () => {
     expect((await executeSessionUpload(options)).uploaded).toBe(0);
   });
 
-  it("fails before changing any history when a retained queue or state is invalid", async () => {
+  it("still recovers a retained backlog whose state file is torn", async () => {
+    // Reset and sync are the documented recovery path for damaged state, so a
+    // half-written queue.state.json must degrade to defaults (offset 0, no
+    // dirty keys, no recorded target) rather than refusing to run. The
+    // retained records themselves are intact and must survive.
     const queue = new LocalQueue(stateDir);
     await queue.overwrite([row("omp")]);
     await writeFile(join(stateDir, "cursors.json"), "{}");
     await writeFile(join(stateDir, "queue.state.json"), "broken");
-    await expect(executeReset({ stateDir })).rejects.toThrow("Cannot verify retained queue upload state");
-    await expect(executeSync({ stateDir, deviceId: "device" })).rejects.toThrow("Cannot verify retained queue upload state");
+    await executeReset({ stateDir });
     expect((await queue.readFromOffset(0)).records).toEqual([row("omp")]);
-    expect(await readFile(join(stateDir, "cursors.json"), "utf8")).toBe("{}");
+    await expect(executeSync({ stateDir, deviceId: "device" })).resolves.toBeDefined();
+    expect((await queue.readFromOffset(0)).records).toEqual([row("omp")]);
+  });
+
+  it("skips a torn queue line instead of refusing to rebuild", async () => {
+    // A crash mid-append leaves a partial last line; the strict reader used to
+    // abort the whole command on it, which blocked the one command that can
+    // repair it.
+    const queue = new LocalQueue(stateDir);
+    await queue.overwrite([row("omp")]);
+    await appendFile(join(stateDir, "queue.jsonl"), '{"source":"omp","device_id":"devi');
+    await expect(executeReset({ stateDir })).resolves.toBeDefined();
+    expect((await queue.readFromOffset(0)).records).toEqual([row("omp")]);
   });
 
   it("recomputes the acknowledged session prefix after removing active records", async () => {

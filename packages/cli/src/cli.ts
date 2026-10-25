@@ -1040,6 +1040,8 @@ const resetCommand = defineCommand({
         log.text(`${pc.green("✓")} ${f.file} ${pc.dim("(reset to the recorded upload target)")}`);
       } else if (f.deleted) {
         log.text(`${pc.green("✓")} ${f.file}`);
+      } else if (f.kept) {
+        log.text(`${pc.yellow("•")} ${f.file} ${pc.dim("(kept)")}`);
       } else {
         log.text(`${pc.dim("•")} ${pc.dim(f.file)} (not found)`);
       }

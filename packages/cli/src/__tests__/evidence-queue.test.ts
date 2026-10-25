@@ -70,6 +70,23 @@ describe("durable usage evidence", () => {
     expect((await queue.readFromOffset(0)).records).toEqual([]);
   });
 
+  it("re-derives pending keys after the state file is lost, instead of stranding the ledger", async () => {
+    // A torn state file makes loadState() return defaults, dropping dirtyKeys.
+    // Evidence that was already observed and is still in the ledger must stay
+    // claimable, otherwise it is never uploaded again (a plain re-observation
+    // of the same event is a no-op in merge()).
+    await queue.merge([good]);
+    await queue.saveOffset(0);          // nothing drained yet: all of it is pending
+    await writeFile(`${dir}/evidence-queue.state.json`, "{not json");
+    const other = { ...good, model: "other-model", hour_start: "2026-09-06T17:00:00.000Z",
+      timestamp: "2026-09-06T17:00:01.000Z", evidence: { ...good.evidence, eventId: "c".repeat(64), groupId: "d".repeat(64) } };
+    await queue.merge([other]);
+    const dirty = await queue.loadDirtyKeys();
+    const keys = JSON.stringify(dirty);
+    expect(keys).toContain(`${"a".repeat(64)}`);   // pre-existing record, pending again
+    expect(keys).toContain("c".repeat(64));        // record merged after the loss
+  });
+
   it("rejects saved device IDs, source/origin mismatches and invalid interval bounds", async () => {
     for (const r of [
       { ...good, device_id: "PRIVATE FIXTURE BODY" },

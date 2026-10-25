@@ -8,23 +8,53 @@ import { isRetiredSource } from "./retired-sources.js";
 export const tokenRecordKey = (r: QueueRecord): string =>
   `${r.source}|${r.model}|${r.hour_start}|${r.device_id}`;
 
-export async function readAntigravityBaseline(stateDir: string, includeRetired = false): Promise<QueueRecord[]> {
+/**
+ * Read the Antigravity partition plus retained retired-source records.
+ *
+ * `tolerant` is for the self-healing paths (`pew sync`, `pew reset`): a torn
+ * tail line or a malformed record is skipped instead of aborting the whole
+ * command. Retired records are carried through the rebuild either way; the
+ * strict default keeps the "cannot verify" guarantee for everything else.
+ */
+export async function readAntigravityBaseline(
+  stateDir: string,
+  includeRetired = false,
+  opts: { tolerant?: boolean } = {},
+): Promise<QueueRecord[]> {
   let raw: string;
   try { raw = await readFile(join(stateDir, "queue.jsonl"), "utf8"); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw new Error("Cannot verify previous usage queue"); }
   try {
-    const rows = raw.split("\n").filter(Boolean).map((line) => JSON.parse(line) as QueueRecord);
-    if (rows.some((r) => !r || typeof r !== "object" || typeof r.source !== "string")) throw new Error();
-    const retained = rows.filter((r) => r.source === "antigravity" || includeRetired && isRetiredSource(r.source));
-    for (const r of retained) {
-      if (typeof r.device_id !== "string" || typeof r.model !== "string" || typeof r.hour_start !== "string" ||
-        !Number.isFinite(Date.parse(r.hour_start)) ||
-        [r.input_tokens, r.cached_input_tokens, r.output_tokens, r.reasoning_output_tokens, r.total_tokens]
-          .some((n) => !Number.isSafeInteger(n) || n < 0 || n > 1_000_000_000) ||
-        r.total_tokens !== r.input_tokens + r.cached_input_tokens + r.output_tokens + r.reasoning_output_tokens) throw new Error();
-    }
-    return retained;
+    return parseBaselineRows(raw, includeRetired, opts.tolerant === true);
   } catch { throw new Error("Cannot verify previous usage queue"); }
+}
+
+function parseBaselineRows(raw: string, includeRetired: boolean, tolerant: boolean): QueueRecord[] {
+  const lines = raw.split("\n").filter(Boolean);
+  const rows: QueueRecord[] = [];
+  for (const line of lines) {
+    let parsed: QueueRecord;
+    try { parsed = JSON.parse(line) as QueueRecord; }
+    catch { if (tolerant) continue; throw new Error(); }
+    if (!parsed || typeof parsed !== "object" || typeof parsed.source !== "string") {
+      if (tolerant) continue;
+      throw new Error();
+    }
+    rows.push(parsed);
+  }
+  const retained = rows.filter((r) => r.source === "antigravity" || includeRetired && isRetiredSource(r.source));
+  for (const r of retained) {
+    const valid = typeof r.device_id === "string" && typeof r.model === "string" && typeof r.hour_start === "string" &&
+      Number.isFinite(Date.parse(r.hour_start)) &&
+      [r.input_tokens, r.cached_input_tokens, r.output_tokens, r.reasoning_output_tokens, r.total_tokens]
+        .every((n) => Number.isSafeInteger(n) && n >= 0 && n <= 1_000_000_000) &&
+      r.total_tokens === r.input_tokens + r.cached_input_tokens + r.output_tokens + r.reasoning_output_tokens;
+    if (!valid) {
+      if (tolerant) { retained.splice(retained.indexOf(r), 1); continue; }
+      throw new Error();
+    }
+  }
+  return retained;
 }
 
 export function antigravityRecords(deltas: ParsedDelta[], deviceId: string): QueueRecord[] {

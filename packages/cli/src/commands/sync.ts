@@ -51,7 +51,7 @@ import { aggregateRecords } from "./upload.js";
 import { readAntigravitySource } from "../parsers/antigravity.js";
 import { antigravityRecords, readAntigravityBaseline, replaceAntigravityPartition, tokenRecordKey } from "../utils/antigravity-snapshot.js";
 import { inclusiveAccounting } from "../utils/accounting.js";
-import { isRetiredCursorPath, RETIRED_SOURCES, isRetiredSource, readRetainedQueueState } from "../utils/retired-sources.js";
+import { isRetiredCursorPath, RETIRED_SOURCES, isRetiredSource, readIdempotentQueueState } from "../utils/retired-sources.js";
 
 /** Sync execution options */
 export interface SyncOptions {
@@ -221,10 +221,10 @@ export async function executeSync(opts: SyncOptions): Promise<SyncResult> {
   return withStateLock(opts.stateDir, async () => {
     await recoverSyncCommit(opts.stateDir);
     const internal: InternalSyncOptions = { ...opts };
-    const retained = await readAntigravityBaseline(opts.stateDir, true);
+    const retained = await readAntigravityBaseline(opts.stateDir, true, { tolerant: true });
     internal.previousAntigravityRecords = retained.filter((r) => r.source === "antigravity");
     internal.previousRetiredRecords = retained.filter((r) => isRetiredSource(r.source));
-    if (internal.previousRetiredRecords.length) await readRetainedQueueState(opts.stateDir, "queue.state.json");
+    if (internal.previousRetiredRecords.length) await readIdempotentQueueState(opts.stateDir, "queue.state.json");
     internal.previousAntigravityCursor = (await new CursorStore(opts.stateDir).load()).antigravity;
     if (opts.antigravityDir) {
       try {
