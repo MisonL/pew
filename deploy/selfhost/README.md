@@ -1025,7 +1025,11 @@ git fetch upstream main
 git merge upstream/main
 bun run test
 cd deploy/selfhost                              # compose 只读 ./.env，不向下搜索
-docker compose build && docker compose up -d   # 两个镜像（web + pew-selfhost）都要重建，只 build web 会带着旧的 worker/deploy 代码
+# 两个镜像（web + pew-selfhost）都要重建，只 build web 会带着旧的 worker/deploy 代码。
+# PEW_REVISION 写进 OCI label：没有它，镜像会继承基础镜像的 revision，
+# `docker image inspect` 报的是基础镜像的提交，digest 无法反查 pew 代码版本。
+PEW_REVISION=$(git rev-parse HEAD) PEW_VERSION=$(node -p "require('./package.json').version") \
+  docker compose build && docker compose up -d
 curl -s http://127.0.0.1:7020/api/live
 # 认证回归：/setup 可达、登录成功、改密后旧会话失效
 ```

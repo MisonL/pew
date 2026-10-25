@@ -7,8 +7,14 @@ const dockerfile = source("Dockerfile");
 
 describe("production container", () => {
   it("builds without application credentials or test switches", () => {
+    // Build args must be this allowlist: a base-image pin plus the two
+    // provenance values that only feed OCI labels. Anything else risks a
+    // build-time credential sitting in the image history.
     expect([...dockerfile.matchAll(/^ARG (\w+)/gm)].map((match) => match[1]))
-      .toEqual(["NODE_VERSION"]);
+      .toEqual(["NODE_VERSION", "PEW_REVISION", "PEW_VERSION"]);
+    // The provenance args must reach only LABEL lines — never ENV, so they
+    // cannot be read back from a running container.
+    expect(dockerfile).not.toMatch(/^ENV\s+PEW_/m);
     expect(dockerfile).not.toMatch(/CF_|AUTH_|WORKER_|E2E_|TOKEN|SECRET|--mount=type=secret/);
     expect(dockerfile).toContain("RUN bun install --frozen-lockfile");
     expect(dockerfile).toContain("COPY --from=oven/bun:1.4.3");

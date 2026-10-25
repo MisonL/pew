@@ -31,3 +31,15 @@ COPY scripts scripts
 COPY deploy deploy
 
 ENV NODE_ENV=production
+
+# Provenance. Without these the image inherits oven/bun's OCI labels, so
+# `docker image inspect` reports bun's revision as if it were pew's and no
+# digest can be traced back to a commit. The build passes PEW_REVISION from
+# `git rev-parse HEAD` (see deploy/selfhost/README.md); it is empty when the
+# build runs outside a repository.
+ARG PEW_REVISION=""
+ARG PEW_VERSION=""
+LABEL org.opencontainers.image.title="pew-selfhost" \
+      org.opencontainers.image.revision="${PEW_REVISION}" \
+      org.opencontainers.image.version="${PEW_VERSION}" \
+      org.opencontainers.image.source="https://github.com/MisonL/pew"

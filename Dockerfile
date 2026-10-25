@@ -57,6 +57,15 @@ COPY --from=builder --chown=node:node /app/packages/web/public ./packages/web/pu
 USER node
 RUN node -e "require('node:module').createRequire(require.resolve('./packages/web/node_modules/next'))('sharp')({ create: { width: 1, height: 1, channels: 4, background: '#fff' } }).png().toBuffer().then(() => console.log('Sharp ready'))"
 
+# Provenance: overrides the base image's own OCI labels, which otherwise make
+# `docker image inspect` report the Node builder's revision instead of pew's.
+ARG PEW_REVISION=""
+ARG PEW_VERSION=""
+LABEL org.opencontainers.image.title="pew" \
+      org.opencontainers.image.revision="${PEW_REVISION}" \
+      org.opencontainers.image.version="${PEW_VERSION}" \
+      org.opencontainers.image.source="https://github.com/MisonL/pew"
+
 EXPOSE 7020
 ENV PORT=7020
 ENV HOSTNAME="0.0.0.0"
