@@ -89,6 +89,13 @@ export interface UploadResult {
   batches: number;
   error?: string;
   warning?: string;
+  /**
+   * Set when this stage actually shipped records to an origin different from
+   * the recorded one. The caller composes the warning across stages: a stage
+   * with an empty queue ships nothing and therefore cannot re-route anything,
+   * but its sibling queues still can.
+   */
+  targetChangedFrom?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,10 +146,16 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
     const queueState = await queue.loadState();
     const dirtyKeys = recordKey ? queueState.dirtyKeys : undefined;
     const useDirtyKeys = recordKey && dirtyKeys !== undefined;
+    // Reported on every path, including the "nothing of mine to send" ones: a
+    // stage with an empty queue ships nothing, but the caller composes one
+    // warning across stages and its siblings may still ship the backlog.
+    const previousTarget = config.trackUploadTarget ? queueState.lastUploadTarget : undefined;
+    const targetChanged = previousTarget !== undefined && previousTarget !== apiUrl;
 
     // 2a. If dirtyKeys is an empty array, nothing to upload
     if (useDirtyKeys && dirtyKeys.length === 0) {
-      return { success: true, uploaded: 0, batches: 0 };
+      return { success: true, uploaded: 0, batches: 0,
+        ...(targetChanged ? { targetChangedFrom: previousTarget } : {}) };
     }
 
     // 2b. Read records — dirty-keys mode always reads from offset 0
@@ -178,7 +191,8 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
       if (useDirtyKeys) {
         await queue.saveDirtyKeys([]);
       }
-      return { success: true, uploaded: 0, batches: 0 };
+      return { success: true, uploaded: 0, batches: 0,
+        ...(targetChanged ? { targetChangedFrom: previousTarget } : {}) };
     }
 
     // 2b. Pre-process (aggregate for tokens, dedup for sessions)
@@ -186,8 +200,7 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
 
     // Only warn when something is actually about to ship: an empty backlog
     // cannot be re-routed, and a first-ever upload has no previous target.
-    const previousTarget = config.trackUploadTarget ? queueState.lastUploadTarget : undefined;
-    const targetChanged = previousTarget !== undefined && previousTarget !== apiUrl;
+    // (`previousTarget`/`targetChanged` are hoisted above the early returns.)
 
     // 3. Split into batches
     const batchSize = Math.max(1, Math.min(requestedBatchSize, config.maxBatchSize ?? DEFAULT_BATCH_SIZE));
@@ -265,6 +278,7 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
       ...(targetChanged
         ? {
             warning: `Last successful upload went to ${previousTarget}; this run sent pending ${entityName} to ${apiUrl}.`,
+            targetChangedFrom: previousTarget,
           }
         : {}),
     };

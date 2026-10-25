@@ -1131,6 +1131,33 @@ describe("upload-engine", () => {
       expect(state.lastUploadTarget).toBe("http://pew.corp:7020");
     });
 
+    it("reports the recorded target on an empty backlog so one stage can compose the warning", async () => {
+      // The caller runs token → evidence → accounting as separate engines and
+      // merges their output. When the token queue is empty but a sibling queue
+      // still holds a backlog, the re-route must still be visible; the engine
+      // that owns the target therefore reports it even when it shipped nothing.
+      const { queue, config } = createTrackingEngine(dir);
+      await new ConfigManager(dir).save({ token: "pk_saas" });
+      await new ConfigManager(dir, false, "http://pew.corp:7020").save({ token: "pk_selfhosted" });
+
+      await queue.append(makeRecord(1));
+      const engine = createUploadEngine(config);
+      await engine.execute({
+        stateDir: dir,
+        apiUrl: "http://pew.corp:7020",
+        fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }]).fetchFn,
+      });
+
+      const empty = await engine.execute({
+        stateDir: dir,
+        apiUrl: DEFAULT_HOST,
+        fetch: createMockFetch([]).fetchFn,
+      });
+      expect(empty.uploaded).toBe(0);
+      expect(empty.warning).toBeUndefined();
+      expect(empty.targetChangedFrom).toBe("http://pew.corp:7020");
+    });
+
     it("keeps the recorded target when an upload to a new origin fails", async () => {
       // The warning describes the last SUCCESSFUL drain; a failed attempt
       // shipped nothing, so it must not rewrite the baseline.

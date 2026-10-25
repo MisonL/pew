@@ -209,7 +209,12 @@ export async function applyMigrations(
 
   const files = (await readDirImpl(options.dir))
     .filter((name) => name.endsWith(".sql"))
-    .sort((a, b) => a.localeCompare(b, "en"));
+    // Byte order, matching scripts/local-e2e-bindings.ts and
+    // scripts/test-local-e2e.ts. A locale-aware sort ("en") orders "_" and "-"
+    // differently from those, so the hosted path and the test path could apply
+    // the same migration set in a different order once a name like "030-A.sql"
+    // appears — and both would still consider every file applied.
+    .sort();
 
   const applied: string[] = [];
   const skipped: string[] = [];

@@ -284,6 +284,11 @@ describe("registerShutdownSignals", () => {
         return process;
       }) as never);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    // registerShutdownSignals arms a real, deliberately NOT unref'd 10s
+    // forced-exit timer. Without this spy it outlives the test and (in a
+    // reused worker, or once a slower test follows in this file) kills the
+    // process with exit 1 — reported against whatever ran last.
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     try {
       registerShutdownSignals(close);
       handlers.SIGTERM!();
@@ -293,6 +298,7 @@ describe("registerShutdownSignals", () => {
     } finally {
       onSpy.mockRestore();
       logSpy.mockRestore();
+      exitSpy.mockRestore();
     }
   });
 

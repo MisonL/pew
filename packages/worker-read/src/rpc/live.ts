@@ -97,7 +97,7 @@ async function handleGetActiveSessions(
       sr.last_message_at AS last_activity_at
     FROM session_records sr
     JOIN users u ON u.id = sr.user_id
-    WHERE sr.last_message_at >= datetime('now', '-30 minutes')
+    WHERE julianday(sr.last_message_at) >= julianday('now', '-30 minutes')
     ORDER BY sr.last_message_at DESC
     LIMIT ?
   `;
@@ -112,7 +112,7 @@ async function handleGetRecentActivity(
   db: D1Database
 ): Promise<Response> {
   const limit = Math.min(req.limit ?? 50, 250);
-  const conditions = ["ur.hour_start >= datetime('now', '-1 hour')"];
+  const conditions = ["julianday(ur.hour_start) >= julianday('now', '-1 hour')"];
   const params: unknown[] = [];
 
   if (req.userId) {
@@ -153,10 +153,10 @@ async function handleGetLiveStats(db: D1Database): Promise<Response> {
   // session_records uses last_message_at instead of ended_at
   const sql = `
     SELECT
-      (SELECT COUNT(*) FROM session_records WHERE last_message_at >= datetime('now', '-30 minutes')) AS active_sessions,
-      (SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM usage_totals WHERE hour_start >= datetime('now', '-1 hour')) AS tokens_last_hour,
-      (SELECT COUNT(*) FROM usage_totals WHERE hour_start >= datetime('now', '-1 hour')) AS requests_last_hour,
-      (SELECT COUNT(DISTINCT user_id) FROM usage_totals WHERE hour_start >= datetime('now', '-1 hour')) AS unique_users_last_hour
+      (SELECT COUNT(*) FROM session_records WHERE julianday(last_message_at) >= julianday('now', '-30 minutes')) AS active_sessions,
+      (SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM usage_totals WHERE julianday(hour_start) >= julianday('now', '-1 hour')) AS tokens_last_hour,
+      (SELECT COUNT(*) FROM usage_totals WHERE julianday(hour_start) >= julianday('now', '-1 hour')) AS requests_last_hour,
+      (SELECT COUNT(DISTINCT user_id) FROM usage_totals WHERE julianday(hour_start) >= julianday('now', '-1 hour')) AS unique_users_last_hour
   `;
 
   const result = await db.prepare(sql).first<LiveStatsRow>();
@@ -175,9 +175,9 @@ async function handleGetUserLiveStats(
   // session_records uses last_message_at instead of ended_at
   const sql = `
     SELECT
-      (SELECT COUNT(*) FROM session_records WHERE user_id = ? AND last_message_at >= datetime('now', '-30 minutes')) AS active_sessions,
-      (SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM usage_totals WHERE user_id = ? AND hour_start >= datetime('now', '-1 hour')) AS tokens_last_hour,
-      (SELECT COUNT(*) FROM usage_totals WHERE user_id = ? AND hour_start >= datetime('now', '-1 hour')) AS requests_last_hour
+      (SELECT COUNT(*) FROM session_records WHERE user_id = ? AND julianday(last_message_at) >= julianday('now', '-30 minutes')) AS active_sessions,
+      (SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM usage_totals WHERE user_id = ? AND julianday(hour_start) >= julianday('now', '-1 hour')) AS tokens_last_hour,
+      (SELECT COUNT(*) FROM usage_totals WHERE user_id = ? AND julianday(hour_start) >= julianday('now', '-1 hour')) AS requests_last_hour
   `;
 
   const result = await db

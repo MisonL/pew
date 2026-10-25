@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { executeUpload, aggregateRecords } from "../commands/upload.js";
 import { LocalQueue } from "../storage/local-queue.js";
+import { EvidenceQueue } from "../storage/evidence-queue.js";
 import { ConfigManager } from "../config/manager.js";
 import { DEFAULT_HOST } from "../commands/login.js";
 import type { QueueRecord } from "@pew/core";
@@ -539,6 +540,42 @@ describe("executeUpload", () => {
     expect(result.success).toBe(true);
     expect(result.warning).toContain("http://pew.corp:7020");
     expect(result.warning).toContain(DEFAULT_HOST);
+  });
+
+  it("warns on a host switch even when only the evidence queue has a backlog", async () => {
+    // The token queue is drained, so the token stage has nothing to ship and
+    // stays quiet — but the evidence backlog behind it is still re-routed.
+    await new ConfigManager(dir).save({ token: "pk_saas" });
+    await new ConfigManager(dir, false, "http://pew.corp:7020").save({ token: "pk_selfhosted" });
+
+    const queue = new LocalQueue(dir);
+    await queue.appendBatch([makeRecord()]);
+    await executeUpload({
+      stateDir: dir,
+      apiUrl: "http://pew.corp:7020",
+      fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }]).fetchFn,
+    });
+
+    // Only the evidence queue gains work; the token queue stays empty.
+    const evidence = new EvidenceQueue(dir);
+    await evidence.merge([{
+      source: "hermes", model: "test-model", device_id: "test-device",
+      timestamp: "2026-09-06T16:00:01.000Z", hour_start: "2026-09-06T16:00:00.000Z",
+      input_tokens: 100, cached_input_tokens: 0, output_tokens: 20, reasoning_output_tokens: 0, total_tokens: 120,
+      evidence: { eventId: "a".repeat(64), groupId: "b".repeat(64), callType: "approval",
+        origin: "hermes-aux-ledger", provider: "openai", granularity: "session",
+        timePrecision: "session-start", intervalStart: null, intervalEnd: null,
+        callCount: 1, snapshotSeq: 1 },
+    }]);
+
+    const result = await executeUpload({
+      stateDir: dir,
+      apiUrl: DEFAULT_HOST,
+      fetch: createMockFetch([{ status: 200, body: {} }]).fetchFn,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.warning).toContain("http://pew.corp:7020");
   });
 });
 

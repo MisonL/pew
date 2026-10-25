@@ -115,6 +115,11 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
     entityName: "usage evidence", preprocess: (records) => records,
     recordKey: evidenceKey,
   }).execute(opts);
+  // The token stage is the only one that records the target, so it is also the
+  // one that notices a switch — but it says nothing when its own queue is
+  // empty, while the evidence/accounting backlogs behind it still ship to the
+  // new host. Report the switch when any stage actually sends to a different
+  // origin than the last recorded drain.
   const usage = { ...supplemental, uploaded: main.uploaded + supplemental.uploaded, batches: main.batches + supplemental.batches };
   if (!supplemental.success) return { ...usage, ...mergeWarnings(warnings) };
   const details = await createUploadEngine<AccountingRecord>({
@@ -132,6 +137,15 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
     },
   }).execute(opts);
   if (!details.success) warnings.push(`Accounting details pending: ${details.error}`);
+  // The token stage is the only one that records the target, so it is also the
+  // one that detects a switch — but it stays silent when its own queue is
+  // empty, while the evidence/accounting backlogs behind it still ship to the
+  // new host. Warn whenever any stage actually shipped to a different origin
+  // than the last recorded drain.
+  if (main.targetChangedFrom && !main.warning &&
+      (main.uploaded > 0 || supplemental.uploaded > 0 || details.uploaded > 0)) {
+    warnings.push(`Last successful upload went to ${main.targetChangedFrom}; this run sent pending records to ${opts.apiUrl}.`);
+  }
   return { ...usage, uploaded: usage.uploaded + details.uploaded, batches: usage.batches + details.batches,
     ...mergeWarnings(warnings) };
 }
