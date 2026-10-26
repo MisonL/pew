@@ -1,4 +1,4 @@
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { QueueRecord, SessionQueueRecord } from "@pew/core";
 import { LocalQueue } from "../storage/local-queue.js";
@@ -138,7 +138,9 @@ async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
   // Rebuilt after the unlinks on purpose: offset 0 with no dirtyKeys is what
   // every reader already treats as "nothing uploaded yet".
   for (const [name, target] of restoreTargets) {
-    await writeFile(join(opts.stateDir, name), `${JSON.stringify({ offset: 0, lastUploadTarget: target })}\n`);
+    const path = join(opts.stateDir, name);
+    await writeFile(`${path}.tmp`, `${JSON.stringify({ offset: 0, lastUploadTarget: target })}\n`, { mode: 0o600 });
+    await rename(`${path}.tmp`, path);
     const entry = files.find((f) => f.file === name);
     if (entry) entry.recreated = true;
   }

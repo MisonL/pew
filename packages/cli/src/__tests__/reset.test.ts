@@ -113,6 +113,24 @@ describe("executeReset", () => {
     await expect(stat(join(tempDir, "queue.jsonl"))).rejects.toThrow();
   });
 
+  it("recreates the retained queue state atomically, leaving no temp file", async () => {
+    // reset runs under the state lock, but a crash mid-write would leave a
+    // half-written queue.state.json — and loadState() only recovers raw queue
+    // files, not this one. Write-then-rename keeps it whole or untouched.
+    // Other state files are owner-only; this rewrite must not loosen that.
+    await writeFile(join(tempDir, "queue.state.json"),
+      `${JSON.stringify({ offset: 0, dirtyKeys: [], lastUploadTarget: "http://pew.corp:7020" })}\n`);
+
+    await executeReset({ stateDir: tempDir });
+
+    expect(JSON.parse(await readFile(join(tempDir, "queue.state.json"), "utf8"))).toEqual({
+      offset: 0,
+      lastUploadTarget: "http://pew.corp:7020",
+    });
+    expect((await stat(join(tempDir, "queue.state.json"))).mode & 0o777).toBe(0o600);
+    expect(await readdir(tempDir)).toEqual(["queue.state.json"]);
+  });
+
   it("should propagate non-ENOENT errors", async () => {
     const permError = Object.assign(new Error("EACCES"), { code: "EACCES" });
     const unlinkFn = vi.fn().mockRejectedValue(permError);
