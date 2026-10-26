@@ -27,8 +27,12 @@ function makeRow(overrides: Partial<UsageRow> = {}): UsageRow {
 describe("toHourlyByDevice", () => {
   const defaultDateRange = { from: "2026-03-07", to: "2026-03-07" };
 
+  function point(date: string, device_id: string, total_tokens: number) {
+    return { date, device_id, total_tokens };
+  }
+
   it("should return 24-hour structure with empty devices for empty input", () => {
-    const result = toHourlyByDevice([], [], defaultDateRange, 0);
+    const result = toHourlyByDevice([], defaultDateRange, 0);
 
     expect(result).toHaveLength(24);
     expect(result[0]!.hour).toBe(0);
@@ -37,18 +41,13 @@ describe("toHourlyByDevice", () => {
   });
 
   it("should group tokens by hour and device", () => {
-    const rows: UsageRow[] = [
-      makeRow({ hour_start: "2026-03-07T10:00:00Z", source: "claude-code", model: "sonnet", total_tokens: 1000 }),
-      makeRow({ hour_start: "2026-03-07T10:30:00Z", source: "claude-code", model: "sonnet", total_tokens: 500 }),
-      makeRow({ hour_start: "2026-03-07T14:00:00Z", source: "opencode", model: "gpt-4", total_tokens: 2000 }),
+    const timeline = [
+      point("2026-03-07T10:00:00Z", "device-1", 1000),
+      point("2026-03-07T10:30:00Z", "device-1", 500),
+      point("2026-03-07T14:00:00Z", "device-2", 2000),
     ];
 
-    const deviceDetails = [
-      { device_id: "device-1", source: "claude-code", model: "sonnet", total_tokens: 1500 },
-      { device_id: "device-2", source: "opencode", model: "gpt-4", total_tokens: 2000 },
-    ];
-
-    const result = toHourlyByDevice(rows, deviceDetails, defaultDateRange, 0);
+    const result = toHourlyByDevice(timeline, defaultDateRange, 0);
 
     expect(result).toHaveLength(24);
     // Hour 10: device-1 = 1500, device-2 = 0
@@ -59,19 +58,30 @@ describe("toHourlyByDevice", () => {
     expect(result[14]!.devices["device-2"]).toBe(2000);
   });
 
+  it("should keep devices separate when they share a source and model", () => {
+    // The previous (source, model) join attributed both devices' usage to the
+    // first device that reported the pair, leaving the second flat at zero.
+    const timeline = [
+      point("2026-03-07T10:00:00Z", "device-1", 1000),
+      point("2026-03-07T10:00:00Z", "device-2", 4000),
+    ];
+
+    const result = toHourlyByDevice(timeline, defaultDateRange, 0);
+
+    expect(result[10]!.devices["device-1"]).toBe(1000);
+    expect(result[10]!.devices["device-2"]).toBe(4000);
+    expect(result[10]!.devices.unknown).toBeUndefined();
+  });
+
   it("should compute daily average over date range", () => {
     // 2 days in range: Mar 7 and Mar 8
     const dateRange = { from: "2026-03-07", to: "2026-03-08" };
-    const rows: UsageRow[] = [
-      makeRow({ hour_start: "2026-03-07T10:00:00Z", source: "claude-code", model: "sonnet", total_tokens: 2000 }),
-      makeRow({ hour_start: "2026-03-08T10:00:00Z", source: "claude-code", model: "sonnet", total_tokens: 4000 }),
+    const timeline = [
+      point("2026-03-07T10:00:00Z", "device-1", 2000),
+      point("2026-03-08T10:00:00Z", "device-1", 4000),
     ];
 
-    const deviceDetails = [
-      { device_id: "device-1", source: "claude-code", model: "sonnet", total_tokens: 6000 },
-    ];
-
-    const result = toHourlyByDevice(rows, deviceDetails, dateRange, 0);
+    const result = toHourlyByDevice(timeline, dateRange, 0);
 
     // Hour 10: total 6000 / 2 days = 3000 average
     expect(result[10]!.devices["device-1"]).toBe(3000);
@@ -79,36 +89,28 @@ describe("toHourlyByDevice", () => {
 
   it("should shift hours with timezone offset (UTC-8)", () => {
     // 2026-03-07T18:00Z → PST local = 2026-03-07T10:00 → hour 10
-    const rows: UsageRow[] = [
-      makeRow({ hour_start: "2026-03-07T18:00:00Z", source: "claude-code", model: "sonnet", total_tokens: 1000 }),
-    ];
+    const timeline = [point("2026-03-07T18:00:00Z", "device-1", 1000)];
 
-    const deviceDetails = [
-      { device_id: "device-1", source: "claude-code", model: "sonnet", total_tokens: 1000 },
-    ];
-
-    const result = toHourlyByDevice(rows, deviceDetails, defaultDateRange, 480);
+    const result = toHourlyByDevice(timeline, defaultDateRange, 480);
 
     expect(result[10]!.devices["device-1"]).toBe(1000);
     expect(result[18]!.devices["device-1"]).toBe(0);
   });
 
-  it("should handle rows without matching devices", () => {
-    const rows: UsageRow[] = [
-      makeRow({ hour_start: "2026-03-07T10:00:00Z", source: "unknown-source", model: "unknown-model", total_tokens: 1000 }),
+  it("should zero-fill every known device in hours it has no usage", () => {
+    const timeline = [
+      point("2026-03-07T10:00:00Z", "device-1", 1000),
+      point("2026-03-07T14:00:00Z", "device-2", 2000),
     ];
 
-    // Device details exist but don't match the row's source:model
-    const deviceDetails = [
-      { device_id: "device-1", source: "other-source", model: "other-model", total_tokens: 2000 },
-    ];
+    const result = toHourlyByDevice(timeline, defaultDateRange, 0);
 
-    const result = toHourlyByDevice(rows, deviceDetails, defaultDateRange, 0);
-
-    // Tokens go to "unknown" device, but device-1 is still in the result with 0
-    expect(result[10]!.devices["device-1"]).toBe(0);
-    // Unknown devices are tracked but value goes to "unknown" key
-    expect(result[10]!.devices.unknown).toBe(1000);
+    expect(Object.keys(result[10]!.devices).sort()).toEqual([
+      "device-1",
+      "device-2",
+    ]);
+    expect(result[10]!.devices["device-2"]).toBe(0);
+    expect(result[14]!.devices["device-1"]).toBe(0);
   });
 });
 

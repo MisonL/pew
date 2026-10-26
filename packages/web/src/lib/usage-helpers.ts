@@ -879,35 +879,22 @@ export interface HourlyByDevicePoint {
 /**
  * Compute average hourly token usage grouped by device.
  *
- * Groups half-hour records by local hour-of-day and device_id,
- * then divides by the number of days in the date range to get averages.
+ * Groups timeline buckets by local hour-of-day and device_id, then divides
+ * by the number of days in the date range to get averages.
  *
- * @param rows         — raw UsageRow[] (must be half-hour granularity)
- * @param deviceDetails — DeviceCostDetail[] from useDeviceData, used to get device-level breakdown
- * @param dateRange    — period boundaries for day counting (local dates "YYYY-MM-DD")
- * @param tzOffset     — minutes from UTC (positive = west), default 0
+ * @param timeline   — device timeline buckets (half-hour granularity; `date`
+ *                     is the bucket instant). Day-granularity rows carry no
+ *                     hour-of-day and would all land in one bucket.
+ * @param dateRange  — period boundaries for day counting (local dates "YYYY-MM-DD")
+ * @param tzOffset   — minutes from UTC (positive = west), default 0
  */
 export function toHourlyByDevice(
-  rows: UsageRow[],
-  deviceDetails: Array<{ device_id: string; source: string; model: string; total_tokens: number }>,
+  timeline: ReadonlyArray<{ date: string; device_id: string; total_tokens: number }>,
   dateRange: { from: string; to: string },
   tzOffset = 0,
 ): HourlyByDevicePoint[] {
-  // Build a lookup map: (hour_start, source, model) -> device_id
-  // This is needed because UsageRow doesn't have device_id directly
-  const deviceMap = new Map<string, string>();
-  for (const d of deviceDetails) {
-    // Key by source:model to find device_id
-    const key = `${d.source}:${d.model}`;
-    // If multiple devices have same source:model, we can't distinguish
-    // Just use the first one (or we could aggregate by device if we had device_id in UsageRow)
-    if (!deviceMap.has(key)) {
-      deviceMap.set(key, d.device_id);
-    }
-  }
-
   // Collect all unique device IDs
-  const allDevices = new Set<string>(deviceDetails.map((d) => d.device_id));
+  const allDevices = new Set<string>(timeline.map((p) => p.device_id));
 
   // Accumulators: [hour] -> { [device_id]: tokens }
   const hourly: Array<Map<string, number>> = [];
@@ -915,19 +902,18 @@ export function toHourlyByDevice(
     hourly.push(new Map());
   }
 
-  // Accumulate tokens by local hour and device
-  for (const r of rows) {
-    const utcMs = new Date(r.hour_start).getTime();
+  // Accumulate tokens by local hour and device. The device id comes straight
+  // from the timeline: the previous (source, model) join credited every hour
+  // of a pair to whichever device reported it first, so two machines running
+  // the same agent and model showed as one (and the other flat at zero).
+  for (const p of timeline) {
+    const utcMs = new Date(p.date).getTime();
     const localMs = utcMs - tzOffset * 60_000;
-    const localDate = new Date(localMs);
-    const localHour = localDate.getUTCHours();
-
-    const key = `${r.source}:${r.model}`;
-    const deviceId = deviceMap.get(key) ?? "unknown";
+    const localHour = new Date(localMs).getUTCHours();
 
     const bucket = hourly[localHour];
     if (bucket) {
-      bucket.set(deviceId, (bucket.get(deviceId) ?? 0) + accountedTotal(r));
+      bucket.set(p.device_id, (bucket.get(p.device_id) ?? 0) + p.total_tokens);
     }
   }
 
@@ -936,19 +922,7 @@ export function toHourlyByDevice(
   const endMs = new Date(`${dateRange.to}T00:00:00Z`).getTime();
   const dayCount = Math.max(1, Math.floor((endMs - startMs) / 86_400_000) + 1);
 
-  // Build result with averages
-  // Include all known devices plus any "unknown" devices from hourly data
   const deviceKeys = Array.from(allDevices);
-
-  // Also check hourly maps for any extra device IDs (like "unknown")
-  for (const hourMap of hourly) {
-    for (const deviceId of hourMap.keys()) {
-      if (!allDevices.has(deviceId)) {
-        deviceKeys.push(deviceId);
-        allDevices.add(deviceId);
-      }
-    }
-  }
 
   return hourly.map((hourMap, hour) => {
     const devices: Record<string, number> = {};

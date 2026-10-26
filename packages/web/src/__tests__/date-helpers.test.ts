@@ -11,6 +11,7 @@ import {
   formatMonth,
   detectPeakHours,
   getLocalToday,
+  trailingLocalDays,
   formatDuration,
   fillDateRange,
   fillTimelineGaps,
@@ -452,6 +453,42 @@ describe("getLocalToday", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-10T12:00:00.000Z"));
     expect(getLocalToday()).toBe("2026-03-10");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// trailingLocalDays
+// ---------------------------------------------------------------------------
+
+describe("trailingLocalDays", () => {
+  it("returns UTC day boundaries when tzOffset is 0", () => {
+    const w = trailingLocalDays(30, 0, "2026-03-10");
+    expect(w.startDay).toBe("2026-02-08");
+    expect(w.today).toBe("2026-03-10");
+    expect(w.from).toBe("2026-02-08T00:00:00.000Z");
+    // `to` is exclusive: the instant after the local today ends.
+    expect(w.to).toBe("2026-03-11T00:00:00.000Z");
+  });
+
+  it("shifts the window to exact instants for a UTC+8 viewer", () => {
+    // Local Feb 8 00:00 = Feb 7 16:00Z; local Mar 11 00:00 = Mar 10 16:00Z.
+    const w = trailingLocalDays(30, -480, "2026-03-10");
+    expect(w.from).toBe("2026-02-07T16:00:00.000Z");
+    expect(w.to).toBe("2026-03-10T16:00:00.000Z");
+  });
+
+  it("shifts the window to exact instants for a UTC-5 viewer", () => {
+    const w = trailingLocalDays(30, 300, "2026-03-10");
+    expect(w.from).toBe("2026-02-08T05:00:00.000Z");
+    expect(w.to).toBe("2026-03-11T05:00:00.000Z");
+  });
+
+  it("defaults today to the local calendar date", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-10T15:00:00.000Z"));
+    const w = trailingLocalDays(7, 0);
+    expect(w.today).toBe("2026-03-10");
+    expect(w.startDay).toBe("2026-03-03");
   });
 });
 

@@ -30,7 +30,7 @@ import { MODEL_SERIES_LIMIT, groupByDate, toHourlyByAgent, toHourlyByModel, toHo
 import type { DailyGroup } from "@/lib/usage-helpers";
 import { usePricingMap, formatCost } from "@/hooks/use-pricing";
 import type { PricingMap } from "@/hooks/use-pricing";
-import { formatDate, getLocalToday } from "@/lib/date-helpers";
+import { formatDate, trailingLocalDays } from "@/lib/date-helpers";
 import { PageHeader } from "@nocoo/basalt/components/page-header";
 
 // ---------------------------------------------------------------------------
@@ -383,17 +383,19 @@ export default function RecentPage() {
   // Wait for both data sources before showing content to avoid double animation
   const loading = usageLoading || deviceLoading;
 
-  // For hourly pattern charts, fetch last 30 days of half-hour data
+  // For hourly pattern charts, fetch last 30 days of half-hour data.
+  // Exact instants, not bare dates: the API reads a bare `from` as UTC
+  // midnight and widens a bare `to` by another UTC day, so at UTC+8 the first
+  // eight hours of the oldest local day fell outside the window while the
+  // first eight hours of tomorrow leaked in — inflating the hour-of-day
+  // averages that are divided by 31 days.
   const tzOffset = useTzOffset();
-  const { patternFrom, patternTo } = useMemo(() => {
-    const today = getLocalToday(tzOffset);
-    const fromDate = new Date(`${today}T00:00:00Z`);
-    fromDate.setUTCDate(fromDate.getUTCDate() - 30);
-    return {
-      patternFrom: fromDate.toISOString().slice(0, 10),
-      patternTo: today,
-    };
-  }, [tzOffset]);
+  const patternWindow = useMemo(
+    () => trailingLocalDays(30, tzOffset),
+    [tzOffset],
+  );
+  const patternFrom = patternWindow.from;
+  const patternTo = patternWindow.to;
 
   // The pattern charts rank by accountedTotal(); the server-side projection
   // returns exactly those numbers, so the annotations (the bulk of a 30-day
@@ -405,12 +407,15 @@ export default function RecentPage() {
     includeAccounting: "project",
   });
 
-  // Fetch device data for the same period (day granularity for pattern
-  // charts). The drill-down rows are read for their (device, source, model)
-  // attribution only, so the annotations can stay on the server.
+  // Fetch device data for the same period at half-hour granularity: the
+  // hourly-by-device chart buckets the timeline by local hour-of-day, and the
+  // per-device drill-down rows cannot distinguish two devices that ran the
+  // same agent/model. The drill-down itself is not read here.
   const { data: deviceData, loading: patternDeviceLoading } = useDeviceData({
     from: patternFrom,
     to: patternTo,
+    granularity: "half-hour",
+    includeDetails: false,
     includeAccounting: false,
   });
 
@@ -434,9 +439,11 @@ export default function RecentPage() {
   );
 
   // Compute hourly breakdowns from 30-day data
+  // Bare local dates for the day-count divisor only; the fetch uses the
+  // exact instants above.
   const dateRange = useMemo(
-    () => ({ from: patternFrom, to: patternTo }),
-    [patternFrom, patternTo],
+    () => ({ from: patternWindow.startDay, to: patternWindow.today }),
+    [patternWindow],
   );
 
   const hourlyByAgent = useMemo(
@@ -457,15 +464,10 @@ export default function RecentPage() {
 
   const hourlyByDevice = useMemo(
     () =>
-      patternData && deviceData
-        ? toHourlyByDevice(
-            patternData.records,
-            deviceData.deviceDetails,
-            dateRange,
-            tzOffset,
-          )
+      deviceData
+        ? toHourlyByDevice(deviceData.timeline, dateRange, tzOffset)
         : [],
-    [patternData, deviceData, dateRange, tzOffset],
+    [deviceData, dateRange, tzOffset],
   );
 
   // Device details for labels

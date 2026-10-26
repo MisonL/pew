@@ -90,6 +90,34 @@ export function periodToUtcRange(period: Period, today: string, tzOffset: number
   };
 }
 
+/**
+ * Exact UTC instants for the local calendar window [today − days, today],
+ * with `to` exclusive (the instant local today ends).
+ *
+ * Callers that chart by local day must send instants, not bare dates: the
+ * usage routes read a bare `from` as UTC midnight and widen a bare `to` by a
+ * further UTC day, so at UTC+8 the first eight hours of the oldest local day
+ * fell outside the window while the first eight hours of tomorrow leaked in.
+ * `startDay`/`today` are the bare local dates, for helpers that only need the
+ * day count.
+ */
+export function trailingLocalDays(
+  days: number,
+  tzOffset = 0,
+  today = getLocalToday(tzOffset),
+): { from: string; to: string; startDay: string; today: string } {
+  const startDayDate = new Date(`${today}T00:00:00Z`);
+  startDayDate.setUTCDate(startDayDate.getUTCDate() - days);
+  return {
+    from: new Date(startDayDate.getTime() + tzOffset * 60_000).toISOString(),
+    to: new Date(
+      new Date(`${today}T00:00:00Z`).getTime() + 86_400_000 + tzOffset * 60_000,
+    ).toISOString(),
+    startDay: startDayDate.toISOString().slice(0, 10),
+    today,
+  };
+}
+
 /** Human-readable label for a period. */
 export function periodLabel(period: Period): string {
   switch (period) {
