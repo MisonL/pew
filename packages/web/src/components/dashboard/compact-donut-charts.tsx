@@ -147,7 +147,11 @@ interface DeviceDonutChartProps {
 export function DeviceDonutChart({ devices, className }: DeviceDonutChartProps) {
   const total = devices.reduce((sum, d) => sum + d.total_tokens, 0);
 
-  const data: DonutDataItem[] = devices.slice(0, 5).map((d, i) => ({
+  // Every device stays in the chart: slicing before rendering let Recharts
+  // renormalize five arcs to a full circle while the labels still printed
+  // shares of all devices, and the sixth device's usage vanished entirely.
+  // CompactDonutChart collapses the legend past five entries.
+  const data: DonutDataItem[] = devices.map((d, i) => ({
     name: d.alias || d.device_id.slice(0, 8),
     value: d.total_tokens,
     color: CHART_COLORS[i % CHART_COLORS.length] as string,
@@ -175,10 +179,12 @@ export function AgentDonutChart({ sourceTrend, className }: AgentDonutChartProps
     }
   }
 
-  const sorted = Array.from(totals.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5);
+  const sorted = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]);
 
+  // Share of ALL agents. Summing only the first five (the old
+  // slice-before-sum) made the visible percentages add up to 100% and
+  // overstated every one of them; the legend collapse in CompactDonutChart
+  // keeps the extra series reachable.
   const total = sorted.reduce((sum, [, val]) => sum + val, 0);
 
   const data: DonutDataItem[] = sorted.map(([src, val]) => ({
