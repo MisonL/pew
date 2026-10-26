@@ -172,6 +172,19 @@ describe("GET /api/seasons", () => {
     expect(data.seasons[2].status).toBe("ended");
   });
 
+  it("should order same-status seasons by start_date, not by string spelling", async () => {
+    // Both spellings are accepted by the season routes and denote the same
+    // instant, but lexicographically "…T10:00Z" sorts above "…T10:00:30Z"
+    // even though it is 30 seconds earlier. Epoch comparison must win.
+    const shorter = { ...UPCOMING_SEASON_ROW, id: "s-short", slug: "s-short", start_date: "2026-04-01T10:00Z" };
+    const longer = { ...UPCOMING_SEASON_ROW, id: "s-long", slug: "s-long", start_date: "2026-04-01T10:00:30Z" };
+
+    mockDbRead.listSeasons.mockResolvedValueOnce([shorter, longer]);
+    const data = await (await GET(makeRequest())).json();
+
+    expect(data.seasons.map((s: { id: string }) => s.id)).toEqual(["s-long", "s-short"]);
+  });
+
   it("should handle no-such-table gracefully", async () => {
     mockDbRead.listSeasons.mockRejectedValueOnce(
       new Error("no such table: seasons")

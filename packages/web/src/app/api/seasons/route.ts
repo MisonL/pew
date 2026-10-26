@@ -61,8 +61,11 @@ export async function GET(request: Request) {
     seasons.sort((a, b) => {
       const orderDiff = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
       if (orderDiff !== 0) return orderDiff;
-      // Within same status group, more recent start_date first
-      return b.start_date.localeCompare(a.start_date);
+      // Epoch ms, not localeCompare: the API accepts both
+      // "2026-03-15T10:00Z" and "2026-03-15T10:00:30Z", and lexicographically
+      // the shorter spelling sorts above the longer one inside the same
+      // minute even though it is earlier.
+      return new Date(b.start_date).getTime() - new Date(a.start_date).getTime();
     });
 
     return NextResponse.json({ seasons });

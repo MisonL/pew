@@ -290,7 +290,7 @@ async function handleListSeasons(
            FROM seasons s
            LEFT JOIN season_teams st ON st.season_id = s.id
            GROUP BY s.id
-           ORDER BY s.start_date DESC`
+           ORDER BY datetime(s.start_date) DESC`
         )
         .all<SeasonRow>();
       return results.results;

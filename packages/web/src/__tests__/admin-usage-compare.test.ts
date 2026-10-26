@@ -159,6 +159,39 @@ describe("GET /api/admin/usage/compare", () => {
     expect((await res.json()).error).toMatch(/2 valid/);
   });
 
+  it("treats a bare `to` date as inclusive of that whole day", async () => {
+    // The compare page sends "YYYY-MM-DD"; the SQL bound is
+    // `hour_start < toDate`, so the bare date must be bumped one day or the
+    // named day (today by default) never appears in the chart or totals.
+    mockDbRead.getAdminUsersByIds.mockResolvedValueOnce([
+      { id: "u1", name: "A", email: "a@a.com", image: null, slug: null },
+      { id: "u2", name: "B", email: "b@b.com", image: null, slug: null },
+    ]);
+    mockDbRead.getAdminUsageComparison.mockResolvedValueOnce([]);
+
+    const res = await GET(
+      makeGetRequest(BASE_PATH, { userIds: "u1,u2", from: "2026-04-01", to: "2026-04-10" }),
+    );
+    expect(res.status).toBe(200);
+    const usageCall = mockDbRead.getAdminUsageComparison.mock.calls[0]!;
+    expect(usageCall[1]).toBe("2026-04-01T00:00:00.000Z");
+    expect(usageCall[2]).toBe("2026-04-11T00:00:00.000Z");
+  });
+
+  it("does not bump a full ISO instant `to`", async () => {
+    mockDbRead.getAdminUsersByIds.mockResolvedValueOnce([
+      { id: "u1", name: "A", email: "a@a.com", image: null, slug: null },
+      { id: "u2", name: "B", email: "b@b.com", image: null, slug: null },
+    ]);
+    mockDbRead.getAdminUsageComparison.mockResolvedValueOnce([]);
+
+    const res = await GET(
+      makeGetRequest(BASE_PATH, { userIds: "u1,u2", to: "2026-04-10T12:00:00Z" }),
+    );
+    expect(res.status).toBe(200);
+    expect(mockDbRead.getAdminUsageComparison.mock.calls[0]![2]).toBe("2026-04-10T12:00:00.000Z");
+  });
+
   it("applies source and model filters", async () => {
     mockDbRead.getAdminUsersByIds.mockResolvedValueOnce([
       { id: "u1", name: "A", email: "a@a.com", image: null, slug: null },

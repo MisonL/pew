@@ -13,7 +13,7 @@
 import { NextResponse } from "next/server";
 import { sumCounts } from "@pew/core";
 import { resolveAdmin } from "@/lib/admin";
-import { isDateParam } from "@/lib/date-params";
+import { isBareDate, isDateParam } from "@/lib/date-params";
 import { getDbRead } from "@/lib/db";
 
 const MAX_USERS = 10;
@@ -104,7 +104,17 @@ export async function GET(request: Request) {
   }
 
   const fromDate = fromParam ? new Date(fromParam) : defaultFrom;
-  const toDate = toParam ? new Date(toParam) : now;
+  let toDate = toParam ? new Date(toParam) : now;
+
+  // A bare "YYYY-MM-DD" `to` is inclusive: bump it one UTC day so the
+  // `hour_start < toDate` bound covers that whole day. The admin compare page
+  // always sends bare dates (its defaults are `toISOString().slice(0, 10)`),
+  // so without this bump the day the "To" field names — including today — was
+  // silently missing from the chart and totals, unlike every other
+  // date-range route (/api/usage, /api/usage/by-device, /api/sessions).
+  if (toParam && isBareDate(toParam)) {
+    toDate = new Date(toDate.getTime() + 86_400_000);
+  }
 
   if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
     return NextResponse.json(
