@@ -228,6 +228,21 @@ describe("GET /api/sessions", () => {
       });
     });
 
+    it("should not cap the window: the summary must cover every session in range", async () => {
+      // A cap here truncates silently: the page derives totalSessions,
+      // totalHours and the working-hours grid from the returned array, so a
+      // `limit: 1000` on a 30-day window that holds 5303 sessions reported
+      // 1000 and under-counted hours by 90% (measured 2026-10-26). The RPC
+      // already bounds the response via its own max; this route asks for the
+      // whole window and the page renders what it gets.
+      mockDbRead.getSessionRecords.mockResolvedValueOnce([]);
+
+      await GET(makeGetRequest("/api/sessions"));
+
+      const [, , , options] = mockDbRead.getSessionRecords.mock.calls[0]!;
+      expect(options.limit).toBeUndefined();
+    });
+
     it("should include summary stats", async () => {
       mockDbRead.getSessionRecords.mockResolvedValueOnce([
         {

@@ -97,16 +97,18 @@ export async function GET(request: Request) {
   const db = await getDbRead();
 
   try {
-    // Use limit=1000 to get all sessions within the date range.
-    // The response drops `session_key`, `last_message_at` and `project_ref`:
-    // no page reads them (the dashboard derives everything from started_at,
-    // the message counters, source and model), and the opaque session ids and
-    // project hashes were 56% of a month's response — 230 KB -> 60 KB gzipped
-    // on a 5,340-session window.
+    // No row cap: the page derives totalSessions, totalHours and the
+    // working-hours grid from this array, so truncating the window would make
+    // the summary disagree with the list it summarises (a `limit: 1000` here
+    // reported 1000 of 5303 sessions in a 30-day window and under-counted
+    // hours by 90%). The response drops `session_key`, `last_message_at` and
+    // `project_ref`: no page reads them (the dashboard derives everything from
+    // started_at, the message counters, source and model), and the opaque
+    // session ids and project hashes were 56% of a month's response —
+    // 230 KB -> 60 KB gzipped on a 5,340-session window.
     const records = await db.getSessionRecords(userId, fromDate, toDate, {
       ...(sourceFilter && { source: sourceFilter }),
       ...(kindFilter && { kind: kindFilter }),
-      limit: 1000,
     });
     const rows = records.map(({ source, kind, started_at, duration_seconds, user_messages,
       assistant_messages, total_messages, model }) => ({ source, kind, started_at, duration_seconds,
