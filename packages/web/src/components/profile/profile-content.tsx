@@ -131,10 +131,13 @@ export function ProfileContent({
   const timeRange = useMemo(() => {
     switch (tab) {
       case "season":
-        return {
-          from: (season as NonNullable<typeof season>).start,
-          to: (season as NonNullable<typeof season>).end,
-        };
+        // The season tab can outlive its season: `season` revalidates while
+        // the dialog is open, and a season that ends drops out of the tabs
+        // while `tab` still says "season". Dereferencing the cast crashed the
+        // whole dialog subtree; fall back to the 7-day window instead.
+        return season
+          ? { from: season.start, to: season.end }
+          : { days: 7 };
       case "7d":
         return { days: 7 };
       case "30d":
