@@ -137,14 +137,16 @@ export async function GET(
     }
     fromDate = new Date(fromParam);
     toDate = new Date(toParam);
-    // Same bound as the days path: this endpoint is public (is_public=1
-    // profiles answer without auth), and an unbounded explicit range let an
-    // anonymous caller ask for from=1900-01-01 and receive every record the
-    // profile owns in one multi-megabyte response.
-    const spanDays = (toDate.getTime() - fromDate.getTime()) / 86_400_000;
-    if (fromDate.getTime() > toDate.getTime() || spanDays > MAX_DAYS) {
+    // No span cap here, deliberately. A wide explicit range does not return
+    // more than `days=365` already does — the payload is bounded by what the
+    // profile owns, not by the requested window (measured: 7.1 MB either way)
+    // — while a cap would reject the season tab, which sends the season's own
+    // start/end and has no duration limit on creation. The real cost of an
+    // anonymous wide read is repeated large reads, which rate limiting at the
+    // edge addresses and a range cap does not.
+    if (fromDate.getTime() > toDate.getTime()) {
       return NextResponse.json(
-        { error: `from/to range must be at most ${MAX_DAYS} days` },
+        { error: "from/to range is inverted" },
         { status: 400 },
       );
     }

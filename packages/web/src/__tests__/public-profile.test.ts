@@ -210,27 +210,47 @@ describe("GET /api/users/[slug]", () => {
       expect((await res.json()).error).toBe("Invalid from/to datetime format");
     });
 
-    it("should reject a from/to range wider than the days cap", async () => {
-      // Without a bound this public endpoint accepts from=1900-01-01 and
-      // answers with every record the profile owns — an anonymous caller can
-      // pin the read worker on a multi-megabyte response at will. The days
-      // path caps at MAX_DAYS; the explicit-range path must match it.
+    it("should accept a wide explicit range", async () => {
+      // No span cap here: the payload is bounded by what the profile owns,
+      // not by the requested window — an explicit 365-day range answers with
+      // the same bytes as from=1900 (measured on the deployed profile, 7.1 MB
+      // either way). A cap would break the season tab, which sends the
+      // season's own start/end and has no duration limit at creation time.
+      // The mitigation for repeated anonymous reads is edge rate limiting.
       mockDbRead.getPublicUserBySlugOrId.mockResolvedValueOnce({
-        id: "u1",
-        name: "Test",
-        image: null,
-        slug: "test",
-        is_public: 1,
-        created_at: "2026-01-01",
+        id: "u1", name: "Test", image: null, slug: "wide", is_public: 1,
+        created_at: "2026-01-15T10:00:00Z",
       });
-      const [req, ctx] = makeRequest("test", {
+      mockDbRead.getUserFirstSeen.mockResolvedValueOnce(null);
+      mockDbRead.getUsageRecords.mockResolvedValueOnce([]);
+
+      const [req, ctx] = makeRequest("wide", {
         from: "1900-01-01",
         to: "2100-01-01",
       });
       const res = await GET(req, ctx);
 
+      expect(res.status).toBe(200);
+      const [, fromDate] = mockDbRead.getUsageRecords.mock.calls[0]!;
+      expect(fromDate).toBe("1900-01-01T00:00:00.000Z");
+    });
+
+    it("should reject an inverted from/to range", async () => {
+      // Swapped from/to is a caller mistake, not an empty window: an empty
+      // answer would look like a silent outage of the profile, so reject it
+      // instead of answering with zero records.
+      mockDbRead.getPublicUserBySlugOrId.mockResolvedValueOnce({
+        id: "u1", name: "Test", image: null, slug: "inverted", is_public: 1,
+        created_at: "2026-01-15T10:00:00Z",
+      });
+      const [req, ctx] = makeRequest("inverted", {
+        from: "2026-03-10",
+        to: "2026-03-01",
+      });
+      const res = await GET(req, ctx);
+
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toContain("range");
+      expect((await res.json()).error).toContain("inverted");
     });
   });
 
