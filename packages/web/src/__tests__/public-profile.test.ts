@@ -186,6 +186,52 @@ describe("GET /api/users/[slug]", () => {
       const body = await res.json();
       expect(body.error).toBe("Invalid from/to datetime format");
     });
+
+    it("should reject a calendar day that does not exist", async () => {
+      // Date.parse rolls "2026-02-30" to March 2 instead of failing, so the
+      // old Number.isNaN check accepted it and silently shifted the window.
+      // The three /api/usage routes got this guard in 6ac4575d; this route
+      // kept the loose check and answered 200 on the deployed instance.
+      mockDbRead.getPublicUserBySlugOrId.mockResolvedValueOnce({
+        id: "u1",
+        name: "Test",
+        image: null,
+        slug: "test",
+        is_public: 1,
+        created_at: "2026-01-01",
+      });
+      const [req, ctx] = makeRequest("test", {
+        from: "2026-02-30",
+        to: "2026-03-10",
+      });
+      const res = await GET(req, ctx);
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe("Invalid from/to datetime format");
+    });
+
+    it("should reject a from/to range wider than the days cap", async () => {
+      // Without a bound this public endpoint accepts from=1900-01-01 and
+      // answers with every record the profile owns — an anonymous caller can
+      // pin the read worker on a multi-megabyte response at will. The days
+      // path caps at MAX_DAYS; the explicit-range path must match it.
+      mockDbRead.getPublicUserBySlugOrId.mockResolvedValueOnce({
+        id: "u1",
+        name: "Test",
+        image: null,
+        slug: "test",
+        is_public: 1,
+        created_at: "2026-01-01",
+      });
+      const [req, ctx] = makeRequest("test", {
+        from: "1900-01-01",
+        to: "2100-01-01",
+      });
+      const res = await GET(req, ctx);
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toContain("range");
+    });
   });
 
   describe("successful response", () => {

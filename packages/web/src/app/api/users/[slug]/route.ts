@@ -21,6 +21,7 @@ import { sumCounts, VALID_SOURCES } from "@pew/core";
 import { getDbRead, type DbRead } from "@/lib/db";
 import { resolveUser } from "@/lib/auth-helpers";
 import { jsonResponse } from "@/lib/json-response";
+import { isDateParam } from "@/lib/date-params";
 import { isAdmin, isAdminInDb } from "@/lib/admin";
 
 // ---------------------------------------------------------------------------
@@ -125,12 +126,25 @@ export async function GET(
   let toDate: Date;
 
   if (fromParam && toParam) {
-    // Use exact time range
-    fromDate = new Date(fromParam);
-    toDate = new Date(toParam);
-    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+    // Shared validator: anchored, and it rejects calendar days that do not
+    // exist. `new Date("2026-02-30")` rolls to March 2 rather than failing, so
+    // the Number.isNaN check alone accepted a date the caller never asked for.
+    if (!isDateParam(fromParam) || !isDateParam(toParam)) {
       return NextResponse.json(
         { error: "Invalid from/to datetime format" },
+        { status: 400 },
+      );
+    }
+    fromDate = new Date(fromParam);
+    toDate = new Date(toParam);
+    // Same bound as the days path: this endpoint is public (is_public=1
+    // profiles answer without auth), and an unbounded explicit range let an
+    // anonymous caller ask for from=1900-01-01 and receive every record the
+    // profile owns in one multi-megabyte response.
+    const spanDays = (toDate.getTime() - fromDate.getTime()) / 86_400_000;
+    if (fromDate.getTime() > toDate.getTime() || spanDays > MAX_DAYS) {
+      return NextResponse.json(
+        { error: `from/to range must be at most ${MAX_DAYS} days` },
         { status: 400 },
       );
     }
