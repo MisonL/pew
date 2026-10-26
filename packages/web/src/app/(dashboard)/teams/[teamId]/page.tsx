@@ -221,15 +221,18 @@ function SeasonRegistration({
     useSeasonRegistration({ teamId });
   const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<MessageBannerMsg | null>(null);
+  // Action feedback wins; the hook error covers seasons-fetch failures that
+  // would otherwise look like "no seasons available".
+  const banner = message ?? (error ? { type: "error" as const, text: error } : null);
 
   const handleRegister = async (seasonId: string) => {
     setBusyId(seasonId);
     setMessage(null);
-    const ok = await register(seasonId);
-    if (ok) {
+    const result = await register(seasonId);
+    if (result.ok) {
       setMessage({ type: "success", text: "Team registered for season!" });
     } else {
-      setMessage({ type: "error", text: error ?? "Registration failed" });
+      setMessage({ type: "error", text: result.error });
     }
     setBusyId(null);
   };
@@ -237,11 +240,11 @@ function SeasonRegistration({
   const handleWithdraw = async (seasonId: string) => {
     setBusyId(seasonId);
     setMessage(null);
-    const ok = await withdraw(seasonId);
-    if (ok) {
+    const result = await withdraw(seasonId);
+    if (result.ok) {
       setMessage({ type: "success", text: "Withdrawn from season." });
     } else {
-      setMessage({ type: "error", text: error ?? "Withdrawal failed" });
+      setMessage({ type: "error", text: result.error });
     }
     setBusyId(null);
   };
@@ -262,7 +265,7 @@ function SeasonRegistration({
 
   return (
     <div className="space-y-3">
-      <MessageBanner message={message} />
+      <MessageBanner message={banner} />
 
       {seasons.length === 0 ? (
         <Empty

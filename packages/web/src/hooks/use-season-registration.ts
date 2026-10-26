@@ -6,6 +6,7 @@ import type { SeasonStatus } from "@pew/core";
 import { throwApiError } from "@/lib/api-error";
 import { toErrorMessage } from "@/lib/error-message";
 import { fetcher } from "@/lib/fetcher";
+import { applySeasonOverrides } from "@/lib/season-registration";
 
 export interface AvailableSeason {
   id: string;
@@ -24,12 +25,22 @@ interface UseSeasonRegistrationOptions {
   teamId: string;
 }
 
+/**
+ * Result of a register/withdraw call. The error travels with the result
+ * because hook state read from the caller's closure right after `await` is
+ * always the previous render's value — the caller used to fall back to a
+ * generic "Registration failed" even when the server said why.
+ */
+export type SeasonMutationResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
 interface UseSeasonRegistrationResult {
   seasons: AvailableSeason[];
   loading: boolean;
   error: string | null;
-  register: (seasonId: string) => Promise<boolean>;
-  withdraw: (seasonId: string) => Promise<boolean>;
+  register: (seasonId: string) => Promise<SeasonMutationResult>;
+  withdraw: (seasonId: string) => Promise<SeasonMutationResult>;
   refetch: () => void;
 }
 
@@ -69,25 +80,18 @@ export function useSeasonRegistration(
     mutate: mutateTeam,
   } = useSWR<TeamResponse>(`/api/teams/${teamId}`, fetcher);
 
-  const [overrides, setOverrides] = useState<
-    Map<string, { is_registered: boolean; delta: number }>
-  >(new Map());
+  // Override = the result of the last successful action, per season. See
+  // lib/season-registration.ts for why a fixed ±1 delta drifted.
+  const [overrides, setOverrides] = useState<Map<string, boolean>>(new Map());
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   const seasons = useMemo<AvailableSeason[]>(() => {
     if (!seasonsData) return [];
     const registeredIds = new Set(teamData?.registered_season_ids ?? []);
-    return seasonsData.seasons
-      .filter((s) => s.status === "upcoming" || s.status === "active")
-      .map((s) => {
-        const override = overrides.get(s.id);
-        const baseRegistered = registeredIds.has(s.id);
-        return {
-          ...s,
-          is_registered: override ? override.is_registered : baseRegistered,
-          team_count: s.team_count + (override?.delta ?? 0),
-        };
-      });
+    const visible = seasonsData.seasons.filter(
+      (s) => s.status === "upcoming" || s.status === "active",
+    );
+    return applySeasonOverrides(visible, registeredIds, overrides);
   }, [seasonsData, teamData, overrides]);
 
   const refetch = useCallback(() => {
@@ -97,7 +101,8 @@ export function useSeasonRegistration(
   }, [mutateSeasons, mutateTeam]);
 
   const register = useCallback(
-    async (seasonId: string): Promise<boolean> => {
+    async (seasonId: string): Promise<SeasonMutationResult> => {
+      setMutationError(null);
       try {
         const res = await fetch(`/api/seasons/${seasonId}/register`, {
           method: "POST",
@@ -105,22 +110,20 @@ export function useSeasonRegistration(
           body: JSON.stringify({ team_id: teamId }),
         });
         if (!res.ok) await throwApiError(res);
-        setOverrides((prev) => {
-          const next = new Map(prev);
-          next.set(seasonId, { is_registered: true, delta: 1 });
-          return next;
-        });
-        return true;
+        setOverrides((prev) => new Map(prev).set(seasonId, true));
+        return { ok: true };
       } catch (err) {
-        setMutationError(toErrorMessage(err, "Registration failed"));
-        return false;
+        const message = toErrorMessage(err, "Registration failed");
+        setMutationError(message);
+        return { ok: false, error: message };
       }
     },
     [teamId],
   );
 
   const withdraw = useCallback(
-    async (seasonId: string): Promise<boolean> => {
+    async (seasonId: string): Promise<SeasonMutationResult> => {
+      setMutationError(null);
       try {
         const res = await fetch(`/api/seasons/${seasonId}/register`, {
           method: "DELETE",
@@ -128,15 +131,12 @@ export function useSeasonRegistration(
           body: JSON.stringify({ team_id: teamId }),
         });
         if (!res.ok) await throwApiError(res);
-        setOverrides((prev) => {
-          const next = new Map(prev);
-          next.set(seasonId, { is_registered: false, delta: -1 });
-          return next;
-        });
-        return true;
+        setOverrides((prev) => new Map(prev).set(seasonId, false));
+        return { ok: true };
       } catch (err) {
-        setMutationError(toErrorMessage(err, "Withdrawal failed"));
-        return false;
+        const message = toErrorMessage(err, "Withdrawal failed");
+        setMutationError(message);
+        return { ok: false, error: message };
       }
     },
     [teamId],
