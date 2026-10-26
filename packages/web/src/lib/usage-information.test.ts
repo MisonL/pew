@@ -57,4 +57,30 @@ describe("user-facing usage information", () => {
     expect(notes).not.toContain("Some cost details are unavailable.");
     expect(notes.join(" ")).not.toContain("hermes:none");
   });
+
+  it("treats a fallback pricing snapshot as incomplete even when every price resolves", () => {
+    // The completeness check keys off `map.meta.status`. The client hook's
+    // degraded map must therefore carry a fallback meta (see
+    // hooks/use-pricing.ts) or a degraded snapshot would read as definite.
+    const basis = { input_tokens: 100, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 100 };
+    const group: AccountingGroup = { basis, model: "test", origin: "fixture", provider: "openai", route: "direct",
+      service_tier: "default", context_tokens_min: 100, context_tokens_max: 100, request_count: 1,
+      quality: "reported", diagnostics: [],
+      counts: { input_total_tokens: 100, output_total_tokens: 0, cache_read_input_tokens: 0, cache_write_input_tokens: 100,
+        cache_write_5m_input_tokens: 100, cache_write_1h_input_tokens: 0, reasoning_output_tokens: 0 },
+      reported_costs: [] };
+    const record = { ...row, ...basis, accounting: [{ status: "matched" as const, basis, groups: [group] }] };
+    const pricing = buildPricingMap({ dynamic: [{ model: "openai/test", provider: "OpenAI", route: "direct",
+      displayName: null, origin: "models.dev", updatedAt: "2026-09-01", contextWindow: null,
+      inputPerMillion: 10000, outputPerMillion: 20000, cachedPerMillion: 1000, cacheWritePerMillion: 15000 }] });
+    const withMeta = (status: "dynamic" | "fallback") => ({
+      ...pricing,
+      meta: { status, snapshotId: "s", fetchedAt: null, effectiveAt: null as null },
+    });
+
+    expect(usageInformation([record], withMeta("dynamic"))).not.toContain("Some cost details are unavailable.");
+    const fallback = usageInformation([record], withMeta("fallback"));
+    expect(fallback).toContain("Some cost details are unavailable.");
+    expect(fallback).toContain("Net cache savings unavailable.");
+  });
 });
