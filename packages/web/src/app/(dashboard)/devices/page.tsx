@@ -127,9 +127,12 @@ function StatGrid({ devices }: { devices: DeviceAggregate[] }) {
   const recentDays = 7;
   const recentCutoff = new Date();
   recentCutoff.setDate(recentCutoff.getDate() - recentDays);
-  const recentCutoffStr = recentCutoff.toISOString();
+  const recentCutoffMs = recentCutoff.getTime();
+  // Epoch comparison, not string: last_seen comes from MAX(hour_start), and
+  // legacy rows may carry an offset or a different precision than the
+  // cutoff's toISOString() spelling, which sorts wrong as text.
   const recentlyActive = devices.filter(
-    (d) => d.last_seen >= recentCutoffStr
+    (d) => new Date(d.last_seen).getTime() >= recentCutoffMs
   ).length;
 
   return (

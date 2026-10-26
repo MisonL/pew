@@ -120,6 +120,17 @@ export async function GET(
   // The records are the multi-MB part and get re-fetched per tab by the
   // content view, so the header requests pass includeRecords=0.
   const includeRecords = url.searchParams.get("includeRecords") !== "0";
+  // Day buckets are local days, like every other usage surface: without the
+  // caller's offset the worker groups by date(hour_start) (UTC) and the
+  // client then renders those buckets on a local calendar, shifting usage
+  // near midnight onto the neighbouring day.
+  const rawTz = url.searchParams.get("tzOffset");
+  const parsedTz = rawTz === null ? 0 : Number(rawTz);
+  const tzOffset =
+    Number.isInteger(parsedTz) && Math.abs(parsedTz) <= 840 ? parsedTz : null;
+  if (tzOffset === null) {
+    return NextResponse.json({ error: "Invalid tzOffset value" }, { status: 400 });
+  }
 
   // Determine time range: from/to takes precedence over days
   let fromDate: Date;
@@ -184,6 +195,7 @@ export async function GET(
       {
         ...(sourceFilter && { source: sourceFilter }),
         granularity: "day",
+        tzOffset,
       },
     );
 

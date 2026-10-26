@@ -67,7 +67,7 @@ describe("GET /api/users/[slug]", () => {
     expect(body.records[0]).toMatchObject({ ...r.basis, accounting: [{ groups: [{ counts: { cache_write_input_tokens: 90 }, reported_costs: [] }] }] });
     expect(JSON.stringify(body)).not.toContain(amount.units);
     expect(record.accounting[0]?.groups[0]?.reported_costs).toEqual([amount]);
-    expect(mockDbRead.getUsageRecords).toHaveBeenCalledWith("u1", expect.any(String), expect.any(String), { granularity: "day" });
+    expect(mockDbRead.getUsageRecords).toHaveBeenCalledWith("u1", expect.any(String), expect.any(String), { granularity: "day", tzOffset: 0 });
   });
 
   describe("slug validation", () => {

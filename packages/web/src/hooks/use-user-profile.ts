@@ -71,6 +71,8 @@ export function useUserProfile(
   options: UseUserProfileOptions,
 ): UseUserProfileResult {
   const { slug, days = 30, from, to, source, includeRecords = true } = options;
+  // Frozen per mount — acceptable; page refresh handles DST changes.
+  const tzOffset = useTzOffset();
 
   const url = useMemo(() => {
     if (!slug) return null;
@@ -83,8 +85,12 @@ export function useUserProfile(
     }
     if (source) params.set("source", source);
     if (!includeRecords) params.set("includeRecords", "0");
+    // Day buckets must be the viewer's local days; without this the server
+    // groups by UTC date and the same usage lands on a different day here
+    // than on the dashboard.
+    params.set("tzOffset", String(tzOffset));
     return `/api/users/${slug}?${params.toString()}`;
-  }, [slug, days, from, to, source, includeRecords]);
+  }, [slug, days, from, to, source, includeRecords, tzOffset]);
 
   const { data: result, error, isLoading, mutate } = useSWR<ProfileResult>(
     url,
@@ -94,7 +100,6 @@ export function useUserProfile(
   const data = result?.kind === "ok" ? result.data : null;
   const notFound = result?.kind === "not_found";
 
-  const tzOffset = useTzOffset();
   const { daily, sources, models } = useDerivedUsageData(data?.records ?? null, tzOffset);
   const heatmap = useMemo(() => toHeatmapData(daily), [daily]);
 

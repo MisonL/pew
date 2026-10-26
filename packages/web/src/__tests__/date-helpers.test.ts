@@ -111,61 +111,47 @@ describe("periodToDateRange", () => {
     expect(result).toEqual({ from: "2020-01-01" });
   });
 
-  it("uses exact UTC bounds when a rolling range is requested", () => {
+  it("uses exact UTC bounds for every period, not bare local dates", () => {
+    // A bare "YYYY-MM-DD" would be read by the API as UTC midnight (and `to`
+    // widened a further day), shifting a local period by the viewer's offset.
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-15T12:00:00Z"));
-    for (const period of ["1m", "3m", "6m"] as const) {
-      const { from, to } = periodToUtcRange(period, "2026-09-15", -480);
-      expect(periodToDateRange(period, -480)).toEqual({ from, to });
+    for (const period of ["1m", "3m", "6m", "month", "week"] as const) {
+      for (const tzOffset of [-480, 0, 420]) {
+        const { from, to } = periodToUtcRange(period, getLocalToday(tzOffset), tzOffset);
+        expect(periodToDateRange(period, tzOffset)).toEqual({ from, to });
+      }
     }
   });
 
-  it('returns first day of current month for "month"', () => {
+  it('starts "month" at local midnight on the 1st', () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 2, 15)); // March 15, 2026
-    const result = periodToDateRange("month");
-    expect(result.from).toBe("2026-03-01");
-    expect(result.to).toBeUndefined();
+    vi.setSystemTime(new Date("2026-03-15T12:00:00Z"));
+    const result = periodToDateRange("month", 0);
+    expect(result.from).toBe("2026-03-01T00:00:00.000Z");
+    expect(result.to).toBe("2026-03-16T00:00:00.000Z");
   });
 
-  it('returns last Sunday for "week"', () => {
+  it('starts "month" at the local 1st, which is the previous UTC day east of UTC', () => {
     vi.useFakeTimers();
-    // Wednesday March 11, 2026 — previous Sunday = March 8
-    vi.setSystemTime(new Date(2026, 2, 11));
-    const result = periodToDateRange("week");
-    expect(result.from).toBe("2026-03-08");
-  });
-
-  it('returns same day if today is Sunday for "week"', () => {
-    vi.useFakeTimers();
-    // March 8, 2026 is a Sunday
-    vi.setSystemTime(new Date(2026, 2, 8));
-    const result = periodToDateRange("week");
-    expect(result.from).toBe("2026-03-08");
-  });
-
-  it("should not pad from for positive tzOffset (west of UTC)", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 2, 15)); // March 15, 2026
-    const result = periodToDateRange("month", 480); // UTC-8
-    expect(result.from).toBe("2026-03-01");
-  });
-
-  it("should pad from by one day for negative tzOffset (east of UTC)", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 2, 15)); // March 15, 2026
+    vi.setSystemTime(new Date("2026-03-15T12:00:00Z"));
     const result = periodToDateRange("month", -540); // UTC+9
-    // Local Mar 1 00:00 JST = Feb 28 15:00 UTC, so from must include Feb 28
-    expect(result.from).toBe("2026-02-28");
+    // Local Mar 1 00:00 JST = Feb 28 15:00 UTC
+    expect(result.from).toBe("2026-02-28T15:00:00.000Z");
   });
 
-  it("should pad week from by one day for negative tzOffset", () => {
+  it('starts "week" on the local Sunday', () => {
     vi.useFakeTimers();
-    // Wednesday March 11, 2026 — previous Sunday = March 8
-    vi.setSystemTime(new Date(2026, 2, 11));
-    const result = periodToDateRange("week", -540); // UTC+9
-    // Sunday is March 8, padded back to March 7
-    expect(result.from).toBe("2026-03-07");
+    vi.setSystemTime(new Date("2026-03-11T12:00:00Z")); // Wednesday
+    const result = periodToDateRange("week", 0);
+    expect(result.from).toBe("2026-03-08T00:00:00.000Z");
+  });
+
+  it('starts "week" on the same day when today is Sunday', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-08T12:00:00Z"));
+    const result = periodToDateRange("week", 0);
+    expect(result.from).toBe("2026-03-08T00:00:00.000Z");
   });
 
   it('should not pad "all" period regardless of tzOffset', () => {
@@ -239,28 +225,37 @@ describe("formatMemberSince", () => {
 // ---------------------------------------------------------------------------
 
 describe("getMonthRange", () => {
-  it("returns correct range for March 2026", () => {
+  // Bounds are local midnights expressed as UTC instants, so assert against
+  // the same local construction rather than hardcoded UTC strings — the test
+  // machine's timezone decides what those instants are.
+  it("spans exactly the local calendar month, end exclusive", () => {
     const result = getMonthRange(2026, 2); // month is 0-indexed
-    expect(result.from).toBe("2026-03-01");
-    expect(result.to).toBe("2026-03-31");
+    expect(result.from).toBe(new Date(2026, 2, 1).toISOString());
+    expect(result.to).toBe(new Date(2026, 3, 1).toISOString());
   });
 
   it("handles February in a non-leap year", () => {
     const result = getMonthRange(2025, 1);
-    expect(result.from).toBe("2025-02-01");
-    expect(result.to).toBe("2025-02-28");
+    expect(result.from).toBe(new Date(2025, 1, 1).toISOString());
+    expect(result.to).toBe(new Date(2025, 2, 1).toISOString());
   });
 
   it("handles February in a leap year", () => {
     const result = getMonthRange(2024, 1);
-    expect(result.from).toBe("2024-02-01");
-    expect(result.to).toBe("2024-02-29");
+    expect(result.from).toBe(new Date(2024, 1, 1).toISOString());
+    expect(result.to).toBe(new Date(2024, 2, 1).toISOString());
   });
 
   it("handles December (month wrapping)", () => {
     const result = getMonthRange(2026, 11);
-    expect(result.from).toBe("2026-12-01");
-    expect(result.to).toBe("2026-12-31");
+    expect(result.from).toBe(new Date(2026, 11, 1).toISOString());
+    expect(result.to).toBe(new Date(2027, 0, 1).toISOString());
+  });
+
+  it("returns full instants, not bare dates, so the API cannot shift the window", () => {
+    const result = getMonthRange(2026, 2);
+    expect(result.from).toMatch(/T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(result.to).toMatch(/T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
   });
 });
 

@@ -223,7 +223,10 @@ export function ProfileContent({
           <Calendar className="h-3.5 w-3.5" />
           <span>
             {new Date(season.start).toLocaleDateString()} –{" "}
-            {new Date(season.end).toLocaleDateString()}
+            {/* season.end is the exclusive bound (end_date + 1 min); render the
+                inclusive end_date, or a season ending at 23:59 shows the next
+                day. */}
+            {new Date(new Date(season.end).getTime() - 60_000).toLocaleDateString()}
           </span>
         </div>
       )}

@@ -44,14 +44,6 @@ export function getLocalToday(tzOffset = 0): string {
   return new Date(localMs).toISOString().slice(0, 10);
 }
 
-/** Format a local Date as "YYYY-MM-DD" without UTC conversion. */
-function toLocalDateString(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -59,43 +51,21 @@ function toLocalDateString(d: Date): string {
 /**
  * Compute from/to date strings for a given period.
  *
- * When `tzOffset` is provided the `from` boundary is padded by one day
- * towards UTC so that the server-side query (which compares against UTC
- * `hour_start`) never misses records that fall within the local period.
- * East-of-UTC timezones (negative tzOffset) would otherwise lose up to
- * 14 hours of data at the period start because local midnight maps to
- * the previous UTC day.  Padding by one day is safe because the
- * front-end aggregation helpers already convert each record to a local
- * date before bucketing.
+ * Every period resolves to exact UTC instants via `periodToUtcRange`, not to a
+ * bare local date. A bare "YYYY-MM-DD" is read by the API as UTC midnight and
+ * (for `to`) widened a further day, so aligning a local calendar period to UTC
+ * days pulled up to a day of neighbouring-period usage into the window; the
+ * pages bucket records by local date and then render every bucket they
+ * received, so that over-fetch appeared as a stray partial day at the head of
+ * the chart.
  */
 export function periodToDateRange(
   period: Period,
   tzOffset = 0,
 ): { from: string; to?: string } {
-  const now = new Date();
-
-  switch (period) {
-    case "6m":
-    case "3m":
-    case "1m": {
-      const { from, to } = periodToUtcRange(period, getLocalToday(tzOffset), tzOffset);
-      return { from, to };
-    }
-    case "all":
-      return { from: "2020-01-01" };
-    case "month": {
-      const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      if (tzOffset < 0) firstOfMonth.setDate(firstOfMonth.getDate() - 1);
-      return { from: toLocalDateString(firstOfMonth) };
-    }
-    case "week": {
-      const day = now.getDay();
-      const sunday = new Date(now);
-      sunday.setDate(now.getDate() - day);
-      if (tzOffset < 0) sunday.setDate(sunday.getDate() - 1);
-      return { from: toLocalDateString(sunday) };
-    }
-  }
+  if (period === "all") return { from: "2020-01-01" };
+  const { from, to } = periodToUtcRange(period, getLocalToday(tzOffset), tzOffset);
+  return { from, to };
 }
 
 /** Exact UTC query bounds for a local calendar period. `to` is exclusive. */
@@ -157,14 +127,22 @@ export function formatMemberSince(dateStr: string): string {
   return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 
-/** Get the from/to date strings for a calendar month. */
-export function getMonthRange(year: number, month: number): { from: string; to: string } {
-  const from = new Date(year, month, 1);
-  // Last day of the month
-  const to = new Date(year, month + 1, 0);
+/**
+ * Exact UTC query bounds for a local calendar month. `to` is exclusive.
+ *
+ * Returns instants, not bare "YYYY-MM-DD": the usage API reads a bare `from`
+ * as UTC midnight and widens a bare `to` by a further day, so a local month
+ * sent as bare dates was shifted by the viewer's offset at both ends — the
+ * first hours of the 1st were missing and the last hours of the following
+ * month's 1st leaked in as a stray row.
+ */
+export function getMonthRange(
+  year: number,
+  month: number,
+): { from: string; to: string } {
   return {
-    from: toLocalDateString(from),
-    to: toLocalDateString(to),
+    from: new Date(year, month, 1).toISOString(),
+    to: new Date(year, month + 1, 1).toISOString(),
   };
 }
 

@@ -368,10 +368,13 @@ export default function RecentPage() {
   });
 
   // Fetch device timeline with half-hour granularity for the main chart.
-  // Only timeline totals and device labels are read here.
+  // Only timeline totals and device labels are read here. Pass the exact
+  // instants, not their dates: a bare "YYYY-MM-DD" `to` is inclusive and gets
+  // bumped a day by the route, which widened this chart to ~85 h of bars while
+  // In/Out, By Agent and By Model above render exactly 72.
   const { data: recentDeviceData, loading: deviceLoading } = useDeviceData({
-    from: recentFrom.slice(0, 10), // API expects date string
-    to: recentTo.slice(0, 10),
+    from: recentFrom,
+    to: recentTo,
     granularity: "half-hour",
     includeDetails: false,
     includeAccounting: false,
