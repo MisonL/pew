@@ -112,6 +112,10 @@ async function handleGetRecentActivity(
   db: D1Database
 ): Promise<Response> {
   const limit = Math.min(req.limit ?? 50, 250);
+  // julianday() rather than a string compare: pre-canonicalization rows may
+  // carry offsets or extra precision, which sort wrong as text. This predicate
+  // is not sargable (full scan), but the handler has no caller and the table
+  // is small; correctness on legacy rows wins.
   const conditions = ["julianday(ur.hour_start) >= julianday('now', '-1 hour')"];
   const params: unknown[] = [];
 
