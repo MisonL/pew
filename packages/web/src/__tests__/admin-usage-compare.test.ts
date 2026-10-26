@@ -85,6 +85,17 @@ describe("GET /api/admin/usage/compare", () => {
     expect((await res.json()).error).toMatch(/date/i);
   });
 
+  it("returns 400 for a calendar day that does not exist", async () => {
+    // Date.parse rolls "2026-02-30" to March 2, so Number.isNaN alone let the
+    // window shift silently. Same guard the usage routes and the public
+    // profile use; keeping one validator keeps the answer consistent.
+    const res = await GET(
+      makeGetRequest(BASE_PATH, { userIds: "u1,u2", from: "2026-02-30" }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/date/i);
+  });
+
   it("returns 400 for invalid tzOffset", async () => {
     const res = await GET(
       makeGetRequest(BASE_PATH, { userIds: "u1,u2", tzOffset: "9999" }),

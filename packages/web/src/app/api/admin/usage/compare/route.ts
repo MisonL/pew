@@ -13,6 +13,7 @@
 import { NextResponse } from "next/server";
 import { sumCounts } from "@pew/core";
 import { resolveAdmin } from "@/lib/admin";
+import { isDateParam } from "@/lib/date-params";
 import { getDbRead } from "@/lib/db";
 
 const MAX_USERS = 10;
@@ -91,6 +92,16 @@ export async function GET(request: Request) {
 
   const fromParam = url.searchParams.get("from");
   const toParam = url.searchParams.get("to");
+
+  // Shared validator: anchored, and it rejects calendar days that do not
+  // exist. `new Date("2026-02-30")` rolls to March 2 instead of failing, so
+  // the Number.isNaN check alone accepted a date the caller never asked for.
+  if ((fromParam && !isDateParam(fromParam)) || (toParam && !isDateParam(toParam))) {
+    return NextResponse.json(
+      { error: "Invalid date format" },
+      { status: 400 }
+    );
+  }
 
   const fromDate = fromParam ? new Date(fromParam) : defaultFrom;
   const toDate = toParam ? new Date(toParam) : now;
