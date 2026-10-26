@@ -109,7 +109,8 @@ async function handleListSessions(
     return Response.json({ error: "userId is required" }, { status: 400 });
   }
 
-  const limit = Math.min(req.limit ?? 50, 250);
+  // Lower-clamp as well as upper: SQLite reads a negative LIMIT as "no limit".
+  const limit = Math.min(Math.max(req.limit ?? 50, 0), 250);
   const offset = req.offset ?? 0;
 
   const conditions = ["user_id = ?"];
@@ -130,11 +131,13 @@ async function handleListSessions(
     params.push(req.toDate);
   }
 
+  // started_at is second-precision and not unique; the id tiebreaker keeps
+  // OFFSET pagination from repeating or skipping rows across pages.
   const sql = `SELECT id, user_id, source, session_key, started_at, last_message_at,
                       duration_seconds, total_messages, kind
                FROM session_records
                WHERE ${conditions.join(" AND ")}
-               ORDER BY started_at DESC
+               ORDER BY started_at DESC, id DESC
                LIMIT ? OFFSET ?`;
 
   params.push(limit, offset);

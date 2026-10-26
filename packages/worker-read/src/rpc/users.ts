@@ -245,7 +245,8 @@ async function handleSearchUsers(
     return Response.json({ error: "Missing query" }, { status: 400 });
   }
 
-  const limit = Math.min(req.limit ?? 20, 100);
+  // Lower-clamp as well as upper: SQLite reads a negative LIMIT as "no limit".
+  const limit = Math.min(Math.max(req.limit ?? 20, 0), 100);
   const pattern = `%${req.query}%`;
 
   const { results } = await db

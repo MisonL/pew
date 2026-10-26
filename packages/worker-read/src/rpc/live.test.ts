@@ -81,9 +81,10 @@ describe("live RPC handlers", () => {
 
   describe("live.getRecentActivity", () => {
     it("should return recent activity", async () => {
+      // usage_totals is a view without an `id` column — rows are buckets,
+      // not events, so there is no per-row identity to return.
       const mockActivity = [
         {
-          id: "ur1",
           user_id: "u1",
           name: "alice",
           source: "claude-code",
@@ -103,6 +104,17 @@ describe("live RPC handlers", () => {
 
       expect(response.status).toBe(200);
       expect(body).toEqual({ result: mockActivity });
+    });
+
+    it("does not select columns the usage_totals view lacks", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      await handleLiveRpc({ method: "live.getRecentActivity" }, db);
+
+      const sql = db.prepare.mock.calls[0]![0] as string;
+      // Selecting ur.id made every call fail at prepare time ("no such
+      // column") with a 500.
+      expect(sql).not.toMatch(/\bur\.id\b/);
+      expect(sql).toContain("FROM usage_totals ur");
     });
 
     it("should filter by userId", async () => {
@@ -140,6 +152,15 @@ describe("live RPC handlers", () => {
 
       expect(db.prepare).toHaveBeenCalled();
     });
+
+    it("clamps a negative limit instead of returning everything", async () => {
+      // SQLite reads LIMIT -1 as "no limit": without a lower clamp a caller
+      // asking for -1 got the whole table.
+      db.all.mockResolvedValue({ results: [] });
+      await handleLiveRpc({ method: "live.getRecentActivity", limit: -1 }, db);
+
+      expect(db.bind).toHaveBeenCalledWith(0);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -164,6 +185,17 @@ describe("live RPC handlers", () => {
 
       expect(response.status).toBe(200);
       expect(body).toEqual({ result: mockStats });
+    });
+
+    it("sums the full token total, including cached and reasoning tokens", async () => {
+      // total_tokens = input + cached_input + output + reasoning everywhere
+      // else; input + output silently dropped two of the four components.
+      db.first.mockResolvedValue({});
+      await handleLiveRpc({ method: "live.getStats" }, db);
+
+      const sql = db.prepare.mock.calls[0]![0] as string;
+      expect(sql).toContain("SUM(total_tokens)");
+      expect(sql).not.toContain("input_tokens + output_tokens");
     });
   });
 

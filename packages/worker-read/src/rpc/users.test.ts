@@ -571,6 +571,20 @@ describe("Users RPC handlers", () => {
       expect(db.bind).toHaveBeenCalledWith("%test%", "%test%", 100);
     });
 
+    it("clamps a negative limit instead of returning everything", async () => {
+      // SQLite reads LIMIT -1 as "no limit".
+      db.bind.mockReturnValue({ all: vi.fn().mockResolvedValue({ results: [] }) });
+
+      const request: SearchUsersRequest = {
+        method: "users.search",
+        query: "test",
+        limit: -1,
+      };
+      await handleUsersRpc(request, db);
+
+      expect(db.bind).toHaveBeenCalledWith("%test%", "%test%", 0);
+    });
+
     it("should return 400 when query is missing", async () => {
       const request = { method: "users.search", query: "" } as SearchUsersRequest;
       const response = await handleUsersRpc(request, db);

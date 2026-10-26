@@ -106,6 +106,18 @@ describe("admin RPC handlers", () => {
       expect(response.status).toBe(200);
       expect(body).toEqual({ result: mockStats });
     });
+
+    it("sums the full token total, including cached and reasoning tokens", async () => {
+      // The schema's total_tokens is input + cached_input + output +
+      // reasoning; every other aggregate sums that column directly, so
+      // input + output here made the admin figure disagree with the rest.
+      db.first.mockResolvedValue({});
+      await handleAdminRpc({ method: "admin.getSystemStats" }, db);
+
+      const sql = db.prepare.mock.calls[0]![0] as string;
+      expect(sql).toContain("SUM(total_tokens)");
+      expect(sql).not.toContain("input_tokens + output_tokens");
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -132,6 +144,24 @@ describe("admin RPC handlers", () => {
 
       expect(response.status).toBe(200);
       expect(body).toEqual({ result: mockUsers });
+    });
+
+    it("paginates on a stable key so pages cannot repeat or skip rows", async () => {
+      // created_at has second precision and is not unique; without the id
+      // tiebreaker the order of tied rows is unspecified across OFFSET pages.
+      db.all.mockResolvedValue({ results: [] });
+      await handleAdminRpc({ method: "admin.listUsers" }, db);
+
+      const sql = db.prepare.mock.calls[0]![0] as string;
+      expect(sql).toContain("ORDER BY created_at DESC, id DESC");
+    });
+
+    it("clamps a negative limit instead of returning everything", async () => {
+      // SQLite reads LIMIT -1 as "no limit".
+      db.all.mockResolvedValue({ results: [] });
+      await handleAdminRpc({ method: "admin.listUsers", limit: -5 }, db);
+
+      expect(db.bind.mock.calls[0]![0]).toBe(0);
     });
 
     it("should filter by query", async () => {

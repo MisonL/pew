@@ -117,6 +117,25 @@ describe("sessions RPC handlers", () => {
       expect(db.prepare).toHaveBeenCalled();
     });
 
+    it("paginates on a stable key so pages cannot repeat or skip rows", async () => {
+      // started_at has second precision and is not unique; without the id
+      // tiebreaker the order of tied rows is unspecified across OFFSET pages.
+      db.all.mockResolvedValue({ results: [] });
+      await handleSessionsRpc({ method: "sessions.list", userId: "u1" }, db);
+
+      const sql = db.prepare.mock.calls[0]![0] as string;
+      expect(sql).toContain("ORDER BY started_at DESC, id DESC");
+    });
+
+    it("clamps a negative limit instead of returning everything", async () => {
+      // SQLite reads LIMIT -1 as "no limit".
+      db.all.mockResolvedValue({ results: [] });
+      await handleSessionsRpc({ method: "sessions.list", userId: "u1", limit: -1 }, db);
+
+      // userId, limit, offset
+      expect(db.bind.mock.calls[0]![1]).toBe(0);
+    });
+
     it("should return 400 when userId missing", async () => {
       const request = {
         method: "sessions.list",

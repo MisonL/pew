@@ -222,6 +222,24 @@ describe("auth RPC handlers", () => {
 
       expect(db.prepare).toHaveBeenCalled();
     });
+
+    it("paginates on a stable key so pages cannot repeat or skip rows", async () => {
+      // created_at has second precision and is not unique; without the id
+      // tiebreaker the order of tied rows is unspecified across OFFSET pages.
+      db.all.mockResolvedValue({ results: [] });
+      await handleAuthRpc({ method: "auth.listInviteCodes" }, db);
+
+      const sql = db.prepare.mock.calls[0]![0] as string;
+      expect(sql).toContain("ORDER BY ic.created_at DESC, ic.id DESC");
+    });
+
+    it("clamps a negative limit instead of returning everything", async () => {
+      // SQLite reads LIMIT -1 as "no limit".
+      db.all.mockResolvedValue({ results: [] });
+      await handleAuthRpc({ method: "auth.listInviteCodes", limit: -1 }, db);
+
+      expect(db.bind.mock.calls[0]![0]).toBe(0);
+    });
   });
 
   // -------------------------------------------------------------------------

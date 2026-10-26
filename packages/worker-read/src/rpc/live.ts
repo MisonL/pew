@@ -21,7 +21,6 @@ interface ActiveSessionRow {
 }
 
 interface RecentActivityRow {
-  id: string;
   user_id: string;
   name: string | null;
   source: string;
@@ -82,7 +81,9 @@ async function handleGetActiveSessions(
   req: GetActiveSessionsRequest,
   db: D1Database
 ): Promise<Response> {
-  const limit = Math.min(req.limit ?? 50, 250);
+  // Lower-clamp as well as upper: SQLite reads a negative LIMIT (-1, any
+  // negative) as "no limit", so an unclamped limit silently dropped the cap.
+  const limit = Math.min(Math.max(req.limit ?? 50, 0), 250);
 
   // session_records has last_message_at instead of ended_at
   // "Active" sessions are those with recent activity (within 30 min)
@@ -111,7 +112,7 @@ async function handleGetRecentActivity(
   req: GetRecentActivityRequest,
   db: D1Database
 ): Promise<Response> {
-  const limit = Math.min(req.limit ?? 50, 250);
+  const limit = Math.min(Math.max(req.limit ?? 50, 0), 250);
   // julianday() rather than a string compare: pre-canonicalization rows may
   // carry offsets or extra precision, which sort wrong as text. This predicate
   // is not sargable (full scan), but the handler has no caller and the table
@@ -129,9 +130,11 @@ async function handleGetRecentActivity(
     params.push(req.source);
   }
 
+  // usage_totals is a view of (user, device, source, model, hour) buckets —
+  // there is no per-row id to select. Selecting ur.id made every call fail
+  // at prepare time with "no such column".
   const sql = `
     SELECT
-      ur.id,
       ur.user_id,
       u.name,
       ur.source,
@@ -154,11 +157,15 @@ async function handleGetRecentActivity(
 }
 
 async function handleGetLiveStats(db: D1Database): Promise<Response> {
-  // session_records uses last_message_at instead of ended_at
+  // session_records uses last_message_at instead of ended_at.
+  // tokens_last_hour sums total_tokens (input + cached + output + reasoning),
+  // the same definition every other aggregate uses. requests_last_hour counts
+  // usage buckets, not individual requests: usage_totals collapses events, so
+  // the value is a lower bound on requests, not an exact count.
   const sql = `
     SELECT
       (SELECT COUNT(*) FROM session_records WHERE julianday(last_message_at) >= julianday('now', '-30 minutes')) AS active_sessions,
-      (SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM usage_totals WHERE julianday(hour_start) >= julianday('now', '-1 hour')) AS tokens_last_hour,
+      (SELECT COALESCE(SUM(total_tokens), 0) FROM usage_totals WHERE julianday(hour_start) >= julianday('now', '-1 hour')) AS tokens_last_hour,
       (SELECT COUNT(*) FROM usage_totals WHERE julianday(hour_start) >= julianday('now', '-1 hour')) AS requests_last_hour,
       (SELECT COUNT(DISTINCT user_id) FROM usage_totals WHERE julianday(hour_start) >= julianday('now', '-1 hour')) AS unique_users_last_hour
   `;
@@ -176,11 +183,13 @@ async function handleGetUserLiveStats(
     return Response.json({ error: "userId is required" }, { status: 400 });
   }
 
-  // session_records uses last_message_at instead of ended_at
+  // session_records uses last_message_at instead of ended_at.
+  // tokens_last_hour sums total_tokens for the same definition as everywhere
+  // else; requests_last_hour counts usage buckets (a lower bound).
   const sql = `
     SELECT
       (SELECT COUNT(*) FROM session_records WHERE user_id = ? AND julianday(last_message_at) >= julianday('now', '-30 minutes')) AS active_sessions,
-      (SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM usage_totals WHERE user_id = ? AND julianday(hour_start) >= julianday('now', '-1 hour')) AS tokens_last_hour,
+      (SELECT COALESCE(SUM(total_tokens), 0) FROM usage_totals WHERE user_id = ? AND julianday(hour_start) >= julianday('now', '-1 hour')) AS tokens_last_hour,
       (SELECT COUNT(*) FROM usage_totals WHERE user_id = ? AND julianday(hour_start) >= julianday('now', '-1 hour')) AS requests_last_hour
   `;
 

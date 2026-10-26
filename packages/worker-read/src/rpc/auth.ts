@@ -149,7 +149,8 @@ async function handleListInviteCodes(
   req: ListInviteCodesRequest,
   db: D1Database
 ): Promise<Response> {
-  const limit = Math.min(req.limit ?? 50, 250);
+  // Lower-clamp as well as upper: SQLite reads a negative LIMIT as "no limit".
+  const limit = Math.min(Math.max(req.limit ?? 50, 0), 250);
   const offset = req.offset ?? 0;
 
   // Join with users table to get creator and consumer emails
@@ -173,7 +174,9 @@ async function handleListInviteCodes(
     sql += ` WHERE ic.used_by IS NULL`;
   }
 
-  sql += ` ORDER BY ic.created_at DESC LIMIT ? OFFSET ?`;
+  // created_at is second-precision and not unique; the id tiebreaker keeps
+  // OFFSET pagination from repeating or skipping rows across pages.
+  sql += ` ORDER BY ic.created_at DESC, ic.id DESC LIMIT ? OFFSET ?`;
   params.push(limit, offset);
 
   const results = await db.prepare(sql).bind(...params).all<InviteCodeRow>();

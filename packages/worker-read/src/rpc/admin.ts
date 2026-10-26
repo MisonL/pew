@@ -144,11 +144,14 @@ async function handleGetAuditLog(
 }
 
 async function handleGetSystemStats(db: D1Database): Promise<Response> {
+  // total_tokens = input + cached_input + output + reasoning (schema CHECK);
+  // summing input + output alone under-reported every user with cached or
+  // reasoning tokens, disagreeing with every other aggregate.
   const sql = `
     SELECT
       (SELECT COUNT(*) FROM users) AS total_users,
       (SELECT COUNT(*) FROM session_records) AS total_sessions,
-      (SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM usage_totals) AS total_tokens,
+      (SELECT COALESCE(SUM(total_tokens), 0) FROM usage_totals) AS total_tokens,
       (SELECT COUNT(DISTINCT user_id) FROM session_records WHERE julianday(started_at) >= julianday('now', '-1 day')) AS active_users_24h
   `;
 
@@ -161,7 +164,8 @@ async function handleListAdminUsers(
   req: ListAdminUsersRequest,
   db: D1Database
 ): Promise<Response> {
-  const limit = Math.min(req.limit ?? 50, 250);
+  // Lower-clamp as well as upper: SQLite reads a negative LIMIT as "no limit".
+  const limit = Math.min(Math.max(req.limit ?? 50, 0), 250);
   const offset = req.offset ?? 0;
 
   const conditions: string[] = [];
@@ -180,7 +184,9 @@ async function handleListAdminUsers(
     sql += ` WHERE ${conditions.join(" AND ")}`;
   }
 
-  sql += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+  // created_at is second-precision and not unique; the id tiebreaker keeps
+  // OFFSET pagination from repeating or skipping rows across pages.
+  sql += ` ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`;
   params.push(limit, offset);
 
   const results = await db.prepare(sql).bind(...params).all<AdminUserRow>();
