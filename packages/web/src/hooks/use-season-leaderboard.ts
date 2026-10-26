@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import type { SeasonStatus } from "@pew/core";
 import { fetcher } from "@/lib/fetcher";
+import { mergeSeasonMembers } from "@/lib/season-leaderboard";
 
 export interface SeasonTeamEntry {
   rank: number;
@@ -67,26 +68,32 @@ export function useSeasonLeaderboard(
   const { data, error, isLoading, isValidating, mutate } =
     useSWR<SeasonLeaderboardData>(key, fetcher);
 
-  const fetchedTeamsRef = useRef<Set<string>>(new Set());
+  // Lazily fetched member lists live here, NOT in the SWR payload: the main
+  // key revalidates on window focus and its response never contains members
+  // (the API only adds them under expand=members), so storing them in `data`
+  // meant a focus revalidation wiped every expanded team and the old
+  // fetched-teams ref then refused to load them again until a page reload.
+  const [membersByTeam, setMembersByTeam] = useState<Map<string, SeasonMember[]>>(
+    new Map(),
+  );
   const loadingTeamIdsRef = useRef<Set<string>>(new Set());
   const [loadingTeamIds, setLoadingTeamIds] = useState<Set<string>>(new Set());
 
-  // Reset lazy-member tracking when season changes.
-  // Without this, team IDs fetched in season A would be skipped in season B.
-  const [prevSeasonKey, setPrevSeasonKey] = useState(seasonIdOrSlug);
-  if (prevSeasonKey !== seasonIdOrSlug) {
-    setPrevSeasonKey(seasonIdOrSlug);
-    setLoadingTeamIds(new Set());
-  }
+  // Reset the lazy-member cache when the season changes: team IDs fetched in
+  // season A must not satisfy season B (and must not pin A's member data).
   useEffect(() => {
-    fetchedTeamsRef.current = new Set();
+    setMembersByTeam(new Map());
     loadingTeamIdsRef.current = new Set();
-  }, []);
+    setLoadingTeamIds(new Set());
+    // The season key is the reset trigger; it is intentionally not read in
+    // the body, so reference it to keep the dependency honest.
+    void seasonIdOrSlug;
+  }, [seasonIdOrSlug]);
 
   const loadTeamMembers = useCallback(
     async (teamId: string) => {
-      if (!seasonIdOrSlug || !data) return;
-      if (fetchedTeamsRef.current.has(teamId) || loadingTeamIdsRef.current.has(teamId)) {
+      if (!seasonIdOrSlug) return;
+      if (membersByTeam.has(teamId) || loadingTeamIdsRef.current.has(teamId)) {
         return;
       }
 
@@ -107,19 +114,7 @@ export function useSeasonLeaderboard(
 
         if (teamWithMembers?.members) {
           const members = teamWithMembers.members;
-          fetchedTeamsRef.current.add(teamId);
-          await mutate(
-            (prev) => {
-              if (!prev) return prev;
-              return {
-                ...prev,
-                entries: prev.entries.map((entry): SeasonTeamEntry =>
-                  entry.team.id === teamId ? { ...entry, members } : entry,
-                ),
-              };
-            },
-            { revalidate: false },
-          );
+          setMembersByTeam((prev) => new Map(prev).set(teamId, members));
         }
       } catch {
         // Silently fail — user can retry by collapsing/expanding again
@@ -132,16 +127,26 @@ export function useSeasonLeaderboard(
         });
       }
     },
-    [seasonIdOrSlug, data, mutate],
+    [seasonIdOrSlug, membersByTeam],
   );
 
+  // Merge the lazily fetched members into every response — including the
+  // member-less ones a focus revalidation produces.
+  const mergedData = useMemo(() => {
+    if (!data) return null;
+    return {
+      ...data,
+      entries: mergeSeasonMembers(data.entries, membersByTeam),
+    };
+  }, [data, membersByTeam]);
+
   return {
-    data: data ?? null,
+    data: mergedData,
     loading: isLoading,
     refreshing: isValidating && !isLoading,
     error: error ? (error instanceof Error ? error.message : String(error)) : null,
     refetch: () => {
-      fetchedTeamsRef.current = new Set();
+      setMembersByTeam(new Map());
       void mutate();
     },
     loadTeamMembers,

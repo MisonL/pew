@@ -362,8 +362,8 @@ describe("leaderboard client pagination", () => {
 describe("disabled leaderboard state", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("clears visible pagination and loading state while invalidating the pending request", () => {
-    const initial = [[{ user: { id: "old-user" } }], 40, true, true, "old error", true, 20];
+  it("clears visible pagination while staying in the loading state and invalidating the pending request", () => {
+    const initial = [[{ user: { id: "old-user" } }], 40, false, true, "old error", true, 20];
     const setters = initial.map(() => vi.fn());
     const state = vi.spyOn(React, "useState");
     initial.forEach((value, index) => { state.mockReturnValueOnce([value, setters[index]!]); });
@@ -382,7 +382,10 @@ describe("disabled leaderboard state", () => {
     useLeaderboard({ enabled: false, teamId: "old-team" });
     effect.mock.calls[0]![0]();
 
-    [[], 0, false, false, null, false, 0].forEach((value, index) => {
+    // Disabled means "cannot query yet" (session/scope resolving), so the
+    // loading state must stay set — otherwise the page renders its
+    // "No usage data" empty state while it is merely waiting.
+    [[], 0, true, false, null, false, 0].forEach((value, index) => {
       expect(setters[index]).toHaveBeenCalledWith(value);
     });
     expect(controller.signal.aborted).toBe(true);

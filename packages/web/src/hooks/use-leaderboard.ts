@@ -232,7 +232,12 @@ export function useLeaderboard(
       ++requestIdRef.current;
       setEntries([]);
       setOffset(0);
-      setLoading(false);
+      // Stay in the loading state: "disabled" means the caller cannot query
+      // yet (session or org/team scope still resolving), not "loaded and
+      // empty". Reporting not-loading here made the page flash its
+      // "No usage data for this period yet." empty state on every cold load
+      // until the scope settled.
+      setLoading(true);
       setLoadingMore(false);
       setHasMore(false);
       setError(null);
