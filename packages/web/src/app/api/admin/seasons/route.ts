@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import { resolveAdmin } from "@/lib/admin";
 import { getDbRead, getDbWrite } from "@/lib/db";
+import { hasRealCalendarDay } from "@/lib/date-params";
 import { deriveSeasonStatus } from "@/lib/seasons";
 import { autoRegisterTeamsForSeason } from "@/lib/auto-register";
 
@@ -20,6 +21,11 @@ const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?Z$/;
 
 function isValidDatetime(s: string): boolean {
   if (!DATETIME_RE.test(s)) return false;
+  // The format check alone accepts "2026-02-30T00:00:00Z": Date.parse rolls it
+  // to March 2 (which is what every JS read then assumes) while SQLite's
+  // datetime() keeps it literal, so the two sides would disagree about when
+  // this season starts.
+  if (!hasRealCalendarDay(s)) return false;
   const d = new Date(s);
   return !Number.isNaN(d.getTime());
 }

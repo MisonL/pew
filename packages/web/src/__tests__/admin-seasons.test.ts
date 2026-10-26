@@ -251,6 +251,39 @@ describe("POST /api/admin/seasons", () => {
     expect(json.error).toContain("start_date must be ISO 8601 UTC format");
   });
 
+  it("should reject a start_date on a calendar day that does not exist", async () => {
+    // Date.parse rolls "2099-02-30" to March 2 and SQLite's datetime() keeps
+    // it literal, so storing it would make the JS status derivation and the
+    // roster-sync SQL disagree about when the season starts.
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+
+    const res = await POST(
+      makeJsonRequest("POST", "/api/admin/seasons", {
+        name: "Bad Day",
+        slug: "bad-day",
+        start_date: "2099-02-30T00:00:00Z",
+        end_date: "2099-04-30T23:59:00Z",
+      })
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("start_date must be ISO 8601 UTC format");
+  });
+
+  it("should reject an end_date on a calendar day that does not exist", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+
+    const res = await POST(
+      makeJsonRequest("POST", "/api/admin/seasons", {
+        name: "Bad End",
+        slug: "bad-end",
+        start_date: "2099-04-01T00:00:00Z",
+        end_date: "2099-04-31T23:59:00Z",
+      })
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("end_date must be ISO 8601 UTC format");
+  });
+
   it("should reject non-admin users", async () => {
     resolveAdmin.mockResolvedValueOnce(null);
     const res = await POST(
@@ -410,6 +443,25 @@ describe("PATCH /api/admin/seasons/[seasonId]", () => {
     const json = await res.json();
     expect(json.name).toBe("New Name");
     expect(json.status).toBe("active");
+  });
+
+  it("should reject a date change to a calendar day that does not exist", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+
+    mockDbRead.getSeasonById.mockResolvedValueOnce({
+      id: "season-1",
+      name: "Future Season",
+      slug: "s-future",
+      start_date: "2099-06-01T00:00:00Z",
+      end_date: "2099-06-30T23:59:00Z",
+    });
+
+    const res = await PATCH(
+      makeJsonRequest("PATCH", "/api/admin/seasons", { start_date: "2099-02-30T00:00:00Z" }),
+      { params: patchParams }
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("start_date must be ISO 8601 UTC format");
   });
 
   it("should allow date change on upcoming season", async () => {

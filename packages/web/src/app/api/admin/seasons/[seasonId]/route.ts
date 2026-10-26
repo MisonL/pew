@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import { resolveAdmin } from "@/lib/admin";
 import { getDbRead, getDbWrite } from "@/lib/db";
+import { hasRealCalendarDay } from "@/lib/date-params";
 import { deriveSeasonStatus } from "@/lib/seasons";
 import { syncAllRostersForSeason } from "@/lib/season-roster";
 
@@ -19,6 +20,10 @@ const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?Z$/;
 
 function isValidDatetime(s: string): boolean {
   if (!DATETIME_RE.test(s)) return false;
+  // Same guard as the create route: a non-existent calendar day must be
+  // rejected here too, or the stored value would mean March 2 to every JS
+  // read and February 30 to SQLite's datetime().
+  if (!hasRealCalendarDay(s)) return false;
   const d = new Date(s);
   return !Number.isNaN(d.getTime());
 }

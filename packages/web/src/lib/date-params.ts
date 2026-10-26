@@ -27,9 +27,21 @@ function daysInMonth(year: number, month: number): number {
 export function isDateParam(value: string): boolean {
   const match = DATE_PARAM_RE.exec(value);
   if (!match) return false;
-  const [, year, month, day] = match as RegExpExecArray;
-  if (Number(day) > daysInMonth(Number(year), Number(month))) return false;
+  if (!hasRealCalendarDay(value)) return false;
   return Number.isFinite(Date.parse(value));
+}
+
+/**
+ * True when the leading "YYYY-MM-DD" of `value` names a calendar day that
+ * exists. `Date.parse` rolls "2026-02-30" to March 2 instead of failing, and
+ * SQLite's `datetime()` keeps it literal, so an unchecked value means JS and
+ * SQL disagree about which day it is.
+ */
+export function hasRealCalendarDay(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return false;
+  const [, year, month, day] = match as RegExpExecArray;
+  return Number(day) <= daysInMonth(Number(year), Number(month));
 }
 
 /** Parse a validated date parameter to a UTC ISO string. */
