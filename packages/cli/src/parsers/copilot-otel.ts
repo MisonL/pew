@@ -125,11 +125,16 @@ export async function parseCopilotOtelFile(opts: {
     const traceId = typeof span.traceId === "string" ? span.traceId : "";
     const spanId = typeof span.spanId === "string" ? span.spanId : "";
     const id = traceId || spanId ? `${traceId}:${spanId}` : null;
+    const delta = extractUsageDelta(span);
+    // Register the span only when it actually produced usage. Registering
+    // every span meant a non-usage span that shares an id with a later usage
+    // span (same trace/span pair, different export batch) silently dropped the
+    // usage; and within one parse only usage-bearing spans can double-count.
     if (id) {
       if (seenSpanIds.has(id)) return;
+      if (!delta) return;
       seenSpanIds.add(id);
     }
-    const delta = extractUsageDelta(span);
     if (delta) deltas.push(delta);
   }
 

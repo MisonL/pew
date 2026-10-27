@@ -299,6 +299,47 @@ describe("parseCopilotCliFile", () => {
     expect(r2.endOffset).toBe(completeBlock.length + completedTail.length);
   });
 
+  it("rewinds endOffset when the file ends on a telemetry marker with no JSON yet", async () => {
+    const filePath = join(tempDir, "process-marker-only.log");
+    const completeBlock = buildLogWithUsage({
+      input_tokens: 1000,
+      output_tokens: 100,
+      created_at: "2026-03-16T10:40:00.000Z",
+    });
+    // The log writer flushes the marker line first and the JSON body later.
+    // Advancing past the marker here would make the body, once it lands, look
+    // like ordinary non-log lines that the next sync ignores.
+    const markerOnly = "2026-03-16T10:41:00.000Z [INFO] [Telemetry] cli.telemetry:\n";
+    await writeFile(filePath, completeBlock + markerOnly);
+
+    const r1 = await parseCopilotCliFile({ filePath, startOffset: 0 });
+    expect(r1.deltas).toHaveLength(1);
+    expect(r1.endOffset).toBe(completeBlock.length);
+
+    const completedTail = buildLogWithUsage({
+      input_tokens: 2000,
+      output_tokens: 200,
+      created_at: "2026-03-16T10:41:00.000Z",
+    });
+    await writeFile(filePath, completeBlock + completedTail);
+
+    const r2 = await parseCopilotCliFile({ filePath, startOffset: r1.endOffset });
+    expect(r2.deltas).toHaveLength(1);
+    expect(r2.deltas[0]!.tokens.inputTokens).toBe(2000);
+  });
+
+  it("never reports an endOffset past the file size when the last line is unterminated", async () => {
+    const filePath = join(tempDir, "process-no-trailing-newline.log");
+    const content = buildLogWithUsage();
+    // Strip the final newline: readline still yields the line, but the EOL
+    // bytes it adds back were never on disk.
+    await writeFile(filePath, content.replace(/\n$/, ""));
+
+    const result = await parseCopilotCliFile({ filePath, startOffset: 0 });
+    expect(result.deltas).toHaveLength(1);
+    expect(result.endOffset).toBeLessThanOrEqual(content.length - 1);
+  });
+
   it("handles braces inside JSON string values correctly", async () => {
     const filePath = join(tempDir, "process-braces.log");
     // Build a telemetry block where a string value contains braces

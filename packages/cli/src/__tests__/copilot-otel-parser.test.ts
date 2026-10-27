@@ -171,6 +171,22 @@ describe("parseCopilotOtelFile", () => {
     expect(result.deltas).toHaveLength(1);
   });
 
+  it("keeps a usage span whose id was first seen on a non-usage span", async () => {
+    const filePath = join(tempDir, "otel.jsonl");
+    // The exporter can emit the same span twice: once before the usage
+    // attributes are filled in and once after. Registering the id on the first
+    // (usage-less) line dropped the usage permanently.
+    const usageLess = otelSpan({
+      attributes: { "gen_ai.request.model": "gpt-5.5" },
+    });
+    await writeFile(filePath, `${usageLess}\n${otelSpan()}\n`);
+
+    const result = await parseCopilotOtelFile({ filePath, startOffset: 0 });
+    expect(result.deltas).toHaveLength(1);
+    // Disjoint accounting: 19_714 inclusive minus 11_776 cache reads.
+    expect(result.deltas[0].tokens.inputTokens).toBe(7_938);
+  });
+
   it("accepts spans identified only by instrumentation scope", async () => {
     const filePath = join(tempDir, "otel.jsonl");
     await writeFile(filePath, `${otelSpan({

@@ -142,11 +142,17 @@ export async function parseCopilotCliFile(opts: {
   }
 
   // Do NOT flush trailing incomplete blocks — leave them for next sync.
-  // If the file was fully consumed and no block is pending, endOffset
-  // equals fileSize. Otherwise endOffset rewinds to the safe point.
-  const endOffset = collectingJson && jsonLines.length > 0
-    ? lastCompletedOffset
-    : startOffset + bytesConsumed;
+  // A pending marker means its JSON body has not been fully consumed: either
+  // nothing has been written after it yet or only part of it. Both must rewind
+  // to before the marker, because the next sync only re-enters collectingJson
+  // mode by re-reading it; a body that arrives later would otherwise look like
+  // ordinary non-log lines and be skipped forever.
+  //
+  // The final line of a file without a trailing newline carries no EOL bytes
+  // on disk even though readline strips one, so the running byte count can
+  // overshoot the file by up to one; never report an offset past the end.
+  const consumed = Math.min(startOffset + bytesConsumed, fileSize);
+  const endOffset = collectingJson ? lastCompletedOffset : consumed;
 
   return { deltas, endOffset };
 }
