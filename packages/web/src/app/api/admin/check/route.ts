@@ -34,6 +34,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ isAdmin: false });
   }
 
+  // Same rule as resolveAdmin/isAdminUser: a Bearer api_key is a long-lived
+  // CLI credential that a password reset does not rotate, so it must not
+  // unlock admin UI. Every admin API already refuses it — answering `true`
+  // here would only render entries that then 403.
+  if (authResult.via === "bearer") {
+    return NextResponse.json({ isAdmin: false });
+  }
+
   let email: string | null | undefined = authResult.email;
   if (!email) {
     const db = await getDbRead();

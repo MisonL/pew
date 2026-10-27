@@ -105,6 +105,37 @@ describe("GET /api/admin/check", () => {
     expect(body.isAdmin).toBe(false);
   });
 
+  it("should return isAdmin: false for a Bearer api_key even when the user is an admin", async () => {
+    // The Bearer key is a long-lived CLI credential a password reset does not
+    // rotate; resolveAdmin/isAdminUser refuse it on every admin API, so this
+    // read must agree instead of rendering admin entries that then 403.
+    vi.mocked(resolveUser).mockResolvedValueOnce({
+      userId: "u1",
+      email: "admin@example.com",
+      via: "bearer",
+    });
+
+    const res = await GET(new Request("http://localhost:7020/api/admin/check"));
+    const body = await res.json();
+
+    expect(body.isAdmin).toBe(false);
+    // Must short-circuit before any database lookup.
+    expect(mockDbRead.getUserEmail).not.toHaveBeenCalled();
+  });
+
+  it("should still return isAdmin: true for a session-authenticated admin", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({
+      userId: "u1",
+      email: "admin@example.com",
+      via: "session",
+    });
+
+    const res = await GET(new Request("http://localhost:7020/api/admin/check"));
+    const body = await res.json();
+
+    expect(body.isAdmin).toBe(true);
+  });
+
   // -------------------------------------------------------------------------
   // E2E admin bypass guard (E2E_SKIP_AUTH + E2E_ADMIN_BYPASS + RESOURCE_ENV=test + !railway)
   // -------------------------------------------------------------------------
