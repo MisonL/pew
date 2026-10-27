@@ -6,6 +6,9 @@ import { isOffsetCursor, readContinuityAnchors } from "./continuity-anchor.js";
 
 const HASH_CHUNK = 64 * 1024;
 
+/** Largest end-offset overshoot treated as an EOL accounting slip (CRLF = 2). */
+const MAX_EOL_SLIP_BYTES = 2;
+
 /** Exclusive byte bound for a JSONL read pinned to a snapshot. */
 export function jsonlStreamBound(fileSize: number, endBound?: number): number {
   if (fileSize <= 0) return 0;
@@ -110,8 +113,22 @@ export async function parseStableJsonlFile(opts: {
   const result = await opts.parse();
   if (!result) return null;
   const cursor = opts.buildCursor(result);
-  const offset = isOffsetCursor(cursor) ? cursor.offset : 0;
-  if (offset > opts.snapshotSize) return null;
+  let offset = 0;
+  if (isOffsetCursor(cursor)) {
+    offset = cursor.offset;
+    if (offset > opts.snapshotSize) {
+      // A parser whose byte accounting slips on the final EOL claims to have
+      // consumed a byte that does not exist. Discarding the parse would
+      // re-read and re-emit the same records on every sync forever, so a
+      // one-byte slip is clamped to the snapshot end — the read itself never
+      // passed it. A larger overshoot means the accounting is broken in a way
+      // clamping would paper over by silently skipping the next records, so
+      // it is discarded for a retry instead.
+      if (offset - opts.snapshotSize > MAX_EOL_SLIP_BYTES) return null;
+      offset = opts.snapshotSize;
+      cursor.offset = offset;
+    }
+  }
   const anchors = await readContinuityAnchors(opts.filePath, offset);
   if (anchors === null) return null;
   if (opts.confirm && !(await opts.confirm())) return null;

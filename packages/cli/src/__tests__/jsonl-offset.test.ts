@@ -205,6 +205,23 @@ describe("parseStableJsonlFile", () => {
     expect(committed).toBeNull();
   });
 
+  it("clamps a one-byte EOL overshoot instead of re-reading the file forever", async () => {
+    // A parser that counts an EOL the file does not contain reports
+    // size + 1. Discarding that parse re-emits the same records on every
+    // sync; clamping is exact because the read never passed the snapshot.
+    const body = '{"id":"a"}\n{"id":"b"}\n';
+    await writeFile(filePath, body);
+    const committed = await parseStableJsonlFile({
+      filePath,
+      startOffset: 0,
+      snapshotSize: body.length,
+      parse: async () => deltaResult(2),
+      buildCursor: () => offsetCursor(body.length, body.length + 1),
+    });
+    expect(committed?.result.deltas[0]?.tokens.inputTokens).toBe(2);
+    expect(committed?.cursor.offset).toBe(body.length);
+  });
+
   it("does not parse when confirm fails before parse", async () => {
     const body = '{"id":"a"}\n';
     await writeFile(filePath, body);

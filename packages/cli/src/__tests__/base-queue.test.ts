@@ -281,6 +281,23 @@ describe("BaseQueue", () => {
     expect(offset).toBe(0);
   });
 
+  it.each([
+    ["negative", -5],
+    ["fractional", 12.5],
+    ["non-numeric", "4096"],
+    ["null", null],
+  ])("falls back to offset 0 when the persisted offset is %s", async (_label, offset) => {
+    // A torn or hand-edited state file must not leave the cursor at a position
+    // that slices the queue mid-record; offset 0 re-reads everything, which is
+    // safe because uploads deduplicate on upsert.
+    await writeFile(
+      join(tempDir, "test.state.json"),
+      JSON.stringify({ offset }),
+    );
+    const queue = createQueue(tempDir);
+    expect(await queue.loadOffset()).toBe(0);
+  });
+
   // ---- queuePath exposed ----
 
   it("should expose queuePath", () => {

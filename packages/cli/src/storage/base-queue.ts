@@ -145,7 +145,13 @@ export class BaseQueue<T> {
       const raw = await readFile(this.statePath, "utf-8");
       const state = JSON.parse(raw) as Partial<QueueState>;
       return {
-        offset: state.offset ?? 0,
+        // A torn or hand-edited state file can carry any JSON value here. A
+        // cursor that is not a byte count slices the queue mid-record
+        // (`subarray(-5)`, `subarray("4096")`); re-reading from 0 is safe
+        // because every upload stage deduplicates on upsert.
+        offset: Number.isSafeInteger(state.offset) && (state.offset as number) >= 0
+          ? (state.offset as number)
+          : 0,
         // Preserve undefined vs [] distinction for legacy detection
         dirtyKeys: state.dirtyKeys,
         lastUploadTarget:
