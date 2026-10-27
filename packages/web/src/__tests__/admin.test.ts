@@ -285,6 +285,28 @@ describe("isAdminUser", () => {
     expect(result).toBe(false);
   });
 
+  it("should refuse admin status to a bearer api_key", async () => {
+    // Same threat model as resolveAdmin: a CLI api_key is long-lived and a
+    // password reset does not invalidate it, so a leaked admin key must not
+    // unlock the admin-specific read paths (all teams with invite codes,
+    // private profiles, org lists, leaderboard scope).
+    const result = await isAdminUser({
+      userId: "u1",
+      email: "admin@example.com",
+      via: "bearer",
+    });
+    expect(result).toBe(false);
+  });
+
+  it("should keep admin status for an interactive session", async () => {
+    const result = await isAdminUser({
+      userId: "u1",
+      email: "admin@example.com",
+      via: "session",
+    });
+    expect(result).toBe(true);
+  });
+
   it("should fall back to DB lookup when auth result has no email", async () => {
     mockDbRead.getUserEmail.mockResolvedValueOnce("admin@example.com");
 

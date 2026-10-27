@@ -494,6 +494,33 @@ describe("GET /api/users/[slug]", () => {
       expect(mockDbRead.checkSharedSeason).not.toHaveBeenCalled();
     });
 
+    it("should deny the admin bypass to a bearer api_key", async () => {
+      // A leaked admin CLI key must not read private profiles: bearer
+      // credentials survive a password reset, unlike the session cookie.
+      vi.mocked(authHelpersModule.resolveUser).mockResolvedValueOnce({
+        userId: "admin-1",
+        email: "admin@example.com",
+        via: "bearer",
+      });
+      vi.mocked(adminModule.isAdmin).mockReturnValue(true);
+      mockDbRead.getPublicUserBySlugOrId.mockResolvedValueOnce({
+        id: "u1",
+        name: "Private User",
+        image: null,
+        slug: "privuser",
+        is_public: 0,
+        created_at: "2026-01-01",
+      });
+      mockDbRead.checkSharedTeam.mockResolvedValueOnce(false);
+      mockDbRead.checkSharedSeason.mockResolvedValueOnce(false);
+
+      const [req, ctx] = makeRequest("privuser");
+      const res = await GET(req, ctx);
+
+      expect(res.status).toBe(404);
+      expect(adminModule.isAdmin).not.toHaveBeenCalled();
+    });
+
     it("should allow teammates to view private profiles", async () => {
       vi.mocked(authHelpersModule.resolveUser).mockResolvedValueOnce({
         userId: "viewer-1",

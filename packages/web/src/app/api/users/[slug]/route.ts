@@ -51,8 +51,13 @@ async function canBypassPublic(
   const auth = await resolveUser(request);
   if (!auth) return false;
 
-  // 1. Admin bypass
-  if (isAdmin(auth.email) || (await isAdminInDb(auth.userId))) return true;
+  // 1. Admin bypass — interactive session only. A Bearer api_key is a
+  // long-lived CLI credential that a password reset does not rotate, so a
+  // leaked admin key must not read private profiles (same rule as
+  // resolveAdmin/isAdminUser).
+  if (auth.via !== "bearer" && (isAdmin(auth.email) || (await isAdminInDb(auth.userId)))) {
+    return true;
+  }
 
   // 2. Teammate check — caller and target share at least one team
   try {

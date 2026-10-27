@@ -324,14 +324,17 @@ async function handleCheckSharedSeason(
     return Response.json({ error: "Missing userId1 or userId2" }, { status: 400 });
   }
 
+  // "Same-season participant" means the roster frozen at registration
+  // (season_team_members), not live team membership: a user who joined a
+  // registered team after the season locked was never a participant, and one
+  // who left still was. Live membership also let anyone who joins any
+  // registered team claim the same-season relationship retroactively.
   const row = await db
     .prepare(
-      `SELECT st1.season_id
-       FROM season_teams st1
-       JOIN team_members tm1 ON st1.team_id = tm1.team_id
-       JOIN season_teams st2 ON st1.season_id = st2.season_id
-       JOIN team_members tm2 ON st2.team_id = tm2.team_id
-       WHERE tm1.user_id = ? AND tm2.user_id = ?
+      `SELECT stm1.season_id
+       FROM season_team_members stm1
+       JOIN season_team_members stm2 ON stm1.season_id = stm2.season_id
+       WHERE stm1.user_id = ? AND stm2.user_id = ?
        LIMIT 1`,
     )
     .bind(req.userId1, req.userId2)

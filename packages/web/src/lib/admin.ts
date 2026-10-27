@@ -126,12 +126,19 @@ export async function resolveAdmin(
 /**
  * Check if the given AuthResult represents an admin user.
  * Handles case where email may be missing from the auth result.
+ *
+ * Like resolveAdmin, a Bearer api_key never counts as admin: the CLI key is
+ * long-lived and a password reset does not rotate it, so a leaked admin key
+ * must not unlock the admin-specific read paths that use this helper (all
+ * teams with invite codes, private profiles, all-org listings, leaderboard
+ * scope). E2E bypass carries no `via` and stays admin.
  */
 export async function isAdminUser(
   authResult: AuthResult
 ): Promise<boolean> {
   // In E2E mode with admin bypass, all users are admins
   if (isAdminBypass()) return true;
+  if (authResult.via === "bearer") return false;
 
   let email = authResult.email;
   if (!email) {

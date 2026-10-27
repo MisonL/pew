@@ -723,6 +723,20 @@ describe("Users RPC handlers", () => {
       expect(await (await handleUsersRpc(req, db)).json()).toEqual({ result: { shared: false } });
     });
 
+    it("matches the frozen season roster, not live team membership", async () => {
+      // "Same-season participant" is the roster locked at registration:
+      // someone who joined the team afterwards was never in that season, and
+      // someone who left was. Live team_members membership also let a user
+      // manufacture access by joining any team registered in the season.
+      db.bind.mockReturnValue({ first: vi.fn().mockResolvedValue(null) });
+      await handleUsersRpc({ method: "users.checkSharedSeason", userId1: "a", userId2: "b" }, db);
+
+      const sql = (db.prepare as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![0] as string;
+      expect(sql).toContain("season_team_members");
+      expect(sql).not.toContain("team_members tm");
+      expect(sql).not.toMatch(/JOIN\s+team_members/);
+    });
+
     it("should return 400 when userId1 missing", async () => {
       const req = {
         method: "users.checkSharedSeason",

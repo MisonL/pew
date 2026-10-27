@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "./route";
-import { createMockDbRead, loadMockedAuthHelpers, makeGetRequest } from "@/__tests__/test-utils";
+import { createMockDbRead, makeGetRequest } from "@/__tests__/test-utils";
 import type {
   DynamicPricingEntryDto,
   DynamicPricingMetaDto,
@@ -15,13 +15,11 @@ vi.mock("@/lib/auth-helpers", () => ({
 }));
 
 vi.mock("@/lib/admin", () => ({
-  isAdminUser: vi.fn(),
+  resolveAdmin: vi.fn(),
 }));
 
 import { getDbRead } from "@/lib/db";
-import { isAdminUser } from "@/lib/admin";
-
-const { resolveUser } = await loadMockedAuthHelpers();
+import { resolveAdmin } from "@/lib/admin";
 
 const ENTRY: DynamicPricingEntryDto = {
   model: "anthropic/claude-sonnet-4",
@@ -51,19 +49,24 @@ describe("GET /api/admin/pricing/models", () => {
     vi.clearAllMocks();
     mockDbRead = createMockDbRead();
     vi.mocked(getDbRead).mockResolvedValue(mockDbRead as never);
-    vi.mocked(resolveUser).mockResolvedValue({ userId: "u1" });
-    vi.mocked(isAdminUser).mockResolvedValue(true);
+    vi.mocked(resolveAdmin).mockResolvedValue({
+      userId: "u1",
+      email: "admin@example.com",
+    });
   });
 
-  it("returns 401 when unauthenticated", async () => {
-    vi.mocked(resolveUser).mockResolvedValueOnce(null);
+  it("returns 403 when unauthenticated", async () => {
+    // resolveAdmin is the single admin gate (session only, bearer refused);
+    // every admin/* route answers 403 for both unauthenticated and
+    // non-admin callers.
+    vi.mocked(resolveAdmin).mockResolvedValueOnce(null);
     const res = await GET(makeGetRequest("/api/admin/pricing/models"));
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Forbidden" });
   });
 
   it("returns 403 when authenticated but not admin", async () => {
-    vi.mocked(isAdminUser).mockResolvedValueOnce(false);
+    vi.mocked(resolveAdmin).mockResolvedValueOnce(null);
     const res = await GET(makeGetRequest("/api/admin/pricing/models"));
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: "Forbidden" });

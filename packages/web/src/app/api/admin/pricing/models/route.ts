@@ -5,18 +5,14 @@
  * route; both share the same handler. Strictly read-only.
  */
 
-import { resolveUser } from "@/lib/auth-helpers";
-import { unauthorizedResponse, forbiddenResponse } from "@/lib/api-responses";
-import { isAdminUser } from "@/lib/admin";
+import { resolveAdmin } from "@/lib/admin";
+import { forbiddenResponse } from "@/lib/api-responses";
 import { fetchDynamicPricingPayload } from "@/lib/pricing-models-handler";
 
 export async function GET(request: Request) {
-  const authResult = await resolveUser(request);
-  if (!authResult) {
-    return unauthorizedResponse();
-  }
-
-  const admin = await isAdminUser(authResult);
+  // resolveAdmin, not resolveUser + isAdminUser: every admin/* route must
+  // share the one session-only admin gate (bearer api_keys are refused).
+  const admin = await resolveAdmin(request);
   if (!admin) {
     return forbiddenResponse();
   }
