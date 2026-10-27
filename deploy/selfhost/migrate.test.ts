@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { splitStatements, applyMigrations } from "./migrate";
+import { splitStatements, applyMigrations, isDdlStatement } from "./migrate";
 import type { D1Like, D1Result, D1StatementLike } from "./d1-adapter";
 
 describe("splitStatements", () => {
@@ -139,6 +139,19 @@ describe("splitStatements", () => {
     expect(out).toHaveLength(2);
     expect(out[0]).toBe("CREATE TABLE a(x)");
     expect(out[1]).toContain("CREATE INDEX i ON a(x)");
+  });
+
+  it("classifies a statement behind a leading block comment as DDL", () => {
+    // The retained leading comment used to defeat the ^\s*(CREATE|...) anchor:
+    // such a statement went to prepare().run() (!norw*), so rqlite rewrote its
+    // DEFAULT (datetime('now')) into a frozen literal in sqlite_master — the
+    // exact failure the norw* split exists to prevent.
+    const out = splitStatements("/* header */\nCREATE TABLE x (a TEXT);\n");
+    expect(out).toHaveLength(1);
+    expect(isDdlStatement(out[0]!.trimEnd())).toBe(true);
+    // Comment-only differences must not change the classification of DML.
+    expect(isDdlStatement("/* c */ INSERT INTO t VALUES (1)")).toBe(false);
+    expect(isDdlStatement("/* c1 */ /* c2 */\nALTER TABLE t ADD COLUMN c TEXT")).toBe(true);
   });
 });
 

@@ -68,6 +68,14 @@ export function createD1HttpNodeHandler(options: D1HttpNodeHandlerOptions) {
             method: "POST",
             headers: { "Content-Type": "application/json", ...authHeader },
             body: JSON.stringify([["SELECT 1"]]),
+            // Every other rqlite call in this deployment bounds itself; this
+            // probe used to be the one that could hang forever. compose kills
+            // the healthcheck *client* after 5s, but the server-side fetch and
+            // its socket stayed pending, accumulating one per interval while
+            // rqlite accepted connections without answering (paused container,
+            // stuck election). Bound it like the others so the probe fails fast
+            // and the request is released.
+            signal: AbortSignal.timeout(5_000),
           });
           const probeBody = (await probe.json()) as { results?: { error?: string }[] };
           if (!probe.ok || probeBody.results?.[0]?.error) throw new Error("db probe failed");

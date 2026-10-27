@@ -17,6 +17,8 @@ export interface WorkerServerOptions<E> {
   env: E;
   port: number;
   hostname?: string;
+  /** Override for tests; production keeps the Cloudflare-derived default. */
+  maxBodyBytes?: number;
 }
 
 export interface WorkerServerHandle {
@@ -27,13 +29,25 @@ export interface WorkerServerHandle {
 /** Cloudflare caps request bodies at 100MB; keep headroom below that. */
 const MAX_BODY_BYTES = 32 * 1024 * 1024;
 
-async function readBody(req: IncomingMessage): Promise<Buffer | undefined> {
+/**
+ * Distinguishes "too large" from a genuine server fault so the handler can
+ * answer 413 (final) instead of 500 (which clients retry forever). The
+ * d1-http container already answers 413 for the same condition.
+ */
+class BodyTooLargeError extends Error {
+  constructor() {
+    super("Request body too large");
+    this.name = "BodyTooLargeError";
+  }
+}
+
+async function readBody(req: IncomingMessage, maxBytes: number): Promise<Buffer | undefined> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
     const buf = chunk as Buffer;
     total += buf.length;
-    if (total > MAX_BODY_BYTES) throw new Error("Request body too large");
+    if (total > maxBytes) throw new BodyTooLargeError();
     chunks.push(buf);
   }
   return chunks.length > 0 ? Buffer.concat(chunks) : undefined;
@@ -75,7 +89,7 @@ export function createWorkerServer<E>(options: WorkerServerOptions<E>) {
       const server = createServer((req, res) => {
         void (async () => {
           try {
-            const body = await readBody(req);
+            const body = await readBody(req, options.maxBodyBytes ?? MAX_BODY_BYTES);
             const response = await options.worker.fetch(toRequest(req, body), options.env);
             await sendResponse(res, response);
           } catch (error) {
@@ -84,11 +98,15 @@ export function createWorkerServer<E>(options: WorkerServerOptions<E>) {
             // keep-alive Node would parse that remainder as the next request
             // (same trap server-d1-http.ts fixes with its 413 path). Tear the
             // connection down after responding instead of reusing it.
+            const tooLarge = error instanceof BodyTooLargeError;
             if (!res.headersSent) {
-              res.statusCode = 500;
+              res.statusCode = tooLarge ? 413 : 500;
               res.setHeader("Connection", "close");
             }
-            res.end(JSON.stringify({ error: "Internal server error" }), () => req.destroy());
+            res.end(
+              JSON.stringify({ error: tooLarge ? "Request body too large" : "Internal server error" }),
+              () => req.destroy(),
+            );
           }
         })();
       });

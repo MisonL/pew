@@ -44,7 +44,23 @@ const LEDGER_DDL = [
  * values for one INSERT when it shared a norw* request with a CREATE TABLE).
  */
 export function isDdlStatement(sql: string): boolean {
-  return /^\s*(CREATE|ALTER|DROP|REINDEX|VACUUM)\b/i.test(sql);
+  return /^\s*(CREATE|ALTER|DROP|REINDEX|VACUUM)\b/i.test(stripLeadingComments(sql));
+}
+
+/**
+ * Statements whose leading block comment would otherwise defeat the anchor in
+ * isDdlStatement — `/* header *\/ CREATE TABLE ...` classifies as DML and gets
+ * rqlite's deterministic rewrite, freezing `DEFAULT (datetime('now'))` into
+ * sqlite_master. (Line comments are already cut by the splitter.) The comment
+ * is only stripped for classification; the statement itself is sent verbatim.
+ */
+function stripLeadingComments(sql: string): string {
+  let out = sql;
+  for (;;) {
+    const next = out.replace(/^\s+/, "").replace(/^\/\*[\s\S]*?\*\//, "");
+    if (next === out) return out;
+    out = next;
+  }
 }
 
 /**

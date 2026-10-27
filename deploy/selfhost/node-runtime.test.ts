@@ -78,6 +78,30 @@ describe("createWorkerServer", () => {
       await handle.close();
     }
   });
+
+  it("answers 413 (not 500) for an oversized body", async () => {
+    // A 5xx tells the CLI to retry; an oversized body can never succeed, so
+    // the retry loop would spin forever. d1-http already answers 413 here.
+    const worker = {
+      async fetch(): Promise<Response> {
+        return Response.json({ ok: true });
+      },
+    };
+    const server = createWorkerServer({ worker, env: {}, port: 0, maxBodyBytes: 1024 });
+    const handle = await server.listen();
+    try {
+      const res = await fetch(`http://127.0.0.1:${handle.port}/api/rpc`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pad: "a".repeat(4096) }),
+      });
+      expect(res.status).toBe(413);
+      expect(res.headers.get("connection")).toBe("close");
+      expect(await res.json()).toEqual({ error: "Request body too large" });
+    } finally {
+      await handle.close();
+    }
+  });
 });
 
 describe("runScheduled", () => {
