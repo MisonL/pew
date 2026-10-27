@@ -42,12 +42,28 @@ export async function installCodexNotifier(
 
   const notify = buildNotifyCommand(opts.notifyPath, runtimePath);
   const existingNotify = extractNotify(text);
+  if (existingNotify.notAnArray) {
+    // A top-level `notify` that is not an array is not a command this
+    // installer can save and restore. Overwriting it would destroy the value
+    // and uninstall would then delete the key outright.
+    return {
+      source: SOURCE,
+      action: "skip",
+      changed: false,
+      detail:
+        "ownership_conflict: top-level notify is not an array; refusing to overwrite it",
+      warnings: [
+        "Inspect the top-level `notify` in config.toml and remove it manually if it is no longer needed.",
+      ],
+    };
+  }
+  const existingCommand = existingNotify.command;
   const existingBackup = await readOptional(opts.originalBackupPath, fs);
 
   // Happy path: no backup on disk. Save the existing command (unless it's
   // Pew-owned in a legacy shape — never self-backup) and take the slot.
   if (existingBackup === null) {
-    if (arraysEqual(existingNotify, notify)) {
+    if (arraysEqual(existingCommand, notify)) {
       return {
         source: SOURCE,
         action: "install",
@@ -55,13 +71,13 @@ export async function installCodexNotifier(
         detail: "Codex notifier already installed",
       };
     }
-    if (existingNotify && existingNotify.length > 0 && !isPewOwnedCommand(existingNotify, opts.notifyPath)) {
+    if (existingCommand && existingCommand.length > 0 && !isPewOwnedCommand(existingCommand, opts.notifyPath)) {
       // Only capture a non-Pew original; a legacy /usr/bin/env node pew
       // command is an in-place migration, not a foreign notifier.
       await fs.mkdir(dirname(opts.originalBackupPath), { recursive: true });
       await fs.writeFile(
         opts.originalBackupPath,
-        `${JSON.stringify({ notify: existingNotify, capturedAt: new Date().toISOString() }, null, 2)}\n`,
+        `${JSON.stringify({ notify: existingCommand, capturedAt: new Date().toISOString() }, null, 2)}\n`,
         "utf8",
       );
     }
@@ -82,7 +98,7 @@ export async function installCodexNotifier(
   // top-level command is Pew-owned (the expected pre-migration state);
   // otherwise Pew was displaced and stayed displaced, and re-writing the
   // slot would seed the Issue #318 cycle.
-  if (arraysEqual(existingNotify, notify)) {
+  if (arraysEqual(existingCommand, notify)) {
     return {
       source: SOURCE,
       action: "install",
@@ -90,7 +106,7 @@ export async function installCodexNotifier(
       detail: "Codex notifier already installed",
     };
   }
-  if (!existingNotify || !isPewOwnedCommand(existingNotify, opts.notifyPath)) {
+  if (!existingCommand || !isPewOwnedCommand(existingCommand, opts.notifyPath)) {
     return {
       source: SOURCE,
       action: "skip",
@@ -135,9 +151,10 @@ export async function uninstallCodexNotifier(
 
   const existingNotify = extractNotify(text);
   const expectedNotify = buildNotifyCommand(opts.notifyPath, runtimePath);
+  const existingCommand = existingNotify.command;
   const isCurrentPewOwned =
-    existingNotify !== null && isPewOwnedCommand(existingNotify, opts.notifyPath);
-  if (!arraysEqual(existingNotify, expectedNotify) && !isCurrentPewOwned) {
+    existingCommand !== null && isPewOwnedCommand(existingCommand, opts.notifyPath);
+  if (!arraysEqual(existingCommand, expectedNotify) && !isCurrentPewOwned) {
     return {
       source: SOURCE,
       action: "skip",
@@ -229,7 +246,7 @@ export async function getCodexNotifierStatus(
   const text = await readOptional(opts.configPath, fs);
   if (text === null) return "not-installed";
   const existing = extractNotify(text);
-  return existing !== null && isPewOwnedCommand(existing, opts.notifyPath)
+  return existing.command !== null && isPewOwnedCommand(existing.command, opts.notifyPath)
     ? "installed"
     : "not-installed";
 }
@@ -273,16 +290,52 @@ async function readOptional(
   }
 }
 
-function extractNotify(text: string): string[] | null {
-  const lines = text.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(/^\s*notify\s*=\s*(.*)\s*$/);
-    if (!match) continue;
+/**
+ * What the top-level `notify` key holds. TOML is table-scoped: `notify` is
+ * Pew's slot only before the first `[table]` header. A `notify` inside
+ * `[model_providers.custom]` belongs to that provider, and reading,
+ * replacing or deleting it corrupts the user's config — the previous line
+ * scan matched the first `notify =` anywhere in the file.
+ */
+interface TopLevelNotify {
+  /** The command, when the value is a complete string array. */
+  command: string[] | null;
+  /**
+   * A top-level `notify` exists whose value is not an array at all (e.g.
+   * `notify = true`). Such a value cannot be saved and restored, so overwriting
+   * it would destroy it and uninstalling would delete the key outright.
+   */
+  notAnArray: boolean;
+}
 
-    const rhs = (match[1] ?? "").trim();
-    const literal = readTomlArrayLiteral(lines, i, rhs);
-    if (!literal) continue;
-    return parseTomlStringArray(literal);
+/** A complete `[table]` / `[[array.of.tables]]` header on one line. */
+const TOML_TABLE_HEADER = /^\s*\[\[?[^\]]*\]\]?\s*(?:#.*)?$/;
+
+function extractNotify(text: string): TopLevelNotify {
+  const lines = text.split(/\r?\n/);
+  const found = findTopLevelNotify(lines);
+  if (!found) return { command: null, notAnArray: false };
+  // A value that never closes (`notify = [` with no `]`) is left to the
+  // lenient in-place replace below; only a non-array value blocks the write.
+  if (!found.rhs.startsWith("[")) return { command: null, notAnArray: true };
+
+  const literal = readTomlArrayLiteral(lines, found.index, found.rhs);
+  const values = literal === null ? null : parseTomlStringArray(literal);
+  return { command: values, notAnArray: false };
+}
+
+/**
+ * Locate the top-level `notify` assignment. Stops at the first table header:
+ * everything after it is table-scoped and not ours. A non-header line that
+ * starts with `[` (e.g. `[1, 2],` inside a multi-line array) does not match
+ * TOML_TABLE_HEADER, so an array continuation cannot end the scan early.
+ */
+function findTopLevelNotify(lines: string[]): { index: number; rhs: string } | null {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (TOML_TABLE_HEADER.test(line)) return null;
+    const match = line.match(/^\s*notify\s*=\s*(.*)$/);
+    if (match) return { index: i, rhs: (match[1] ?? "").trim() };
   }
   return null;
 }
@@ -290,48 +343,42 @@ function extractNotify(text: string): string[] | null {
 function setNotify(text: string, notify: string[]): string {
   const lines = text.split(/\r?\n/);
   const replacement = `notify = ${formatTomlStringArray(notify)}`;
-  const out: string[] = [];
-  let replaced = false;
+  const found = findTopLevelNotify(lines);
 
-  for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(/^\s*notify\s*=\s*(.*)\s*$/);
-    if (!match) {
-      out.push(lines[i]);
-      continue;
-    }
-
-    if (!replaced) {
-      out.push(replacement);
-      replaced = true;
-    }
-
-    i = findTomlArrayBlockEnd(lines, i, (match[1] ?? "").trim());
+  if (!found) {
+    // Top-level keys must precede the first table header; appending after a
+    // table would make the key part of that table.
+    const headerIndex = lines.findIndex((line) => TOML_TABLE_HEADER.test(line));
+    const insertAt = headerIndex === -1 ? trailingBlankStart(lines) : headerIndex;
+    lines.splice(insertAt, 0, replacement);
+  } else {
+    const end = findTomlArrayBlockEnd(lines, found.index, found.rhs);
+    lines.splice(found.index, end - found.index + 1, replacement);
   }
 
-  if (!replaced) {
-    const firstTableIndex = out.findIndex((line) => /^\s*\[/.test(line));
-    const insertAt = firstTableIndex === -1 ? out.length : firstTableIndex;
-    out.splice(insertAt, 0, replacement);
-  }
-
-  return `${out.join("\n").replace(/\n+$/, "")}\n`;
+  return normalizeTomlText(lines);
 }
 
 function removeNotify(text: string): string {
   const lines = text.split(/\r?\n/);
-  const out: string[] = [];
+  const found = findTopLevelNotify(lines);
+  if (!found) return normalizeTomlText(lines);
 
-  for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(/^\s*notify\s*=\s*(.*)\s*$/);
-    if (!match) {
-      out.push(lines[i]);
-      continue;
-    }
+  const end = findTomlArrayBlockEnd(lines, found.index, found.rhs);
+  lines.splice(found.index, end - found.index + 1);
+  return normalizeTomlText(lines);
+}
 
-    i = findTomlArrayBlockEnd(lines, i, (match[1] ?? "").trim());
-  }
+/** Index of the first trailing blank line, so appends land before it. */
+function trailingBlankStart(lines: string[]): number {
+  let at = lines.length;
+  while (at > 0 && (lines[at - 1] ?? "").trim() === "") at--;
+  return at;
+}
 
-  return `${out.join("\n").replace(/\n+$/, "")}\n`;
+function normalizeTomlText(lines: string[]): string {
+  const joined = lines.join("\n").replace(/\n+$/, "");
+  return joined === "" ? "" : `${joined}\n`;
 }
 
 /**

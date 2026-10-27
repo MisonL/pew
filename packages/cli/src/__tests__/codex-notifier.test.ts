@@ -455,6 +455,135 @@ describe("Codex notifier installer", () => {
     expect(result.detail).toContain("not found");
   });
 
+  // ---- TOML table scoping ----
+
+  it("never touches a notify key that belongs to a TOML table", async () => {
+    // `notify` is Pew's slot only at the top level. A provider table made its
+    // own `notify`; the old line scan matched it, replaced it on install and
+    // deleted it on uninstall — corrupting the user's provider config.
+    const original = [
+      'model = "gpt-5"',
+      "",
+      "[model_providers.custom]",
+      'name = "custom"',
+      "notify = true",
+      "",
+      "[model_providers.other]",
+      'name = "other"',
+    ].join("\n");
+    await writeFile(configPath, `${original}\n`, "utf8");
+
+    const install = await installCodexNotifier({
+      configPath,
+      notifyPath,
+      originalBackupPath,
+      runtimePath: "/usr/local/bin/node",
+    });
+    expect(install.changed).toBe(true);
+
+    const afterInstall = await readFile(configPath, "utf8");
+    expect(afterInstall).toContain("notify = true");
+    // Pew's own slot lands at the top level, before the first table header.
+    const pewLine = 'notify = ["/usr/local/bin/node", "/tmp/pew/bin/notify.cjs", "--source=codex"]';
+    expect(afterInstall.indexOf(pewLine)).toBeGreaterThan(-1);
+    expect(afterInstall.indexOf(pewLine)).toBeLessThan(afterInstall.indexOf("[model_providers.custom]"));
+
+    const uninstall = await uninstallCodexNotifier({
+      configPath,
+      notifyPath,
+      originalBackupPath,
+      runtimePath: "/usr/local/bin/node",
+    });
+    expect(uninstall.changed).toBe(true);
+
+    const afterUninstall = await readFile(configPath, "utf8");
+    expect(afterUninstall).toContain("notify = true");
+    expect(afterUninstall).not.toContain("notify.cjs");
+  });
+
+  it("does not restore a table-scoped notify as if it were the top-level one", async () => {
+    await writeFile(
+      configPath,
+      [
+        'notify = ["/usr/local/bin/node", "/tmp/pew/bin/notify.cjs", "--source=codex"]',
+        "",
+        "[model_providers.custom]",
+        'notify = ["/opt/provider/hook"]',
+      ].join("\n"),
+      "utf8",
+    );
+
+    await uninstallCodexNotifier({
+      configPath,
+      notifyPath,
+      originalBackupPath,
+      runtimePath: "/usr/local/bin/node",
+    });
+
+    const updated = await readFile(configPath, "utf8");
+    expect(updated).not.toContain("notify.cjs");
+    expect(updated).toContain('notify = ["/opt/provider/hook"]');
+  });
+
+  it("reports not-installed when only a table-scoped notify looks Pew-owned", async () => {
+    await writeFile(
+      configPath,
+      [
+        "[model_providers.custom]",
+        'notify = ["/usr/local/bin/node", "/tmp/pew/bin/notify.cjs", "--source=codex"]',
+      ].join("\n"),
+      "utf8",
+    );
+
+    expect(
+      await getCodexNotifierStatus({ configPath, notifyPath, originalBackupPath }),
+    ).toBe("not-installed");
+  });
+
+  it("refuses to overwrite a top-level notify that is not an array", async () => {
+    const original = 'model = "gpt-5"\nnotify = true\n';
+    await writeFile(configPath, original, "utf8");
+
+    const install = await installCodexNotifier({
+      configPath,
+      notifyPath,
+      originalBackupPath,
+      runtimePath: "/usr/local/bin/node",
+    });
+    expect(install.action).toBe("skip");
+    expect(install.detail).toContain("not an array");
+    expect(await readFile(configPath, "utf8")).toBe(original);
+
+    const uninstall = await uninstallCodexNotifier({
+      configPath,
+      notifyPath,
+      originalBackupPath,
+      runtimePath: "/usr/local/bin/node",
+    });
+    expect(uninstall.action).toBe("skip");
+    expect(await readFile(configPath, "utf8")).toBe(original);
+  });
+
+  it("inserts the top-level notify before the first table header", async () => {
+    await writeFile(
+      configPath,
+      ['model = "gpt-5"', "", "[model_providers.custom]", 'name = "custom"'].join("\n") + "\n",
+      "utf8",
+    );
+
+    await installCodexNotifier({
+      configPath,
+      notifyPath,
+      originalBackupPath,
+      runtimePath: "/usr/local/bin/node",
+    });
+
+    const updated = await readFile(configPath, "utf8");
+    // A key appended after [model_providers.custom] would belong to that
+    // table, which is exactly the corruption this fix removes.
+    expect(updated.indexOf("notify =")).toBeLessThan(updated.indexOf("[model_providers.custom]"));
+  });
+
   it("re-throws non-ENOENT errors from readOptional", async () => {
     const fsMock = {
       readFile: async () => {
