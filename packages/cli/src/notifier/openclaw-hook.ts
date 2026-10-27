@@ -107,44 +107,55 @@ export async function uninstallOpenClawHook(
 
   const config = loaded.config;
   let changed = false;
+  // Edit only the keys Pew owns. `plugins` and `plugins.load` carry keys Pew
+  // never writes (`allow`, `deny`, `load.allow`, …); rebuilding them from the
+  // three keys Pew knows would delete the rest of the user's plugin config.
+  // Each section is skipped back only once it is empty, so an unrelated
+  // section left behind is preserved as-is.
   const plugins = normalizeObject(config.plugins);
-  const entries = normalizeObject(plugins.entries);
-  if (entries[PLUGIN_ID]) {
-    delete entries[PLUGIN_ID];
-    changed = true;
-  }
+
+  const rawEntries = normalizeObject(plugins.entries);
+  if (PLUGIN_ID in rawEntries) changed = true;
+  const entries = omitKey(rawEntries, PLUGIN_ID);
+  if (Object.keys(entries).length > 0) plugins.entries = entries;
+  else delete plugins.entries;
 
   const load = normalizeObject(plugins.load);
-  const paths = Array.isArray(load.paths) ? load.paths : [];
-  const resolvedPluginDir = resolve(pluginDir);
-  const nextPaths = paths.filter((entry) => resolve(String(entry)) !== resolvedPluginDir);
-  if (nextPaths.length !== paths.length) {
-    load.paths = nextPaths;
-    changed = true;
+  if (Array.isArray(load.paths)) {
+    const resolvedPluginDir = resolve(pluginDir);
+    const nextPaths = load.paths.filter((entry) => resolve(String(entry)) !== resolvedPluginDir);
+    if (nextPaths.length !== load.paths.length) {
+      changed = true;
+      if (nextPaths.length > 0) load.paths = nextPaths;
+      else delete load.paths;
+    }
+    if (Object.keys(load).length > 0) plugins.load = load;
+    else delete plugins.load;
   }
 
   const installs = normalizeObject(plugins.installs);
+  const resolvedInstallDir = resolve(pluginDir);
+  const nextInstalls: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(installs)) {
-    const sourcePath = typeof (value as Record<string, unknown>).sourcePath === "string"
-      ? resolve(String((value as Record<string, unknown>).sourcePath))
+    const entry = value as Record<string, unknown> | null;
+    const sourcePath = typeof entry?.sourcePath === "string"
+      ? resolve(String(entry.sourcePath))
       : null;
-    const installPath = typeof (value as Record<string, unknown>).installPath === "string"
-      ? resolve(String((value as Record<string, unknown>).installPath))
+    const installPath = typeof entry?.installPath === "string"
+      ? resolve(String(entry.installPath))
       : null;
-    if (key === PLUGIN_ID || sourcePath === resolvedPluginDir || installPath === resolvedPluginDir) {
-      delete installs[key];
+    if (key === PLUGIN_ID || sourcePath === resolvedInstallDir || installPath === resolvedInstallDir) {
       changed = true;
+      continue;
     }
+    nextInstalls[key] = value;
   }
-
-  const nextPlugins: Record<string, unknown> = {};
-  if (Object.keys(entries).length > 0) nextPlugins.entries = entries;
-  if (Array.isArray(load.paths) && load.paths.length > 0) nextPlugins.load = load;
-  if (Object.keys(installs).length > 0) nextPlugins.installs = installs;
+  if (Object.keys(nextInstalls).length > 0) plugins.installs = nextInstalls;
+  else delete plugins.installs;
 
   if (changed) {
     const nextConfig = { ...config };
-    if (Object.keys(nextPlugins).length > 0) nextConfig.plugins = nextPlugins;
+    if (Object.keys(plugins).length > 0) nextConfig.plugins = plugins;
     else delete nextConfig.plugins;
     await fs.writeFile(opts.openclawConfigPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
   }
@@ -320,6 +331,15 @@ function normalizeObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? { ...(value as Record<string, unknown>) }
     : {};
+}
+
+/** Copy of `source` without `key` (a computed delete would defeat the AST gate). */
+function omitKey(source: Record<string, unknown>, key: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(source)) {
+    if (name !== key) out[name] = value;
+  }
+  return out;
 }
 
 function defaultSpawn(cmd: string, args: string[], opts?: SpawnSyncOptions): SpawnResult {
