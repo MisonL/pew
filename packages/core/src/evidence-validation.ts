@@ -38,8 +38,16 @@ export function validateEvidenceRecord(value: unknown, index: number): Validatio
     !count(e.snapshotSeq) || e.snapshotSeq === 0 || (e.callCount !== null && (!count(e.callCount) || Number(e.callCount) > MAX_RECORD_MESSAGES))) return invalid();
   if ((r.source === "pi") !== (e.callType === "compaction" && e.origin === "pi-session")) return invalid();
   if (r.source === "hermes" && (e.callType === "compaction" || e.origin === "pi-session")) return invalid();
-  for (const field of ["intervalStart", "intervalEnd"]) {
-    if (e[field] !== null && !isValidISODate(e[field])) return invalid();
+  // interval_start is part of the evidence UPSERT's identity guard, compared
+  // by exact text, so it must be in the same canonical spelling the writer
+  // stores. isValidISODate accepts "+02:00" offsets and microsecond fractions,
+  // which parse to the same instant as the canonical form but are not text
+  // equal — such a snapshot would pass validation and then be silently
+  // discarded by the guard, answering 200 while losing the newer data.
+  for (const field of ["intervalStart", "intervalEnd"] as const) {
+    const value = e[field];
+    if (value === null) continue;
+    if (typeof value !== "string" || !isValidISODate(value) || value !== new Date(Date.parse(value)).toISOString()) return invalid();
   }
   if (e.intervalStart !== null && e.intervalEnd !== null && Date.parse(e.intervalStart as string) > Date.parse(e.intervalEnd as string)) return invalid();
   return { valid: true, record: r as unknown as EvidenceRecord };

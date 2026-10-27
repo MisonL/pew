@@ -37,6 +37,12 @@ describe("usage evidence trust boundary", () => {
       { callCount: -1 }, { snapshotSeq: 0 }, { snapshotSeq: 1.1 },
       { intervalStart: "PRIVATE_FIXTURE_BODY" }, { intervalEnd: "PRIVATE_FIXTURE_BODY" },
       { intervalStart: "2026-09-08T00:00:00.000Z" }, { response: "PRIVATE_FIXTURE_BODY" },
+      // The UPSERT guard compares interval_start by exact text, so a valid
+      // instant in a different spelling would pass validation and then be
+      // discarded silently. Both must be rejected, not normalized.
+      { intervalStart: "2026-09-06T18:00:00+02:00" },
+      { intervalEnd: "2026-09-07T16:00:00.000001Z" },
+      { intervalEnd: "2026-09-07T16:00:00Z" },
       { callType: "compaction" }, { origin: "pi-session" },
     ].map((evidence) => ({ ...good, evidence: { ...good.evidence, ...evidence } })),
   ])("rejects untrusted shape, numbers or provenance without echoing input (#%#)", (value) => {

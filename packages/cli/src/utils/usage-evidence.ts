@@ -42,6 +42,12 @@ export function toEvidenceRecord(delta: ParsedDelta, deviceId: string): Evidence
     (evidence.callCount !== null && (!Number.isSafeInteger(evidence.callCount) || evidence.callCount < 0))) {
     throw new Error("Invalid usage evidence");
   }
+  // Canonical spelling is part of the wire contract: the server's UPSERT
+  // guard compares interval_start by exact text, so an offset form (or a
+  // microsecond fraction) that parses to the same instant would be accepted
+  // and then silently discarded. Normalize here, where the value enters the
+  // ledger, so the queue can never carry a spelling the server would reject.
+  const canonical = (value: string | null): string | null => value === null ? null : new Date(Date.parse(value)).toISOString();
   return {
     source: delta.source, model: usageLabel(delta.model), device_id: deviceId,
     timestamp: new Date(delta.timestamp).toISOString(), hour_start: hourStart,
@@ -52,8 +58,8 @@ export function toEvidenceRecord(delta: ParsedDelta, deviceId: string): Evidence
       eventId: evidence.eventId, groupId: evidence.groupId,
       callType: evidence.callType, origin: evidence.origin,
       provider: usageLabel(evidence.provider), granularity: evidence.granularity,
-      timePrecision: evidence.timePrecision, intervalStart: evidence.intervalStart,
-      intervalEnd: evidence.intervalEnd, callCount: evidence.callCount,
+      timePrecision: evidence.timePrecision, intervalStart: canonical(evidence.intervalStart),
+      intervalEnd: canonical(evidence.intervalEnd), callCount: evidence.callCount,
       snapshotSeq: evidence.snapshotSeq,
     },
   };
