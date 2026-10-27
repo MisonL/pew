@@ -42,6 +42,16 @@ export interface UploadEngineConfig<T> {
   recordKey?: (record: T) => string;
   /** Optional versioned receipt protocol; HTTP 200 alone is insufficient. */
   validateResponse?: (body: unknown, batch: T[]) => string | null;
+  /**
+   * Return a reason when a record cannot satisfy the server's ingest contract.
+   *
+   * The server rejects the *whole batch* with 400 when one record is invalid,
+   * and a 4xx never advances the upload offset — so one bad record would
+   * wedge this queue forever, blocking every record behind it. Dropping it
+   * locally with a warning keeps the backlog moving; the raw logs are
+   * untouched, so `pew reset && pew sync` rebuilds the queue from source.
+   */
+  rejectRecord?: (record: T) => string | null;
   maxBatchSize?: number;
   maxBatchBytes?: number;
   /**
@@ -111,7 +121,7 @@ const DEFAULT_RETRY_DELAY_MS = 1000;
 // ---------------------------------------------------------------------------
 
 export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
-  const { queue, endpoint, entityName, preprocess, recordKey } = config;
+  const { queue, endpoint, entityName, preprocess, recordKey, rejectRecord } = config;
 
   async function execute(opts: UploadExecuteOptions): Promise<UploadResult> {
     const {
@@ -195,8 +205,40 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
         ...(targetChanged ? { targetChangedFrom: previousTarget } : {}) };
     }
 
-    // 2b. Pre-process (aggregate for tokens, dedup for sessions)
-    const records = preprocess(rawRecords);
+    // 2d. Pre-process (aggregate for tokens, dedup for sessions)
+    const preprocessed = preprocess(rawRecords);
+
+    // 2e. Drop records the server contract rejects. One such record fails its
+    //     whole batch with 400, and a 4xx never advances the offset, so
+    //     leaving it in the queue blocks every record behind it forever.
+    const rejections: string[] = [];
+    const records = rejectRecord
+      ? preprocessed.filter((record) => {
+          const reason = rejectRecord(record);
+          if (reason !== null) rejections.push(reason);
+          return reason === null;
+        })
+      : preprocessed;
+    const rejectionWarning = rejections.length > 0
+      ? `Skipped ${rejections.length} ${entityName} that cannot pass the upload contract (first: ${rejections[0]}). Source files are untouched; \`pew reset && pew sync\` rebuilds the queue.`
+      : undefined;
+
+    if (records.length === 0) {
+      // Everything read was rejected: advance past it exactly like the
+      // corrupt-line path above, so the same poison is not re-read forever.
+      if (!useDirtyKeys) {
+        const currentOffset = await queue.loadOffset();
+        if (newOffset !== currentOffset) {
+          await queue.saveOffset(newOffset);
+        }
+      }
+      if (useDirtyKeys) {
+        await queue.saveDirtyKeys([]);
+      }
+      return { success: true, uploaded: 0, batches: 0,
+        ...(rejectionWarning ? { warning: rejectionWarning } : {}),
+        ...(targetChanged ? { targetChangedFrom: previousTarget } : {}) };
+    }
 
     // Only warn when something is actually about to ship: an empty backlog
     // cannot be re-routed, and a first-ever upload has no previous target.
@@ -249,6 +291,7 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
           uploaded: totalUploaded,
           batches: batchesCompleted,
           error: result.error,
+          ...(rejectionWarning ? { warning: rejectionWarning } : {}),
         };
       }
 
@@ -271,16 +314,19 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
       message: `Uploaded ${totalUploaded} ${entityName} in ${batchesCompleted} batch(es).`,
     });
 
+    const warnings = [
+      rejectionWarning,
+      targetChanged
+        ? `Last successful upload went to ${previousTarget}; this run sent pending ${entityName} to ${apiUrl}.`
+        : undefined,
+    ].filter((w): w is string => Boolean(w));
+
     return {
       success: true,
       uploaded: totalUploaded,
       batches: batchesCompleted,
-      ...(targetChanged
-        ? {
-            warning: `Last successful upload went to ${previousTarget}; this run sent pending ${entityName} to ${apiUrl}.`,
-            targetChangedFrom: previousTarget,
-          }
-        : {}),
+      ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
+      ...(targetChanged ? { targetChangedFrom: previousTarget } : {}),
     };
   }
 

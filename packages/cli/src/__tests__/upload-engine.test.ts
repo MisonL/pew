@@ -1254,4 +1254,86 @@ describe("upload-engine", () => {
     expect(result2.uploaded).toBe(0);
     expect(calls2).toHaveLength(0);
   });
+  // =========================================================================
+  // Contract rejection
+  // =========================================================================
+
+  describe("rejectRecord", () => {
+    /** Engine whose record #999 is "poison": the server would answer 400. */
+    function createRejectingEngine(testDir: string) {
+      const queue = new BaseQueue<TestRecord>(testDir, "test.jsonl", "test.state.json");
+      const config: UploadEngineConfig<TestRecord> = {
+        queue,
+        endpoint: "/api/test-ingest",
+        entityName: "test records",
+        preprocess: (records) => records,
+        rejectRecord: (r) => (r.id === 999 ? "record is poison" : null),
+      };
+      return { queue, config };
+    }
+
+    it("drops a rejected record, ships the rest and advances past it", async () => {
+      const { queue, config } = createRejectingEngine(dir);
+      const cm = new ConfigManager(dir);
+      await cm.save({ token: "pk_test" });
+      await writeFile(
+        queue.queuePath,
+        [makeRecord(1), makeRecord(999), makeRecord(2)]
+          .map((r) => `${JSON.stringify(r)}\n`)
+          .join(""),
+      );
+
+      const { fetchFn, calls } = createMockFetch([{ status: 200, body: { ingested: 2 } }]);
+      const result = await createUploadEngine(config).execute({
+        stateDir: dir,
+        apiUrl: DEFAULT_HOST,
+        fetch: fetchFn,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.uploaded).toBe(2);
+      expect(result.warning).toMatch(/Skipped 1 test records/);
+      expect(result.warning).toContain("record is poison");
+      const sent = JSON.parse(String(calls[0]!.init.body)) as TestRecord[];
+      expect(sent.map((r) => r.id)).toEqual([1, 2]);
+      // The offset must move, or the poison record is re-read forever.
+      expect(await queue.loadOffset()).toBeGreaterThan(0);
+    });
+
+    it("recovers a queue where every record is rejected", async () => {
+      const { queue, config } = createRejectingEngine(dir);
+      const cm = new ConfigManager(dir);
+      await cm.save({ token: "pk_test" });
+      await writeFile(queue.queuePath, `${JSON.stringify(makeRecord(999))}\n`);
+
+      const { fetchFn, calls } = createMockFetch([]);
+      const result = await createUploadEngine(config).execute({
+        stateDir: dir,
+        apiUrl: DEFAULT_HOST,
+        fetch: fetchFn,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.uploaded).toBe(0);
+      expect(calls).toHaveLength(0);
+      expect(result.warning).toMatch(/Skipped 1 test records/);
+      expect(await queue.loadOffset()).toBeGreaterThan(0);
+    });
+
+    it("clears the dirty keys of a fully rejected dirty-keys backlog", async () => {
+      const { queue, config } = createRejectingEngine(dir);
+      const cm = new ConfigManager(dir);
+      await cm.save({ token: "pk_test" });
+      await writeFile(queue.queuePath, `${JSON.stringify(makeRecord(999))}\n`);
+      await queue.saveDirtyKeys(["999"]);
+
+      const { fetchFn, calls } = createMockFetch([]);
+      const result = await createUploadEngine({ ...config, recordKey: (r) => String(r.id) })
+        .execute({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn });
+
+      expect(result.success).toBe(true);
+      expect(calls).toHaveLength(0);
+      expect(await queue.loadDirtyKeys()).toEqual([]);
+    });
+  });
 });

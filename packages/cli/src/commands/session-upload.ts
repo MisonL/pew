@@ -7,6 +7,7 @@
 
 import { SessionQueue } from "../storage/session-queue.js";
 import { withStateLock } from "../storage/state-lock.js";
+import { sessionRecordRejection } from "../utils/ingest-contract.js";
 import type { OnCorruptLine } from "../storage/base-queue.js";
 import { createUploadEngine } from "./upload-engine.js";
 import type {
@@ -93,6 +94,7 @@ async function sessionUploadLocked(
     endpoint: "/api/ingest/sessions",
     entityName: "session records",
     preprocess: deduplicateSessionRecords,
+    rejectRecord: sessionRecordRejection,
     trackUploadTarget: true,
   });
 

@@ -11,6 +11,7 @@ import { AccountingQueue, accountingKey } from "../storage/accounting-queue.js";
 import { recoverSyncCommit } from "../storage/sync-commit.js";
 import { withStateLock } from "../storage/state-lock.js";
 import { evidenceKey } from "../utils/usage-evidence.js";
+import { tokenRecordRejection } from "../utils/ingest-contract.js";
 import type { OnCorruptLine } from "../storage/base-queue.js";
 import { createUploadEngine } from "./upload-engine.js";
 import type {
@@ -101,6 +102,7 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
     entityName: "records",
     preprocess: aggregateRecords,
     recordKey: (r) => `${r.source}|${r.model}|${r.hour_start}|${r.device_id}`,
+    rejectRecord: tokenRecordRejection,
     trackUploadTarget: true,
   });
 
