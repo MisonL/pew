@@ -135,6 +135,15 @@ export async function POST(request: Request) {
         { status: 503 }
       );
     }
+    // The uniqueness check above is a read; a concurrent create can still win
+    // the race and land here as UNIQUE, which is the same conflict the
+    // sequential path reports as 409.
+    if (/UNIQUE constraint failed/i.test(msg) && /organizations\.slug/i.test(msg)) {
+      return NextResponse.json(
+        { error: "An organization with this slug already exists" },
+        { status: 409 }
+      );
+    }
     console.error("Failed to create organization:", err);
     return NextResponse.json(
       { error: "Failed to create organization" },

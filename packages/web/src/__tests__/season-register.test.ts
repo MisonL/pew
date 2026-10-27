@@ -232,7 +232,7 @@ describe("POST /api/seasons/[seasonId]/register", () => {
     mockDbRead.getSeasonRegistration.mockResolvedValueOnce(null);
     mockDbRead.getTeamMembers.mockResolvedValueOnce(MEMBERS);
     mockDbRead.checkSeasonMemberConflict.mockResolvedValueOnce(null);
-    mockDbWrite.batch.mockRejectedValueOnce(new Error("UNIQUE constraint failed"));
+    mockDbWrite.batch.mockRejectedValueOnce(new Error("database is locked"));
     mockDbWrite.execute.mockResolvedValue({ changes: 0, duration: 0.01 });
 
     const res = await POST(postReq({ team_id: "t1" }), PARAMS);
@@ -244,6 +244,30 @@ describe("POST /api/seasons/[seasonId]/register", () => {
     expect(mockDbWrite.execute.mock.calls[1]![0]).toContain("DELETE FROM season_teams WHERE id = ?");
   });
 
+  it("returns 409 when a concurrent registration wins the uniqueness race", async () => {
+    // The "already registered" check above is a read; two requests can both
+    // pass it and the loser hits UNIQUE(season_id, team_id) — or
+    // UNIQUE(season_id, user_id) when two teams share a member.
+    resolveUser.mockResolvedValueOnce(USER);
+    mockDbRead.getSeasonById.mockResolvedValueOnce(SEASON_UPCOMING);
+    deriveSeasonStatus.mockReturnValueOnce("upcoming");
+    mockDbRead.getTeamMembership.mockResolvedValueOnce("owner");
+    mockDbRead.getSeasonRegistration.mockResolvedValueOnce(null);
+    mockDbRead.getTeamMembers.mockResolvedValueOnce(MEMBERS);
+    mockDbRead.checkSeasonMemberConflict.mockResolvedValueOnce(null);
+    mockDbWrite.batch.mockRejectedValueOnce(
+      new Error("UNIQUE constraint failed: season_teams.season_id, season_teams.team_id"),
+    );
+    mockDbWrite.execute.mockResolvedValue({ changes: 0, duration: 0.01 });
+
+    const res = await POST(postReq({ team_id: "t1" }), PARAMS);
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("already registered");
+    // The partial write must still be compensated before answering.
+    expect(mockDbWrite.execute).toHaveBeenCalledTimes(2);
+  });
+
   it("swallows cleanup errors during compensation", async () => {
     resolveUser.mockResolvedValueOnce(USER);
     mockDbRead.getSeasonById.mockResolvedValueOnce(SEASON_UPCOMING);
@@ -252,13 +276,16 @@ describe("POST /api/seasons/[seasonId]/register", () => {
     mockDbRead.getSeasonRegistration.mockResolvedValueOnce(null);
     mockDbRead.getTeamMembers.mockResolvedValueOnce(MEMBERS);
     mockDbRead.checkSeasonMemberConflict.mockResolvedValueOnce(null);
-    mockDbWrite.batch.mockRejectedValueOnce(new Error("UNIQUE constraint failed"));
+    mockDbWrite.batch.mockRejectedValueOnce(new Error("database is locked"));
     // Cleanup itself fails
     mockDbWrite.execute.mockRejectedValue(new Error("cleanup failed"));
 
     const res = await POST(postReq({ team_id: "t1" }), PARAMS);
     // Should still return 500 from the original error, not crash
     expect(res.status).toBe(500);
+
+    // Even when compensation fails, we still tried (same logic as above)
+    expect(mockDbWrite.execute).toHaveBeenCalledTimes(2);
   });
 
   it("returns 503 on 'no such table' error", async () => {

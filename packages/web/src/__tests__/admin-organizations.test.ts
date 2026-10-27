@@ -250,6 +250,23 @@ describe("POST /api/admin/organizations", () => {
     expect(json.error).toBe("Failed to create organization");
   });
 
+  it("should return 409 (not 500) when a concurrent create wins the slug race", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getOrganizationBySlug.mockResolvedValueOnce(null); // read says free
+    mockDbWrite.execute.mockRejectedValueOnce(
+      new Error("UNIQUE constraint failed: organizations.slug"),
+    );
+
+    const res = await POST(
+      makeJsonRequest("POST", "/api/admin/organizations", {
+        name: "Test",
+        slug: "test",
+      })
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("already exists");
+  });
+
   it("should handle no-such-table on create", async () => {
     resolveAdmin.mockResolvedValueOnce(ADMIN);
     mockDbRead.getOrganizationBySlug.mockRejectedValueOnce(new Error("no such table: organizations"));

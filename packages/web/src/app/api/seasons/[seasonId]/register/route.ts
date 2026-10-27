@@ -127,21 +127,34 @@ export async function POST(
     } catch (batchErr) {
       // Compensate: delete only rows created by THIS request (by UUID).
       // This is safe even under concurrent registrations because we never
-      // touch rows written by other requests.
-      try {
-        if (memberIds.length > 0) {
+      // touch rows written by other requests. Each delete is independent —
+      // as one sequence, a failure of the first would skip the second and
+      // leave a registered team with no roster (a 0-token leaderboard entry).
+      if (memberIds.length > 0) {
+        try {
           const ph = memberIds.map(() => "?").join(",");
           await dbWrite.execute(
             `DELETE FROM season_team_members WHERE id IN (${ph})`,
             memberIds
           );
+        } catch {
+          // Swallow cleanup errors — the original error is more important
         }
-        await dbWrite.execute(
-          "DELETE FROM season_teams WHERE id = ?",
-          [id]
-        );
+      }
+      try {
+        await dbWrite.execute("DELETE FROM season_teams WHERE id = ?", [id]);
       } catch {
         // Swallow cleanup errors — the original error is more important
+      }
+      // The registration check above is a read; two concurrent requests both
+      // pass it and the loser hits UNIQUE(season_id, team_id) — or
+      // UNIQUE(season_id, user_id) when two teams share a member. That is the
+      // same conflict the sequential path reports as 409, not a server fault.
+      if (batchErr instanceof Error && /UNIQUE constraint failed/i.test(batchErr.message)) {
+        return NextResponse.json(
+          { error: "Team is already registered for this season, or a member is already registered on another team" },
+          { status: 409 },
+        );
       }
       throw batchErr;
     }

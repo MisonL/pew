@@ -226,7 +226,7 @@ describe("admin organization member management", () => {
       mockDbRead.getOrganizationById.mockResolvedValueOnce({ id: "org-1" });
       mockDbRead.getAdminUsersByIds.mockResolvedValueOnce([{ id: "u1", name: "Alice", email: "a@e.com", image: null, slug: "a" }]);
       mockDbRead.checkOrgMembership.mockResolvedValueOnce(false); // not a member
-      mockDbWrite.execute.mockResolvedValueOnce({});
+      mockDbWrite.execute.mockResolvedValueOnce({ changes: 1 });
 
       const res = await POST(
         makeJsonRequest("POST", { userId: "u1" }),
@@ -235,6 +235,22 @@ describe("admin organization member management", () => {
       expect(res.status).toBe(201);
       const json = await res.json();
       expect(json.user.name).toBe("Alice");
+    });
+
+    it("should return 409 (not 500) when a concurrent add wins the uniqueness race", async () => {
+      vi.mocked(resolveAdmin).mockResolvedValue(ADMIN);
+      mockDbRead.getOrganizationById.mockResolvedValueOnce({ id: "org-1" });
+      mockDbRead.getAdminUsersByIds.mockResolvedValueOnce([{ id: "u1", name: "Alice", email: "a@e.com", image: null, slug: "a" }]);
+      mockDbRead.checkOrgMembership.mockResolvedValueOnce(false); // read says free
+      // The conditional INSERT matched zero rows: another request inserted first.
+      mockDbWrite.execute.mockResolvedValueOnce({ changes: 0 });
+
+      const res = await POST(
+        makeJsonRequest("POST", { userId: "u1" }),
+        makeParams("org-1"),
+      );
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toContain("already a member");
     });
 
     it("should return 503 if table not migrated", async () => {

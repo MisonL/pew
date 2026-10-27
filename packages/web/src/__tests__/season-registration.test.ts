@@ -234,8 +234,8 @@ describe("POST /api/seasons/[seasonId]/register", () => {
       { user_id: "user-2", name: null, nickname: null, slug: null, image: null, role: "member", joined_at: "" },
     ]);
     mockDbRead.checkSeasonMemberConflict.mockResolvedValueOnce(null);
-    // Batch fails (e.g. UNIQUE constraint from concurrent request)
-    mockDbWrite.batch.mockRejectedValueOnce(new Error("UNIQUE constraint failed"));
+    // Batch fails for a reason other than losing the uniqueness race.
+    mockDbWrite.batch.mockRejectedValueOnce(new Error("database is locked"));
     // Cleanup calls succeed
     mockDbWrite.execute.mockResolvedValue({ changes: 0, duration: 0.01 });
 

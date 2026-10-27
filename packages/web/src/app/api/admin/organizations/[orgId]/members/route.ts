@@ -122,15 +122,26 @@ export async function POST(
       );
     }
 
-    // Add member
+    // Add member. Same idempotent-insert rule as the user-facing join route:
+    // the read above is a fast path, and two concurrent adds both pass it —
+    // the loser would hit UNIQUE(org_id, user_id) as a generic 500.
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
 
-    await dbWrite.execute(
+    const added = await dbWrite.execute(
       `INSERT INTO organization_members (id, org_id, user_id, joined_at)
-       VALUES (?, ?, ?, ?)`,
-      [id, orgId, userId, now]
+       SELECT ?, ?, ?, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM organization_members WHERE org_id = ? AND user_id = ?)`,
+      [id, orgId, userId, now, orgId, userId]
     );
+
+    if (added.changes === 0) {
+      return NextResponse.json(
+        { error: "User is already a member of this organization" },
+        { status: 409 }
+      );
+    }
 
     return NextResponse.json(
       {

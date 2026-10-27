@@ -326,6 +326,30 @@ describe("POST /api/organizations/[orgId]/join", () => {
     expect(json.orgSlug).toBe("anthropic");
   });
 
+  it("should return 409 (not 500) when a concurrent join wins the uniqueness race", async () => {
+    // Two simultaneous joins both pass the membership read; the conditional
+    // INSERT then matches zero rows for the loser instead of raising
+    // UNIQUE(org_id, user_id), which would surface as a generic 500.
+    resolveUser.mockResolvedValueOnce(USER);
+    mockDbRead.getOrganizationById.mockResolvedValueOnce({
+      id: "org-1",
+      name: "Anthropic",
+      slug: "anthropic",
+      logo_url: null,
+      created_by: "admin-1",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    mockDbRead.checkOrgMembership.mockResolvedValueOnce(false); // read says free
+    mockDbWrite.execute.mockResolvedValueOnce({ changes: 0 });
+
+    const res = await JOIN(makeOrgRequest("POST", "org-1/join"), {
+      params: Promise.resolve({ orgId: "org-1" }),
+    });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("Already a member of this organization");
+  });
+
   it("should return 404 for non-existent org", async () => {
     resolveUser.mockResolvedValueOnce(USER);
     mockDbRead.getOrganizationById.mockResolvedValueOnce(null);

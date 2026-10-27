@@ -392,6 +392,27 @@ describe("POST /api/admin/seasons", () => {
     expect(json.error).toContain("Failed to create season");
     consoleSpy.mockRestore();
   });
+
+  it("should return 409 (not 500) when a concurrent create wins the slug race", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getSeasonBySlug.mockResolvedValueOnce(null); // read says free
+    mockDbWrite.execute.mockRejectedValueOnce(
+      new Error("UNIQUE constraint failed: seasons.slug"),
+    );
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await POST(
+      makeJsonRequest("POST", "/api/admin/seasons", {
+        name: "Season 1",
+        slug: "s1",
+        start_date: "2099-04-01T00:00:00Z",
+        end_date: "2099-04-30T23:59:00Z",
+      })
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("already exists");
+    consoleSpy.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------

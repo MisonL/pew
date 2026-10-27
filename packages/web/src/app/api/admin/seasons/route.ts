@@ -195,6 +195,15 @@ export async function POST(request: Request) {
         { status: 503 }
       );
     }
+    // Same read-then-insert race as organizations: a concurrent create can
+    // still win and land here as UNIQUE, which is the 409 the sequential
+    // path already returns.
+    if (/UNIQUE constraint failed/i.test(msg) && /seasons\.slug/i.test(msg)) {
+      return NextResponse.json(
+        { error: "A season with this slug already exists" },
+        { status: 409 }
+      );
+    }
     console.error("Failed to create season:", err);
     return NextResponse.json(
       { error: "Failed to create season" },

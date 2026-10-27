@@ -40,15 +40,27 @@ export async function POST(
       );
     }
 
-    // Add member
+    // Add member. The membership predicate makes the insert idempotent under
+    // concurrency: the read above is only a fast path, and two simultaneous
+    // joins both pass it — the loser would otherwise hit UNIQUE(org_id,
+    // user_id) as a generic 500 instead of the 409 this route promises.
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
 
-    await dbWrite.execute(
+    const result = await dbWrite.execute(
       `INSERT INTO organization_members (id, org_id, user_id, joined_at)
-       VALUES (?, ?, ?, ?)`,
-      [id, orgId, authResult.userId, now]
+       SELECT ?, ?, ?, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM organization_members WHERE org_id = ? AND user_id = ?)`,
+      [id, orgId, authResult.userId, now, orgId, authResult.userId]
     );
+
+    if (result.changes === 0) {
+      return NextResponse.json(
+        { error: "Already a member of this organization" },
+        { status: 409 }
+      );
+    }
 
     return NextResponse.json({
       orgId: org.id,
