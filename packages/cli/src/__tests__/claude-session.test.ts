@@ -300,4 +300,36 @@ describe("collectClaudeSessions", () => {
     expect(result).toHaveLength(1);
     expect(result[0].sessionKey).toBe("claude:ses-with-ts");
   });
+
+  it("emits canonical UTC timestamps the ingest contract accepts", async () => {
+    const f = join(tmpDir, "offsets.jsonl");
+    // Mixed offsets: lexicographic comparison would pick 18:00+08:00 as the
+    // latest, but that instant is five hours before 11:00Z.
+    const lines = [
+      line({ timestamp: "2026-03-07T18:00:00+08:00" }),
+      userLine({ timestamp: "2026-03-07T11:00:00Z" }),
+      // Unparseable values must be skipped, not poison the bounds.
+      line({ timestamp: "not a timestamp" }),
+      line({ timestamp: "2026-03-07" }),
+    ];
+    await writeFile(f, `${lines.join("\n")}\n`);
+
+    const result = await collectClaudeSessions(f);
+    expect(result).toHaveLength(1);
+    expect(result[0].startedAt).toBe("2026-03-07T10:00:00.000Z");
+    expect(result[0].lastMessageAt).toBe("2026-03-07T11:00:00.000Z");
+    expect(result[0].durationSeconds).toBe(3600);
+  });
+
+  it("never emits a non-finite or over-cap duration", async () => {
+    const f = join(tmpDir, "wild-span.jsonl");
+    const lines = [
+      line({ timestamp: "0001-01-01T00:00:00.000Z" }),
+      line({ timestamp: "9999-12-31T00:00:00.000Z" }),
+    ];
+    await writeFile(f, `${lines.join("\n")}\n`);
+
+    const result = await collectClaudeSessions(f);
+    expect(result[0].durationSeconds).toBe(315_576_000);
+  });
 });

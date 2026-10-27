@@ -14,6 +14,11 @@ import { basename, dirname } from "node:path";
 import { createInterface } from "node:readline";
 import type { SessionSnapshot } from "@pew/core";
 import { hashProjectRef } from "../utils/hash-project-ref.js";
+import {
+  durationSeconds,
+  type InstantBounds,
+  trackInstant,
+} from "../utils/session-time.js";
 
 /**
  * A root session file stem: `<ISO-with-dashes>Z_<uuid>`, e.g.
@@ -95,8 +100,7 @@ export async function collectPiSessions(
   let userMessages = 0;
   let assistantMessages = 0;
   let totalMessages = 0;
-  let minTimestamp: string | null = null;
-  let maxTimestamp: string | null = null;
+  const timestamps: InstantBounds = { min: null, max: null };
   let lastModel: string | null = null;
 
   const stream = createReadStream(filePath, { encoding: "utf8" });
@@ -124,12 +128,7 @@ export async function collectPiSessions(
 
       // Track timestamps from all entries
       if (timestamp) {
-        if (!minTimestamp || timestamp < minTimestamp) {
-          minTimestamp = timestamp;
-        }
-        if (!maxTimestamp || timestamp > maxTimestamp) {
-          maxTimestamp = timestamp;
-        }
+        trackInstant(timestamps, timestamp);
       }
 
       // Count messages and track model
@@ -160,12 +159,10 @@ export async function collectPiSessions(
     stream.destroy();
   }
 
-  if (!sessionId || !minTimestamp) return [];
+  if (!sessionId || !timestamps.min) return [];
 
-  const startedAt = minTimestamp;
-  const lastMessageAt = maxTimestamp ?? minTimestamp;
-  const durationMs =
-    new Date(lastMessageAt).getTime() - new Date(startedAt).getTime();
+  const startedAt = timestamps.min;
+  const lastMessageAt = timestamps.max ?? timestamps.min;
 
   const { dirName, nested } = locateSession(filePath);
   const projectRef = extractProjectRef(dirName);
@@ -177,7 +174,7 @@ export async function collectPiSessions(
       kind: nested ? "automated" : "human",
       startedAt,
       lastMessageAt,
-      durationSeconds: Math.max(0, Math.floor(durationMs / 1000)),
+      durationSeconds: durationSeconds(startedAt, lastMessageAt),
       userMessages,
       assistantMessages,
       totalMessages,

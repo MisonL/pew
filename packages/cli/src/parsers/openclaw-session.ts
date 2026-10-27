@@ -13,6 +13,11 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import type { SessionSnapshot, Source } from "@pew/core";
 import { hashProjectRef } from "../utils/hash-project-ref.js";
+import {
+  durationSeconds,
+  type InstantBounds,
+  trackInstant,
+} from "../utils/session-time.js";
 
 /**
  * Extract agent name from an OpenClaw file path.
@@ -47,8 +52,7 @@ export async function collectOpenClawSessions(
 
   let assistantMessages = 0;
   let totalMessages = 0;
-  let minTimestamp: string | null = null;
-  let maxTimestamp: string | null = null;
+  const timestamps: InstantBounds = { min: null, max: null };
   let lastModel: string | null = null;
 
   const stream = createReadStream(filePath, { encoding: "utf8" });
@@ -87,12 +91,7 @@ export async function collectOpenClawSessions(
       const timestamp =
         typeof obj.timestamp === "string" ? obj.timestamp : null;
       if (timestamp) {
-        if (!minTimestamp || timestamp < minTimestamp) {
-          minTimestamp = timestamp;
-        }
-        if (!maxTimestamp || timestamp > maxTimestamp) {
-          maxTimestamp = timestamp;
-        }
+        trackInstant(timestamps, timestamp);
       }
     }
   } finally {
@@ -101,12 +100,10 @@ export async function collectOpenClawSessions(
   }
 
   // No valid timestamps → can't produce a snapshot
-  if (!minTimestamp) return [];
+  if (!timestamps.min) return [];
 
-  const startedAt = minTimestamp;
-  const lastMessageAt = maxTimestamp ?? minTimestamp;
-  const durationMs =
-    new Date(lastMessageAt).getTime() - new Date(startedAt).getTime();
+  const startedAt = timestamps.min;
+  const lastMessageAt = timestamps.max ?? timestamps.min;
 
   // Session key: sha256 of absolute path (OpenClaw has no native session ID)
   const hash = createHash("sha256")
@@ -125,7 +122,7 @@ export async function collectOpenClawSessions(
       kind: "automated",
       startedAt,
       lastMessageAt,
-      durationSeconds: Math.max(0, Math.floor(durationMs / 1000)),
+      durationSeconds: durationSeconds(startedAt, lastMessageAt),
       userMessages: 0,
       assistantMessages,
       totalMessages,

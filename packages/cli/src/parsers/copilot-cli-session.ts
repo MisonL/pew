@@ -23,6 +23,7 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import type { SessionSnapshot, Source } from "@pew/core";
+import { canonicalInstant, durationSeconds } from "../utils/session-time.js";
 
 /** Timestamp pattern from log lines: 2026-04-11T11:12:04.598Z */
 const TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)/;
@@ -52,8 +53,10 @@ export async function collectCopilotCliSessions(
     for await (const line of rl) {
       if (!line) continue;
 
-      const timestampMatch = line.match(TIMESTAMP_RE);
-      const timestamp = timestampMatch?.[1] ?? null;
+      // The regex pins the shape; canonicalInstant additionally rejects a
+      // calendar day that does not exist ("2026-02-30T…" parses by rolling
+      // over to March 2) before it can reach the queue.
+      const timestamp = canonicalInstant(line.match(TIMESTAMP_RE)?.[1]);
 
       // Track first timestamp as session start
       if (timestamp && !firstTimestamp) {
@@ -99,8 +102,6 @@ export async function collectCopilotCliSessions(
 
   const startedAt = firstTimestamp;
   const lastMessageAt = lastRequestTimestamp ?? firstTimestamp;
-  const durationMs =
-    new Date(lastMessageAt).getTime() - new Date(startedAt).getTime();
 
   // Session key: use native UUID from Workspace initialized
   const sessionKey = `copilot-cli:${sessionId}`;
@@ -112,7 +113,7 @@ export async function collectCopilotCliSessions(
       kind: "human",
       startedAt,
       lastMessageAt,
-      durationSeconds: Math.max(0, Math.floor(durationMs / 1000)),
+      durationSeconds: durationSeconds(startedAt, lastMessageAt),
       userMessages,
       assistantMessages: userMessages, // 1:1 request/response assumed
       totalMessages: userMessages * 2, // user + assistant per @pew/core spec

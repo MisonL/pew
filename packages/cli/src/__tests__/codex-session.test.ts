@@ -468,4 +468,22 @@ describe("collectCodexSessions", () => {
     expect(result).toHaveLength(1);
     expect(result[0].model).toBeNull();
   });
+
+  it("should emit canonical UTC bounds and skip unparseable timestamps", async () => {
+    const f = join(tmpDir, "rollout-offsets.jsonl");
+    const lines = [
+      sessionMetaLine(),
+      // 18:00+08:00 is 10:00Z: earlier than 11:00Z despite sorting later.
+      eventMsgLine("user_message", "2026-03-07T18:00:00+08:00"),
+      eventMsgLine("user_message", "2026-03-07T11:00:00Z"),
+      eventMsgLine("user_message", "not a timestamp"),
+    ];
+    await writeFile(f, `${lines.join("\n")}\n`);
+
+    const result = await collectCodexSessions(f);
+    expect(result).toHaveLength(1);
+    expect(result[0].startedAt).toBe("2026-03-07T10:00:00.000Z");
+    expect(result[0].lastMessageAt).toBe("2026-03-07T11:00:00.000Z");
+    expect(result[0].durationSeconds).toBe(3600);
+  });
 });

@@ -21,6 +21,11 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import type { SessionSnapshot, Source } from "@pew/core";
 import { hashProjectRef } from "../utils/hash-project-ref.js";
+import {
+  durationSeconds,
+  type InstantBounds,
+  trackInstant,
+} from "../utils/session-time.js";
 
 /**
  * Collect session snapshots from a Codex CLI JSONL rollout file.
@@ -40,8 +45,7 @@ export async function collectCodexSessions(
   let userMessages = 0;
   let assistantMessages = 0;
   let totalMessages = 0;
-  let minTimestamp: string | null = null;
-  let maxTimestamp: string | null = null;
+  const timestamps: InstantBounds = { min: null, max: null };
 
   const stream = createReadStream(filePath, { encoding: "utf8" });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
@@ -65,12 +69,7 @@ export async function collectCodexSessions(
 
       // Track timestamps
       if (timestamp) {
-        if (!minTimestamp || timestamp < minTimestamp) {
-          minTimestamp = timestamp;
-        }
-        if (!maxTimestamp || timestamp > maxTimestamp) {
-          maxTimestamp = timestamp;
-        }
+        trackInstant(timestamps, timestamp);
       }
 
       const payload = obj.payload as Record<string, unknown> | undefined;
@@ -115,12 +114,10 @@ export async function collectCodexSessions(
   }
 
   // No valid timestamps → can't produce a snapshot
-  if (!minTimestamp) return [];
+  if (!timestamps.min) return [];
 
-  const startedAt = minTimestamp;
-  const lastMessageAt = maxTimestamp ?? minTimestamp;
-  const durationMs =
-    new Date(lastMessageAt).getTime() - new Date(startedAt).getTime();
+  const startedAt = timestamps.min;
+  const lastMessageAt = timestamps.max ?? timestamps.min;
 
   // Session key: prefer native UUID from session_meta, fallback to sha256 of path
   let sessionKey: string;
@@ -141,7 +138,7 @@ export async function collectCodexSessions(
       kind: "human",
       startedAt,
       lastMessageAt,
-      durationSeconds: Math.max(0, Math.floor(durationMs / 1000)),
+      durationSeconds: durationSeconds(startedAt, lastMessageAt),
       userMessages,
       assistantMessages,
       totalMessages,

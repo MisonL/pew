@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionSnapshot, Source } from "@pew/core";
 import { hashProjectRef } from "../utils/hash-project-ref.js";
+import { canonicalInstant, durationSeconds } from "../utils/session-time.js";
 
 async function readJson(path: string): Promise<Record<string, unknown> | null> {
   try {
@@ -43,19 +44,21 @@ export async function parseGrokSession(
   const sessionId = typeof info?.id === "string" ? info.id : null;
   if (!sessionId) return null;
 
-  const startedAt =
-    typeof summary.created_at === "string" ? summary.created_at : null;
+  // The summary carries whatever Grok wrote, and it can include microsecond
+  // precision — canonicalize before the snapshot reaches the queue, where the
+  // server compares these strings verbatim.
+  const startedAt = canonicalInstant(summary.created_at);
   if (!startedAt) return null;
 
   const lastMessageAt =
-    typeof summary.last_active_at === "string"
-      ? summary.last_active_at
-      : typeof summary.updated_at === "string"
-        ? summary.updated_at
-        : startedAt;
+    canonicalInstant(summary.last_active_at) ??
+    canonicalInstant(summary.updated_at) ??
+    startedAt;
 
-  const durationSeconds = toNonNeg(
+  const duration = clampDuration(
     signals?.sessionDurationSeconds ?? 0,
+    startedAt,
+    lastMessageAt,
   );
   const userMessages = toNonNeg(signals?.userMessageCount ?? 0);
   const assistantMessages = toNonNeg(signals?.assistantMessageCount ?? 0);
@@ -80,7 +83,7 @@ export async function parseGrokSession(
     kind: "human",
     startedAt,
     lastMessageAt,
-    durationSeconds,
+    durationSeconds: duration,
     userMessages,
     assistantMessages,
     totalMessages,
@@ -93,5 +96,19 @@ export async function parseGrokSession(
 function toNonNeg(v: unknown): number {
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.floor(n);
+  // Same cap the server enforces (core MAX_RECORD_MESSAGES); an out-of-range
+  // counter rejects the whole batch, and a rejected batch never advances the
+  // upload offset.
+  return Math.min(Math.floor(n), 100_000_000);
+}
+
+/**
+ * Grok reports its own wall-clock duration; trust it only when it is a
+ * finite, in-range number of seconds. Out-of-range values would be rejected
+ * by the server and wedge the whole session queue.
+ */
+function clampDuration(v: unknown, startedAt: string, lastMessageAt: string): number {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return durationSeconds(startedAt, lastMessageAt);
+  return Math.min(Math.floor(n), 315_576_000);
 }

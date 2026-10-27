@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import type { TokenDelta } from "@pew/core";
 import type { ParsedDelta } from "./claude.js";
 import { isAllZero, toNonNegInt } from "../utils/token-delta.js";
+import { canonicalInstant } from "../utils/session-time.js";
 import { clampedJsonlEndOffset, jsonlStreamBound } from "../utils/jsonl-offset.js";
 import { evidenceId, usageLabel } from "../utils/usage-evidence.js";
 import { piAccounting } from "../utils/accounting.js";
@@ -163,20 +164,24 @@ export async function parsePiFile(opts: {
 
         const beforeCursor = readStart + completeBytes <= startOffset;
         if (obj.type === "compaction") {
+          // canonicalInstant, not Date.parse: the evidence record and the
+          // bucket both key off this string, and the server accepts only the
+          // toISOString() spelling of the instant.
+          const compactionAt = canonicalInstant(obj.timestamp);
           if (!sessionId || typeof obj.id !== "string" || !obj.id ||
-            typeof obj.timestamp !== "string" || !Number.isFinite(Date.parse(obj.timestamp)) ||
+            compactionAt === null ||
             !obj.usage || typeof obj.usage !== "object") continue;
           // Pi copies entry IDs and timestamps when forking into a NEW session
           // header. Scope by the immutable entry tuple, not pathname/header.
           // The timestamp also separates reused short entry IDs in new calls.
-          const eventId = evidenceId(["pi", "compaction", obj.id, new Date(obj.timestamp).toISOString()]);
+          const eventId = evidenceId(["pi", "compaction", obj.id, compactionAt]);
           const tokens = normalizePiUsage(obj.usage as Record<string, unknown>);
           if (isAllZero(tokens)) continue;
           if (seenCompactions.has(eventId)) continue;
           seenCompactions.add(eventId);
           if (beforeCursor) continue;
           const model = obj.model ? usageLabel(obj.model) : obj.fromHook ? "unknown" : currentModel;
-          deltas.push({ source, model, timestamp: obj.timestamp, tokens,
+          deltas.push({ source, model, timestamp: compactionAt, tokens,
             ...(opts.includeAccounting ? { accounting: piAccounting(tokens, obj.usage as Record<string, unknown>, model, currentProvider, true) } : {}), evidence: {
             eventId, groupId: eventId,
             callType: "compaction", origin: "pi-session", provider: currentProvider,
@@ -204,8 +209,7 @@ export async function parsePiFile(opts: {
         if (beforeCursor) continue;
 
         // Extract timestamp from the outer JSONL entry
-        const timestamp =
-          typeof obj.timestamp === "string" ? obj.timestamp : null;
+        const timestamp = canonicalInstant(obj.timestamp);
         if (!timestamp) continue;
 
         // Normalize and filter zero deltas

@@ -10,6 +10,11 @@ import { stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import type { SessionSnapshot, Source } from "@pew/core";
 import { hashProjectRef } from "../utils/hash-project-ref.js";
+import {
+  durationSeconds,
+  type InstantBounds,
+  trackInstant,
+} from "../utils/session-time.js";
 
 /** Internal accumulator for a single session */
 interface SessionAccum {
@@ -17,8 +22,7 @@ interface SessionAccum {
   userMessages: number;
   assistantMessages: number;
   totalMessages: number;
-  minTimestamp: string | null;
-  maxTimestamp: string | null;
+  timestamps: InstantBounds;
   lastModel: string | null;
 }
 
@@ -87,8 +91,7 @@ export async function collectClaudeSessions(
           userMessages: 0,
           assistantMessages: 0,
           totalMessages: 0,
-          minTimestamp: null,
-          maxTimestamp: null,
+          timestamps: { min: null, max: null },
           lastModel: null,
         };
         sessions.set(sessionId, accum);
@@ -104,12 +107,7 @@ export async function collectClaudeSessions(
 
       // Track timestamps
       if (timestamp) {
-        if (!accum.minTimestamp || timestamp < accum.minTimestamp) {
-          accum.minTimestamp = timestamp;
-        }
-        if (!accum.maxTimestamp || timestamp > accum.maxTimestamp) {
-          accum.maxTimestamp = timestamp;
-        }
+        trackInstant(accum.timestamps, timestamp);
       }
 
       // Track model (from message.model or obj.model)
@@ -135,12 +133,10 @@ export async function collectClaudeSessions(
   const results: SessionSnapshot[] = [];
 
   for (const accum of sessions.values()) {
-    if (!accum.minTimestamp) continue; // no valid timestamps → skip
+    if (!accum.timestamps.min) continue; // no valid timestamps → skip
 
-    const startedAt = accum.minTimestamp;
-    const lastMessageAt = accum.maxTimestamp ?? accum.minTimestamp;
-    const durationMs =
-      new Date(lastMessageAt).getTime() - new Date(startedAt).getTime();
+    const startedAt = accum.timestamps.min;
+    const lastMessageAt = accum.timestamps.max ?? accum.timestamps.min;
 
     results.push({
       sessionKey: `claude:${accum.sessionId}`,
@@ -148,7 +144,7 @@ export async function collectClaudeSessions(
       kind: "human",
       startedAt,
       lastMessageAt,
-      durationSeconds: Math.max(0, Math.floor(durationMs / 1000)),
+      durationSeconds: durationSeconds(startedAt, lastMessageAt),
       userMessages: accum.userMessages,
       assistantMessages: accum.assistantMessages,
       totalMessages: accum.totalMessages,

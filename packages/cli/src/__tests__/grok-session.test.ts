@@ -62,8 +62,10 @@ describe("parseGrokSession", () => {
     expect(snap!.sessionKey).toBe("sid-1");
     expect(snap!.source).toBe("grok");
     expect(snap!.kind).toBe("human");
-    expect(snap!.startedAt).toBe("2026-07-10T00:37:48.494738Z");
-    expect(snap!.lastMessageAt).toBe("2026-07-10T00:38:09.334793Z");
+    // Canonical UTC on the way out: Grok writes microseconds, the ingest
+    // contract stores and compares the millisecond toISOString() spelling.
+    expect(snap!.startedAt).toBe("2026-07-10T00:37:48.494Z");
+    expect(snap!.lastMessageAt).toBe("2026-07-10T00:38:09.334Z");
     expect(snap!.durationSeconds).toBe(18);
     expect(snap!.userMessages).toBe(1);
     expect(snap!.assistantMessages).toBe(3);
@@ -84,7 +86,7 @@ describe("parseGrokSession", () => {
     );
     const snap = await parseGrokSession(sessionDir);
     expect(snap).not.toBeNull();
-    expect(snap!.startedAt).toBe("2026-07-10T00:00:00Z");
+    expect(snap!.startedAt).toBe("2026-07-10T00:00:00.000Z");
     expect(snap!.model).toBe("grok-4.5");
     expect(snap!.userMessages).toBe(0);
     expect(snap!.assistantMessages).toBe(0);
@@ -119,7 +121,7 @@ describe("parseGrokSession", () => {
     expect(await parseGrokSession(sessionDir)).toMatchObject({
       sessionKey: "legacy-session",
       source: "grok",
-      lastMessageAt: "2026-07-10T00:10:00Z",
+      lastMessageAt: "2026-07-10T00:10:00.000Z",
       projectRef: hashProjectRef("/tmp/legacy-project"),
       totalMessages: 0,
       userMessages: 0,
