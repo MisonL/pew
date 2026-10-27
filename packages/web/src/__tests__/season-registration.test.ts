@@ -284,10 +284,7 @@ describe("DELETE /api/seasons/[seasonId]/register", () => {
     mockDbRead.getSeasonById.mockResolvedValueOnce({ id: "season-1", start_date: "2099-01-01T00:00:00Z", end_date: "2099-12-31T23:59:00Z" });
     mockDbRead.getTeamMembership.mockResolvedValueOnce("owner");
     mockDbRead.getSeasonRegistration.mockResolvedValueOnce({ id: "reg-1" });
-    // DELETE season_team_members + DELETE season_teams
-    mockDbWrite.execute
-      .mockResolvedValueOnce({ changes: 2, duration: 0.01 })
-      .mockResolvedValueOnce({ changes: 1, duration: 0.01 });
+    mockDbWrite.batch.mockResolvedValueOnce([]);
 
     const res = await DELETE(makeJsonRequest("DELETE", "/api/seasons/season-1/register", { team_id: "team-1" }), {
       params: regParams,
@@ -296,10 +293,14 @@ describe("DELETE /api/seasons/[seasonId]/register", () => {
     const json = await res.json();
     expect(json.deleted).toBe(true);
 
-    // Verify both deletes happened
-    expect(mockDbWrite.execute).toHaveBeenCalledTimes(2);
-    expect(mockDbWrite.execute.mock.calls[0]![0]).toContain("season_team_members");
-    expect(mockDbWrite.execute.mock.calls[1]![0]).toContain("season_teams");
+    // Both deletes go in one batch: a failure between them would leave the
+    // team registered with an empty roster (a 0-token leaderboard entry).
+    expect(mockDbWrite.batch).toHaveBeenCalledTimes(1);
+    const statements = mockDbWrite.batch.mock.calls[0]![0] as Array<{ sql: string }>;
+    expect(statements).toHaveLength(2);
+    expect(statements[0]!.sql).toContain("season_team_members");
+    expect(statements[1]!.sql).toContain("season_teams");
+    expect(mockDbWrite.execute).not.toHaveBeenCalled();
   });
 
   it("should reject withdrawal from active season", async () => {

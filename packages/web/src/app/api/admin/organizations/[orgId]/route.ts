@@ -8,6 +8,7 @@
 
 import { NextResponse } from "next/server";
 import { resolveAdmin } from "@/lib/admin";
+import { readJsonBody } from "@/lib/request-json";
 import { getDbRead, getDbWrite } from "@/lib/db";
 
 // ---------------------------------------------------------------------------
@@ -83,12 +84,9 @@ export async function PATCH(
 
   const { orgId } = await params;
 
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
 
   const dbRead = await getDbRead();
   const dbWrite = await getDbWrite();

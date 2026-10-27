@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
 import { getDbRead, getDbWrite } from "@/lib/db";
+import { readJsonBody } from "@/lib/request-json";
 import { deriveSeasonStatus } from "@/lib/seasons";
 
 // ---------------------------------------------------------------------------
@@ -25,14 +26,9 @@ export async function POST(
 
   const { seasonId } = await params;
 
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const { team_id } = body as { team_id?: string };
+  const parsed = await readJsonBody<{ team_id?: string }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { team_id } = parsed.body;
   if (!team_id || typeof team_id !== "string") {
     return NextResponse.json(
       { error: "team_id is required" },
@@ -192,14 +188,9 @@ export async function DELETE(
 
   const { seasonId } = await params;
 
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const { team_id } = body as { team_id?: string };
+  const parsed = await readJsonBody<{ team_id?: string }>(request);
+  if (!parsed.ok) return parsed.response;
+  const { team_id } = parsed.body;
   if (!team_id || typeof team_id !== "string") {
     return NextResponse.json(
       { error: "team_id is required" },
@@ -255,15 +246,21 @@ export async function DELETE(
       );
     }
 
-    await dbWrite.execute(
-      "DELETE FROM season_team_members WHERE season_id = ? AND team_id = ?",
-      [seasonId, team_id]
-    );
-
-    await dbWrite.execute(
-      "DELETE FROM season_teams WHERE season_id = ? AND team_id = ?",
-      [seasonId, team_id]
-    );
+    // One batch: as separate statements, a failure after the roster delete
+    // left the team registered with an empty roster, which the public
+    // leaderboard renders as a real entry with 0 tokens until someone
+    // retries. The registration delete alone is the visible-state switch, so
+    // both must commit together.
+    await dbWrite.batch([
+      {
+        sql: "DELETE FROM season_team_members WHERE season_id = ? AND team_id = ?",
+        params: [seasonId, team_id],
+      },
+      {
+        sql: "DELETE FROM season_teams WHERE season_id = ? AND team_id = ?",
+        params: [seasonId, team_id],
+      },
+    ]);
 
     await dbRead.invalidateCacheKey("seasons:list");
 

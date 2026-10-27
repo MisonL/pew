@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
 import { isAdminUser } from "@/lib/admin";
 import { getDbRead, getDbWrite } from "@/lib/db";
+import { readJsonBody } from "@/lib/request-json";
 import type { TeamRow } from "@/lib/rpc-types";
 
 // ---------------------------------------------------------------------------
@@ -80,12 +81,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
 
   const name = body.name;
   if (typeof name !== "string" || name.length < 1 || name.length > 64) {
@@ -120,18 +118,23 @@ export async function POST(request: Request) {
 
     const teamId = crypto.randomUUID();
 
-    await dbWrite.execute(
-      `INSERT INTO teams (id, name, slug, invite_code, created_by, created_at)
-       VALUES (?, ?, ?, ?, ?, datetime('now'))`,
-      [teamId, name, finalSlug, inviteCode, authResult.userId],
-    );
-
-    // Add creator as member (role: owner)
-    await dbWrite.execute(
-      `INSERT INTO team_members (id, team_id, user_id, role, joined_at)
-       VALUES (?, ?, ?, 'owner', datetime('now'))`,
-      [crypto.randomUUID(), teamId, authResult.userId],
-    );
+    // One batch: a team row whose owner membership insert failed would be
+    // invisible to listTeamsForUser (INNER JOIN team_members) yet still hold a
+    // live invite_code, and no route could delete it. The slug uniqueness
+    // check above is a read, so a concurrent create can still win the race —
+    // that surfaces as UNIQUE constraint failed and is mapped to 409 below.
+    await dbWrite.batch([
+      {
+        sql: `INSERT INTO teams (id, name, slug, invite_code, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+        params: [teamId, name, finalSlug, inviteCode, authResult.userId],
+      },
+      {
+        sql: `INSERT INTO team_members (id, team_id, user_id, role, joined_at)
+         VALUES (?, ?, ?, 'owner', datetime('now'))`,
+        params: [crypto.randomUUID(), teamId, authResult.userId],
+      },
+    ]);
 
     return NextResponse.json({
       id: teamId,
@@ -147,6 +150,12 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Teams feature not available yet — database migration pending" },
         { status: 503 },
+      );
+    }
+    if (/UNIQUE constraint failed/i.test(msg) && /teams\.slug/i.test(msg)) {
+      return NextResponse.json(
+        { error: "A team with this name already exists. Please try a different name." },
+        { status: 409 },
       );
     }
     console.error("Failed to create team:", err);

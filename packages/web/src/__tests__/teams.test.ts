@@ -228,7 +228,7 @@ describe("POST /api/teams", () => {
   it("should create a team with auto-generated slug (201)", async () => {
     vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
     mockDbRead.checkTeamSlugExists.mockResolvedValueOnce(false); // slug not taken
-    mockDbWrite.execute.mockResolvedValue({ changes: 1 });
+    mockDbWrite.batch.mockResolvedValue([]);
 
     const res = await POST(makeJson("POST", { name: "My Cool Team!" }));
     const body = await res.json();
@@ -238,14 +238,20 @@ describe("POST /api/teams", () => {
     expect(body.slug).toBe("my-cool-team"); // auto slugified
     expect(body.member_count).toBe(1);
     expect(body.invite_code).toBeTruthy();
-    // Should have 2 execute calls: INSERT teams + INSERT team_members
-    expect(mockDbWrite.execute).toHaveBeenCalledTimes(2);
+    // Team row and owner membership go in ONE batch: a separate second write
+    // that failed would leave a memberless team whose invite code still works.
+    expect(mockDbWrite.batch).toHaveBeenCalledTimes(1);
+    const statements = mockDbWrite.batch.mock.calls[0]![0] as Array<{ sql: string }>;
+    expect(statements).toHaveLength(2);
+    expect(statements[0]!.sql).toContain("INSERT INTO teams");
+    expect(statements[1]!.sql).toContain("INSERT INTO team_members");
+    expect(mockDbWrite.execute).not.toHaveBeenCalled();
   });
 
   it("should append random suffix when slug is taken", async () => {
     vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
     mockDbRead.checkTeamSlugExists.mockResolvedValueOnce(true); // slug taken
-    mockDbWrite.execute.mockResolvedValue({ changes: 1 });
+    mockDbWrite.batch.mockResolvedValue([]);
 
     const res = await POST(makeJson("POST", { name: "Taken" }));
     const body = await res.json();
@@ -258,7 +264,7 @@ describe("POST /api/teams", () => {
   it("should use 'team' as fallback slug for non-alphanumeric names", async () => {
     vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
     mockDbRead.checkTeamSlugExists.mockResolvedValueOnce(false);
-    mockDbWrite.execute.mockResolvedValue({ changes: 1 });
+    mockDbWrite.batch.mockResolvedValue([]);
 
     const res = await POST(makeJson("POST", { name: "---" }));
     const body = await res.json();
@@ -267,10 +273,21 @@ describe("POST /api/teams", () => {
     expect(body.slug).toBe("team");
   });
 
+  it("should return 409 when a concurrent create wins the slug race", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
+    mockDbRead.checkTeamSlugExists.mockResolvedValueOnce(false); // read says free
+    mockDbWrite.batch.mockRejectedValueOnce(new Error("UNIQUE constraint failed: teams.slug"));
+
+    const res = await POST(makeJson("POST", { name: "Race" }));
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("already exists");
+  });
+
   it("should return 503 when teams table does not exist", async () => {
     vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
     mockDbRead.checkTeamSlugExists.mockResolvedValueOnce(false);
-    mockDbWrite.execute.mockRejectedValueOnce(new Error("no such table: teams"));
+    mockDbWrite.batch.mockRejectedValueOnce(new Error("no such table: teams"));
 
     const res = await POST(makeJson("POST", { name: "Test" }));
 
@@ -280,7 +297,7 @@ describe("POST /api/teams", () => {
   it("should return 500 on unexpected POST error", async () => {
     vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
     mockDbRead.checkTeamSlugExists.mockResolvedValueOnce(false);
-    mockDbWrite.execute.mockRejectedValueOnce(new Error("D1 down"));
+    mockDbWrite.batch.mockRejectedValueOnce(new Error("D1 down"));
 
     const res = await POST(makeJson("POST", { name: "Test" }));
 

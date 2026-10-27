@@ -13,6 +13,7 @@ import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
 import { unauthorizedResponse } from "@/lib/api-responses";
 import { getDbRead, getDbWrite } from "@/lib/db";
+import { readJsonBody } from "@/lib/request-json";
 
 // ---------------------------------------------------------------------------
 // DELETE — permanently delete account
@@ -37,14 +38,9 @@ export async function DELETE(request: Request) {
     return unauthorizedResponse();
   }
 
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const confirmEmail = body.confirm_email;
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const confirmEmail = parsed.body.confirm_email;
   if (typeof confirmEmail !== "string" || !confirmEmail.trim()) {
     return NextResponse.json(
       { error: "confirm_email is required" },

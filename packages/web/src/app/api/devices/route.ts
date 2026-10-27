@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
 import { unauthorizedResponse } from "@/lib/api-responses";
 import { getDbRead, getDbWrite } from "@/lib/db";
+import { readJsonBody } from "@/lib/request-json";
 
 // ---------------------------------------------------------------------------
 // GET /api/devices
@@ -56,12 +57,9 @@ export async function PUT(request: Request) {
   }
   const userId = authResult.userId;
 
-  let body: { device_id?: string; alias?: string };
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  const parsed = await readJsonBody<{ device_id?: string; alias?: string }>(request, "Invalid JSON body");
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
 
   // Validate device_id
   const deviceId = body.device_id;
@@ -141,12 +139,9 @@ export async function DELETE(request: Request) {
   }
   const userId = authResult.userId;
 
-  let body: { device_id?: string };
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  const parsed = await readJsonBody<{ device_id?: string }>(request, "Invalid JSON body");
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
 
   const deviceId = body.device_id;
   if (!deviceId || typeof deviceId !== "string" || !deviceId.trim()) {

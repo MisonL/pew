@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
 import { getDbRead, getDbWrite } from "@/lib/db";
 import { inMemoryRateLimiter, TEAM_JOIN_RATE_LIMIT } from "@/lib/rate-limit";
+import { readJsonBody } from "@/lib/request-json";
 import { syncSeasonRosters } from "@/lib/season-roster";
 
 export async function POST(request: Request) {
@@ -26,12 +27,9 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
 
   const inviteCode = body.invite_code;
   if (typeof inviteCode !== "string" || inviteCode.length === 0) {
@@ -82,17 +80,30 @@ export async function POST(request: Request) {
       // Settings table may not exist yet — use default
     }
 
-    // Atomic check+insert: INSERT only if team is under the member limit.
-    // This prevents race conditions where concurrent joins both pass a
-    // separate COUNT check and both INSERT, exceeding the limit.
+    // Atomic check+insert: INSERT only if team is under the member limit AND
+    // the caller is not already a member. The membership predicate is not
+    // redundant with the read above: two concurrent joins (a double-click, or
+    // a retried request) both pass that read, and the loser would hit
+    // UNIQUE(team_id, user_id) as a generic 500 instead of the 409 this route
+    // promises. With it, the loser matches zero rows and gets 409 below.
     const result = await dbWrite.execute(
       `INSERT INTO team_members (id, team_id, user_id, role, joined_at)
        SELECT ?, ?, ?, 'member', datetime('now')
-       WHERE (SELECT COUNT(*) FROM team_members WHERE team_id = ?) < ?`,
-      [crypto.randomUUID(), team.id, authResult.userId, team.id, maxMembers],
+       WHERE (SELECT COUNT(*) FROM team_members WHERE team_id = ?) < ?
+         AND NOT EXISTS (SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ?)`,
+      [crypto.randomUUID(), team.id, authResult.userId, team.id, maxMembers, team.id, authResult.userId],
     );
 
     if (result.changes === 0) {
+      // Distinguish "already a member" from "team is full" so a repeated
+      // request is idempotent rather than reporting a misleading 403.
+      const joined = await dbRead.checkTeamMembershipExists(team.id, authResult.userId);
+      if (joined) {
+        return NextResponse.json(
+          { error: "Already a member of this team" },
+          { status: 409 },
+        );
+      }
       return NextResponse.json(
         { error: `Team is full (max ${maxMembers} members)` },
         { status: 403 },

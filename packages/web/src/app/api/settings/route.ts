@@ -5,6 +5,7 @@
 import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
 import { getDbRead, getDbWrite } from "@/lib/db";
+import { readJsonBody } from "@/lib/request-json";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -84,12 +85,9 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
 
   const dbRead = await getDbRead();
   const dbWrite = await getDbWrite();
@@ -190,6 +188,12 @@ export async function PATCH(request: Request) {
         { error: "Nickname feature not available yet — database migration pending" },
         { status: 503 },
       );
+    }
+    // The uniqueness check above is a read; two users claiming the same slug
+    // at once both pass it, and the loser would otherwise see a generic 500
+    // instead of the 409 the sequential path returns.
+    if (/UNIQUE constraint failed/i.test(msg) && /users\.slug/i.test(msg)) {
+      return NextResponse.json({ error: "slug is already taken" }, { status: 409 });
     }
     console.error("Failed to update settings:", err);
     return NextResponse.json({ error: "Failed to update settings" }, { status: 500 });

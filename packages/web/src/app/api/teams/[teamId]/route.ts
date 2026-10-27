@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
 
 import { getDbRead, getDbWrite } from "@/lib/db";
+import { readJsonBody } from "@/lib/request-json";
 import { deleteTeamLogoByUrl } from "@/lib/r2";
 
 // ---------------------------------------------------------------------------
@@ -117,17 +118,12 @@ export async function PATCH(
 
   const { teamId } = await params;
 
-  let name: string | undefined;
-  let autoRegisterSeason: boolean | undefined;
-  let regenerateInviteCode: boolean;
-  try {
-    const body = await request.json();
-    name = typeof body.name === "string" ? body.name.trim() : undefined;
-    autoRegisterSeason = typeof body.auto_register_season === "boolean" ? body.auto_register_season : undefined;
-    regenerateInviteCode = body.regenerate_invite_code === true;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
+  const name = typeof body.name === "string" ? body.name.trim() : undefined;
+  const autoRegisterSeason = typeof body.auto_register_season === "boolean" ? body.auto_register_season : undefined;
+  const regenerateInviteCode = body.regenerate_invite_code === true;
 
   if (name !== undefined && (!name || name.length > 64)) {
     return NextResponse.json(

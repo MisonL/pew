@@ -59,6 +59,15 @@ export const MAX_ACCOUNTING_BODY_BYTES = 24 * 1024 * 1024;
  */
 export const MAX_AUTH_BODY_BYTES = 16 * 1024;
 
+/**
+ * Body cap for the authenticated JSON write routes (settings, devices, teams,
+ * season registration, account deletion, admin). Same reasoning as
+ * MAX_AUTH_BODY_BYTES: every one of these bodies is a handful of short fields,
+ * and an unbounded `request.json()` lets any signed-in caller (or a leaked
+ * Bearer key) make the single web process buffer an arbitrary payload.
+ */
+export const MAX_JSON_BODY_BYTES = 16 * 1024;
+
 /** Maximum string field length (model names, session keys, etc.) */
 export const MAX_STRING_LENGTH = 1024;
 

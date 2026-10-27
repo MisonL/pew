@@ -398,16 +398,20 @@ describe("DELETE /api/seasons/[seasonId]/register", () => {
     deriveSeasonStatus.mockReturnValueOnce("upcoming");
     mockDbRead.getTeamMembership.mockResolvedValueOnce("owner");
     mockDbRead.getSeasonRegistration.mockResolvedValueOnce({ id: "reg-1" });
-    mockDbWrite.execute.mockResolvedValue({ changes: 1, duration: 0.01 });
+    mockDbWrite.batch.mockResolvedValue([]);
 
     const res = await DELETE(deleteReq({ team_id: "t1" }), PARAMS);
     expect(res.status).toBe(200);
     expect((await res.json()).deleted).toBe(true);
 
-    // Verify both deletes
-    expect(mockDbWrite.execute).toHaveBeenCalledTimes(2);
-    expect(mockDbWrite.execute.mock.calls[0]![0]).toContain("season_team_members");
-    expect(mockDbWrite.execute.mock.calls[1]![0]).toContain("season_teams");
+    // Both deletes go in ONE batch: a failure between them would leave the
+    // team registered with an empty roster (a 0-token leaderboard entry).
+    expect(mockDbWrite.batch).toHaveBeenCalledTimes(1);
+    const statements = mockDbWrite.batch.mock.calls[0]![0] as Array<{ sql: string }>;
+    expect(statements).toHaveLength(2);
+    expect(statements[0]!.sql).toContain("season_team_members");
+    expect(statements[1]!.sql).toContain("season_teams");
+    expect(mockDbWrite.execute).not.toHaveBeenCalled();
   });
 
   it("returns 503 on 'no such table' error", async () => {

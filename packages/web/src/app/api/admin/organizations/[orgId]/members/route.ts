@@ -7,6 +7,7 @@
 
 import { NextResponse } from "next/server";
 import { resolveAdmin } from "@/lib/admin";
+import { readJsonBody } from "@/lib/request-json";
 import { getDbRead, getDbWrite } from "@/lib/db";
 
 // ---------------------------------------------------------------------------
@@ -82,14 +83,9 @@ export async function POST(
 
   const { orgId } = await params;
 
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const { userId } = body as { userId?: string };
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const { userId } = parsed.body as { userId?: string };
 
   if (!userId || typeof userId !== "string") {
     return NextResponse.json(

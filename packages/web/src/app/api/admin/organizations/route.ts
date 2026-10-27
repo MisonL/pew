@@ -7,6 +7,7 @@
 
 import { NextResponse } from "next/server";
 import { resolveAdmin } from "@/lib/admin";
+import { readJsonBody } from "@/lib/request-json";
 import { getDbRead, getDbWrite } from "@/lib/db";
 
 // ---------------------------------------------------------------------------
@@ -68,14 +69,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const { name, slug } = body as {
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const { name, slug } = parsed.body as {
     name?: string;
     slug?: string;
   };

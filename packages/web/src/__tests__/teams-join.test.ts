@@ -247,10 +247,29 @@ describe("POST /api/teams/join", () => {
     mockDbRead.getAppSetting.mockResolvedValueOnce("5"); // max_team_members setting
     // Atomic INSERT ... SELECT inserts 0 rows (team became full concurrently)
     mockDbWrite.execute.mockResolvedValueOnce({ changes: 0 });
+    // Re-check after the 0-row insert: still not a member -> genuinely full.
+    mockDbRead.checkTeamMembershipExists.mockResolvedValueOnce(false);
 
     const res = await POST(makeJson({ invite_code: "0123456789abcdef0123456789abcdef" }));
     expect(res.status).toBe(403);
     expect((await res.json()).error).toContain("Team is full");
+  });
+
+  it("should return 409 (not 500) when a concurrent join already inserted the membership", async () => {
+    // Two concurrent requests both pass the pre-check. Without the NOT EXISTS
+    // predicate the loser hits UNIQUE(team_id, user_id) and surfaces as a
+    // generic 500; with it the insert matches zero rows and the re-check
+    // reports the duplicate membership as 409.
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
+    mockDbRead.findTeamByInviteCode.mockResolvedValueOnce({ id: "t1", name: "Team", slug: "team" });
+    mockDbRead.checkTeamMembershipExists.mockResolvedValueOnce(false);
+    mockDbRead.getAppSetting.mockResolvedValueOnce("5");
+    mockDbWrite.execute.mockResolvedValueOnce({ changes: 0 });
+    mockDbRead.checkTeamMembershipExists.mockResolvedValueOnce(true); // the other request won
+
+    const res = await POST(makeJson({ invite_code: "0123456789abcdef0123456789abcdef" }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("Already a member");
   });
 
   it("should return 429 when rate limited", async () => {

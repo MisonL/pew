@@ -300,6 +300,17 @@ describe("PATCH /api/settings", () => {
     expect((await res.json()).error).toContain("already taken");
   });
 
+  it("should return 409 (not 500) when a concurrent request claims the slug first", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
+    mockDbRead.checkSlugExists.mockResolvedValueOnce(false); // read says free
+    mockDbWrite.execute.mockRejectedValueOnce(new Error("UNIQUE constraint failed: users.slug"));
+
+    const res = await PATCH(makeJsonRequest("PATCH", "/api/settings", { slug: "racy" }));
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("already taken");
+  });
+
   it("should allow null slug (clear)", async () => {
     vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
     mockDbWrite.execute.mockResolvedValueOnce({ changes: 1 });
