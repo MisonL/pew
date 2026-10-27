@@ -55,14 +55,6 @@ const SKIP_DIRS = new Set([
 // points at the `delete` statement itself. Per-line, so a new violation in
 // the same file will NOT be silently allowed.
 const ALLOWED_SITES: Record<string, string> = {
-  "packages/cli/src/notifier/claude-hook.ts:128":
-    "hook cleanup: dynamic key = EVENT_NAME const, guaranteed present via prior check",
-  "packages/cli/src/notifier/gemini-hook.ts:136":
-    "hook cleanup: dynamic key = EVENT_NAME const, guaranteed present via prior check",
-  "packages/cli/src/notifier/openclaw-hook.ts:113":
-    "hook cleanup: dynamic key = PLUGIN_ID const",
-  "packages/cli/src/notifier/openclaw-hook.ts:135":
-    "hook cleanup: dynamic key = installs entry from a loop over Object.entries",
   "deploy/selfhost/basic-auth.test.ts:60":
     "test env restore: dynamic key from const KEYS list, moved here from reset-password.test.ts with the resolver under test",
 };
