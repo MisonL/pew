@@ -1,5 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { NotifierOperationResult, NotifierStatus } from "@pew/core";
+import { shellArg } from "./shell-quote.js";
 
 interface ClaudeHookFs {
   readFile: (path: string, encoding: BufferEncoding) => Promise<string>;
@@ -21,6 +23,7 @@ export async function installClaudeHook(
 ): Promise<NotifierOperationResult> {
   const fs = opts.fs ?? { readFile, writeFile, mkdir };
   const command = buildClaudeHookCommand(opts.notifyPath);
+  const accepted = acceptedCommands(opts.notifyPath);
   const loaded = await loadSettings(opts.settingsPath, fs);
   if (loaded.status === "invalid") {
     return {
@@ -36,13 +39,15 @@ export async function installClaudeHook(
   const entries = normalizeArray(hooks[EVENT_NAME]);
 
   let changed = false;
+  // Upgrade an entry still carrying the legacy double-quoted spelling to the
+  // current one in place, so the dangerous form does not survive a reinstall.
   const nextEntries = entries.map((entry) => {
-    const normalized = normalizeEntry(entry, command);
+    const normalized = normalizeEntry(entry, command, accepted);
     if (normalized !== entry) changed = true;
     return normalized;
   });
 
-  if (!hasCommand(nextEntries, command)) {
+  if (!hasCommand(nextEntries, accepted)) {
     nextEntries.push({
       hooks: [{ type: "command", command }],
     });
@@ -80,7 +85,7 @@ export async function uninstallClaudeHook(
   opts: ClaudeHookOptions,
 ): Promise<NotifierOperationResult> {
   const fs = opts.fs ?? { readFile, writeFile, mkdir };
-  const command = buildClaudeHookCommand(opts.notifyPath);
+  const accepted = acceptedCommands(opts.notifyPath);
   const loaded = await loadSettings(opts.settingsPath, fs);
 
   if (loaded.status === "missing") {
@@ -106,7 +111,7 @@ export async function uninstallClaudeHook(
   let removed = false;
   const nextEntries = entries
     .map((entry) => {
-      const stripped = stripCommand(entry, command);
+      const stripped = stripCommand(entry, accepted);
       if (stripped !== entry) removed = true;
       return stripped;
     })
@@ -121,12 +126,14 @@ export async function uninstallClaudeHook(
     };
   }
 
-  const nextHooks = { ...hooks };
-  if (nextEntries.length > 0) {
-    nextHooks[EVENT_NAME] = nextEntries;
-  } else {
-    delete nextHooks[EVENT_NAME];
+  // Rebuild rather than `delete nextHooks[EVENT_NAME]` — the repo's AST gate
+  // bans computed deletes, and a spread keeps every other event's entries
+  // byte-identical.
+  const nextHooks: Record<string, unknown> = {};
+  for (const [event, eventEntries] of Object.entries(hooks)) {
+    if (event !== EVENT_NAME) nextHooks[event] = eventEntries;
   }
+  if (nextEntries.length > 0) nextHooks[EVENT_NAME] = nextEntries;
 
   const nextSettings = { ...settings };
   if (Object.keys(nextHooks).length > 0) nextSettings.hooks = nextHooks;
@@ -149,16 +156,35 @@ export async function getClaudeHookStatus(opts: ClaudeHookOptions): Promise<Noti
   if (loaded.status === "invalid" || !loaded.settings) return "error";
   return hasCommand(
     normalizeArray(normalizeObject(loaded.settings.hooks)[EVENT_NAME]),
-    buildClaudeHookCommand(opts.notifyPath),
+    acceptedCommands(opts.notifyPath),
   )
     ? "installed"
     : "not-installed";
 }
 
-function buildClaudeHookCommand(notifyPath: string): string {
-  return `/usr/bin/env node ${quoteArg(notifyPath)} --source=${SOURCE}`;
+/** Both spellings an entry may legitimately carry; see legacyClaudeHookCommand. */
+function acceptedCommands(notifyPath: string): string[] {
+  return [buildClaudeHookCommand(notifyPath), legacyClaudeHookCommand(notifyPath)];
 }
 
+function buildClaudeHookCommand(notifyPath: string): string {
+  return `/usr/bin/env node ${shellArg(notifyPath)} --source=${SOURCE}`;
+}
+
+/**
+ * The command earlier versions wrote: the same argument wrapped in double
+ * quotes when it was not shell-safe. Double quotes do not stop `$(...)`, so
+ * that spelling is exactly the injection this file no longer produces — but
+ * an install already on disk still carries it, and both `status` and
+ * `uninstall` must still recognise the entry. Otherwise a reinstall adds a
+ * second hook beside the dangerous one and uninstall leaves it behind.
+ */
+function legacyClaudeHookCommand(notifyPath: string): string {
+  const quoted = /^[A-Za-z0-9_\-./:@]+$/.test(notifyPath)
+    ? notifyPath
+    : `"${notifyPath.replace(/"/g, '\\"')}"`;
+  return `/usr/bin/env node ${quoted} --source=${SOURCE}`;
+}
 async function loadSettings(
   settingsPath: string,
   fs: ClaudeHookFs,
@@ -198,7 +224,16 @@ function normalizeArray(value: unknown): Record<string, unknown>[] {
     : [];
 }
 
-function normalizeEntry(entry: Record<string, unknown>, command: string): Record<string, unknown> {
+/**
+ * Rewrite a Pew-owned entry: add the missing `type: "command"`, and replace a
+ * legacy double-quoted command with the current spelling so an existing
+ * install is upgraded in place instead of left beside a second hook.
+ */
+function normalizeEntry(
+  entry: Record<string, unknown>,
+  command: string,
+  accepted: string[],
+): Record<string, unknown> {
   const hooks = Array.isArray(entry.hooks) ? entry.hooks : null;
   if (!hooks) return entry;
 
@@ -206,10 +241,10 @@ function normalizeEntry(entry: Record<string, unknown>, command: string): Record
   const nextHooks = hooks.map((hook) => {
     if (!hook || typeof hook !== "object") return hook;
     const hookObject = hook as Record<string, unknown>;
-    if (!commandMatches(hookObject.command, command)) return hookObject;
-    if (hookObject.type === "command") return hookObject;
+    if (typeof hookObject.command !== "string" || !accepted.includes(hookObject.command)) return hookObject;
+    if (hookObject.command === command && hookObject.type === "command") return hookObject;
     changed = true;
-    return { ...hookObject, type: "command" };
+    return { ...hookObject, type: "command", command };
   });
 
   return changed ? { ...entry, hooks: nextHooks } : entry;
@@ -217,14 +252,15 @@ function normalizeEntry(entry: Record<string, unknown>, command: string): Record
 
 function stripCommand(
   entry: Record<string, unknown>,
-  command: string,
+  accepted: string[],
 ): Record<string, unknown> | null {
   const hooks = Array.isArray(entry.hooks) ? entry.hooks : null;
   if (!hooks) return entry;
 
   const nextHooks = hooks.filter((hook) => {
     if (!hook || typeof hook !== "object") return true;
-    return !commandMatches((hook as Record<string, unknown>).command, command);
+    const value = (hook as Record<string, unknown>).command;
+    return !(typeof value === "string" && accepted.includes(value));
   });
 
   if (nextHooks.length === hooks.length) return entry;
@@ -232,18 +268,15 @@ function stripCommand(
   return { ...entry, hooks: nextHooks };
 }
 
-function hasCommand(entries: Record<string, unknown>[], command: string): boolean {
+function hasCommand(entries: Record<string, unknown>[], accepted: string[]): boolean {
   return entries.some((entry) => {
     const hooks = Array.isArray(entry.hooks) ? entry.hooks : [];
     return hooks.some((hook) => {
       if (!hook || typeof hook !== "object") return false;
-      return commandMatches((hook as Record<string, unknown>).command, command);
+      const value = (hook as Record<string, unknown>).command;
+      return typeof value === "string" && accepted.includes(value);
     });
   });
-}
-
-function commandMatches(value: unknown, command: string): boolean {
-  return value === command;
 }
 
 async function writeSettings(
@@ -257,13 +290,11 @@ async function writeSettings(
       ? `${settingsPath}.bak.${new Date().toISOString().replace(/[:.]/g, "-")}`
       : null;
 
-  await fs.mkdir(new URL(".", `file://${settingsPath}`).pathname, { recursive: true }).catch(
-    async () => {
-      const lastSlash = settingsPath.lastIndexOf("/");
-      const dir = lastSlash >= 0 ? settingsPath.slice(0, lastSlash) : ".";
-      await fs.mkdir(dir, { recursive: true });
-    },
-  );
+  // dirname, not `new URL(".", `file://${settingsPath}`).pathname`: the URL
+  // form percent-encodes the path, so `/Users/John Doe/.claude/settings.json`
+  // became `/Users/John%20Doe/.claude/` (a stray directory, and the real
+  // settings write then failed with ENOENT), and a `#` truncated it entirely.
+  await fs.mkdir(dirname(settingsPath), { recursive: true });
 
   if (backupPath && previousRaw !== null) {
     await fs.writeFile(backupPath, previousRaw, "utf8");
@@ -273,7 +304,3 @@ async function writeSettings(
   return backupPath;
 }
 
-function quoteArg(value: string): string {
-  if (/^[A-Za-z0-9_\-./:@]+$/.test(value)) return value;
-  return `"${value.replace(/"/g, '\\"')}"`;
-}

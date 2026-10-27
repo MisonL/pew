@@ -31,6 +31,56 @@ describe("Claude hook installer", () => {
     expect(saved.hooks.SessionEnd[0].hooks[0].command).toContain("--source=claude-code");
   });
 
+  it("single-quotes a notify path that a shell would expand", async () => {
+    // The command is stored as a string the host runs through `sh -c`.
+    // Double quotes do not stop `$(...)`, so the old spelling executed it on
+    // every session end.
+    const hostile = "/home/$(id)/.config/pew/bin/notify.cjs";
+    await installClaudeHook({ settingsPath, notifyPath: hostile });
+    const saved = JSON.parse(await readFile(settingsPath, "utf8"));
+    const command = saved.hooks.SessionEnd[0].hooks[0].command as string;
+
+    expect(command).toBe(`/usr/bin/env node '${hostile}' --source=claude-code`);
+    expect(command).not.toContain(`"${hostile}"`);
+  });
+
+  it("keeps a space-only path in the legacy double-quoted spelling", async () => {
+    // A space is inert inside double quotes; keeping the old spelling means an
+    // already-installed hook still matches and is not duplicated.
+    const spaced = "/Users/John Doe/.config/pew/bin/notify.cjs";
+    await installClaudeHook({ settingsPath, notifyPath: spaced });
+    const saved = JSON.parse(await readFile(settingsPath, "utf8"));
+    expect(saved.hooks.SessionEnd[0].hooks[0].command)
+      .toBe(`/usr/bin/env node "${spaced}" --source=claude-code`);
+  });
+
+  it("upgrades an entry still carrying the legacy double-quoted spelling in place", async () => {
+    const hostile = "/home/$(id)/.config/pew/bin/notify.cjs";
+    await writeFile(settingsPath, JSON.stringify({
+      hooks: { SessionEnd: [{ hooks: [{ type: "command", command: `/usr/bin/env node "${hostile}" --source=claude-code` }] }] },
+    }));
+    const result = await installClaudeHook({ settingsPath, notifyPath: hostile });
+    const saved = JSON.parse(await readFile(settingsPath, "utf8"));
+
+    expect(result.changed).toBe(true);
+    // One entry, not two, and the dangerous spelling is gone.
+    expect(saved.hooks.SessionEnd).toHaveLength(1);
+    expect(saved.hooks.SessionEnd[0].hooks).toHaveLength(1);
+    expect(saved.hooks.SessionEnd[0].hooks[0].command).toBe(`/usr/bin/env node '${hostile}' --source=claude-code`);
+  });
+
+  it("reports a legacy-spelled hook as installed and removes it on uninstall", async () => {
+    const spaced = "/Users/John Doe/.config/pew/bin/notify.cjs";
+    await writeFile(settingsPath, JSON.stringify({
+      hooks: { SessionEnd: [{ hooks: [{ type: "command", command: `/usr/bin/env node "${spaced}" --source=claude-code` }] }] },
+    }));
+    expect(await getClaudeHookStatus({ settingsPath, notifyPath: spaced })).toBe("installed");
+    const result = await uninstallClaudeHook({ settingsPath, notifyPath: spaced });
+    expect(result.changed).toBe(true);
+    const saved = JSON.parse(await readFile(settingsPath, "utf8"));
+    expect(saved.hooks).toBeUndefined();
+  });
+
   it("appends to existing SessionEnd hooks without overwriting other entries", async () => {
     await writeFile(
       settingsPath,
@@ -212,31 +262,10 @@ describe("Claude hook installer", () => {
     ).rejects.toThrow("EACCES");
   });
 
-  it("falls back to string-based mkdir when URL-based mkdir fails", async () => {
-    let mkdirCallCount = 0;
-    const fsMock = {
-      readFile: async () => {
-        const err = new Error("ENOENT") as NodeJS.ErrnoException;
-        err.code = "ENOENT";
-        throw err;
-      },
-      writeFile: async () => {},
-      mkdir: async (_p: string) => {
-        mkdirCallCount++;
-        if (mkdirCallCount === 1) {
-          // First call (URL-based path) fails
-          throw new Error("Invalid URL");
-        }
-        // Second call (string-based fallback) succeeds
-      },
-    };
-
-    const result = await installClaudeHook({ settingsPath, notifyPath, fs: fsMock });
-    expect(result.changed).toBe(true);
-    expect(mkdirCallCount).toBe(2);
-  });
-
-  it("falls back to '.' when settingsPath has no slash and URL mkdir fails", async () => {
+  it("creates the settings directory from the literal path, not a URL pathname", async () => {
+    // `new URL(".", `file://${settingsPath}`).pathname` percent-encoded the
+    // path: `/Users/John Doe/...` became `/Users/John%20Doe/...`, so mkdir
+    // created a stray directory and the settings write failed with ENOENT.
     const captured: string[] = [];
     const fsMock = {
       readFile: async () => {
@@ -247,13 +276,31 @@ describe("Claude hook installer", () => {
       writeFile: async () => {},
       mkdir: async (p: string) => {
         captured.push(p);
-        if (captured.length === 1) throw new Error("Invalid URL");
       },
     };
-    // Settings path with no slash — fallback should use "."
+    await installClaudeHook({
+      settingsPath: "/tmp/pew claude#1/settings.json",
+      notifyPath,
+      fs: fsMock,
+    });
+    expect(captured).toEqual(["/tmp/pew claude#1"]);
+  });
+
+  it("uses '.' when settingsPath has no directory component", async () => {
+    const captured: string[] = [];
+    const fsMock = {
+      readFile: async () => {
+        const err = new Error("ENOENT") as NodeJS.ErrnoException;
+        err.code = "ENOENT";
+        throw err;
+      },
+      writeFile: async () => {},
+      mkdir: async (p: string) => {
+        captured.push(p);
+      },
+    };
     await installClaudeHook({ settingsPath: "settings.json", notifyPath, fs: fsMock });
-    expect(captured).toHaveLength(2);
-    expect(captured[1]).toBe(".");
+    expect(captured).toEqual(["."]);
   });
 
   it("reports error when settings JSON is a top-level array", async () => {
