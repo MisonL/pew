@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   acquireLock,
   releaseLock,
-  isLockStale,
+  reclaimLock,
+  readLockOwnerState,
   waitForLock,
   readLockPid,
   type LockFsOps,
@@ -13,41 +14,66 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Minimal fake fs that tracks lockfile state in memory */
+/**
+ * Minimal fake fs that tracks lockfiles in memory, keyed by path. Keying
+ * matters: reclamation uses a `<lock>.reclaim` mutex beside the lock, so a
+ * single shared slot would make the mutex and the lock appear to be the same
+ * file.
+ */
 function createFakeFs(opts?: {
   lockContent?: string | null;
   readThrows?: Error;
   writeThrows?: Error;
   unlinkThrows?: Error;
-}): LockFsOps & { _state: { content: string | null } } {
-  const state = { content: opts?.lockContent ?? null };
+}): LockFsOps & {
+  _state: { files: Map<string, string>; unlinks: string[] };
+  /** The primary lockfile's content, or null when unlocked. */
+  _content: string | null;
+} {
+  const state = {
+    files: new Map<string, string>(),
+    unlinks: [] as string[],
+  };
+  if (opts?.lockContent != null) state.files.set("/tmp/sync.lock", opts.lockContent);
 
-  return {
+  const fake = {
+    _content: null as string | null,
     _state: state,
 
-    async writeFile(_path: string, data: string, options?: { flag?: string }) {
+    async writeFile(path: string, data: string, options?: { flag?: string }) {
       if (opts?.writeThrows) throw opts.writeThrows;
-      if (options?.flag === "wx" && state.content !== null) {
+      if (options?.flag === "wx" && state.files.has(path)) {
         const err = new Error("EEXIST") as NodeJS.ErrnoException;
         err.code = "EEXIST";
         throw err;
       }
-      state.content = data;
+      state.files.set(path, data);
     },
 
-    async readFile(_path: string): Promise<string> {
+    async readFile(path: string): Promise<string> {
       if (opts?.readThrows) throw opts.readThrows;
-      if (state.content === null) {
+      const content = state.files.get(path);
+      if (content === undefined) {
         const err = new Error("ENOENT") as NodeJS.ErrnoException;
         err.code = "ENOENT";
         throw err;
       }
-      return state.content;
+      return content;
     },
 
-    async unlink(_path: string): Promise<void> {
+    async unlink(path: string): Promise<void> {
       if (opts?.unlinkThrows) throw opts.unlinkThrows;
-      state.content = null;
+      state.unlinks.push(path);
+      state.files.delete(path);
+    },
+  };
+
+  return {
+    ...fake,
+    get _content(): string | null { return state.files.get("/tmp/sync.lock") ?? null; },
+    set _content(value: string | null) {
+      if (value === null) state.files.delete("/tmp/sync.lock");
+      else state.files.set("/tmp/sync.lock", value);
     },
   };
 }
@@ -89,8 +115,8 @@ describe("acquireLock", () => {
     const result = await acquireLock("/tmp/sync.lock", { fs, process: proc });
 
     expect(result).toBe(true);
-    expect(fs._state.content).not.toBeNull();
-    const parsed = JSON.parse(fs._state.content!);
+    expect(fs._content).not.toBeNull();
+    const parsed = JSON.parse(fs._content!);
     expect(parsed.pid).toBe(9999);
     expect(parsed.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
@@ -103,7 +129,7 @@ describe("acquireLock", () => {
 
     expect(result).toBe(false);
     // Original lockfile unchanged
-    const parsed = JSON.parse(fs._state.content!);
+    const parsed = JSON.parse(fs._content!);
     expect(parsed.pid).toBe(8888);
   });
 
@@ -130,7 +156,7 @@ describe("releaseLock", () => {
 
     await releaseLock("/tmp/sync.lock", { fs, process: proc });
 
-    expect(fs._state.content).toBeNull();
+    expect(fs._content).toBeNull();
   });
 
   it("does NOT remove lockfile when PID does not match", async () => {
@@ -140,8 +166,8 @@ describe("releaseLock", () => {
     await releaseLock("/tmp/sync.lock", { fs, process: proc });
 
     // Lockfile still exists with original PID
-    expect(fs._state.content).not.toBeNull();
-    const parsed = JSON.parse(fs._state.content!);
+    expect(fs._content).not.toBeNull();
+    const parsed = JSON.parse(fs._content!);
     expect(parsed.pid).toBe(8888);
   });
 
@@ -206,64 +232,175 @@ describe("readLockPid", () => {
 });
 
 // ---------------------------------------------------------------------------
-// isLockStale
+// readLockOwnerState
 // ---------------------------------------------------------------------------
 
-describe("isLockStale", () => {
-  it("returns true when the PID is dead (ESRCH)", async () => {
+describe("readLockOwnerState", () => {
+  it("reports dead when the PID is gone (ESRCH)", async () => {
     const fs = createFakeFs({ lockContent: lockContent(7777) });
     const proc = createFakeProcess({
       pid: 9999,
       killThrows: new Map([[7777, "ESRCH"]]),
     });
 
-    const stale = await isLockStale("/tmp/sync.lock", { fs, process: proc });
-    expect(stale).toBe(true);
+    expect(await readLockOwnerState("/tmp/sync.lock", { fs, process: proc })).toBe("dead");
   });
 
-  it("returns false when the PID is alive", async () => {
+  it("reports alive when the PID exists", async () => {
     const fs = createFakeFs({ lockContent: lockContent(7777) });
     const proc = createFakeProcess({ pid: 9999 });
-    // Default: kill doesn't throw → PID is alive
 
-    const stale = await isLockStale("/tmp/sync.lock", { fs, process: proc });
-    expect(stale).toBe(false);
+    expect(await readLockOwnerState("/tmp/sync.lock", { fs, process: proc })).toBe("alive");
   });
 
-  it("returns false when the PID is alive but we lack permission (EPERM)", async () => {
+  it("reports alive on EPERM — the process exists, we just cannot signal it", async () => {
     const fs = createFakeFs({ lockContent: lockContent(7777) });
     const proc = createFakeProcess({
       pid: 9999,
       killThrows: new Map([[7777, "EPERM"]]),
     });
 
-    // EPERM means the process exists but we can't signal it — not stale
-    const stale = await isLockStale("/tmp/sync.lock", { fs, process: proc });
-    expect(stale).toBe(false);
+    expect(await readLockOwnerState("/tmp/sync.lock", { fs, process: proc })).toBe("alive");
   });
 
-  it("returns true when lockfile does not exist (nothing to lock)", async () => {
+  it("reports missing when there is no lockfile", async () => {
     const fs = createFakeFs({ lockContent: null });
     const proc = createFakeProcess();
 
-    const stale = await isLockStale("/tmp/sync.lock", { fs, process: proc });
-    expect(stale).toBe(true);
+    expect(await readLockOwnerState("/tmp/sync.lock", { fs, process: proc })).toBe("missing");
   });
 
-  it("returns true when lockfile content is corrupted", async () => {
+  it("reports unreadable — not dead — for corrupt content", async () => {
+    // A just-created lockfile is briefly empty: O_EXCL creates it before the
+    // owner's content lands. Treating that as dead deletes a live lock.
     const fs = createFakeFs({ lockContent: "not json" });
     const proc = createFakeProcess();
 
-    const stale = await isLockStale("/tmp/sync.lock", { fs, process: proc });
-    expect(stale).toBe(true);
+    expect(await readLockOwnerState("/tmp/sync.lock", { fs, process: proc })).toBe("unreadable");
   });
 
-  it("returns false when it is our own PID (self-check)", async () => {
+  it("reports alive for our own PID (self-check)", async () => {
     const fs = createFakeFs({ lockContent: lockContent(9999) });
     const proc = createFakeProcess({ pid: 9999 });
 
-    const stale = await isLockStale("/tmp/sync.lock", { fs, process: proc });
-    expect(stale).toBe(false);
+    expect(await readLockOwnerState("/tmp/sync.lock", { fs, process: proc })).toBe("alive");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reclaimLock
+// ---------------------------------------------------------------------------
+
+describe("reclaimLock", () => {
+  it("removes a lockfile whose owner is dead", async () => {
+    const fs = createFakeFs({ lockContent: lockContent(7777) });
+    const proc = createFakeProcess({
+      pid: 9999,
+      killThrows: new Map([[7777, "ESRCH"]]),
+    });
+
+    await reclaimLock("/tmp/sync.lock", {
+      fs,
+      process: proc,
+      allowUnreadable: false,
+      sleep: async () => {},
+    });
+
+    expect(fs._content).toBeNull();
+  });
+
+  it("leaves a live owner's lockfile alone", async () => {
+    const fs = createFakeFs({ lockContent: lockContent(7777) });
+    const proc = createFakeProcess({ pid: 9999 });
+
+    await reclaimLock("/tmp/sync.lock", {
+      fs,
+      process: proc,
+      allowUnreadable: false,
+      sleep: async () => {},
+    });
+
+    expect(fs._content).toBe(lockContent(7777));
+  });
+
+  it("does not delete a lock that another process created while we waited", async () => {
+    // The race this guards: two reclaimers both read the dead PID; the first
+    // reclaims and a new owner takes the lock; the second must not unlink the
+    // fresh lock. The reclaimer re-reads under its mutex, so a replacement is
+    // seen as alive.
+    const fs = createFakeFs({ lockContent: lockContent(7777) });
+    const proc = createFakeProcess({
+      pid: 9999,
+      killThrows: new Map([[7777, "ESRCH"]]),
+    });
+
+    // While reclaimer A holds the mutex, simulate reclaimer B's stale decision
+    // by having the lock replaced by a new owner after the caller's check.
+    const originalRead = fs.readFile.bind(fs);
+    let reads = 0;
+    fs.readFile = async (path: string) => {
+      reads += 1;
+      // First read (the caller's check) sees the dead owner; every later read
+      // sees the replacement, as if it happened while waiting for the mutex.
+      if (reads === 1) return originalRead(path);
+      return lockContent(8888);
+    };
+
+    // The caller's own pre-check: this is the observation that says "dead".
+    expect(await readLockOwnerState("/tmp/sync.lock", { fs, process: proc })).toBe("dead");
+
+    await reclaimLock("/tmp/sync.lock", {
+      fs,
+      process: proc,
+      allowUnreadable: false,
+      sleep: async () => {},
+    });
+
+    // 8888 is alive in this fake, so the replacement lock must survive.
+    expect(fs._content).not.toBeNull();
+  });
+
+  it("reclaims corrupt content only when the caller has confirmed it is stale", async () => {
+    const fs = createFakeFs({ lockContent: "not json" });
+    const proc = createFakeProcess({ pid: 9999 });
+
+    await reclaimLock("/tmp/sync.lock", {
+      fs,
+      process: proc,
+      allowUnreadable: false,
+      sleep: async () => {},
+    });
+    expect(fs._content).toBe("not json");
+
+    await reclaimLock("/tmp/sync.lock", {
+      fs,
+      process: proc,
+      allowUnreadable: true,
+      sleep: async () => {},
+    });
+    expect(fs._content).toBeNull();
+  });
+
+  it("reclaims a stale reclaim mutex left by a dead reclaimer", async () => {
+    const fs = createFakeFs({ lockContent: lockContent(7777) });
+    fs._state.files.set("/tmp/sync.lock.reclaim", lockContent(6666));
+    const proc = createFakeProcess({
+      pid: 9999,
+      killThrows: new Map([
+        [7777, "ESRCH"],
+        [6666, "ESRCH"],
+      ]),
+    });
+
+    await reclaimLock("/tmp/sync.lock", {
+      fs,
+      process: proc,
+      allowUnreadable: false,
+      sleep: async () => {},
+    });
+
+    expect(fs._content).toBeNull();
+    expect(fs._state.files.has("/tmp/sync.lock.reclaim")).toBe(false);
   });
 });
 
@@ -337,7 +474,7 @@ describe("waitForLock", () => {
       pollCount++;
       if (pollCount >= 2) {
         // Simulate lock released after 2 polls
-        fs._state.content = null;
+        fs._content = null;
       }
     };
 
@@ -349,6 +486,85 @@ describe("waitForLock", () => {
     });
 
     expect(result.acquired).toBe(true);
+  });
+
+  it("does not reclaim corrupt content on the first poll, but does once it persists", async () => {
+    // A lockfile with no PID is also the shape of one being written right
+    // now. The first observation must be given a chance to become readable;
+    // only a file that stays unreadable is treated as crash debris.
+    const fs = createFakeFs({ lockContent: "" });
+    const proc = createFakeProcess({ pid: 9999 });
+    let polls = 0;
+    const sleeps: number[] = [];
+    let elapsed = 0;
+
+    const result = await waitForLock("/tmp/sync.lock", {
+      fs,
+      process: proc,
+      timeoutMs: 10000,
+      sleep: async (ms) => {
+        polls += 1;
+        sleeps.push(ms);
+        elapsed += ms;
+        if (polls === 1) {
+          // The writer finishes; a real lock now occupies the path.
+          fs._content = lockContent(7777);
+        }
+      },
+      now: () => elapsed,
+    });
+
+    // The transient empty file was not deleted: the live lock stayed and the
+    // waiter timed out rather than stealing it.
+    expect(result.acquired).toBe(false);
+    expect(fs._content).toBe(lockContent(7777));
+    expect(sleeps[0]).toBe(100);
+
+    // A file that never becomes readable is reclaimed and acquired.
+    const stuck = createFakeFs({ lockContent: "" });
+    const second = await waitForLock("/tmp/sync.lock", {
+      fs: stuck,
+      process: proc,
+      timeoutMs: 10000,
+      sleep: async () => {},
+    });
+    expect(second.acquired).toBe(true);
+  });
+
+  it("does not delete a lock another waiter acquired after reclamation", async () => {
+    // Two waiters see the same dead owner. The first reclaims and acquires;
+    // the second's reclaim must observe the new live owner, not the dead one
+    // it saw before, and must therefore leave the lock alone.
+    const fs = createFakeFs({ lockContent: lockContent(7777) });
+    const procA = createFakeProcess({
+      pid: 1001,
+      killThrows: new Map([[7777, "ESRCH"]]),
+    });
+    const procB = createFakeProcess({
+      pid: 1002,
+      killThrows: new Map([[7777, "ESRCH"]]),
+    });
+
+    const a = await waitForLock("/tmp/sync.lock", {
+      fs,
+      process: procA,
+      timeoutMs: 10000,
+      sleep: async () => {},
+    });
+    expect(a.acquired).toBe(true);
+    const holderPid = JSON.parse(fs._content!).pid;
+    expect(holderPid).toBe(1001);
+
+    // B's kill() now also reports 1001 as alive, so its reclaim leaves it be.
+    const b = await waitForLock("/tmp/sync.lock", {
+      fs,
+      process: procB,
+      timeoutMs: 200,
+      sleep: async () => {},
+      now: (() => { let t = 0; return () => { t += 100; return t; }; })(),
+    });
+    expect(b.acquired).toBe(false);
+    expect(JSON.parse(fs._content!).pid).toBe(1001);
   });
 
   it("uses exponential backoff starting at 100ms, capped at 2000ms", async () => {
