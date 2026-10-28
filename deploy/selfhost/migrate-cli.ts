@@ -56,7 +56,12 @@ export async function assertAuthReconciled(
   expectAuth: boolean
 ): Promise<void> {
   if (!expectAuth) return;
-  const status = await fetchImpl(`${baseUrl}/status`);
+  // Both probes are bounded like waitForRqlite's: migrate gates five of the
+  // six containers (compose depends_on service_completed_successfully, and
+  // web waits on read/ingest health), so a rqlite that accepts TCP but never
+  // answers must not park the whole starter for undici's default headers
+  // timeout on each of two sequential fetches.
+  const status = await fetchImpl(`${baseUrl}/status`, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
   const body = (await status.json()) as { http?: { auth?: string } };
   if (status.ok && body.http?.auth !== "enabled") {
     throw new Error(
@@ -64,7 +69,9 @@ export async function assertAuthReconciled(
     );
   }
   // '*' grants status/ready to everyone; data endpoints must still 401.
-  const probe = await fetchImpl(`${baseUrl}/db/query?q=${encodeURIComponent("SELECT 1")}`);
+  const probe = await fetchImpl(`${baseUrl}/db/query?q=${encodeURIComponent("SELECT 1")}`, {
+    signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+  });
   if (probe.ok) {
     throw new Error("auth reconciliation failed: anonymous query succeeded (auth misconfigured)");
   }

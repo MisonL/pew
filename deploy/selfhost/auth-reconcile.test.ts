@@ -79,6 +79,24 @@ describe("assertAuthReconciled (expectAuth=true)", () => {
     await expect(assertAuthReconciled(f, URL, false)).resolves.toBeUndefined();
     expect(f).not.toHaveBeenCalled();
   });
+
+  it("caps both probes with their own timeout", async () => {
+    // migrate is the gate for read/ingest/scheduler/d1-http/web: a rqlite that
+    // accepts TCP but never answers would hang these fetches for undici's
+    // 300 s headersTimeout each (two sequential probes), and compose would
+    // never start the rest of the stack. Every probe carries a signal, same
+    // rule waitForRqlite already documents.
+    const signals: Array<AbortSignal | undefined> = [];
+    const f = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      signals.push(init?.signal ?? undefined);
+      return signals.length === 1
+        ? new Response(JSON.stringify({ http: { auth: "enabled" } }), { status: 200 })
+        : new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+    });
+    await expect(assertAuthReconciled(f, URL, true)).resolves.toBeUndefined();
+    expect(signals).toHaveLength(2);
+    for (const signal of signals) expect(signal).toBeInstanceOf(AbortSignal);
+  });
 });
 
 describe("waitForRqlite", () => {
