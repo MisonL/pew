@@ -532,6 +532,28 @@ describe("seasons RPC handlers", () => {
 
       expect(response.status).toBe(400);
     });
+
+    it("breaks token ties by team id so the derived rank is stable", async () => {
+      // The live leaderboard branch numbers entries `index + 1` from this
+      // order. With only `ORDER BY total_tokens DESC`, two teams on the same
+      // total can swap places between requests as the query plan changes —
+      // the global leaderboard already ties-break by user id for this reason.
+      db.all.mockResolvedValue({ results: [] });
+
+      await handleSeasonsRpc(
+        {
+          method: "seasons.getTeamTokens",
+          seasonId: "s1",
+          fromDate: "2026-01-01T00:00:00.000Z",
+          toDate: "2026-04-01T00:00:00.000Z",
+        } as GetSeasonTeamTokensRequest,
+        db,
+        kv,
+      );
+
+      const sql = db.prepare.mock.calls.at(-1)?.[0] as string;
+      expect(sql).toMatch(/ORDER BY total_tokens DESC,\s*st\.team_id/);
+    });
   });
 
   // -------------------------------------------------------------------------

@@ -447,7 +447,9 @@ async function handleGetSeasonMemberSnapshots(
     sql += ` AND u.is_public = 1`;
   }
 
-  sql += ` ORDER BY sms.total_tokens DESC`;
+  // Ties break by user id so a member's position cannot wobble between
+  // requests (the rank column and the client both read this order).
+  sql += ` ORDER BY sms.total_tokens DESC, sms.team_id, sms.user_id`;
 
   const results = await db.prepare(sql).bind(req.seasonId).all<SeasonMemberSnapshotRow>();
 
@@ -484,7 +486,7 @@ async function handleGetSeasonTeamTokens(
         AND ur.hour_start < ?
       WHERE st.season_id = ?
       GROUP BY st.team_id
-      ORDER BY total_tokens DESC`
+      ORDER BY total_tokens DESC, st.team_id`
     )
     .bind(req.fromDate, req.toDate, req.seasonId)
     .all<TeamTokenRow>();
@@ -527,7 +529,7 @@ async function handleGetSeasonMemberTokens(
     sql += ` AND u.is_public = 1`;
   }
 
-  sql += ` GROUP BY tm.team_id, tm.user_id ORDER BY total_tokens DESC`;
+  sql += ` GROUP BY tm.team_id, tm.user_id ORDER BY total_tokens DESC, tm.team_id, tm.user_id`;
 
   const results = await db
     .prepare(sql)
@@ -640,7 +642,7 @@ async function handleAggregateTeamTokens(
         AND ur.hour_start < ?
       WHERE st.season_id = ?
       GROUP BY st.team_id
-      ORDER BY total_tokens DESC`
+      ORDER BY total_tokens DESC, st.team_id`
     )
     .bind(req.fromDate, req.toDate, req.seasonId)
     .all<TeamAggRow>();
@@ -675,7 +677,7 @@ async function handleAggregateMemberTokens(
       WHERE tm.season_id = ?
         AND tm.team_id IN (SELECT value FROM json_each(?))
       GROUP BY tm.team_id, tm.user_id
-      ORDER BY total_tokens DESC`
+      ORDER BY total_tokens DESC, tm.team_id, tm.user_id`
     )
     .bind(req.fromDate, req.toDate, req.seasonId, JSON.stringify(req.teamIds))
     .all<MemberAggRow>();
