@@ -1227,7 +1227,19 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   const evidenceRecords = allDeltas.filter((d) => d.evidence).map((d) => toEvidenceRecord(d, opts.deviceId));
   const { records: oldRecords } = await queue.readFromOffset(0);
   const retiredRecords = opts.previousRetiredRecords ?? [];
-  let finalRecords = initialCursorEmpty ? [...records, ...retiredRecords] : records.length > 0 ? aggregateRecords([...oldRecords, ...records]) : undefined;
+  // A full scan is authoritative only when it actually scanned something.
+  // Cursors can be empty without a reset: pruneAliasCursors drops every
+  // cursor whose path no longer stats (an unmounted volume, a moved data
+  // dir), so the NEXT run looks like a first run. If that run discovers
+  // nothing either, replacing the queue with "what the scan found" (nothing)
+  // silently destroys pending un-uploaded records — the same raw data would
+  // not reproduce them while the source is still missing. Keep the queue and
+  // let the full scan overwrite it once a source is actually reachable.
+  const fullScanFoundData =
+    records.length > 0 || retiredRecords.length > 0 || opts.antigravitySnapshot != null;
+  let finalRecords = initialCursorEmpty
+    ? (fullScanFoundData ? [...records, ...retiredRecords] : undefined)
+    : records.length > 0 ? aggregateRecords([...oldRecords, ...records]) : undefined;
   const previousAntigravity = opts.previousAntigravityRecords ?? [];
   const freshAntigravity = opts.antigravitySnapshot
     ? antigravityRecords(opts.antigravitySnapshot.deltas, opts.deviceId) : null;

@@ -140,6 +140,29 @@ describe("executeSync", () => {
     expect(records[0].hour_start).toBe("2026-03-07T10:00:00.000Z");
   });
 
+  it("keeps the pending queue when a full scan finds no source at all", async () => {
+    const claudeRoot = join(dataDir, ".claude");
+    const claudeDir = join(claudeRoot, "projects", "proj-a");
+    await mkdir(claudeDir, { recursive: true });
+    await writeFile(
+      join(claudeDir, "session.jsonl"),
+      `${claudeLine("2026-03-07T10:15:00.000Z", 5000, 800)}\n`,
+    );
+    await executeSync({ stateDir, claudeDir: claudeRoot });
+    const before = await readFile(join(stateDir, "queue.jsonl"), "utf-8");
+    expect(before.length).toBeGreaterThan(0);
+
+    // The source directory disappears: the first sync prunes its cursors, the
+    // second sees empty cursors and is treated as a full scan that discovers
+    // nothing. Neither may wipe the pending backlog — the raw data is
+    // temporarily unreachable, not empty, and this device has no other copy.
+    await rm(claudeRoot, { recursive: true, force: true });
+    await executeSync({ stateDir, claudeDir: claudeRoot });
+    await executeSync({ stateDir, claudeDir: claudeRoot });
+
+    expect(await readFile(join(stateDir, "queue.jsonl"), "utf-8")).toBe(before);
+  });
+
   it("should sync Pi data files to queue", async () => {
     const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-b");
     await mkdir(piDir, { recursive: true });
