@@ -466,88 +466,83 @@ function formatTomlStringArray(values: string[]): string {
   return `[${values.map((value) => JSON.stringify(value)).join(", ")}]`;
 }
 
-function readTomlArrayLiteral(
-  lines: string[],
-  startIndex: number,
-  rhs: string,
-): string | null {
-  if (!rhs.startsWith("[")) return null;
+/**
+ * One scan of a top-level `notify` array assignment, shared by the reader
+ * (extractNotify) and the rewriters (setNotify / removeNotify).
+ *
+ * TOML comments start at `#` outside a string and run to the end of the line,
+ * so quotes and brackets inside a comment are plain text. Skipping them keeps
+ * the scanner's state honest: `# don't skip this` used to open a
+ * single-quoted string that swallowed the rest of the file, and `# ]` used to
+ * close the array early, leaving the real continuation lines orphaned after a
+ * rewrite.
+ */
+interface TomlArrayScan {
+  /** Comment-stripped literal text, or null when the array never closes. */
+  literal: string | null;
+  /** Last line of the block (where depth returns to 0), else startIndex. */
+  endIndex: number;
+}
 
+function scanTomlArray(lines: string[], startIndex: number, rhs: string): TomlArrayScan {
   let depth = 0;
   let inString = false;
   let quote: '"' | "'" | null = null;
   const chunks: string[] = [];
 
   for (let i = startIndex; i < lines.length; i++) {
-    const chunk = i === startIndex ? rhs : lines[i];
-    chunks.push(chunk.trim());
+    const chunk = i === startIndex ? rhs : (lines[i] ?? "");
+    let text = "";
 
     for (let j = 0; j < chunk.length; j++) {
       const char = chunk[j];
       if (!inString) {
+        if (char === "#") break; // comment runs to end of line
+        text += char;
         if (char === '"' || char === "'") {
           inString = true;
           quote = char;
-          continue;
+        } else if (char === "[") {
+          depth += 1;
+        } else if (char === "]") {
+          depth -= 1;
         }
-        if (char === "[") depth += 1;
-        else if (char === "]") depth -= 1;
         continue;
       }
 
       // Skip escaped characters in double-quoted strings
       if (quote === '"' && char === "\\" && j + 1 < chunk.length) {
-        j++; // skip the next character
+        text += char + chunk[j + 1];
+        j++;
         continue;
       }
 
+      text += char;
       if (char === quote) {
         inString = false;
         quote = null;
       }
     }
 
-    if (depth === 0) return chunks.join(" ");
+    chunks.push(text.trim());
+    if (depth === 0) return { literal: chunks.join(" "), endIndex: i };
   }
 
-  return null;
+  return { literal: null, endIndex: startIndex };
+}
+
+function readTomlArrayLiteral(
+  lines: string[],
+  startIndex: number,
+  rhs: string,
+): string | null {
+  if (!rhs.startsWith("[")) return null;
+  return scanTomlArray(lines, startIndex, rhs).literal;
 }
 
 function findTomlArrayBlockEnd(lines: string[], startIndex: number, rhs: string): number {
   if (!rhs.startsWith("[")) return startIndex;
-
-  let depth = 0;
-  let inString = false;
-  let quote: '"' | "'" | null = null;
-
-  for (let i = startIndex; i < lines.length; i++) {
-    const chunk = i === startIndex ? rhs : lines[i];
-    for (let j = 0; j < chunk.length; j++) {
-      const char = chunk[j];
-      if (!inString) {
-        if (char === '"' || char === "'") {
-          inString = true;
-          quote = char;
-          continue;
-        }
-        if (char === "[") depth += 1;
-        else if (char === "]") depth -= 1;
-        continue;
-      }
-      // Skip escaped characters in double-quoted strings
-      if (quote === '"' && char === "\\" && j + 1 < chunk.length) {
-        j++;
-        continue;
-      }
-      if (char === quote) {
-        inString = false;
-        quote = null;
-      }
-    }
-    if (depth === 0) return i;
-  }
-
-  return startIndex;
+  return scanTomlArray(lines, startIndex, rhs).endIndex;
 }
 
 function arraysEqual(left: string[] | null, right: string[]): boolean {

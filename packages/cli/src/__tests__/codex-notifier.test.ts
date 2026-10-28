@@ -71,8 +71,7 @@ describe("Codex notifier installer", () => {
     ]);
   });
 
-  it("is idempotent when the pew notify is already installed", async () => {
-    await writeFile(
+  it("is idempotent when the pew notify is already installed", async () => {    await writeFile(
       configPath,
       'notify = ["/usr/local/bin/node", "/tmp/pew/bin/notify.cjs", "--source=codex"]\n',
       "utf8",
@@ -98,6 +97,101 @@ describe("Codex notifier installer", () => {
 
     expect(result.action).toBe("skip");
     expect(result.detail).toContain("not found");
+  });
+
+  // A `#` in a TOML array literal starts a comment that runs to end of line;
+  // nothing inside it — a quote, a bracket — is syntax. The scanner used to
+  // treat both as string/bracket state, so a comment desynchronized it:
+  //   `# don't`   opened a single-quoted string that never closed → the block
+  //               end was never found → only the first line was replaced and
+  //               the continuation lines were orphaned → INVALID TOML
+  //   `# ]`       closed the array at the comment → same orphaned lines
+  //   `... ] # x` the literal failed to parse → the original command was not
+  //               backed up and uninstall would delete the key outright
+  it("replaces an array whose comments contain a quote or a bracket", async () => {
+    const config = [
+      'model = "gpt-5"',
+      "notify = [",
+      '  "/usr/bin/env", # don\'t skip this',
+      '  "node", # ]',
+      '  "/tmp/original-notify.js",',
+      "]",
+    ].join("\n");
+    await writeFile(configPath, config, "utf8");
+
+    const result = await installCodexNotifier({
+      configPath,
+      notifyPath,
+      originalBackupPath,
+      runtimePath: "/usr/local/bin/node",
+    });
+    const updated = await readFile(configPath, "utf8");
+    const backup = JSON.parse(await readFile(originalBackupPath, "utf8"));
+
+    expect(result.changed).toBe(true);
+    // The whole array was replaced: no orphaned continuation lines.
+    expect(updated).toBe(
+      'model = "gpt-5"\n' +
+        'notify = ["/usr/local/bin/node", "/tmp/pew/bin/notify.cjs", "--source=codex"]\n',
+    );
+    expect(backup.notify).toEqual([
+      "/usr/bin/env",
+      "node",
+      "/tmp/original-notify.js",
+    ]);
+  });
+
+  it("still captures the original when the value line trails a comment", async () => {
+    await writeFile(
+      configPath,
+      'notify = ["/bin/sh", "-c", "echo done"] # desktop notification\n',
+      "utf8",
+    );
+
+    const result = await installCodexNotifier({
+      configPath,
+      notifyPath,
+      originalBackupPath,
+      runtimePath: "/usr/local/bin/node",
+    });
+    const backup = JSON.parse(await readFile(originalBackupPath, "utf8"));
+
+    expect(result.changed).toBe(true);
+    expect(backup.notify).toEqual(["/bin/sh", "-c", "echo done"]);
+    // And uninstall restores it rather than deleting the key.
+    await uninstallCodexNotifier({
+      configPath,
+      notifyPath,
+      originalBackupPath,
+      runtimePath: "/usr/local/bin/node",
+    });
+    const restored = await readFile(configPath, "utf8");
+    expect(restored).toContain('notify = ["/bin/sh", "-c", "echo done"]');
+  });
+
+  it("keeps a hash inside a string and skips full-line comments in the array", async () => {
+    await writeFile(
+      configPath,
+      [
+        "notify = [",
+        "  # the shell that runs the hook",
+        '  "/bin/bash",',
+        '  "-c",',
+        '  "echo #not-a-comment",',
+        "]",
+      ].join("\n"),
+      "utf8",
+    );
+
+    await installCodexNotifier({
+      configPath,
+      notifyPath,
+      originalBackupPath,
+      runtimePath: "/usr/local/bin/node",
+    });
+    const backup = JSON.parse(await readFile(originalBackupPath, "utf8"));
+
+    expect(backup.notify).toEqual(["/bin/bash", "-c", "echo #not-a-comment"]);
   });
 
   it("restores the original notify from backup on uninstall", async () => {
