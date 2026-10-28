@@ -27,12 +27,23 @@ export function accountingJson(value: unknown): string {
 // Runtime-local privacy gate: @pew/core is not installed with the published CLI.
 // Keep the semantic checks aligned with core/accounting.ts (covered by parity
 // regression fixtures). The private core package cannot be a runtime import.
+//
+// The numeric caps are part of the server's contract, not a nicety: a record
+// that passes the local gate and fails the server's is answered 400, and a
+// 400 used to wedge the whole details outbox behind it.
+const MAX_RECORD_TOKENS = 1_000_000_000;
+const MAX_RECORD_MESSAGES = 100_000_000;
+// Fields core bounds with `tokenCount` (safe integer ≥ 0 AND ≤ cap).
+const TOKEN_FIELDS = new Set(("input_tokens cached_input_tokens output_tokens reasoning_output_tokens total_tokens " +
+  "input_total_tokens cache_read_input_tokens cache_write_input_tokens cache_write_5m_input_tokens cache_write_1h_input_tokens " +
+  "output_total_tokens context_tokens_min context_tokens_max raw_total_tokens").split(" "));
 const NUMBER_FIELDS = new Set(("details_version evidence_snapshot_seq source_revision parser_revision detail_revision " +
-  "input_tokens cached_input_tokens output_tokens reasoning_output_tokens total_tokens input_total_tokens cache_read_input_tokens " +
-  "cache_write_input_tokens cache_write_5m_input_tokens cache_write_1h_input_tokens output_total_tokens " +
-  "context_tokens_min context_tokens_max request_count scale raw_total_tokens").split(" "));
+  "request_count scale").split(" "));
 const LABEL_FIELDS = new Set("source model origin provider route service_tier quality currency kind status code".split(" "));
 function safeTree(value: unknown, key = "record"): boolean {
+  const bounded = (cap: number) => { const n = optionalToken(value); return n !== null && n <= cap; };
+  if (TOKEN_FIELDS.has(key)) return value === null || bounded(MAX_RECORD_TOKENS);
+  if (key === "request_count") return value === null || bounded(MAX_RECORD_MESSAGES);
   if (NUMBER_FIELDS.has(key)) return value === null || optionalToken(value) !== null;
   if (LABEL_FIELDS.has(key)) return value === null || (typeof value === "string" && usageLabel(value) === value);
   if (key === "device_id") return typeof value === "string" && /^[\w.-]{1,128}$/.test(value);

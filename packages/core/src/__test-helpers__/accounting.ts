@@ -24,6 +24,22 @@ export function invalidAccountingCases(): Array<[string, unknown]> {
   const counts = (patch: Record<string, unknown>) => group({ counts: { ...first.counts, ...patch } });
   const amount = { units: "10", scale: 10, currency: "USD", kind: "actual", status: "complete", source: "grok-server" };
   const money = (patch: Record<string, unknown>) => group({ reported_costs: [{ ...amount, ...patch }] });
+  // Scale every counter by `factor` while keeping the crosswalk consistent, so
+  // the only thing wrong with the record is that it exceeds a numeric cap.
+  const scaled = (factor: number) => {
+    const s = structuredClone(r) as typeof r;
+    const g = s.groups[0];
+    if (!g) throw new Error("Expected accounting fixture group");
+    for (const k of ["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"] as const) s.basis[k] *= factor;
+    g.basis = { ...s.basis };
+    if (g.counts) {
+      g.counts = { input_total_tokens: 900 * factor, cache_read_input_tokens: 800 * factor,
+        cache_write_input_tokens: 90 * factor, cache_write_5m_input_tokens: null,
+        cache_write_1h_input_tokens: null, output_total_tokens: 40 * factor, reasoning_output_tokens: 10 * factor };
+    }
+    if (g.context_tokens_min !== null) { g.context_tokens_min = 900 * factor; g.context_tokens_max = 900 * factor; }
+    return s;
+  };
   return [
     ["null envelope", null], ["array envelope", []], ["future version", { ...r, details_version: 2 }],
     ["raw body", { ...r, prompt: "PRIVATE" }], ["unknown source", { ...r, source: "synthetic-source" }],
@@ -70,5 +86,12 @@ export function invalidAccountingCases(): Array<[string, unknown]> {
     ["unprojected diagnostic", group({ diagnostics: [{ code: "error", raw_total_tokens: null }] })],
     ["negative diagnostic total", group({ diagnostics: [{ code: "total_mismatch", raw_total_tokens: -1 }] })],
     ["groups fail partition", { ...r, groups: [...r.groups, ...r.groups] }],
+    // The server's numeric caps. The published CLI deliberately re-implements
+    // this validator without importing core, so these are the cases that catch
+    // a drifted copy: an over-cap record that only the CLI accepts is answered
+    // 400 by the server and (before the refusal path) wedged the whole details
+    // outbox.
+    ["over token cap", scaled(10_000_001)], ["requests over cap", group({ request_count: 100_000_001 })],
+    ["context over cap", group({ context_tokens_min: 2_000_000_000, context_tokens_max: 2_000_000_000 })],
   ];
 }
