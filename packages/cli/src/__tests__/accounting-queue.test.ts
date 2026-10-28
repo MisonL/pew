@@ -49,6 +49,22 @@ describe("durable independent accounting revisions", () => {
     },
   );
 
+  it("re-reads the ledger when the saved offset lies past its end", async () => {
+    // BaseQueue documents the invariant: a cursor past EOF means the file
+    // shrank under it (restored backup, compaction crash), and slicing there
+    // returns nothing while persisting the SHORTER length. The override used
+    // to slice at the stale offset anyway, so the legacy merge fallback
+    // derived an empty dirty set and stranded the whole ledger.
+    const q = new AccountingQueue(await temp());
+    const record = fixture();
+    await q.merge([record]);
+    await q.saveDirtyKeys(undefined);
+    await q.saveOffset(999_999);
+    const { records, newOffset } = await q.readFromOffset(999_999);
+    expect(records.map(accountingKey)).toEqual([accountingKey(record)]);
+    expect(newOffset).toBe((await readFile(q.queuePath)).byteLength);
+  });
+
   it.each([false, true])("preserves Antigravity pending accounting intent during unrelated replay (pending=%s)", async (pending) => {
     const q = new AccountingQueue(await temp());
     const agy: AccountingRecord = { ...fixture(), source: "antigravity" };

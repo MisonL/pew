@@ -98,7 +98,13 @@ export class AccountingQueue extends BaseQueue<AccountingRecord> {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { records: [], newOffset: 0 };
       throw new Error("Invalid accounting ledger");
     }
-    try { return { records: raw.subarray(offset).toString("utf8").split("\n").filter(Boolean).map((line) => checkedRecord(JSON.parse(line))), newOffset: raw.byteLength }; }
+    // Same invariant as BaseQueue: an offset past EOF means the file shrank
+    // under the cursor (restored backup, compaction crash). Slicing there
+    // returns nothing and reports the shorter length, which would strand
+    // every record in the ledger — including the pending-intent fallback
+    // below, which derives the dirty set from exactly this read.
+    const start = offset > raw.byteLength ? 0 : offset;
+    try { return { records: raw.subarray(start).toString("utf8").split("\n").filter(Boolean).map((line) => checkedRecord(JSON.parse(line))), newOffset: raw.byteLength }; }
     catch { throw new Error("Invalid accounting ledger"); }
   }
 

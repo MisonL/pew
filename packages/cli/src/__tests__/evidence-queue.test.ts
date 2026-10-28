@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { EvidenceRecord } from "@pew/core";
@@ -85,6 +85,19 @@ describe("durable usage evidence", () => {
     const keys = JSON.stringify(dirty);
     expect(keys).toContain(`${"a".repeat(64)}`);   // pre-existing record, pending again
     expect(keys).toContain("c".repeat(64));        // record merged after the loss
+  });
+
+  it("re-reads the ledger when the saved offset lies past its end", async () => {
+    // BaseQueue documents the invariant: a cursor past EOF means the file
+    // shrank under it. Slicing there returns nothing and reports the SHORTER
+    // length, so the override would strand the ledger and the pending-intent
+    // fallback that derives its dirty set from this read.
+    await queue.merge([good]);
+    await queue.saveDirtyKeys(undefined);
+    await queue.saveOffset(999_999);
+    const { records, newOffset } = await queue.readFromOffset(999_999);
+    expect(records).toEqual([good]);
+    expect(newOffset).toBe((await readFile(queue.queuePath)).byteLength);
   });
 
   it("rejects saved device IDs, source/origin mismatches and invalid interval bounds", async () => {

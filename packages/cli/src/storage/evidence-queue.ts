@@ -36,7 +36,12 @@ export class EvidenceQueue extends BaseQueue<EvidenceRecord> {
       throw new Error("Invalid usage evidence ledger");
     }
     try {
-      const records = raw.subarray(offset).toString("utf8").split("\n").filter(Boolean).map((line) => checkedRecord(JSON.parse(line)));
+      // Same invariant as BaseQueue: an offset past EOF means the file shrank
+      // under the cursor, and slicing there would report the shorter length
+      // while returning nothing — stranding the ledger and the pending-intent
+      // fallback below, which derives its dirty set from this read.
+      const start = offset > raw.byteLength ? 0 : offset;
+      const records = raw.subarray(start).toString("utf8").split("\n").filter(Boolean).map((line) => checkedRecord(JSON.parse(line)));
       return { records, newOffset: raw.byteLength };
     } catch {
       throw new Error("Invalid usage evidence ledger");
