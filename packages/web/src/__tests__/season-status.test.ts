@@ -86,12 +86,15 @@ describe("deriveSeasonStatus", () => {
 // ---------------------------------------------------------------------------
 
 describe("formatSeasonDate", () => {
-  it("should return a formatted date string", () => {
-    const result = formatSeasonDate("2026-03-15T00:00:00Z");
-    // The exact output depends on the runtime locale,
-    // but it should contain the key date components
-    expect(result).toContain("2026");
-    expect(result).toContain("15");
+  it("renders the date in the viewer's local calendar", () => {
+    const iso = "2026-03-15T00:00:00Z";
+    const result = formatSeasonDate(iso);
+    // The display layer converts to local time (AGENTS.md DateTime strategy),
+    // so the day shown is the local day of that instant — west of UTC a
+    // UTC-midnight instant is still the previous day.
+    const local = new Date(iso);
+    expect(result).toContain(String(local.getFullYear()));
+    expect(result).toContain(String(local.getDate()));
   });
 
   it("should include time component", () => {

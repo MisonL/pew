@@ -288,7 +288,7 @@ describe("forecastMonthlyCost", () => {
   });
 
   it("returns null for empty data", () => {
-    const result = forecastMonthlyCost([], new Date("2026-03-15"));
+    const result = forecastMonthlyCost([], new Date(2026, 2, 15));
     expect(result).toBeNull();
   });
 
@@ -297,7 +297,7 @@ describe("forecastMonthlyCost", () => {
       makeCostPoint("2026-03-01", 5),
       makeCostPoint("2026-03-02", 10),
     ];
-    const result = forecastMonthlyCost(points, new Date("2026-03-02"));
+    const result = forecastMonthlyCost(points, new Date(2026, 2, 2));
     expect(result).toBeNull();
   });
 
@@ -306,7 +306,7 @@ describe("forecastMonthlyCost", () => {
     const points = Array.from({ length: 10 }, (_, i) =>
       makeCostPoint(`2026-03-${String(i + 1).padStart(2, "0")}`, 10),
     );
-    const result = forecastMonthlyCost(points, new Date("2026-03-10"));
+    const result = forecastMonthlyCost(points, new Date(2026, 2, 10));
     expect(result).not.toBeNull();
     expect(result!.currentMonthCost).toBeCloseTo(100, 1);
     expect(result!.daysElapsed).toBe(10);
@@ -320,7 +320,7 @@ describe("forecastMonthlyCost", () => {
     const points = Array.from({ length: 31 }, (_, i) =>
       makeCostPoint(`2026-03-${String(i + 1).padStart(2, "0")}`, 5),
     );
-    const result = forecastMonthlyCost(points, new Date("2026-03-31"));
+    const result = forecastMonthlyCost(points, new Date(2026, 2, 31));
     expect(result).not.toBeNull();
     expect(result!.currentMonthCost).toBeCloseTo(155, 1);
     expect(result!.projectedMonthCost).toBeCloseTo(155, 1);
@@ -330,7 +330,7 @@ describe("forecastMonthlyCost", () => {
     const points = Array.from({ length: 7 }, (_, i) =>
       makeCostPoint(`2026-02-${String(i + 1).padStart(2, "0")}`, 4),
     );
-    const result = forecastMonthlyCost(points, new Date("2026-02-07"));
+    const result = forecastMonthlyCost(points, new Date(2026, 1, 7));
     expect(result).not.toBeNull();
     expect(result!.daysInMonth).toBe(28);
     expect(result!.projectedMonthCost).toBeCloseTo(112, 1); // 4 * 28
@@ -346,7 +346,7 @@ describe("forecastMonthlyCost", () => {
       makeCostPoint("2026-03-04", 10),
       makeCostPoint("2026-03-05", 10),
     ];
-    const result = forecastMonthlyCost(points, new Date("2026-03-05"));
+    const result = forecastMonthlyCost(points, new Date(2026, 2, 5));
     expect(result).not.toBeNull();
     expect(result!.currentMonthCost).toBeCloseTo(50, 1);
     expect(result!.daysElapsed).toBe(5);

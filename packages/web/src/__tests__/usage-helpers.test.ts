@@ -460,7 +460,7 @@ describe("computeMoMGrowth", () => {
   }
 
   it("should return zeros for empty input", () => {
-    const result = computeMoMGrowth([], makePricingMap(), new Date("2026-03-15"));
+    const result = computeMoMGrowth([], makePricingMap(), new Date(2026, 2, 15));
 
     expect(result.currentMonth.tokens).toBe(0);
     expect(result.currentMonth.cost).toBe(0);
@@ -487,7 +487,7 @@ describe("computeMoMGrowth", () => {
       makeRow({ hour_start: "2026-03-10T10:00:00Z", total_tokens: 2000, input_tokens: 1600, output_tokens: 400, cached_input_tokens: 200 }),
     ];
 
-    const result = computeMoMGrowth(rows, makePricingMap(), new Date("2026-03-15"));
+    const result = computeMoMGrowth(rows, makePricingMap(), new Date(2026, 2, 15));
 
     expect(result.previousMonth.tokens).toBe(3000);
     expect(result.previousMonth.days).toBe(2);
@@ -504,7 +504,7 @@ describe("computeMoMGrowth", () => {
       makeRow({ hour_start: "2026-03-05T10:00:00Z", total_tokens: 5000, input_tokens: 4000, output_tokens: 1000, cached_input_tokens: 500 }),
     ];
 
-    const result = computeMoMGrowth(rows, makePricingMap(), new Date("2026-03-15"));
+    const result = computeMoMGrowth(rows, makePricingMap(), new Date(2026, 2, 15));
 
     expect(result.currentMonth.tokens).toBe(5000);
     expect(result.previousMonth.tokens).toBe(0);
@@ -518,7 +518,7 @@ describe("computeMoMGrowth", () => {
       makeRow({ hour_start: "2026-02-10T10:00:00Z", total_tokens: 3000, input_tokens: 2400, output_tokens: 600, cached_input_tokens: 300 }),
     ];
 
-    const result = computeMoMGrowth(rows, makePricingMap(), new Date("2026-03-15"));
+    const result = computeMoMGrowth(rows, makePricingMap(), new Date(2026, 2, 15));
 
     expect(result.previousMonth.tokens).toBe(3000);
     expect(result.currentMonth.tokens).toBe(0);
@@ -542,7 +542,7 @@ describe("computeMoMGrowth", () => {
       makeRow({ hour_start: "2026-03-05T10:00:00Z", total_tokens: 1000, input_tokens: 800, output_tokens: 200, cached_input_tokens: 100 }),
     ];
 
-    const result = computeMoMGrowth(rows, makePricingMap(), new Date("2026-03-15"));
+    const result = computeMoMGrowth(rows, makePricingMap(), new Date(2026, 2, 15));
 
     expect(result.previousMonth.days).toBe(1);
     expect(result.currentMonth.days).toBe(2);
@@ -560,7 +560,7 @@ describe("computeMoMGrowth", () => {
       makeRow({ hour_start: "2026-03-10T10:00:00Z", total_tokens: 2000, input_tokens: 1600, output_tokens: 400, cached_input_tokens: 200 }),
     ];
 
-    const result = computeMoMGrowth(rows, makePricingMap(), new Date("2026-03-15"));
+    const result = computeMoMGrowth(rows, makePricingMap(), new Date(2026, 2, 15));
 
     // Full month: prev=5000, cur=4000 → tokenGrowth = -20%
     expect(result.previousMonth.tokens).toBe(5000);
@@ -580,7 +580,7 @@ describe("computeMoMGrowth", () => {
       makeRow({ hour_start: "2026-03-10T10:00:00Z", total_tokens: 2000, input_tokens: 1600, output_tokens: 400, cached_input_tokens: 200 }),
     ];
 
-    const result = computeMoMGrowth(rows, makePricingMap(), new Date("2026-03-15"));
+    const result = computeMoMGrowth(rows, makePricingMap(), new Date(2026, 2, 15));
 
     expect(result.previousMonthSameDate.tokens).toBe(1000);
     expect(result.sameDateTokenGrowth).toBeCloseTo(100);
@@ -593,7 +593,7 @@ describe("computeMoMGrowth", () => {
       makeRow({ hour_start: "2026-03-01T10:00:00Z", total_tokens: 1000, input_tokens: 800, output_tokens: 200, cached_input_tokens: 100 }),
     ];
 
-    const result = computeMoMGrowth(rows, makePricingMap(), new Date("2026-03-02"));
+    const result = computeMoMGrowth(rows, makePricingMap(), new Date(2026, 2, 2));
 
     // Full month comparison still works
     expect(result.previousMonth.tokens).toBe(3000);
@@ -610,7 +610,7 @@ describe("computeMoMGrowth", () => {
       makeRow({ hour_start: "2026-03-01T01:00:00Z", total_tokens: 1000, input_tokens: 800, output_tokens: 200, cached_input_tokens: 100 }),
     ];
 
-    const result = computeMoMGrowth(rows, makePricingMap(), new Date("2026-03-15"), 480);
+    const result = computeMoMGrowth(rows, makePricingMap(), new Date(2026, 2, 15), 480);
 
     // Should be assigned to February (previous month), not March
     expect(result.previousMonth.tokens).toBe(1000);
@@ -623,7 +623,7 @@ describe("computeMoMGrowth", () => {
       makeRow({ hour_start: "2026-02-28T20:00:00Z", total_tokens: 2000, input_tokens: 1600, output_tokens: 400, cached_input_tokens: 200 }),
     ];
 
-    const result = computeMoMGrowth(rows, makePricingMap(), new Date("2026-03-15"), -540);
+    const result = computeMoMGrowth(rows, makePricingMap(), new Date(2026, 2, 15), -540);
 
     // Should be assigned to March (current month), not February
     expect(result.currentMonth.tokens).toBe(2000);
@@ -636,8 +636,8 @@ describe("computeMoMGrowth", () => {
       makeRow({ hour_start: "2026-03-05T10:00:00Z", total_tokens: 4000, input_tokens: 3200, output_tokens: 800, cached_input_tokens: 400 }),
     ];
 
-    const withTz = computeMoMGrowth(rows, makePricingMap(), new Date("2026-03-15"), 0);
-    const without = computeMoMGrowth(rows, makePricingMap(), new Date("2026-03-15"));
+    const withTz = computeMoMGrowth(rows, makePricingMap(), new Date(2026, 2, 15), 0);
+    const without = computeMoMGrowth(rows, makePricingMap(), new Date(2026, 2, 15));
 
     expect(withTz.currentMonth.tokens).toBe(without.currentMonth.tokens);
     expect(withTz.previousMonth.tokens).toBe(without.previousMonth.tokens);
@@ -814,7 +814,7 @@ describe("computeWoWGrowth", () => {
   }
 
   it("should return zeros for empty input", () => {
-    const result = computeWoWGrowth([], makePricingMap(), new Date("2026-03-15"));
+    const result = computeWoWGrowth([], makePricingMap(), new Date("2026-03-15T00:00:00Z"));
 
     expect(result.currentWeek.tokens).toBe(0);
     expect(result.currentWeek.cost).toBe(0);
@@ -832,7 +832,7 @@ describe("computeWoWGrowth", () => {
       makeRow({ hour_start: "2026-03-15T10:00:00Z", total_tokens: 2000, input_tokens: 1600, output_tokens: 400, cached_input_tokens: 200 }), // current week Sun
     ];
 
-    const result = computeWoWGrowth(rows, makePricingMap(), new Date("2026-03-15"));
+    const result = computeWoWGrowth(rows, makePricingMap(), new Date("2026-03-15T00:00:00Z"));
 
     expect(result.previousWeek.tokens).toBe(1000);
     expect(result.currentWeek.tokens).toBe(2000);
@@ -844,7 +844,7 @@ describe("computeWoWGrowth", () => {
       makeRow({ hour_start: "2026-03-15T10:00:00Z", total_tokens: 2000, input_tokens: 1600, output_tokens: 400, cached_input_tokens: 200 }),
     ];
 
-    const result = computeWoWGrowth(rows, makePricingMap(), new Date("2026-03-15"));
+    const result = computeWoWGrowth(rows, makePricingMap(), new Date("2026-03-15T00:00:00Z"));
 
     expect(result.currentWeek.tokens).toBe(2000);
     expect(result.previousWeek.tokens).toBe(0);
@@ -863,7 +863,7 @@ describe("computeWoWGrowth", () => {
       makeRow({ hour_start: "2026-03-18T10:00:00Z", total_tokens: 2000, input_tokens: 1600, output_tokens: 400, cached_input_tokens: 200 }), // current Wed
     ];
 
-    const result = computeWoWGrowth(rows, makePricingMap(), new Date("2026-03-18"));
+    const result = computeWoWGrowth(rows, makePricingMap(), new Date("2026-03-18T00:00:00Z"));
 
     // Previous week total: 500 + 500 + 1000 = 2000
     expect(result.previousWeek.tokens).toBe(2000);

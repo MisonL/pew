@@ -70,6 +70,7 @@ All date/time values follow a strict UTC-in, local-out pattern:
 - **Display (Web UI)**: convert to the user's local timezone before rendering; `tzOffset` pattern for bucketing; `toLocaleString()`/`toLocaleDateString()` on the client.
 - **`datetime-local` inputs** show local wallclock time: UTC → local via `utcToLocalDatetimeValue()`, local → UTC via `localDatetimeValueToUtc()` (both in `date-helpers.ts`). Never append `Z` to a `datetime-local` value directly.
 - **Ordering/equality**: always epoch ms (`new Date(x).getTime()`), never string comparison — ISO variants have unstable lexicographic order.
+- **Tests**: the unit suite must pass in any host timezone, so a test that supplies a reference date builds it from local components (`new Date(2026, 2, 15)` — local midnight) when the code under test reads local calendar fields, and as an explicit UTC instant (`new Date("2026-03-15T00:00:00Z")`) when it reads the instant. `new Date("2026-03-15")` parses as UTC midnight and is the wrong shape for local-field readers: it is the previous day west of UTC. Verified with `TZ=America/Los_Angeles bun run test` (a west-of-UTC host catches what an Asia/Shanghai workstation hides).
 
 ## CLI dev workflow and state files
 
