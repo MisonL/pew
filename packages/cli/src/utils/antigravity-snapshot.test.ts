@@ -30,6 +30,21 @@ describe("Antigravity absolute source partitions", () => {
       await expect(readAntigravityBaseline(dir)).rejects.toThrow("Cannot verify previous usage queue");
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
+  it("drops every malformed record in tolerant mode, not only alternating ones", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pew-agy-baseline-"));
+    try {
+      // Two adjacent invalid rows (wrong total) plus an invalid JSON line —
+      // the splice-during-iteration variant must not let the second invalid
+      // row of a run survive into the retained baseline.
+      const bad = JSON.stringify({ ...record(), total_tokens: 1 });
+      const goodRetired = JSON.stringify(record("gemini-cli"));
+      await writeFile(join(dir, "queue.jsonl"),
+        `${bad}\n${bad}\n${goodRetired}\n${bad}\n`);
+      expect(await readAntigravityBaseline(dir, true, { tolerant: true }))
+        .toEqual([record("gemini-cli")]);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it("never adds a rescanned snapshot to the previous snapshot", () => {
     const fresh = antigravityRecords([delta()], "device");
     expect(fresh).toEqual([record()]);

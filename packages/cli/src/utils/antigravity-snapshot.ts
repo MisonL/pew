@@ -43,17 +43,17 @@ function parseBaselineRows(raw: string, includeRetired: boolean, tolerant: boole
     rows.push(parsed);
   }
   const retained = rows.filter((r) => r.source === "antigravity" || includeRetired && isRetiredSource(r.source));
-  for (const r of retained) {
-    const valid = typeof r.device_id === "string" && typeof r.model === "string" && typeof r.hour_start === "string" &&
-      Number.isFinite(Date.parse(r.hour_start)) &&
-      [r.input_tokens, r.cached_input_tokens, r.output_tokens, r.reasoning_output_tokens, r.total_tokens]
-        .every((n) => Number.isSafeInteger(n) && n >= 0 && n <= 1_000_000_000) &&
-      r.total_tokens === r.input_tokens + r.cached_input_tokens + r.output_tokens + r.reasoning_output_tokens;
-    if (!valid) {
-      if (tolerant) { retained.splice(retained.indexOf(r), 1); continue; }
-      throw new Error();
-    }
-  }
+  const valid = (r: QueueRecord): boolean =>
+    typeof r.device_id === "string" && typeof r.model === "string" && typeof r.hour_start === "string" &&
+    Number.isFinite(Date.parse(r.hour_start)) &&
+    [r.input_tokens, r.cached_input_tokens, r.output_tokens, r.reasoning_output_tokens, r.total_tokens]
+      .every((n) => Number.isSafeInteger(n) && n >= 0 && n <= 1_000_000_000) &&
+    r.total_tokens === r.input_tokens + r.cached_input_tokens + r.output_tokens + r.reasoning_output_tokens;
+  // Filter, never splice in place: removing the current element from the array
+  // being iterated skips its successor, so only alternating invalid rows would
+  // be dropped and the rest would survive into the rebuilt baseline.
+  if (tolerant) return retained.filter(valid);
+  if (!retained.every(valid)) throw new Error();
   return retained;
 }
 
