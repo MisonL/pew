@@ -115,7 +115,12 @@ export class BaseQueue<T> {
       return { records: [], newOffset: 0 };
     }
 
-    const slice = buf.subarray(offset);
+    // An offset past the end means the file shrank under the cursor
+    // (compaction crash, restored backup). Slicing there returns nothing and
+    // would then persist the SHORTER length, stranding every record in the
+    // file; re-reading from 0 is safe because uploads deduplicate on upsert.
+    const start = offset > buf.byteLength ? 0 : offset;
+    const slice = buf.subarray(start);
     const text = slice.toString("utf-8");
     const lines = text.split("\n").filter((line) => line.trim().length > 0);
 
@@ -152,8 +157,14 @@ export class BaseQueue<T> {
         offset: Number.isSafeInteger(state.offset) && (state.offset as number) >= 0
           ? (state.offset as number)
           : 0,
-        // Preserve undefined vs [] distinction for legacy detection
-        dirtyKeys: state.dirtyKeys,
+        // Preserve undefined vs [] distinction for legacy detection. A
+        // dirtyKeys that is not an array of strings would either crash
+        // `new Set(dirtyKeys)` or filter every record out and then be
+        // cleared — falling back to undefined (legacy offset upload) drains
+        // the backlog instead of stranding it.
+        dirtyKeys: Array.isArray(state.dirtyKeys) && state.dirtyKeys.every((key) => typeof key === "string")
+          ? (state.dirtyKeys as string[])
+          : undefined,
         lastUploadTarget:
           typeof state.lastUploadTarget === "string" ? state.lastUploadTarget : undefined,
       };

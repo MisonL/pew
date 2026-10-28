@@ -52,12 +52,25 @@ describe("BaseQueue", () => {
     expect(JSON.parse(lines[0])).toEqual({ id: 1, name: "item-1" });
   });
 
+  it("re-reads from the start when the saved offset lies beyond the end of the file", async () => {
+    // A cursor past EOF means the file was truncated under it (compaction,
+    // restore, crash between overwrite and saveOffset). Slicing at that
+    // offset returns nothing and would then persist a SMALLER offset,
+    // stranding every record. Re-read from 0; uploads deduplicate on upsert.
+    const queue = createQueue(tempDir);
+    await queue.append(makeRecord(1));
+    await queue.append(makeRecord(2));
+    await queue.saveOffset(999_999);
+    const { records, newOffset } = await queue.readFromOffset(999_999);
+    expect(records.map((r) => r.id)).toEqual([1, 2]);
+    expect(newOffset).toBe((await readFile(join(tempDir, "test.jsonl"), "utf8")).length);
+  });
+
   it("should append multiple records sequentially", async () => {
     const queue = createQueue(tempDir);
     await queue.append(makeRecord(1));
     await queue.append(makeRecord(2));
     await queue.append(makeRecord(3));
-
     const raw = await readFile(join(tempDir, "test.jsonl"), "utf-8");
     const lines = raw.trim().split("\n");
     expect(lines).toHaveLength(3);
@@ -296,6 +309,22 @@ describe("BaseQueue", () => {
     );
     const queue = createQueue(tempDir);
     expect(await queue.loadOffset()).toBe(0);
+  });
+
+  it.each([
+    ["string", '"key-a"'],
+    ["number", "5"],
+    ["object", '{"key-a":1}'],
+    ["non-string array", "[1,2]"],
+  ])("falls back to legacy (undefined) dirtyKeys when the persisted dirtyKeys is a %s", async (_label, raw) => {
+    // The same trust level as the offset guard: a torn or hand-edited state
+    // file can carry any JSON value here. A non-array (or non-string-array)
+    // dirtyKeys would either crash `new Set(dirtyKeys)` or filter every
+    // record out and then be cleared, silently stranding the pending
+    // backlog. undefined falls back to offset-based upload, which drains it.
+    await writeFile(join(tempDir, "test.state.json"), `{"offset":0,"dirtyKeys":${raw}}`);
+    const queue = createQueue(tempDir);
+    expect(await queue.loadDirtyKeys()).toBeUndefined();
   });
 
   // ---- queuePath exposed ----
