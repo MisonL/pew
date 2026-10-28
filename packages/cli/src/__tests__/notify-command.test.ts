@@ -507,14 +507,39 @@ describe("trailing-edge cooldown sync", () => {
     expect(coordinatedSyncFn).toHaveBeenCalledTimes(3);
   });
 
-  // Skip in CI: timing-sensitive test with process locking, unreliable in containers
-  it.skipIf(!!process.env.CI)("recovers from stale trailing.lock left by a crashed process", async () => {
+  it("recovers from stale trailing.lock left by a crashed process", async () => {
     const { writeFile: fsWriteFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
 
-    // Pre-create a stale trailing.lock with a dead PID (PID 2 is never a user process)
+    // A crashed owner is simulated with a PID we know is gone: spawn a child,
+    // wait for it to exit, then use its PID. Hard-coded PIDs are not portable
+    // — PID 2 is kthreadd on a Linux VM (kill → EPERM, which the lock code
+    // correctly reads as "alive") and absent inside a container (kill →
+    // ESRCH), so the same fixture passes on one host and hangs on the other.
+    const { spawn } = await import("node:child_process");
+    const acquireDeadPid = async (): Promise<number> => {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const child = spawn(process.execPath, ["-e", "0"], { stdio: "ignore" });
+        await new Promise<void>((resolve, reject) => {
+          child.once("exit", () => resolve());
+          child.once("error", reject);
+        });
+        const pid = child.pid;
+        if (pid === undefined) continue;
+        try {
+          // Still visible (zombie or the PID was recycled) — try again.
+          process.kill(pid, 0);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "ESRCH") return pid;
+        }
+      }
+      throw new Error("could not obtain a dead PID");
+    };
+    const deadPid = await acquireDeadPid();
+
+    // Pre-create a stale trailing.lock with that dead PID
     const trailingLockPath = join(tempDir, "trailing.lock");
-    await fsWriteFile(trailingLockPath, JSON.stringify({ pid: 2, startedAt: new Date().toISOString() }));
+    await fsWriteFile(trailingLockPath, JSON.stringify({ pid: deadPid, startedAt: new Date().toISOString() }));
 
     let callCount = 0;
     const coordinatedSyncFn = vi.fn(
