@@ -202,6 +202,13 @@ export interface OpenCodeSqliteCursor {
   lastTimeCreated: number;
   /** IDs of messages at exactly lastTimeCreated (for >= dedup on next query) */
   lastProcessedIds?: string[];
+  /**
+   * Assistant messages observed with no tokens yet, which OpenCode writes
+   * before the model call and fills in later without touching `time_created`.
+   * Re-queried by id on the next run so a sync that lands mid-generation does
+   * not lose the message's usage forever. Bounded to the newest entries.
+   */
+  pendingIds?: string[];
   /** Max time_updated seen from session table (epoch ms) */
   lastSessionUpdated: number;
   /** DB file inode (detect replacement/recreation) */

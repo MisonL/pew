@@ -172,6 +172,108 @@ describe("processOpenCodeMessages", () => {
     expect(result.deltas).toHaveLength(0);
   });
 
+  it("should stop holding back an in-flight message once it is old", () => {
+    const created = 1771120749059;
+    const rows: MessageRow[] = [
+      msgRow("msg_stuck", "ses_001", created, JSON.stringify({
+        role: "assistant",
+        modelID: "test-model",
+        time: { created },
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      })),
+    ];
+
+    // A generation that died is not pending forever, and this keeps a future
+    // OpenCode that stops writing time.completed from zeroing this source.
+    const result = processOpenCodeMessages(rows, false, created + 7 * 60 * 60 * 1000);
+
+    expect(result.pendingIds).toEqual([]);
+    expect(result.deltas).toHaveLength(0);
+  });
+
+  it("should emit usage written without time.completed once the row is old", () => {
+    const created = 1771120749059;
+    const rows: MessageRow[] = [
+      msgRow("msg_unmarked", "ses_001", created, JSON.stringify({
+        role: "assistant",
+        modelID: "test-model",
+        time: { created },
+        tokens: { input: 80, output: 20, reasoning: 0, cache: { read: 0, write: 0 } },
+      })),
+    ];
+
+    const result = processOpenCodeMessages(rows, false, created + 7 * 60 * 60 * 1000);
+
+    expect(result.pendingIds).toEqual([]);
+    expect(result.deltas).toHaveLength(1);
+    expect(result.deltas[0].tokens.inputTokens).toBe(80);
+  });
+
+  it("should hold back a message inserted but not yet written (no tokens, no completed)", () => {
+    const created = Date.now() - 1_000;
+    const rows: MessageRow[] = [
+      msgRow("msg_inflight", "ses_001", created, JSON.stringify({
+        role: "assistant",
+        modelID: "test-model",
+        time: { created },
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      })),
+    ];
+
+    const result = processOpenCodeMessages(rows);
+
+    expect(result.deltas).toHaveLength(0);
+    expect(result.pendingIds).toEqual(["msg_inflight"]);
+    // The key is still registered so the JSON-source dedup stays consistent.
+    expect(result.messageKeys).toEqual(new Set(["ses_001|msg_inflight"]));
+    // ...and the watermark still advances past the row.
+    expect(result.maxTimeCreated).toBe(created);
+  });
+
+  it("should not mark a completed zero-token message pending", () => {
+    const rows: MessageRow[] = [
+      msgRow("msg_done", "ses_001", 1771120749059, assistantData({
+        tokens: {
+          total: 0,
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+      })),
+    ];
+
+    const result = processOpenCodeMessages(rows);
+
+    expect(result.deltas).toHaveLength(0);
+    expect(result.pendingIds).toEqual([]);
+  });
+
+  it("should hold back a message whose tokens are not final yet (no completed)", () => {
+    const created = Date.now() - 1_000;
+    const rows: MessageRow[] = [
+      msgRow("msg_midstep", "ses_001", created, JSON.stringify({
+        role: "assistant",
+        modelID: "test-model",
+        time: { created },
+        tokens: {
+          total: 100,
+          input: 80,
+          output: 20,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+      })),
+    ];
+
+    // Each step overwrites `tokens` with that step's usage, so reading
+    // mid-generation would count only the last step's slice.
+    const result = processOpenCodeMessages(rows);
+
+    expect(result.deltas).toEqual([]);
+    expect(result.pendingIds).toEqual(["msg_midstep"]);
+  });
+
   it("should populate messageKeys for dedup", () => {
     const rows: MessageRow[] = [
       msgRow("msg_001", "ses_001", 1771120749059, assistantData()),

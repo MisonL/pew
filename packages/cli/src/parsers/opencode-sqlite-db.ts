@@ -108,15 +108,43 @@ export function openMessageDb(
     return null;
   }
 
+  const MESSAGE_COLUMNS =
+    `id, session_id, time_created, json_extract(data, '$.role') as role, data`;
+
   const stmt = db.prepare(
-    `SELECT id, session_id, time_created, json_extract(data, '$.role') as role, data
+    `SELECT ${MESSAGE_COLUMNS}
      FROM message
      WHERE time_created >= ?
      ORDER BY time_created ASC`,
   );
 
   return {
-    queryMessages: (lastTimeCreated: number) => stmt.all(lastTimeCreated) as MessageRow[],
+    queryMessages: (lastTimeCreated: number, pendingIds: readonly string[] = []) => {
+      const rows = stmt.all(lastTimeCreated) as MessageRow[];
+      if (pendingIds.length === 0) return rows;
+      // Re-read in-flight messages whose time_created already sits below the
+      // watermark: OpenCode fills in their tokens later without moving it.
+      // SQLite has a 999-parameter limit; callers cap the list well below it.
+      const placeholders = pendingIds.map(() => "?").join(",");
+      const pending = db
+        .prepare(
+          `SELECT ${MESSAGE_COLUMNS}
+           FROM message
+           WHERE id IN (${placeholders})
+           ORDER BY time_created ASC`,
+        )
+        .all(...pendingIds) as MessageRow[];
+      if (pending.length === 0) return rows;
+      const seen = new Set(rows.map((r) => r.id));
+      const merged = [...rows];
+      for (const row of pending) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        merged.push(row);
+      }
+      merged.sort((a, b) => a.time_created - b.time_created);
+      return merged;
+    },
     close: () => db.close(),
   };
 }

@@ -170,3 +170,179 @@ describe("openCodeSqliteTokenDriver", () => {
     expect(result.cursor.lastTimeCreated).toBe(1709827400000);
   });
 });
+
+describe("openCodeSqliteTokenDriver — messages written after first observation", () => {
+  let tempDir: string;
+  let dbPath: string;
+  // Fresh clock: OpenCode fills in tokens seconds after inserting the row, so
+  // these rows must look like they were created moments ago.
+  let baseTime: number;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "pew-opencode-sqlite-pending-"));
+    dbPath = join(tempDir, "messages.db");
+    await writeFile(dbPath, "fake-sqlite-content");
+    baseTime = Date.now() - 60_000;
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  /** In-flight assistant row: OpenCode inserts it before the LLM call with zero tokens. */
+  function inFlightRow(id: string, timeCreated: number, sessionId = "ses-001"): MessageRow {
+    return {
+      id,
+      session_id: sessionId,
+      time_created: timeCreated,
+      role: "assistant",
+      data: JSON.stringify({
+        modelID: "claude-sonnet-4-20250514",
+        time: { created: timeCreated },
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      }),
+    };
+  }
+
+  /** The same row once step-finish and cleanup have written tokens + completed. */
+  function settledRow(id: string, timeCreated: number, sessionId = "ses-001"): MessageRow {
+    return {
+      id,
+      session_id: sessionId,
+      time_created: timeCreated,
+      role: "assistant",
+      data: JSON.stringify({
+        modelID: "claude-sonnet-4-20250514",
+        time: { created: timeCreated, completed: timeCreated + 60_000 },
+        tokens: { input: 500, output: 200, reasoning: 0, cache: { read: 0, write: 0 } },
+      }),
+    };
+  }
+
+  function makeDriver(getRows: () => MessageRow[]) {
+    return createOpenCodeSqliteTokenDriver({
+      dbPath,
+      openMessageDb: () => ({
+        queryMessages: (lastTime: number, pendingIds: readonly string[] = []) =>
+          getRows().filter(
+            (r) => r.time_created >= lastTime || pendingIds.includes(r.id),
+          ),
+        close: () => {},
+      }),
+    });
+  }
+
+  it("re-reads a message whose tokens were written after the first observation", async () => {
+    let rows = [inFlightRow("msg-001", baseTime)];
+    const driver = makeDriver(() => rows);
+
+    // First sync lands mid-generation: zero tokens, nothing to emit.
+    const first = await driver.run(undefined, {});
+    expect(first.deltas).toEqual([]);
+    expect(first.cursor.pendingIds).toEqual(["msg-001"]);
+
+    // step-finish + cleanup write the real tokens; time_created is unchanged.
+    rows = [settledRow("msg-001", baseTime)];
+    const second = await driver.run(first.cursor, {});
+    expect(second.deltas).toHaveLength(1);
+    expect(second.deltas[0].tokens.inputTokens).toBe(500);
+    expect(second.cursor.pendingIds ?? []).toEqual([]);
+
+    // Third sync must not emit it again.
+    const third = await driver.run(second.cursor, {});
+    expect(third.deltas).toEqual([]);
+  });
+
+  it("keeps a still-unsettled message pending across syncs", async () => {
+    const rows = [inFlightRow("msg-001", baseTime)];
+    const driver = makeDriver(() => rows);
+
+    const first = await driver.run(undefined, {});
+    const second = await driver.run(first.cursor, {});
+    expect(second.deltas).toEqual([]);
+    expect(second.cursor.pendingIds).toEqual(["msg-001"]);
+  });
+
+  it("recovers a pending message even after the watermark has advanced past it", async () => {
+    // Sync 1 sees an in-flight message plus a settled one created later; the
+    // watermark advances to the settled row's timestamp.
+    let rows = [
+      inFlightRow("msg-early", baseTime),
+      settledRow("msg-late", baseTime + 20_000),
+    ];
+    const driver = makeDriver(() => rows);
+
+    const first = await driver.run(undefined, {});
+    expect(first.deltas).toHaveLength(1); // only msg-late
+    expect(first.cursor.lastTimeCreated).toBe(baseTime + 20_000);
+    expect(first.cursor.pendingIds).toEqual(["msg-early"]);
+
+    // msg-early finishes; its time_created is now below the watermark.
+    rows = [
+      settledRow("msg-early", baseTime),
+      settledRow("msg-late", baseTime + 20_000),
+    ];
+    const second = await driver.run(first.cursor, {});
+    expect(second.deltas).toHaveLength(1);
+    expect(second.deltas[0].model).toBe("claude-sonnet-4-20250514");
+    expect(second.cursor.pendingIds ?? []).toEqual([]);
+
+    const third = await driver.run(second.cursor, {});
+    expect(third.deltas).toEqual([]);
+  });
+
+  it("drops a pending id whose row no longer exists", async () => {
+    let rows = [inFlightRow("msg-001", baseTime)];
+    const driver = makeDriver(() => rows);
+
+    const first = await driver.run(undefined, {});
+    expect(first.cursor.pendingIds).toEqual(["msg-001"]);
+
+    rows = []; // session deleted / reverted
+    const second = await driver.run(first.cursor, {});
+    expect(second.deltas).toEqual([]);
+    expect(second.cursor.pendingIds ?? []).toEqual([]);
+  });
+
+  it("never moves the watermark backwards when only pending rows are re-read", async () => {
+    let rows = [
+      inFlightRow("msg-early", baseTime),
+      settledRow("msg-late", baseTime + 20_000),
+    ];
+    const driver = makeDriver(() => rows);
+
+    const first = await driver.run(undefined, {});
+    expect(first.cursor.lastTimeCreated).toBe(baseTime + 20_000);
+
+    // The late row disappears (session deleted) and only the older pending row
+    // remains; re-reading it must not pull the watermark back down.
+    rows = [inFlightRow("msg-early", baseTime)];
+    const second = await driver.run(first.cursor, {});
+    expect(second.cursor.lastTimeCreated).toBe(baseTime + 20_000);
+    expect(second.cursor.pendingIds).toEqual(["msg-early"]);
+    expect(second.deltas).toEqual([]);
+  });
+
+  it("keeps the boundary dedup when a run leaves the watermark unchanged", async () => {
+    // msg-late sits at the watermark; msg-early stays in flight.
+    const rows = [
+      inFlightRow("msg-early", baseTime),
+      settledRow("msg-late", baseTime + 20_000),
+    ];
+    const driver = makeDriver(() => rows);
+
+    const first = await driver.run(undefined, {});
+    expect(first.deltas).toHaveLength(1);
+    expect(first.cursor.lastProcessedIds).toEqual(["msg-late"]);
+
+    // Next run re-reads only the pending row; the watermark does not move, so
+    // msg-late is still in the `>=` window and must stay deduped.
+    const second = await driver.run(first.cursor, {});
+    expect(second.deltas).toEqual([]);
+    expect(second.cursor.lastTimeCreated).toBe(baseTime + 20_000);
+    expect(second.cursor.lastProcessedIds).toContain("msg-late");
+
+    const third = await driver.run(second.cursor, {});
+    expect(third.deltas).toEqual([]);
+  });
+});

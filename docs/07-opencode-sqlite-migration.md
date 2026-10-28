@@ -173,3 +173,31 @@ Changes needed:
 - Emit explicit `warn`-phase progress events when `bun:sqlite` is unavailable or DB open fails but DB file exists on disk
 - Updated mock helpers in tests to match `>=` semantics
 - Added 7 new tests: same-ms boundary dedup (3), warning emissions (4)
+
+## Late token writes (2026-10-29)
+
+The `message` row is inserted **before** the model call: OpenCode writes
+`time.created` at insert, `tokens` at `step-finish`, and `time.completed` in the
+cleanup block that runs on success, error and interrupt (`processor.ts`). All
+three writes land on the same row and `time_created` never moves, so the
+original `time_created >= watermark` scan read the row once — with zero or
+partial tokens — advanced past it, and never saw the final values. A sync that
+landed mid-generation permanently lost that message's usage.
+
+Fix:
+
+- `processOpenCodeMessages` withholds an assistant row that has no
+  `time.completed` and returns its id in `pendingIds`; only settled rows emit.
+  A row older than 6h is read as-is so a killed writer (or a future OpenCode
+  that stops writing the field) cannot strand or zero the source.
+- `OpenCodeSqliteCursor.pendingIds` carries those ids (bounded to the newest
+  256). `queryMessages(lastTimeCreated, pendingIds)` re-reads them by id even
+  when their `time_created` sits below the watermark.
+- The watermark now takes `max(previous, rows)` so a run that only re-reads
+  pending rows cannot move it backwards and re-count boundary rows.
+
+Tests: `opencode-sqlite-parser.test.ts` (held-back row, stale escape, mid-step
+tokens, completed zero-token row) and
+`drivers/token/opencode-sqlite-token-driver.test.ts` (late write recovered,
+pending across syncs, recovery below the watermark, deleted row dropped,
+watermark monotonic, boundary dedup intact).

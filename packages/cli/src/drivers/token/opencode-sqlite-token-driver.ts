@@ -15,6 +15,16 @@ import { processOpenCodeMessages } from "../../parsers/opencode-sqlite.js";
 import type { QueryMessagesFn } from "../../parsers/opencode-sqlite.js";
 import type { DbTokenDriver, DbTokenResult, SyncContext } from "../types.js";
 
+/**
+ * Upper bound on re-read ids carried in the cursor. OpenCode writes
+ * `time.completed` from a cleanup block that runs even on abort, so a row
+ * stays pending only while its generation is still in flight or after a hard
+ * crash mid-generation — and a crashed row has no tokens to recover, so
+ * dropping the oldest ids costs nothing. The cap keeps a pathological install
+ * from growing the cursor without bound.
+ */
+const MAX_PENDING_IDS = 256;
+
 /** Options needed to construct the SQLite token driver */
 export interface OpenCodeSqliteTokenDriverOpts {
   /** Path to the OpenCode SQLite database */
@@ -63,6 +73,11 @@ export function createOpenCodeSqliteTokenDriver(
           : [],
       );
 
+      const prevPendingIds =
+        prevCursor && prevCursor.inode === dbInode
+          ? (prevCursor.pendingIds ?? [])
+          : [];
+
       const handle = opts.openMessageDb(opts.dbPath);
       if (!handle) {
         return {
@@ -70,6 +85,7 @@ export function createOpenCodeSqliteTokenDriver(
           cursor: prevCursor ?? {
             lastTimeCreated: 0,
             lastProcessedIds: [],
+            pendingIds: [],
             lastSessionUpdated: 0,
             inode: dbInode,
             updatedAt: new Date().toISOString(),
@@ -79,9 +95,11 @@ export function createOpenCodeSqliteTokenDriver(
       }
 
       try {
-        // Query uses >= to avoid missing same-millisecond rows.
+        // Query uses >= to avoid missing same-millisecond rows, and re-reads
+        // every pending id by name: those rows carry no tokens yet, and their
+        // time_created sits below the watermark once it advances.
         // We dedup previously-processed IDs from the prior batch.
-        const rawRows = handle.queryMessages(lastTimeCreated);
+        const rawRows = handle.queryMessages(lastTimeCreated, prevPendingIds);
         const rows = prevProcessedIds.size > 0
           ? rawRows.filter((r) => !prevProcessedIds.has(r.id))
           : rawRows;
@@ -100,12 +118,18 @@ export function createOpenCodeSqliteTokenDriver(
 
         const result = processOpenCodeMessages(filteredRows, ...(ctx.collectAccounting ? [true] as const : []));
 
-        // Update cursor — advance past ALL rows (including deduped).
-        const maxTime = rawRows.length > 0
-          ? rawRows[rawRows.length - 1].time_created
-          : lastTimeCreated;
+        // Update cursor — advance past ALL rows (including deduped), but keep
+        // the rows we held back pending out of the processed set so the next
+        // run still lets them through the `>=` boundary filter.
+        // Pending re-reads can sit below the watermark, so never let the
+        // watermark regress: a lower value would re-scan rows already counted.
+        const maxTime = Math.max(
+          lastTimeCreated,
+          ...rawRows.map((r) => r.time_created),
+        );
+        const pendingSet = new Set(result.pendingIds);
         const idsAtMax = rawRows
-          .filter((r) => r.time_created === maxTime)
+          .filter((r) => r.time_created === maxTime && !pendingSet.has(r.id))
           .map((r) => r.id);
 
         return {
@@ -113,6 +137,7 @@ export function createOpenCodeSqliteTokenDriver(
           cursor: {
             lastTimeCreated: maxTime,
             lastProcessedIds: idsAtMax,
+            pendingIds: result.pendingIds.slice(-MAX_PENDING_IDS),
             lastSessionUpdated: prevCursor?.lastSessionUpdated ?? 0,
             inode: dbInode,
             updatedAt: new Date().toISOString(),
