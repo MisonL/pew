@@ -226,4 +226,19 @@ describe("d1-adapter batch", () => {
       ])
     ).rejects.toThrow(/UNIQUE constraint failed/);
   });
+
+  it("throws instead of returning a misaligned array when rqlite drops statements", async () => {
+    // rqlite silently drops empty statements (verified on 10.5.3), so
+    // results[i] would no longer describe stmts[i]. Positional consumers
+    // (leaderboard-snapshot results[1..3], accounting results[i*2+1]) would
+    // read another statement's result — a silent wrong answer beats no
+    // answer only if it is never wrong.
+    const fetchImpl = vi.fn().mockResolvedValue(
+      rqliteResponse([{ rows: [{ k: "a" }] }, { rows: [{ c: 3 }] }])
+    );
+    const db = makeAdapter(fetchImpl);
+    await expect(
+      db.batch([db.prepare("SELECT 1"), db.prepare(""), db.prepare("SELECT 3")])
+    ).rejects.toThrow(/returned 2 results for 3 statements/);
+  });
 });

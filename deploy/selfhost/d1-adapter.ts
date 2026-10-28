@@ -186,6 +186,14 @@ export function createD1Adapter(options: D1AdapterOptions): D1Like {
       const failure = rows.find((r) => r.error);
       if (failure?.error) throw new Error(failure.error);
 
+      // rqlite also silently drops empty statements (verified on 10.5.3), so
+      // a short array without an error means results[i] no longer describes
+      // stmts[i]. Positional consumers (leaderboard-snapshot results[1..3],
+      // accounting results[i*2+1]) would read another statement's result.
+      if (rows.length !== stmts.length) {
+        throw new Error(`rqlite returned ${rows.length} results for ${stmts.length} statements`);
+      }
+
       return rows.map((r) => toD1Result(r) as D1Result<T>);
     },
   };
