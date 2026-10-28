@@ -1,4 +1,4 @@
-import { readFile, writeFile, appendFile, rename } from "node:fs/promises";
+import { readFile, writeFile, appendFile, rename, open } from "node:fs/promises";
 import { join } from "node:path";
 import { ensureSecureDir } from "./secure-mkdir.js";
 
@@ -62,10 +62,33 @@ export class BaseQueue<T> {
     await ensureSecureDir(this.dir, { recursive: true });
   }
 
+  /**
+   * Terminate a torn tail before an append.
+   *
+   * A crash or ENOSPC mid-append can leave the file ending in a partial line
+   * without its `\n`. Appending directly would merge the fragment and the
+   * next complete record into one unparsable line, silently losing a record
+   * that was never torn. One byte read decides it; the happy path adds
+   * nothing.
+   */
+  private async separator(): Promise<string> {
+    const handle = await open(this.queuePath, "r").catch(() => null);
+    if (handle === null) return "";
+    try {
+      const { size } = await handle.stat();
+      if (size === 0) return "";
+      const buf = Buffer.alloc(1);
+      await handle.read(buf, 0, 1, size - 1);
+      return buf[0] === 0x0a ? "" : "\n";
+    } finally {
+      await handle.close();
+    }
+  }
+
   /** Append a single record to the queue */
   async append(record: T): Promise<void> {
     await this.ensureDir();
-    await appendFile(this.queuePath, `${JSON.stringify(record)}\n`);
+    await appendFile(this.queuePath, `${await this.separator()}${JSON.stringify(record)}\n`);
   }
 
   /** Append multiple records to the queue in a single write */
@@ -73,7 +96,7 @@ export class BaseQueue<T> {
     if (records.length === 0) return;
     await this.ensureDir();
     const data = `${records.map((r) => JSON.stringify(r)).join("\n")}\n`;
-    await appendFile(this.queuePath, data);
+    await appendFile(this.queuePath, `${await this.separator()}${data}`);
   }
 
   /**

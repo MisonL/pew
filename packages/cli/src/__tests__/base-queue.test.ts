@@ -52,6 +52,19 @@ describe("BaseQueue", () => {
     expect(JSON.parse(lines[0])).toEqual({ id: 1, name: "item-1" });
   });
 
+  it("starts a new line after a torn tail instead of merging into it", async () => {
+    // A crash mid-append can leave a partial last line without its \n. The
+    // next append used to continue that line, so the torn fragment and the
+    // next COMPLETE record merged into one unparsable line and the record was
+    // skipped for good. A leading newline terminates the fragment first.
+    await writeFile(join(tempDir, "test.jsonl"), '{"id":1,"na');
+    const queue = createQueue(tempDir);
+    await queue.append(makeRecord(2));
+
+    const { records } = await queue.readFromOffset(0);
+    expect(records).toEqual([makeRecord(2)]);
+  });
+
   it("re-reads from the start when the saved offset lies beyond the end of the file", async () => {
     // A cursor past EOF means the file was truncated under it (compaction,
     // restore, crash between overwrite and saveOffset). Slicing at that
