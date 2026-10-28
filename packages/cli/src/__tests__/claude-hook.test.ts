@@ -384,4 +384,79 @@ describe("Claude hook installer", () => {
     const res = await uninstallClaudeHook({ settingsPath, notifyPath });
     expect(res.changed).toBe(false);
   });
+
+  // A non-object element in the SessionEnd array is not a hook Pew understands,
+  // but it is still the user's data: filtering it out of the rewritten array
+  // deleted it from settings.json on every install and uninstall.
+  it("preserves a non-object SessionEnd entry instead of dropping it", async () => {
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        hooks: {
+          SessionEnd: [
+            "legacy-string-entry",
+            { hooks: [{ type: "command", command: "echo existing" }] },
+          ],
+        },
+      }),
+      "utf8",
+    );
+
+    await installClaudeHook({ settingsPath, notifyPath });
+    const installed = JSON.parse(await readFile(settingsPath, "utf8")) as {
+      hooks: { SessionEnd: unknown[] };
+    };
+    expect(installed.hooks.SessionEnd).toHaveLength(3);
+    expect(installed.hooks.SessionEnd[0]).toBe("legacy-string-entry");
+
+    await uninstallClaudeHook({ settingsPath, notifyPath });
+    const restored = JSON.parse(await readFile(settingsPath, "utf8")) as {
+      hooks: { SessionEnd: unknown[] };
+    };
+    expect(restored.hooks.SessionEnd).toEqual([
+      "legacy-string-entry",
+      { hooks: [{ type: "command", command: "echo existing" }] },
+    ]);
+  });
+
+  // `hooks` is Pew's to extend only when it is a table. A scalar or array
+  // value cannot be extended, and replacing it would destroy the user's value
+  // — the same class the codex installer refuses via `notAnArray`.
+  it("refuses to replace a hooks value that is not an object", async () => {
+    const original = `${JSON.stringify({ model: "opus", hooks: "disabled" }, null, 2)}\n`;
+    await writeFile(settingsPath, original, "utf8");
+
+    const result = await installClaudeHook({ settingsPath, notifyPath });
+
+    expect(result.action).toBe("skip");
+    expect(result.detail).toContain("not an object");
+    expect(await readFile(settingsPath, "utf8")).toBe(original);
+  });
+
+  it("refuses to replace a SessionEnd value that is not an array", async () => {
+    const original = `${JSON.stringify(
+      { hooks: { SessionEnd: "disabled", PreToolUse: [] } },
+      null,
+      2,
+    )}\n`;
+    await writeFile(settingsPath, original, "utf8");
+
+    const result = await installClaudeHook({ settingsPath, notifyPath });
+
+    expect(result.action).toBe("skip");
+    expect(result.detail).toContain("SessionEnd");
+    expect(await readFile(settingsPath, "utf8")).toBe(original);
+  });
+
+  it("treats a null hooks value as absent and installs", async () => {
+    await writeFile(settingsPath, `${JSON.stringify({ hooks: null }, null, 2)}\n`, "utf8");
+
+    const result = await installClaudeHook({ settingsPath, notifyPath });
+    const saved = JSON.parse(await readFile(settingsPath, "utf8")) as {
+      hooks: { SessionEnd: unknown[] };
+    };
+
+    expect(result.changed).toBe(true);
+    expect(saved.hooks.SessionEnd).toHaveLength(1);
+  });
 });

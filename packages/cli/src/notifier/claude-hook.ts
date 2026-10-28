@@ -35,8 +35,37 @@ export async function installClaudeHook(
   }
 
   const settings = loaded.settings ?? {};
-  const hooks = normalizeObject(settings.hooks);
-  const entries = normalizeArray(hooks[EVENT_NAME]);
+  const rawHooks = settings.hooks;
+  // `hooks` is Pew's to extend only when it is a table. A scalar cannot be
+  // extended, and replacing it would destroy the user's value — the same
+  // class of clobber the codex installer refuses via `notAnArray`.
+  if (rawHooks != null && !isPlainObject(rawHooks)) {
+    return {
+      source: SOURCE,
+      action: "skip",
+      changed: false,
+      detail:
+        "ownership_conflict: settings.hooks is not an object; refusing to replace it",
+      warnings: [
+        "Inspect the `hooks` value in settings.json and remove it manually if it is no longer needed.",
+      ],
+    };
+  }
+  const hooks = isPlainObject(rawHooks) ? { ...rawHooks } : {};
+  const rawEntries = hooks[EVENT_NAME];
+  if (rawEntries != null && !Array.isArray(rawEntries)) {
+    return {
+      source: SOURCE,
+      action: "skip",
+      changed: false,
+      detail:
+        "ownership_conflict: settings.hooks.SessionEnd is not an array; refusing to replace it",
+      warnings: [
+        "Inspect the `SessionEnd` value in settings.json and remove it manually if it is no longer needed.",
+      ],
+    };
+  }
+  const entries = toEntryArray(rawEntries);
 
   let changed = false;
   // Upgrade an entry still carrying the legacy double-quoted spelling to the
@@ -106,16 +135,30 @@ export async function uninstallClaudeHook(
   }
 
   const settings = loaded.settings;
-  const hooks = normalizeObject(settings.hooks);
-  const entries = normalizeArray(hooks[EVENT_NAME]);
+  const rawHooks = settings.hooks;
+  const hooks = isPlainObject(rawHooks) ? rawHooks : {};
+  // A non-array SessionEnd cannot hold Pew's entry, so there is nothing to
+  // strip. A non-object `hooks` is likewise not ours to edit.
+  if (!isPlainObject(rawHooks) || !Array.isArray(hooks[EVENT_NAME])) {
+    return {
+      source: SOURCE,
+      action: "skip",
+      changed: false,
+      detail: "Claude hook not installed",
+    };
+  }
+  const entries = toEntryArray(hooks[EVENT_NAME]);
   let removed = false;
-  const nextEntries = entries
-    .map((entry) => {
-      const stripped = stripCommand(entry, accepted);
-      if (stripped !== entry) removed = true;
-      return stripped;
-    })
-    .filter(Boolean);
+  const nextEntries: unknown[] = [];
+  for (const entry of entries) {
+    const stripped = stripCommand(entry, accepted);
+    if (stripped === REMOVE) {
+      removed = true;
+      continue;
+    }
+    if (stripped !== entry) removed = true;
+    nextEntries.push(stripped);
+  }
 
   if (!removed) {
     return {
@@ -154,8 +197,9 @@ export async function getClaudeHookStatus(opts: ClaudeHookOptions): Promise<Noti
   const loaded = await loadSettings(opts.settingsPath, fs);
   if (loaded.status === "missing") return "not-installed";
   if (loaded.status === "invalid" || !loaded.settings) return "error";
+  const hooks = isPlainObject(loaded.settings.hooks) ? loaded.settings.hooks : {};
   return hasCommand(
-    normalizeArray(normalizeObject(loaded.settings.hooks)[EVENT_NAME]),
+    toEntryArray(hooks[EVENT_NAME]),
     acceptedCommands(opts.notifyPath),
   )
     ? "installed"
@@ -212,16 +256,20 @@ async function loadSettings(
   }
 }
 
-function normalizeObject(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? { ...(value as Record<string, unknown>) }
-    : {};
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function normalizeArray(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object"))
-    : [];
+/**
+ * Entries of a hook array, exactly as the user wrote them.
+ *
+ * Non-object elements are malformed per Claude Code's schema, but they are
+ * still the user's data: the old `filter(entry => typeof entry === "object")`
+ * dropped them from the array on every install/uninstall rewrite, silently
+ * deleting sibling values Pew never owned.
+ */
+function toEntryArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? [...value] : [];
 }
 
 /**
@@ -230,50 +278,63 @@ function normalizeArray(value: unknown): Record<string, unknown>[] {
  * install is upgraded in place instead of left beside a second hook.
  */
 function normalizeEntry(
-  entry: Record<string, unknown>,
+  entry: unknown,
   command: string,
   accepted: string[],
-): Record<string, unknown> {
+): unknown {
+  if (!isPlainObject(entry)) return entry;
   const hooks = Array.isArray(entry.hooks) ? entry.hooks : null;
   if (!hooks) return entry;
 
   let changed = false;
   const nextHooks = hooks.map((hook) => {
-    if (!hook || typeof hook !== "object") return hook;
-    const hookObject = hook as Record<string, unknown>;
-    if (typeof hookObject.command !== "string" || !accepted.includes(hookObject.command)) return hookObject;
-    if (hookObject.command === command && hookObject.type === "command") return hookObject;
+    if (!isPlainObject(hook)) return hook;
+    if (typeof hook.command !== "string" || !accepted.includes(hook.command)) return hook;
+    if (hook.command === command && hook.type === "command") return hook;
     changed = true;
-    return { ...hookObject, type: "command", command };
+    return { ...hook, type: "command", command };
   });
 
   return changed ? { ...entry, hooks: nextHooks } : entry;
 }
 
+/** Marks a SessionEnd entry whose every hook was Pew's, so the entry goes. */
+const REMOVE = Symbol("remove-entry");
+
+/**
+ * Strip Pew's commands from one SessionEnd entry.
+ *
+ * Returns the entry unchanged when nothing matched, a copy without Pew's
+ * hooks when only some matched, and REMOVE when Pew's hooks were the only
+ * ones — never `null`, because `null` is also a value the user may have
+ * written into the array and the caller must be able to tell them apart.
+ */
 function stripCommand(
-  entry: Record<string, unknown>,
+  entry: unknown,
   accepted: string[],
-): Record<string, unknown> | null {
+): unknown | typeof REMOVE {
+  if (!isPlainObject(entry)) return entry;
   const hooks = Array.isArray(entry.hooks) ? entry.hooks : null;
   if (!hooks) return entry;
 
   const nextHooks = hooks.filter((hook) => {
-    if (!hook || typeof hook !== "object") return true;
-    const value = (hook as Record<string, unknown>).command;
+    if (!isPlainObject(hook)) return true;
+    const value = hook.command;
     return !(typeof value === "string" && accepted.includes(value));
   });
 
   if (nextHooks.length === hooks.length) return entry;
-  if (nextHooks.length === 0) return null;
+  if (nextHooks.length === 0) return REMOVE;
   return { ...entry, hooks: nextHooks };
 }
 
-function hasCommand(entries: Record<string, unknown>[], accepted: string[]): boolean {
+function hasCommand(entries: unknown[], accepted: string[]): boolean {
   return entries.some((entry) => {
+    if (!isPlainObject(entry)) return false;
     const hooks = Array.isArray(entry.hooks) ? entry.hooks : [];
     return hooks.some((hook) => {
-      if (!hook || typeof hook !== "object") return false;
-      const value = (hook as Record<string, unknown>).command;
+      if (!isPlainObject(hook)) return false;
+      const value = hook.command;
       return typeof value === "string" && accepted.includes(value);
     });
   });
