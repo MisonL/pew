@@ -130,15 +130,26 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
     validateResponse: (body, batch) => {
       const value = body as { details_version?: unknown; acknowledgments?: unknown } | null;
       if (value?.details_version !== 1 || !Array.isArray(value.acknowledgments) || value.acknowledgments.length !== batch.length) return "Server did not acknowledge accounting details v1";
+      const refused: string[] = [];
       for (let i = 0; i < batch.length; i++) {
         const ack = value.acknowledgments[i]; const r = batch[i];
         if (!ack || ack.key !== accountingKey(r) || ack.source_revision !== r.source_revision || ack.parser_revision !== r.parser_revision ||
-          ack.detail_revision !== r.detail_revision || !["applied", "duplicate", "superseded"].includes(ack.status)) return "Accounting details need reconciliation or a compatible server";
+          ack.detail_revision !== r.detail_revision) return "Accounting details need reconciliation or a compatible server";
+        // `base_mismatch`/`conflict` are permanent for this snapshot: the
+        // server has no token base for the bucket or a newer stored revision
+        // disagrees. Retrying cannot change that answer, so the record stays
+        // pending without blocking the annotations queued behind it.
+        if (ack.status === "base_mismatch" || ack.status === "conflict") refused.push(accountingKey(r));
+        else if (!["applied", "duplicate", "superseded"].includes(ack.status)) return "Accounting details need reconciliation or a compatible server";
       }
-      return null;
+      return refused.length > 0 ? { keys: refused, reason: "the server has no matching token base or a newer stored revision" } : null;
     },
   }).execute(opts);
   if (!details.success) warnings.push(`Accounting details pending: ${details.error}`);
+  // A refused record is not a stage failure: the engine keeps it pending and
+  // warns. `usage` was spread from the supplemental result, so the details
+  // stage's warning has to be carried into the merge explicitly.
+  else warnings.push(details.warning);
   // The token stage is the only one that records the target, so it is also the
   // one that detects a switch — but it stays silent when its own queue is
   // empty, while the evidence/accounting backlogs behind it still ship to the

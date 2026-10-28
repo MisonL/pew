@@ -40,8 +40,18 @@ export interface UploadEngineConfig<T> {
    * When omitted, the engine falls back to offset-based upload (legacy).
    */
   recordKey?: (record: T) => string;
-  /** Optional versioned receipt protocol; HTTP 200 alone is insufficient. */
-  validateResponse?: (body: unknown, batch: T[]) => string | null;
+  /**
+   * Verify the receipt and report records the server will not apply.
+   *
+   * Return a `string` for a batch the server did not accept at all (the run
+   * fails and the offset does not advance), or `RefusedRecords` when the
+   * server answered 200 but permanently refuses specific records inside it.
+   * A refused record cannot be fixed by retrying, so failing the stage would
+   * block every record queued behind it forever — the accounting outbox hits
+   * this whenever a replay re-sends an annotation whose token base no longer
+   * exists. Refused keys stay pending; the rest of the run proceeds.
+   */
+  validateResponse?: (body: unknown, batch: T[]) => string | RefusedRecords | null;
   /**
    * Return a reason when a record cannot satisfy the server's ingest contract.
    *
@@ -93,12 +103,31 @@ export interface UploadProgressEvent {
   message?: string;
 }
 
+/**
+ * Records inside an otherwise-successful batch that the server refused
+ * permanently, with the per-record reason.
+ *
+ * `keys` must be a subset of the batch's `recordKey` values; the engine
+ * rejects a receipt that names a record it never sent, because that would
+ * silently clear the wrong pending intent.
+ */
+export interface RefusedRecords {
+  keys: string[];
+  reason: string;
+}
+
 export interface UploadResult {
   success: boolean;
   uploaded: number;
   batches: number;
   error?: string;
   warning?: string;
+  /**
+   * Records the server acknowledged the batch for but will not apply, and
+   * which stay pending in the queue. Permanent (a retry cannot change the
+   * answer), so it is reported separately from `error`.
+   */
+  refused?: number;
   /**
    * Set when this stage actually shipped records to an origin different from
    * the recorded one. The caller composes the warning across stages: a stage
@@ -262,6 +291,11 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
     const fullEndpoint = `${apiUrl}${endpoint}`;
     let totalUploaded = 0;
     let batchesCompleted = 0;
+    // Keys the server refused permanently. They leave the pending set only
+    // when a later run gets a different answer, so they are carried across
+    // batches and re-saved as the remaining dirty set.
+    const refusedKeys = new Set<string>();
+    let refusalReason = "";
 
     for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
       const batch = batches[batchIdx];
@@ -295,14 +329,34 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
         };
       }
 
-      totalUploaded += batch.length;
+      // A refusal in a queue with no per-record pending set has nowhere to
+      // stay pending: the offset would advance past a record the server never
+      // applied. Fail loudly there rather than lose it.
+      if (result.refused) {
+        const { keys, reason } = result.refused;
+        if (!useDirtyKeys || !recordKey) {
+          return { success: false, uploaded: totalUploaded, batches: batchesCompleted, error: reason };
+        }
+        const sent = new Set(batch.map(recordKey));
+        for (const key of keys) {
+          // A receipt naming a record this batch never carried is a protocol
+          // violation; acting on it would clear pending intent for the wrong
+          // record.
+          if (!sent.has(key)) return { success: false, uploaded: totalUploaded, batches: batchesCompleted,
+            error: `Server refused an unknown ${entityName} key` };
+          refusedKeys.add(key);
+        }
+        refusalReason = reason;
+      }
+
+      totalUploaded += batch.length - (result.refused?.keys.length ?? 0);
       batchesCompleted++;
     }
 
     // 5. All batches succeeded — save state
     await queue.saveOffset(newOffset);
     if (useDirtyKeys) {
-      await queue.saveDirtyKeys([]);
+      await queue.saveDirtyKeys([...refusedKeys].sort());
     }
     if (config.trackUploadTarget) {
       await queue.saveLastUploadTarget(apiUrl);
@@ -316,6 +370,9 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
 
     const warnings = [
       rejectionWarning,
+      refusedKeys.size > 0
+        ? `Server refused ${refusedKeys.size} ${entityName} and left them pending: ${refusalReason}`
+        : undefined,
       targetChanged
         ? `Last successful upload went to ${previousTarget}; this run sent pending ${entityName} to ${apiUrl}.`
         : undefined,
@@ -325,6 +382,7 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
       success: true,
       uploaded: totalUploaded,
       batches: batchesCompleted,
+      ...(refusedKeys.size > 0 ? { refused: refusedKeys.size } : {}),
       ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
       ...(targetChanged ? { targetChangedFrom: previousTarget } : {}),
     };
@@ -337,10 +395,9 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
 // Internal: send a single batch with retry
 // ---------------------------------------------------------------------------
 
-interface SendResult {
-  ok: boolean;
-  error?: string;
-}
+type SendResult =
+  | { ok: true; refused?: RefusedRecords }
+  | { ok: false; error: string };
 
 async function sendBatchWithRetry<T>(opts: {
   endpoint: string;
@@ -350,7 +407,7 @@ async function sendBatchWithRetry<T>(opts: {
   maxRetries: number;
   retryDelayMs: number;
   clientVersion?: string;
-  validateResponse?: (body: unknown, batch: T[]) => string | null;
+  validateResponse?: (body: unknown, batch: T[]) => string | RefusedRecords | null;
 }): Promise<SendResult> {
   const { endpoint, token, batch, fetchFn, maxRetries, retryDelayMs, clientVersion } = opts;
 
@@ -381,8 +438,9 @@ async function sendBatchWithRetry<T>(opts: {
 
       if (resp.ok) {
         if (opts.validateResponse) {
-          const error = opts.validateResponse(await resp.json().catch(() => null), batch);
-          if (error) return { ok: false, error };
+          const verdict = opts.validateResponse(await resp.json().catch(() => null), batch);
+          if (typeof verdict === "string") return { ok: false, error: verdict };
+          if (verdict) return { ok: true, refused: verdict };
         }
         return { ok: true };
       }

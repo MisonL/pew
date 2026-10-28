@@ -1336,4 +1336,90 @@ describe("upload-engine", () => {
       expect(await queue.loadDirtyKeys()).toEqual([]);
     });
   });
+
+  // =========================================================================
+  // Receipt refusals
+  // =========================================================================
+
+  describe("refused records", () => {
+    /** Receipt naming every record the batch carried: the server refuses all of them. */
+    function refuseWholeBatch(_body: unknown, batch: TestRecord[]) {
+      return { keys: batch.map((r) => `key-${r.id}`), reason: "no matching base" };
+    }
+
+    it("keeps refused keys pending and ships the records queued behind them", async () => {
+      const queue = new BaseQueue<TestRecord>(dir, "test.jsonl", "test.state.json");
+      const config: UploadEngineConfig<TestRecord> = {
+        queue,
+        endpoint: "/api/test-ingest",
+        entityName: "test records",
+        preprocess: (records) => records,
+        recordKey: (r) => `key-${r.id}`,
+        // The single poisoned record is refused; every other batch is accepted.
+        validateResponse: (_body, batch) => batch.some((r) => r.id === 999)
+          ? { keys: ["key-999"], reason: "no matching base" }
+          : null,
+      };
+      await new ConfigManager(dir).save({ token: "pk_test" });
+      await queue.appendBatch([makeRecord(1), makeRecord(999), makeRecord(2)]);
+      await queue.saveDirtyKeys(["key-1", "key-999", "key-2"]);
+
+      const { fetchFn } = createMockFetch([{ status: 200, body: { ingested: 1 } }]);
+      const result = await createUploadEngine(config).execute({
+        stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn, batchSize: 1,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.uploaded).toBe(2);
+      expect(result.refused).toBe(1);
+      expect(result.warning).toMatch(/Server refused 1 test records/);
+      expect(await queue.loadDirtyKeys()).toEqual(["key-999"]);
+    });
+
+    it("rejects a receipt that names a record the batch never carried", async () => {
+      // Acting on it would clear pending intent for a record that was not
+      // even offered, so it is a protocol failure, not a refusal.
+      const queue = new BaseQueue<TestRecord>(dir, "test.jsonl", "test.state.json");
+      await new ConfigManager(dir).save({ token: "pk_test" });
+      await queue.appendBatch([makeRecord(1)]);
+      await queue.saveDirtyKeys(["key-1"]);
+      const config: UploadEngineConfig<TestRecord> = {
+        queue, endpoint: "/api/test-ingest", entityName: "test records",
+        preprocess: (records) => records,
+        recordKey: (r) => `key-${r.id}`,
+        validateResponse: () => ({ keys: ["key-42"], reason: "no matching base" }),
+      };
+
+      const { fetchFn } = createMockFetch([{ status: 200, body: { ingested: 1 } }]);
+      const result = await createUploadEngine(config).execute({
+        stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/unknown test records key/);
+      expect(await queue.loadDirtyKeys()).toEqual(["key-1"]);
+    });
+
+    it("fails instead of dropping a refusal in offset mode", async () => {
+      // Without dirty keys there is nowhere for a refused record to stay
+      // pending: advancing the offset would strand it silently.
+      const queue = new BaseQueue<TestRecord>(dir, "test.jsonl", "test.state.json");
+      await new ConfigManager(dir).save({ token: "pk_test" });
+      await queue.appendBatch([makeRecord(1)]);
+      const config: UploadEngineConfig<TestRecord> = {
+        queue, endpoint: "/api/test-ingest", entityName: "test records",
+        preprocess: (records) => records,
+        validateResponse: refuseWholeBatch,
+      };
+
+      const { fetchFn } = createMockFetch([{ status: 200, body: { ingested: 1 } }]);
+      const result = await createUploadEngine(config).execute({
+        stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("no matching base");
+      expect(await queue.loadOffset()).toBe(0);
+    });
+  });
 });

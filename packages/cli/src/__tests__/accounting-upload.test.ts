@@ -53,6 +53,30 @@ describe("accounting outbox capability acknowledgment", () => {
     expect(await details.loadDirtyKeys()).toEqual([accountingKey(record)]);
   });
 
+  it("does not let a record the server cannot apply block the ones behind it", async () => {
+    // `pew reset && pew sync` replays every surviving ledger key, including
+    // annotations whose raw logs were rotated away. On a fresh server those
+    // have no token base and are answered `base_mismatch` forever. The batch
+    // that carries one used to abort the whole stage, so every later
+    // annotation — including ones whose base does exist — never shipped on
+    // any run. Refused keys must stay pending; acknowledged ones must clear.
+    const { dir, record, details } = await setup();
+    const blocked = { ...record, hour_start: "2026-09-01T00:30:00.000Z" };
+    const behind = { ...record, hour_start: "2026-09-01T01:00:00.000Z" };
+    await details.merge([blocked, behind]);
+    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async (url, init) => {
+      const body = JSON.parse(String(init?.body)) as AccountingRecord[];
+      if (!String(url).endsWith("/api/ingest/details")) return Response.json({ ingested: body.length });
+      return Response.json({ details_version: 1, acknowledgments: body.map((r) => ({
+        key: accountingKey(r), source_revision: r.source_revision, parser_revision: r.parser_revision,
+        detail_revision: r.detail_revision,
+        status: accountingKey(r) === accountingKey(blocked) ? "base_mismatch" : "applied" })) });
+    });
+    const result = await executeUpload({ stateDir: dir, apiUrl: API, fetch, maxRetries: 0, batchSize: 1 });
+    expect(result.warning).toContain("pending");
+    expect(await details.loadDirtyKeys()).toEqual([accountingKey(blocked)]);
+  });
+
   it("does not let an acknowledgment for a different revision discard the pending snapshot", async () => {
     const { dir, record, details } = await setup();
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({ ingested: 1 }))
