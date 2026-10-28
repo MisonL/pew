@@ -1,5 +1,34 @@
 # Retrospective
 
+### 2026-10-29: A permanently refused record blocked the whole outbox
+
+The details stage sends accounting annotations to `/api/ingest/details` and
+treats any acknowledgment that is not `applied`/`duplicate`/`superseded` as a
+batch failure. `base_mismatch` is the common one: the server has no token base
+for that (device, source, model, hour) — the raw logs that produced it were
+rotated away, or the annotation was recorded on a different host. The engine
+returns on the first failed batch and only clears dirty keys after every batch
+succeeds, so that one record blocked every annotation behind it, on every run,
+permanently. `pew reset && pew sync` does not help: the ledger survives reset
+by design, and the replay re-marks every surviving key dirty.
+
+Reproduced with two records: one refused, one the server would have accepted.
+The second never shipped. With `batchSize: 1` the run made exactly one details
+request, forever.
+
+The fix is to treat a per-record refusal as data, not as a failed batch:
+`validateResponse` may return the keys inside an otherwise-accepted batch that
+the server refused, those keys stay pending, and the rest of the run proceeds.
+A receipt naming a record the batch never carried is still a protocol error,
+and a refusal in offset mode (no per-record pending set) still fails, because
+advancing the offset would strand the record silently.
+
+The same review found the CLI's hand-written copy of `core/accounting.ts`
+omitted its numeric caps (`MAX_RECORD_TOKENS`, `MAX_RECORD_MESSAGES`), so a
+record the server would 400 could be queued — a 400 wedges the stage the same
+way and has no refusal path. And the two ledgers that override
+`readFromOffset` skipped the stale-offset guard `BaseQueue` documents.
+
 ### 2026-10-29: A skipped test is a coverage hole CI will blame on the code
 
 Three inode tests and the Hermes DB inode test were guarded with
