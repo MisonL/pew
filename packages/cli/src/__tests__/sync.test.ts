@@ -1,9 +1,25 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, rm, writeFile, mkdir, readFile, symlink, chmod } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, mkdir, readFile, rename, symlink, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeSync } from "../commands/sync.js";
 import type { QueueRecord } from "@pew/core";
+
+/**
+ * Replace a file's contents while forcing a new inode.
+ *
+ * The replacement is written next to the live file and then renamed over it,
+ * so both files exist at the moment the filesystem allocates the inode and it
+ * cannot hand the old one back. Removing the file first does not work: Linux
+ * (containers included) recycles the just-freed inode for the very next
+ * create, which silently turns any inode-change assertion into a no-op — that
+ * is why the inode tests used to be skipped in CI.
+ */
+async function replaceFileWithNewInode(filePath: string, content: string): Promise<void> {
+  const replacementPath = `${filePath}.replacement`;
+  await writeFile(replacementPath, content);
+  await rename(replacementPath, filePath);
+}
 
 /** Helper: create Claude JSONL content */
 function claudeLine(ts: string, input: number, output: number): string {
@@ -1627,7 +1643,7 @@ describe("executeSync", () => {
 
   // ===== Bug A: Partial replay inflation (inode change on single file) =====
 
-  it.skipIf(!!process.env.CI)("should not inflate when a single file's inode changes (partial replay)", async () => {
+  it("should not inflate when a single file's inode changes (partial replay)", async () => {
     // Scenario: sync Claude file → file gets replaced (new inode, same content)
     // → sync again → queue should have same values (not 2x).
     // This tests the bug where a single driver's inode reset causes
@@ -1650,12 +1666,8 @@ describe("executeSync", () => {
     expect(records1).toHaveLength(1);
     expect(records1[0].input_tokens).toBe(3000);
 
-    // Simulate inode change: delete and recreate file with same content
-    // (On most filesystems, rm + create = new inode)
-    const { rm: rmFile } = await import("node:fs/promises");
-    await rmFile(filePath);
-    await new Promise((r) => setTimeout(r, 50)); // ensure different mtime
-    await writeFile(filePath, content);
+    // Simulate inode change: replace the file on disk with the same content
+    await replaceFileWithNewInode(filePath, content);
 
     // Second sync — inode changed, driver will replay from offset 0
     // With the fix, sync should detect inode change → full rescan → overwrite
@@ -1672,7 +1684,7 @@ describe("executeSync", () => {
     expect(records2[0].output_tokens).toBe(300);   // NOT 600
   });
 
-  it.skipIf(!!process.env.CI)("should not inflate when inode changes with multiple sources active", async () => {
+  it("should not inflate when inode changes with multiple sources active", async () => {
     // Scenario: Claude + Pi both synced. Claude file inode changes.
     // Queue should reflect correct values for BOTH sources.
     const claudeDir = join(dataDir, ".claude", "projects", "proj-multi");
@@ -1697,10 +1709,7 @@ describe("executeSync", () => {
     });
 
     // Simulate Claude file inode change
-    const { rm: rmFile } = await import("node:fs/promises");
-    await rmFile(claudePath);
-    await new Promise((r) => setTimeout(r, 50));
-    await writeFile(claudePath, claudeContent);
+    await replaceFileWithNewInode(claudePath, claudeContent);
 
     // Second sync
     await executeSync({
@@ -2968,7 +2977,7 @@ describe("executeSync", () => {
 
   // ===== Coverage: file inode change with onProgress =====
 
-  it.skipIf(!!process.env.CI)("should emit progress event on file inode change", async () => {
+  it("should emit progress event on file inode change", async () => {
     const claudeDir = join(dataDir, ".claude", "projects", "proj-inode-prog");
     await mkdir(claudeDir, { recursive: true });
     const filePath = join(claudeDir, "session.jsonl");
@@ -2979,10 +2988,7 @@ describe("executeSync", () => {
     await executeSync({ stateDir, claudeDir: join(dataDir, ".claude") });
 
     // Simulate inode change
-    const { rm: rmFile } = await import("node:fs/promises");
-    await rmFile(filePath);
-    await new Promise((r) => setTimeout(r, 50));
-    await writeFile(filePath, content);
+    await replaceFileWithNewInode(filePath, content);
 
     // Second sync with onProgress
     const events: Array<{ source: string; phase: string; message?: string }> = [];
