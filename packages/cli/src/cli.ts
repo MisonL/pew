@@ -840,7 +840,16 @@ const initCommand = defineCommand({
     log.text(`pew binary: ${pc.cyan(result.pewBin)}`);
     log.text(`notify.cjs: ${pc.dim(result.notifyHandler.path)}`);
     for (const hook of result.hooks) {
-      const symbol = hook.changed ? pc.green("✓") : pc.dim("•");
+      // `changed` means Pew wrote something, not that the hook works: the
+      // OpenClaw driver reports changed:true with action:"skip" when its CLI
+      // registration failed. A green ✓ there would claim success the detail
+      // line denies; a plain skip (nothing installed) stays a dim bullet.
+      const symbol =
+        hook.action === "skip" && hook.warnings?.length
+          ? pc.yellow("!")
+          : hook.changed
+            ? pc.green("✓")
+            : pc.dim("•");
       log.text(`${symbol} ${hook.source}  ${hook.detail}`);
       if (hook.warnings?.length) {
         for (const warning of hook.warnings) {
@@ -891,7 +900,16 @@ const uninstallCommand = defineCommand({
     log.text(`notify.cjs: ${pc.dim(result.notifyHandler.path)}  ${result.notifyHandler.detail}`);
     log.text(`codex backup: ${pc.dim(result.codexBackup.path)}  ${result.codexBackup.detail}`);
     for (const hook of result.hooks) {
-      const symbol = hook.changed ? pc.green("✓") : pc.dim("•");
+      // `changed` means Pew wrote something, not that the hook works: the
+      // OpenClaw driver reports changed:true with action:"skip" when its CLI
+      // registration failed. A green ✓ there would claim success the detail
+      // line denies; a plain skip (nothing installed) stays a dim bullet.
+      const symbol =
+        hook.action === "skip" && hook.warnings?.length
+          ? pc.yellow("!")
+          : hook.changed
+            ? pc.green("✓")
+            : pc.dim("•");
       log.text(`${symbol} ${hook.source}  ${hook.detail}`);
       if (hook.warnings?.length) {
         for (const warning of hook.warnings) {
