@@ -30,7 +30,7 @@ pew 由本地 CLI 和 Web 仪表盘组成。CLI 读取 AI 编程工具的日志�
 
 ## 使用
 
-推荐使用 Node.js 24 或更新版本。npm 包声明支持 Node.js 18，但 Antigravity CLI、OpenCode、Hermes 的 SQLite 数据源依赖运行时内置 SQLite，旧版 Node.js 无法读取这些来源。
+推荐使用 Node.js 22.23.4（与 CI / Dockerfile 一致）或更新版本。npm 包声明 `engines.node >= 22`，因为 Antigravity CLI、OpenCode、Hermes 的 SQLite 数据源依赖运行时内置 SQLite，旧版 Node.js 无法读取这些来源。
 
 ```bash
 npm install -g @nocoo/pew
@@ -59,7 +59,7 @@ Antigravity CLI 从 `~/.gemini/antigravity-cli/conversations/*.db` 收集用量�
 
 ## 开发
 
-仓库使用 Bun workspaces。使用与当前 CI / Dockerfile 一致的 Bun 1.4.3，并准备 Node.js 24 或更新版本。
+仓库使用 Bun workspaces。使用与当前 CI / Dockerfile 一致的 Bun 1.4.3 与 Node.js 22.23.4。
 
 ```bash
 git clone https://github.com/nocoo/pew.git
@@ -89,7 +89,7 @@ bun run --filter '@nocoo/pew' build
 
 根 `build` 只构建 core 和 Web，CLI 需单独构建。Web 使用 Next.js standalone 产物，容器入口见 [Dockerfile](Dockerfile)。CLI 通过 `--host` / `PEW_HOST` 指向自托管实例（无需改源码，凭据按 host 隔离到 `config.<host>.json`），见 [deploy/selfhost/README.md](deploy/selfhost/README.md)。
 
-除默认的 Cloudflare 托管路径外，pew 也支持**完全本地的私有化部署**（rqlite + Node 容器，零 Cloudflare 依赖）：见 [deploy/selfhost/README.md](deploy/selfhost/README.md) 与设计文档 `docs/52`–`docs/56`。
+除默认的 Cloudflare 托管路径外，pew 也支持**完全本地的私有化部署**（rqlite + Node 容器，零 Cloudflare 依赖）：见 [deploy/selfhost/README.md](deploy/selfhost/README.md) 与设计文档 `docs/57`–`docs/61`。
 
 | 目录 | 内容 |
 | --- | --- |

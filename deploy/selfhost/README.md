@@ -140,9 +140,9 @@ migrate 启动时的对账自检会显式报错（「credentials configured but 
    改密后旧会话自动失效（JWT 携带密码版本号，不匹配即判无效）。
 
 **限速**：登录限速默认**进程内**（`inMemoryRateLimiter`），多 `web` 副本时退化为按副本
-计。两个后端都是**邮箱 + IP 双键**：memory 后端先查 `login:ip:<ipv6/64>`（30 次/60s），
-再查 `login:<email>`（10 次/60s）；`LOGIN_RATE_LIMIT_BACKEND=rqlite` 时两键都走共享表
-（各 10 次/60s）。**登录侧的 XFF 信任在两种后端下都存在**——memory 的 IP 桶同样用
+计。两个后端都是**邮箱 + IP 双键**，额度也一致：memory 后端先查 `login:ip:<ipv6/64>`
+（30 次/60s），再查 `login:<email>`（10 次/60s）；`LOGIN_RATE_LIMIT_BACKEND=rqlite` 时
+两键都走共享表，额度相同（IP 30 次/60s、邮箱 10 次/60s）。**登录侧的 XFF 信任在两种后端下都存在**——memory 的 IP 桶同样用
 `getClientIp`；auth-code 生成/校验与 CLI 登录的 IP 限速桶**无条件**使用
 `getClientIp`（ingest 的 300/min 桶按 userId 计，仅在 userId 为空时回退到 IP——正常
 路径不可达）——下文反代小节的"反代必须覆写 XFF"硬约束对这些桶同样必要，不限于登录。
@@ -382,7 +382,7 @@ voter/reachable，且新节点能读到扩容前写入的数据。这条路把�
 
 ### 部署拓扑：公网 vs 内网，默认值差一件事
 
-**默认 compose 把 web 的 7020 发布到 `0.0.0.0`**（`docker-compose.yml:314-315` 的
+**默认 compose 把 web 的 7020 发布到 `0.0.0.0`**（`docker-compose.yml:327-328` 的
 `"${WEB_PORT:-7020}:7020"` 没有 host 前缀），Quickstart 的裸 `docker compose up -d`
 就是这个状态。它是否可接受，取决于部署位置：
 
@@ -565,7 +565,7 @@ true，导致 `__Secure-` cookie 被 http origin 拒收、登录全线失效。c
   这是已接受的信息泄漏面：d1-http 只在 compose 网络内可达、调用方只有 web 自身的参数化查询，
   构造出 SQL 错误的输入受 web 路由校验约束。如需收窄，在 d1-http 的错误封套处做通用化映射。
 - 真实密钥只写在 `deploy/selfhost/.env`：`.gitignore` 的 `.env` 规则使其**不入库**；`.dockerignore`
-  用 `**/.env` 匹配任意层级，使其**不进镜像**（注意必须是 `**/.env`——裸 `.env` 只排除构建上下文
+  用 `**/.env*` 匹配任意层级，使其**不进镜像**（注意必须是 `**/.env*`——裸 `.env` 只排除构建上下文
   根目录，`deploy/selfhost/.env` 会被 `COPY deploy deploy` 带进 `pew-selfhost:local` 的最终层）。
   同理 `.dockerignore` 也有 `**/.rqlite-auth.json`（auth.json 是明文密码 JSON，同样会经
   `COPY deploy deploy` 进层）。构建与 compose 里出现的 `CF_ACCOUNT_ID`/`CF_D1_DATABASE_ID` 是占位串，不是凭据。
@@ -880,7 +880,7 @@ docker compose up -d --force-recreate rqlite   # cluster: rqlite-1 rqlite-2 rqli
 - [ ] `.env` 中删除 `RQLITE_USERNAME`、`RQLITE_PASSWORD`、`RQLITE_JOIN_PASSWORD`
       （以及若设过：`RQLITE_READ_USERNAME`、`RQLITE_READ_PASSWORD`、`LOGIN_RATE_LIMIT_BACKEND`）。
 - [ ] 删除宿主磁盘上的 `deploy/selfhost/.rqlite-auth.json`（明文密码文件，不留盘）。
-- [ ] 回退若触及 `.dockerignore`，确认 `**/.rqlite-auth.json` 与 `**/.env` 规则仍在或已
+- [ ] 回退若触及 `.dockerignore`，确认 `**/.rqlite-auth.json` 与 `**/.env*` 规则仍在或已
       一并移除——回退后若规则消失而文件残留，下一次 `docker build` 会把明文密码泄进镜像层。
 - [ ] rqlite 数据卷无需清理（`rate_limit_hits` 表为冻结无害的纯新增；数据敏感性由部署者判断）。
 - [ ] 迁移账本注意：`_migrations` 按文件名跳过——revert 后若以**同名文件**重做 033 且内容
@@ -1005,7 +1005,7 @@ XFF 最后一段、IPv6 前缀归并）、`lib/invite.ts` 与 `lib/auth-helpers.
   仍按原值直拼，自托管默认值（无后缀）会让 token 上传打到 worker 根路径并 404**——这是
   实测过的 bug，合并时别丢。
 - `scripts/migrations/029-leaderboard-revision.sql`：种子 `INSERT` 改为 `INSERT OR IGNORE`
-  （提交 `607455db`，为支持迁移重放）。这是**对上游既有迁移的唯一修改**，docs/52 §4.7
+  （提交 `607455db`，为支持迁移重放）。这是**对上游既有迁移的唯一修改**，docs/57 §4.7
   原写「不改既有迁移」已按此更正。
 - 根 `Dockerfile`：builder 阶段注入 build-time 占位 ENV。
 - `.dockerignore`：除 `**/.env` 与 `**/.rqlite-auth.json` 外还有多条深度排除（`**/.claude`、

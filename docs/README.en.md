@@ -30,7 +30,7 @@ The 9 supported token sources are Antigravity CLI, Claude Code, Codex, GitHub Co
 
 ## Usage
 
-Node.js 24 or newer is recommended. The npm package declares Node.js 18 support, but SQLite sources for Antigravity CLI, OpenCode, and Hermes require built-in SQLite support and cannot be read on older Node.js versions.
+Node.js 22.23.4 (matching CI and the Dockerfile) or newer is recommended. The npm package declares `engines.node >= 22`, because SQLite sources for Antigravity CLI, OpenCode, and Hermes require built-in SQLite support and cannot be read on older Node.js versions.
 
 ```bash
 npm install -g @nocoo/pew
@@ -59,7 +59,7 @@ Antigravity CLI usage and sessions come from `~/.gemini/antigravity-cli/conversa
 
 ## Development
 
-The repository uses Bun workspaces. Use Bun 1.4.3 to match the current CI and Dockerfile, with Node.js 24 or newer.
+The repository uses Bun workspaces. Use Bun 1.4.3 and Node.js 22.23.4 to match the current CI and Dockerfile.
 
 ```bash
 git clone https://github.com/nocoo/pew.git
@@ -87,7 +87,7 @@ bun run build
 bun run --filter '@nocoo/pew' build
 ```
 
-The root `build` command builds core and web only; build the CLI separately. The web application uses Next.js standalone output, with a container entry point in [Dockerfile](../Dockerfile). The CLI's production and development hosts are currently fixed in [login.ts](../packages/cli/src/commands/login.ts); adjust them for a self-hosted installation.
+The root `build` command builds core and web only; build the CLI separately. The web application uses Next.js standalone output, with a container entry point in [Dockerfile](../Dockerfile). The CLI points at a self-hosted instance via `--host` / `PEW_HOST` (no source change needed; credentials are isolated per host in `config.<host>.json`) — see [deploy/selfhost/README.md](../deploy/selfhost/README.md).
 
 | Directory | Contents |
 | --- | --- |

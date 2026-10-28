@@ -6,7 +6,7 @@
 > **勾选回填 2026-10-20**：Task 1–5、7–9、11–12 的 checkbox 按实际交付物与测试回填（对应文件均存在，`rate-limit` 与 `verify-migrations` 等 20 项测试通过）；Task 6、10、13 附有本轮真机实测记录。原文 Task 10 Step 1 写的「第 6 次被拒」与实现的 10 次阈值不符，已按实测更正。
 
 
-**Architecture:** A 用「无条件 bind-mount + entrypoint 包装脚本按文件存在性追加 `-auth`」实现零破坏开关；客户端凭据经 `d1-adapter` → `d1-http` 双层透传为 Basic 头。B 用单条原子 `INSERT...SELECT`（SQL 侧窗口运算）以 `meta.changes` 分支判定放行/拒绝，执行异常**降级到进程内限速器**（原设计的 fail-open 放行已于 2026-10-21 修正，见 docs/55 同名条目下的「实现更正」）。C 是纯文档 + 两个 compose 扩展文件。
+**Architecture:** A 用「无条件 bind-mount + entrypoint 包装脚本按文件存在性追加 `-auth`」实现零破坏开关；客户端凭据经 `d1-adapter` → `d1-http` 双层透传为 Basic 头。B 用单条原子 `INSERT...SELECT`（SQL 侧窗口运算）以 `meta.changes` 分支判定放行/拒绝，执行异常**降级到进程内限速器**（原设计的 fail-open 放行已于 2026-10-21 修正，见 docs/60 同名条目下的「实现更正」）。C 是纯文档 + 两个 compose 扩展文件。
 
 **Tech Stack:** rqlite 10.5.3、Bun、Next.js/Auth.js（v5）、docker compose（`!override` 需 ≥ v2.24.4）、vitest（deploy/selfhost 与 packages/web 两套）。
 

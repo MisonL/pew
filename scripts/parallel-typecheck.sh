@@ -25,11 +25,12 @@ PIDS+=($!)
 
 # Test files are excluded from every declaration build above (they cannot be
 # part of a composite emit: they import helpers across package roots), so
-# without these lanes no test file under the worker packages is typechecked at
-# all — vitest transpiles with esbuild and never checks types. The root
-# tsconfig's `**/*.test.ts` exclusion does not reach worker-read, whose own
-# config is standalone, but it does reach the others, so each package that
-# ships tests needs its own noEmit config.
+# without these lanes vitest's esbuild transpile would be the only pass over
+# them — it never checks types. worker-read's own config is standalone but its
+# build still excludes tests, so it needs the explicit noEmit lane below.
+# packages/worker does not: its tsconfig.json includes src/**/*.test.ts in the
+# program already, so `bun run typecheck` (CI lint) checks its tests via the
+# package's own `tsc -b`; this script only builds the test-free build config.
 tsc --noEmit -p packages/worker-read/tsconfig.test.json &
 PIDS+=($!)
 

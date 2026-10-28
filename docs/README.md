@@ -38,6 +38,7 @@
 | 30 | [30-quality-system-upgrade.md](30-quality-system-upgrade.md) | Quality system upgrade — L1+L2+L3+G1+G2 | done |
 | 31 | [31-d1-test-isolation.md](31-d1-test-isolation.md) | D1 test isolation — quality system → Tier S | done |
 | 32 | [32-proxy-token-gap-investigation.md](32-proxy-token-gap-investigation.md) | Proxy token gap investigation | reference |
+| 32b | [32-local-e2e-isolation.md](32-local-e2e-isolation.md) | Local E2E isolation — per-run temporary D1/KV, no cloud credentials | done |
 | 33 | [33-achievement-system-overhaul.md](33-achievement-system-overhaul.md) | Achievement system overhaul | retired |
 | 34 | [34-showcase-system.md](34-showcase-system.md) | ProductHunt-style showcase system | retired |
 | 35 | [35-hermes-support.md](35-hermes-support.md) | Hermes Agent token tracking (SQLite session-level diff) | done |
@@ -45,18 +46,22 @@
 | 36b | [36-organization-system.md](36-organization-system.md) | Organization entity for interest-based grouping | done |
 | 36c | [36-github-actions-ci.md](36-github-actions-ci.md) | GitHub Actions CI — Phase 1 (no secrets) | done (Phase 2 gates live in ci.yml) |
 | 37 | [37-worker-read-security-hardening.md](37-worker-read-security-hardening.md) | Worker-read security hardening | reference |
-| 38 | [38-cloudflare-kv-cache.md](38-cloudflare-kv-cache.md) | Edge caching for worker-read via Cloudflare KV | design |
+| 38 | [38-cloudflare-kv-cache.md](38-cloudflare-kv-cache.md) | Edge caching for worker-read via Cloudflare KV | done (pricing rows are historical; see doc header) |
 | 39 | [39-badge-system.md](39-badge-system.md) | Admin-assigned leaderboard badges (7-day spotlight) | retired |
 | 40 | [40-dynamic-model-pricing.md](40-dynamic-model-pricing.md) | Dynamic model pricing (shipped) + [c1–c6 subdocs](40-dynamic-model-pricing/) | done |
 | 40b | [40-l3-bdd-refactor.md](40-l3-bdd-refactor.md) | L3 → BDD test refactor plan | reference |
 | 41 | [41-code-hygiene-metrics.md](41-code-hygiene-metrics.md) | Code hygiene metrics (G1–G10) baseline + cleanup roadmap | closed 2026-07-08 |
-| 42 | [42-grok-support.md](42-grok-support.md) | Grok CLI token support — `~/.grok/logs/unified.jsonl` parser | design |
+| 42 | [42-grok-support.md](42-grok-support.md) | Grok CLI token support — `~/.grok/logs/unified.jsonl` parser | implemented 2026-07-10 |
 | 43 | [43-zcode-support.md](43-zcode-support.md) | Historical ZCode CLI collector design | archived; collector retired |
 | 44 | [44-biome-migration-ts7.md](44-biome-migration-ts7.md) | Biome migration + TypeScript 7 stable upgrade | done |
 | 45 | [45-codex-notifier-cycle-containment.md](45-codex-notifier-cycle-containment.md) | Codex notifier forwarding-cycle containment | implemented 2026-07-15 |
 | 46 | [46-omp-support.md](46-omp-support.md) | Historical Oh My Pi collector design | archived; collector retired |
+| 47 | [47-usage-evidence.md](47-usage-evidence.md) | Supplementary usage accounting — evidence ledger for auxiliary usage | done |
+| 48 | [48-cache-accounting.md](48-cache-accounting.md) | Cache accounting contract — versioned annotations without re-uploading tokens | done |
+| 49 | [49-agent-operations.md](49-agent-operations.md) | Time, CLI state and release contracts (agent operations) | done |
+| 50 | [50-leaderboard-read-cache.md](50-leaderboard-read-cache.md) | Leaderboard read cache | done (v3.1.0; range-scan fix in v3.1.1) |
 | 51 | [51-antigravity-support.md](51-antigravity-support.md) | Antigravity CLI SQLite/Protobuf accounting and source safety | implemented |
-| 52 | [52-jp2-migration.md](52-jp2-migration.md) | Railway to jp2 staging, acceptance and approval boundaries | in-progress |
+| 52 | [52-jp2-migration.md](52-jp2-migration.md) | Railway to jp2 staging, acceptance and approval boundaries | done (public cutover 2026-10-22) |
 | 57 | [57-self-hosted-deployment-design.md](57-self-hosted-deployment-design.md) | Self-hosted deployment design (rqlite + Node workers replace D1/KV/Workers) | done |
 | 58 | [58-self-hosted-storage-runtime.md](58-self-hosted-storage-runtime.md) | Self-hosted Plan 1: storage & runtime implementation plan | done |
 | 59 | [59-self-hosted-auth.md](59-self-hosted-auth.md) | Self-hosted Plan 2: auth subsystem implementation plan | done |

@@ -360,7 +360,7 @@ CREATE TABLE instance_setup (
 );
 ```
 
-引导注册在**一个事务内**完成插入（`is_admin = 1` 用户 + `instance_setup` 单行），`users` 计数查询在批量外先读（实现更正 2026-10-15，见 docs/54 Global Constraints）。第二次并发请求会因 `instance_setup` 主键冲突在批量内失败并整体回滚。rqlite 写路径由单 leader 串行 + `?transaction=true` 原子（§4.1 专项一），因此该判定可靠。
+引导注册在**一个事务内**完成插入（`is_admin = 1` 用户 + `instance_setup` 单行），`users` 计数查询在批量外先读（实现更正 2026-10-15，见 docs/59 Global Constraints）。第二次并发请求会因 `instance_setup` 主键冲突在批量内失败并整体回滚。rqlite 写路径由单 leader 串行 + `?transaction=true` 原子（§4.1 专项一），因此该判定可靠。
 
 **注册向导流程（`/setup`）**：
 
@@ -663,8 +663,8 @@ Dockerfile 在 **builder 阶段**以 `ARG/ENV` 注入 `AUTH_SECRET`（`Dockerfil
 | `CF_D1_API_TOKEN` | **真实密钥**（d1-http 的 Bearer 校验，见 §4.1 专项三）；**仅 `d1-http`/`web` 两个服务持有**——`read`/`ingest`/`scheduler` 直连 rqlite、不经 d1-http，不需要也不应拿到它；构建期用占位值。（实现更正 2026-10-17：原文写"`migrate`/`d1-http`/`web` 三个"——交付 compose 的 `migrate` 只注入 `RQLITE_*`，不持有该 token，与 §4.1 的实现更正一致。） |
 | `COMPOSE_PROFILES` | compose profile 默认值：`single`（单节点，默认）或 `cluster`（3 节点）。放 compose 目录 `.env`，使裸 `docker compose up -d` 起单节点 |
 | `DAILY_INTERVAL_MS` | scheduler 定价同步间隔（ms），默认 86400000（24h）；由 compose 透传给 `scheduler` 容器 |
-| `RQLITE_USERNAME` / `RQLITE_PASSWORD` / `RQLITE_JOIN_PASSWORD` | rqlite 鉴权（docs/55 §3.1）：**三个必须同时设置或同时留空**。半填时渲染脚本删除 auth.json，migrate 的 `assertCredentialConsistency` 会 fail-closed 拒绝启动。留空 = 无鉴权（默认） |
-| `LOGIN_RATE_LIMIT_BACKEND` | `memory`（默认）或 `rqlite`（多副本共享登录限速，docs/55 §3.2） |
+| `RQLITE_USERNAME` / `RQLITE_PASSWORD` / `RQLITE_JOIN_PASSWORD` | rqlite 鉴权（docs/60 §3.1）：**三个必须同时设置或同时留空**。半填时渲染脚本删除 auth.json，migrate 的 `assertCredentialConsistency` 会 fail-closed 拒绝启动。留空 = 无鉴权（默认） |
+| `LOGIN_RATE_LIMIT_BACKEND` | `memory`（默认）或 `rqlite`（多副本共享登录限速，docs/60 §3.2） |
 | `WEB_PORT` | web 发布到宿主的端口，默认 7020（反代 overlay 会移除该发布） |
 
 ## 12. 超出本设计范围

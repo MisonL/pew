@@ -16,7 +16,7 @@ G2_OUT="$TMP_DIR/g2.log"
 bun run test:e2e > "$E2E_OUT" 2>&1 &
 E2E_PID=$!
 
-# L3 Browser E2E: Playwright BDD against dev server on :27020
+# L3 Browser E2E: Playwright BDD against a production build (next build + next start) on :27020
 bun run test:e2e:ui > "$E2E_UI_OUT" 2>&1 &
 E2E_UI_PID=$!
 
