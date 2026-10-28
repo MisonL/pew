@@ -1,5 +1,34 @@
 # Retrospective
 
+### 2026-10-29: A skipped test is a coverage hole CI will blame on the code
+
+Three inode tests and the Hermes DB inode test were guarded with
+`it.skipIf(!!process.env.CI)`. The guard was honest — the fixture unlinked a file
+and rewrote it, and Linux recycles that freed inode for the next create
+(measured: 200 of 200 recreations in `node:22.23.4`), so in a container the file
+never looked replaced. The consequence was not local: `sync.ts:615`, the inode
+replay guard that aborts and restarts as a full scan, is covered by nothing else.
+With those tests skipped, CI measured 8054/8478 branches = 94.9988% and failed
+the L1 floor on a commit that passed locally at 8055/8478 = 95.0106%. A full
+`--coverage.reporter=json` diff of the two runs found exactly one differing
+branch arm and no others. One skipped test was the entire delta between the two
+gates, and nothing in the gate said a test had been skipped.
+
+Fix the fixture, not the gate: write the replacement beside the live file and
+`rename` it over, so both exist when the inode is allocated and it cannot be
+recycled (0 of 200 reuses, macOS and Linux). Verifying an inode change by
+`rm` + recreate is not portable and, if it is the only cover for a branch,
+silently moves the CI/local threshold. Record the conditional-skip class in an
+AST gate (`scripts/check-conditional-test-skips.ts`) rather than relying on
+Biome, whose `noSkippedTests`/`noFocusedTests` do not see `skipIf`/`runIf`.
+
+The same review found a second, unrelated portability fault in a skipped test:
+the stale-`trailing.lock` fixture hard-coded `pid: 2`. On the Linux host that
+PID is kthreadd, so `kill(2, 0)` returns EPERM — which the lock code reads,
+correctly, as "owner alive" — and the test hung to timeout, while in a container
+PID 2 is absent and it passes. Derive the dead PID by spawning and reaping a
+child, then re-checking `kill(pid, 0)` for ESRCH.
+
 ### 2026-10-22: An IPv4-mapped socket is not native IPv6 evidence
 
 The initial cutover probe used `curl -6`, but the machine's resolver/network layer
