@@ -8,6 +8,7 @@
 import { SessionQueue } from "../storage/session-queue.js";
 import { withStateLock } from "../storage/state-lock.js";
 import { sessionRecordRejection } from "../utils/ingest-contract.js";
+import { isRetiredSource } from "../utils/retired-sources.js";
 import type { OnCorruptLine } from "../storage/base-queue.js";
 import { createUploadEngine } from "./upload-engine.js";
 import type {
@@ -98,5 +99,11 @@ async function sessionUploadLocked(
     trackUploadTarget: true,
   });
 
-  return engine.execute(opts);
+  const result = await engine.execute(opts);
+  // The ledger is append-only; without post-drain compaction it grows
+  // without bound (docs/23-session-queue-growth.md). Retired-source rows
+  // stay in Pew's own queue on purpose — their collectors no longer replay
+  // them, so `pew reset` rebuilds the backlog from these rows alone.
+  if (result.success) await queue.compact((record) => isRetiredSource(record.source));
+  return result;
 }

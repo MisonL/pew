@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -388,10 +388,68 @@ describe("executeSessionUpload", () => {
 
   // ----- Offset persisted after success -----
 
+  it("compacts the session ledger after a successful drain, keeping retired rows", async () => {
+    const config = new ConfigManager(dir);
+    await config.save({ token: "pk_compact" });
+
+    const queue = new SessionQueue(dir);
+    await queue.appendBatch([
+      makeSessionRecord({ session_key: "claude-code|active-source", source: "claude-code" }),
+      makeSessionRecord({ session_key: "gemini-cli|retired", source: "gemini-cli" }),
+      makeSessionRecord({ session_key: "omp|retired2", source: "omp" }),
+    ]);
+
+    const { fetchFn } = createMockFetch([{ status: 200, body: { ingested: 3 } }]);
+    const result = await executeSessionUpload({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn });
+    expect(result.success).toBe(true);
+
+    // The ledger was trimmed to only retired sources; active records are gone.
+    const raw = await readFile(join(dir, "session-queue.jsonl"), "utf8");
+    const rows = raw.trim().split("\n").map((line) => JSON.parse(line));
+    expect(rows.length).toBe(2);
+    expect(rows.every((r) => ["gemini-cli", "omp"].includes(r.source))).toBe(true);
+
+    // Retained rows are marked as consumed (offset past them), so a second upload sends nothing.
+    const { fetchFn: f2, calls } = createMockFetch([]);
+    const second = await executeSessionUpload({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: f2 });
+    expect(second.uploaded).toBe(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("keeps the ledger intact when the drain fails part-way", async () => {
+    const config = new ConfigManager(dir);
+    await config.save({ token: "pk_failure" });
+
+    const queue = new SessionQueue(dir);
+    const record1 = makeSessionRecord({ session_key: "before-failure" });
+    const record2 = makeSessionRecord({ session_key: "after-failure" });
+    await queue.appendBatch([record1, record2]);
+
+    // 500 × 2 retries → failure
+    const { fetchFn } = createMockFetch([
+      { status: 500, body: { error: "server error" } },
+      { status: 500, body: { error: "server error" } },
+    ]);
+    const result = await executeSessionUpload({
+      stateDir: dir,
+      apiUrl: DEFAULT_HOST,
+      fetch: fetchFn,
+      maxRetries: 1, // two attempts total
+    });
+    expect(result.success).toBe(false);
+    expect(result.uploaded).toBe(0);
+
+    // Ledger unchanged
+    const raw = await readFile(join(dir, "session-queue.jsonl"), "utf8");
+    const rows = raw.trim().split("\n").map((l) => JSON.parse(l));
+    expect(rows.map((r) => r.session_key)).toEqual(["before-failure", "after-failure"]);
+    const state = await readFile(join(dir, "session-queue.state.json"), "utf8").catch(() => "{}");
+    expect(JSON.parse(state).offset ?? 0).toBe(0);
+  });
+
   it("should persist offset after successful upload", async () => {
     const config = new ConfigManager(dir);
     await config.save({ token: "pk_persist" });
-
     const queue = new SessionQueue(dir);
     await queue.appendBatch([makeSessionRecord()]);
 

@@ -66,6 +66,51 @@ describe("BaseQueue", () => {
     expect(newOffset).toBe((await readFile(join(tempDir, "test.jsonl"), "utf8")).length);
   });
 
+  // ---- compact ----
+
+  it("compacts a fully drained queue down to the retained records", async () => {
+    const queue = createQueue(tempDir);
+    await queue.append(makeRecord(1, "keep"));
+    await queue.append(makeRecord(2, "drop"));
+    const { newOffset } = await queue.readFromOffset(0);
+    await queue.saveOffset(newOffset);
+
+    const compacted = await queue.compact((r) => r.name === "keep");
+
+    expect(compacted).toBe(true);
+    const raw = await readFile(join(tempDir, "test.jsonl"), "utf8");
+    expect(raw.trim().split("\n").map((l) => JSON.parse(l).id)).toEqual([1]);
+    // The cursor sits at the new end so retained rows are not re-uploaded.
+    expect(await queue.loadOffset()).toBe(Buffer.byteLength(raw));
+    expect((await queue.readFromOffset(await queue.loadOffset())).records).toEqual([]);
+  });
+
+  it("leaves a queue with a pending tail untouched", async () => {
+    const queue = createQueue(tempDir);
+    await queue.append(makeRecord(1, "keep"));
+    await queue.append(makeRecord(2, "pending"));
+    await queue.append(makeRecord(3, "pending"));
+    const { newOffset } = await queue.readFromOffset(0);
+    await queue.saveOffset(newOffset - 20); // one record still pending
+    const before = await readFile(join(tempDir, "test.jsonl"), "utf8");
+
+    expect(await queue.compact(() => false)).toBe(false);
+    expect(await readFile(join(tempDir, "test.jsonl"), "utf8")).toBe(before);
+  });
+
+  it("is a no-op when nothing would be dropped, and on a missing or empty file", async () => {
+    const queue = createQueue(tempDir);
+    expect(await queue.compact(() => false)).toBe(false);
+
+    await writeFile(join(tempDir, "test.jsonl"), "");
+    expect(await queue.compact(() => false)).toBe(false);
+
+    await queue.append(makeRecord(1, "keep"));
+    const { newOffset } = await queue.readFromOffset(0);
+    await queue.saveOffset(newOffset);
+    expect(await queue.compact((r) => r.name === "keep")).toBe(false);
+  });
+
   it("should append multiple records sequentially", async () => {
     const queue = createQueue(tempDir);
     await queue.append(makeRecord(1));

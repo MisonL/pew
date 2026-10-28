@@ -82,8 +82,11 @@ export class BaseQueue<T> {
    * This replaces the entire queue file contents. Empty array clears the file.
    * The atomic write-then-rename prevents partial reads if the process crashes
    * mid-write.
+   *
+   * Returns the byte length of the rewritten file so a compaction can keep
+   * the cursor at the same end-of-file position it implies.
    */
-  async overwrite(records: T[]): Promise<void> {
+  async overwrite(records: T[]): Promise<number> {
     await this.ensureDir();
     const data =
       records.length > 0
@@ -92,6 +95,34 @@ export class BaseQueue<T> {
     const tmpPath = `${this.queuePath}.tmp`;
     await writeFile(tmpPath, data);
     await rename(tmpPath, this.queuePath);
+    return Buffer.byteLength(data);
+  }
+
+  /**
+   * Drop records a completed drain already consumed, keeping those the
+   * retention predicate marks.
+   *
+   * The session ledger is append-only — every sync appends the latest
+   * snapshot of each changed session and nothing ever truncates it, so the
+   * file grows without bound (docs/23). Only a fully drained queue qualifies:
+   * a pending tail (offset < file length) must never be dropped. Retained
+   * records end up behind the cursor (the drain consumed them), so they are
+   * not re-uploaded; they stay in the ledger only for contracts that expect
+   * them to remain locally (retired-source intent, reset retention).
+   *
+   * Crash-safe because both writes are atomic and ordered file-first: a crash
+   * between them leaves the old large offset pointing past the shorter file,
+   * and `readFromOffset` restarts from 0 in that case (re-upload, idempotent).
+   */
+  async compact(retain: (record: T) => boolean = () => false): Promise<boolean> {
+    const raw = await readFile(this.queuePath).catch(() => null);
+    if (raw === null || raw.byteLength === 0) return false;
+    if ((await this.loadOffset()) < raw.byteLength) return false;
+    const { records } = await this.readFromOffset(0);
+    const kept = records.filter(retain);
+    if (kept.length === records.length) return false;
+    await this.saveOffset(await this.overwrite(kept));
+    return true;
   }
 
   /**
