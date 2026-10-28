@@ -244,6 +244,11 @@ JSX / 路径 alias / worker 类型误报。
 - `scripts/check-dynamic-delete.ts` — 禁 `delete obj[computed]`，允许 `delete obj.static`
 - `scripts/check-ts-expect-error.ts` — `@ts-expect-error` 必须带 ≥10 字符描述
 
+（2026-10-29 追加第三个同类 gate：`scripts/check-conditional-test-skips.ts` — 禁
+`it.skipIf` / `it.runIf`。biome 的 `noSkippedTests` 抓不到这两个条件跳过形式，实测
+probe 只覆盖 `.skip`/`.only`/`.todo`/`it.concurrent.skip`；而条件跳过会让本地门与 CI 门
+测不同的代码。见 Retrospective 2026-10-29。）
+
 **重要：不能原样搬运** raven 脚本，需要改四处：
 
 1. **`ROOTS` 常量必须换成 pew 的路径**：

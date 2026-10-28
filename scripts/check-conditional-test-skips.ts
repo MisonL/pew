@@ -97,6 +97,12 @@ function isTestRootedChain(node: OxcNode | undefined): boolean {
       cur = cur.object;
       continue;
     }
+    // `it.each([...]).skipIf(...)` — the modifier's object is the `it.each`
+    // call; descend through it so the each-form is not a blind spot.
+    if (cur.type === "CallExpression") {
+      cur = cur.callee;
+      continue;
+    }
     return false;
   }
   return false;

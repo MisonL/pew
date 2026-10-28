@@ -83,7 +83,7 @@ when the worktree holds an unstaged fix, and unstaged dirt (e.g. a dev-server
 rewrite of `packages/web/next-env.d.ts`) is neither checked nor committed.
 There are no result caches and no extension fast paths: every commit runs
 `vitest run --coverage` (95%×4 floors), the five-package typecheck, biome
-`--error-on-warnings` and both AST gates inside the snapshot. Staged
+`--error-on-warnings` and all three AST gates inside the snapshot. Staged
 prerequisites are regenerated from staged sources in the snapshot
 (`packages/core/dist` via `tsc`, `.next/types` via `next typegen`); worktree
 `node_modules` is reused read-only through `scripts/snapshot-node-modules.sh`
