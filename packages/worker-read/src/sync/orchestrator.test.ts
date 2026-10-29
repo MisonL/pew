@@ -142,6 +142,52 @@ describe("syncDynamicPricing", () => {
     expect(r.entriesWritten).toBe((baseline as DynamicPricingEntry[]).length);
   });
 
+  // A failed refresh must not *destroy* what a previous successful one stored.
+  // The bundle baseline is a floor, not a replacement: entries that exist only
+  // upstream (or only in the last good sync) disappeared from the served map
+  // on any upstream hiccup, and stayed gone until the next success.
+  it("preserves entries from a source that failed, instead of dropping them", async () => {
+    const previous: DynamicPricingEntry[] = [
+      { model: "vendor/only-on-openrouter", provider: "vendor", displayName: null,
+        inputPerMillion: 1, outputPerMillion: 2, cachedPerMillion: null, contextWindow: 1000,
+        origin: "openrouter", updatedAt: "2026-04-29T00:00:00.000Z", aliases: [] },
+      { model: "vendor/only-on-modelsdev", provider: "vendor", displayName: null,
+        inputPerMillion: 3, outputPerMillion: 4, cachedPerMillion: null, contextWindow: 2000,
+        origin: "models.dev", updatedAt: "2026-04-29T00:00:00.000Z", aliases: [] },
+    ];
+    await kv.put(KEY_DYNAMIC, JSON.stringify(previous));
+    const fetchImpl = mockFetch({
+      [OPENROUTER_URL]: { status: 500, body: { error: "boom" } },
+      [MODELS_DEV_URL]: { status: 502, body: { error: "boom" } },
+    });
+
+    const r = await syncDynamicPricing({ db, kv, fetchImpl }, NOW);
+
+    expect(r.ok).toBe(false);
+    const stored = JSON.parse(kv.store.get(KEY_DYNAMIC)!) as DynamicPricingEntry[];
+    expect(stored.some((e) => e.model === "vendor/only-on-openrouter")).toBe(true);
+    expect(stored.some((e) => e.model === "vendor/only-on-modelsdev")).toBe(true);
+  });
+
+  it("still replaces a preserved entry once that source succeeds again", async () => {
+    await kv.put(KEY_DYNAMIC, JSON.stringify([
+      { model: "vendor/only-on-openrouter", provider: "vendor", displayName: null,
+        inputPerMillion: 1, outputPerMillion: 2, cachedPerMillion: null, contextWindow: 1000,
+        origin: "openrouter", updatedAt: "2026-04-29T00:00:00.000Z", aliases: [] },
+    ]));
+    const fetchImpl = mockFetch({
+      [OPENROUTER_URL]: { status: 200, body: OPENROUTER_OK },
+      [MODELS_DEV_URL]: { status: 200, body: MODELS_DEV_OK },
+    });
+
+    const r = await syncDynamicPricing({ db, kv, fetchImpl }, NOW);
+
+    expect(r.ok).toBe(true);
+    const stored = JSON.parse(kv.store.get(KEY_DYNAMIC)!) as DynamicPricingEntry[];
+    // The stale entry is gone: a successful fetch is authoritative for its source.
+    expect(stored.some((e) => e.model === "vendor/only-on-openrouter")).toBe(false);
+  });
+
   it("lastErrors is null when next sync succeeds for all sources", async () => {
     const fetchImpl = mockFetch({
       [OPENROUTER_URL]: { status: 200, body: OPENROUTER_OK },

@@ -26,6 +26,7 @@ import { mergePricingSources } from "./merge";
 import { parseModelsDev } from "./models-dev";
 import { parseOpenRouter } from "./openrouter";
 import {
+  readDynamic,
   readLastFetch,
   writeDynamicOrThrow,
   writeLastFetch,
@@ -126,8 +127,25 @@ export async function syncDynamicPricing(
   if (orRes.error) errors.push({ source: "openrouter", message: orRes.error });
   if (mdRes.error) errors.push({ source: "models.dev", message: mdRes.error });
 
-  const orParse = parseOpenRouter(orRes.json ?? { data: [] }, now);
-  const mdParse = parseModelsDev(mdRes.json ?? {}, now);
+  // The bundled baseline is a floor, not a replacement. A source that produced
+  // no data this run (fetch failed with no cache, or the cheap-rebuild path
+  // found no cache) must not erase what the last successful run stored for it:
+  // entries that exist only upstream would silently vanish from the served map
+  // and stay gone until the next success. Those entries are re-fed as that
+  // source's layer, so a success still replaces them wholesale while a failure
+  // keeps them at their last known prices.
+  const previousDynamic = orRes.json === null || mdRes.json === null
+    ? (await readDynamic(deps.kv)) ?? []
+    : [];
+  const priorLayer = (origin: DynamicPricingEntry["origin"]) =>
+    previousDynamic.filter((entry) => entry.origin === origin);
+
+  const orParse = orRes.json === null
+    ? { entries: priorLayer("openrouter"), warnings: [] }
+    : parseOpenRouter(orRes.json, now);
+  const mdParse = mdRes.json === null
+    ? { entries: priorLayer("models.dev"), warnings: [] }
+    : parseModelsDev(mdRes.json, now);
 
   const merged = mergePricingSources({
     baseline: baseline as DynamicPricingEntry[],
