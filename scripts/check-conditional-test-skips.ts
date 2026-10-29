@@ -40,6 +40,7 @@ const SKIP_DIRS = new Set([
   ".next",
   ".next-e2e",
   ".next-e2e-ui",
+  ".next-e2e-unit",
   "coverage",
   "__golden__",
   ".git",

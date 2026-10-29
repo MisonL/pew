@@ -194,6 +194,31 @@ export async function warmApiRoutes(port: string, signal: AbortSignal): Promise<
   console.log(`API route warmup: ${warmups.length} routes in ${((Date.now() - started) / 1000).toFixed(1)}s`);
 }
 
+/**
+ * Dist directory for the lane's Next.js build.
+ *
+ * The unit suite spawns real lanes to cover process cleanup, and it can run in
+ * the same worktree as a pre-push L2 lane. Both used to build into
+ * `packages/web/.next-e2e`, so whichever finished first deleted the other's
+ * output mid-run (reproduced as ENOENT on Next's manifests plus ECONNRESET,
+ * with the lane exiting 1). `PEW_E2E_DIST_DIR` lets the suite's lanes build
+ * somewhere else.
+ *
+ * The value reaches `rmSync(join("packages/web", dist))`, so it must stay a
+ * relative path inside `packages/web`: an absolute path or a `..` segment
+ * would delete outside the repository.
+ */
+export function resolveE2eDistDir(tier: "api" | "ui"): string {
+  const override = process.env.PEW_E2E_DIST_DIR;
+  if (override === undefined) return tier === "api" ? ".next-e2e" : ".next-e2e-ui";
+  const segments = override.split("/");
+  if (override === "" || override.startsWith("/") || override.includes("\\") ||
+    segments.some((segment) => segment === ".." || segment === "." || segment === "")) {
+    throw new Error(`PEW_E2E_DIST_DIR must be a relative path inside packages/web: ${override}`);
+  }
+  return override;
+}
+
 export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Promise<number> {
   assertNoLocalEnv();
   const port = tier === "api" ? process.env.E2E_PORT ?? "17020" : process.env.E2E_UI_PORT ?? "27020";
@@ -227,7 +252,7 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
     // Consumed by the ui-tier build race when applicable; otherwise the abort
     // path is already handled through killChildren and the finally block.
   });
-  const dist = tier === "api" ? ".next-e2e" : ".next-e2e-ui";
+  const dist = resolveE2eDistDir(tier);
   // Captured so a cleanup failure in the finally cannot replace the error
   // that actually failed the run (same rule as startLocalBindings): without
   // this, a crashed bindings child turns "test failed" into "kill() failed:

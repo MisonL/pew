@@ -1,10 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
-import { apiRouteWarmupPaths, ensurePortFree, runLocalE2e, startLocalBindings, warmApiRoutes, WARMUP_TIMEOUT_MS } from "../e2e-utils";
+import { apiRouteWarmupPaths, ensurePortFree, resolveE2eDistDir, runLocalE2e, startLocalBindings, warmApiRoutes, WARMUP_TIMEOUT_MS } from "../e2e-utils";
 
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
@@ -192,6 +192,31 @@ describe("warmApiRoutes", () => {
       vi.unstubAllGlobals();
     }
   });
+});
+
+describe("resolveE2eDistDir", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it("defaults to the tier's shared dist dir", () => {
+    expect(resolveE2eDistDir("api")).toBe(".next-e2e");
+    expect(resolveE2eDistDir("ui")).toBe(".next-e2e-ui");
+  });
+
+  it("honours a relative override so the unit suite can build beside a running lane", () => {
+    // The suite's real-lane cases and a pre-push L2 lane share a worktree; with
+    // one dist dir, whichever finishes first deletes the other's output.
+    vi.stubEnv("PEW_E2E_DIST_DIR", ".next-e2e-unit");
+    expect(resolveE2eDistDir("api")).toBe(".next-e2e-unit");
+    expect(resolveE2eDistDir("ui")).toBe(".next-e2e-unit");
+  });
+
+  it.each(["", "/tmp/pew-build", "..", "../elsewhere", "a/../../b", "a//b", "a/./b", "a\\b"])(
+    "refuses %s: the value reaches rmSync(join('packages/web', dist))",
+    (override) => {
+      vi.stubEnv("PEW_E2E_DIST_DIR", override);
+      expect(() => resolveE2eDistDir("api")).toThrow(/relative path inside packages\/web/);
+    },
+  );
 });
 
 describe("E2E process isolation", () => {
@@ -672,7 +697,7 @@ describe("E2E process isolation", () => {
 
   it("cleans migrated state when interrupted before binding startup", async () => {
     const root = mkdtempSync(join(tmpdir(), "pew-signal-test-"));
-    const child = spawn("bun", ["--no-env-file", "scripts/run-e2e.ts"], { env: { PATH: process.env.PATH, HOME: root, TMPDIR: root, E2E_PORT: "37020" }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("bun", ["--no-env-file", "scripts/run-e2e.ts"], { env: { PATH: process.env.PATH, HOME: root, TMPDIR: root, E2E_PORT: "37020", PEW_E2E_DIST_DIR: ".next-e2e-unit" }, stdio: ["ignore", "pipe", "pipe"] });
     const exited = new Promise<number | null>((done) => child.once("exit", done));
     try {
       let output = "";
@@ -699,7 +724,7 @@ describe("E2E process isolation", () => {
 
   it("cleans D1 and the listener after a started server is interrupted", async () => {
     const root = mkdtempSync(join(tmpdir(), "pew-started-test-"));
-    const child = spawn("bun", ["--no-env-file", "scripts/run-e2e.ts"], { env: { PATH: process.env.PATH, HOME: root, TMPDIR: root, E2E_PORT: "37021" }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("bun", ["--no-env-file", "scripts/run-e2e.ts"], { env: { PATH: process.env.PATH, HOME: root, TMPDIR: root, E2E_PORT: "37021", PEW_E2E_DIST_DIR: ".next-e2e-unit" }, stdio: ["ignore", "pipe", "pipe"] });
     const exited = new Promise<number | null>((done) => child.once("exit", done));
     let output = "";
     child.stdout.on("data", (data) => { output += data; });
@@ -729,7 +754,7 @@ describe("E2E process isolation", () => {
     const bin = join(root, "bin");
     mkdirSync(bin);
     writeFileSync(join(bin, "node"), `#!/bin/sh\ncase "$1" in */next/dist/bin/next) exit 23;; esac\nexec ${JSON.stringify(process.execPath)} "$@"\n`, { mode: 0o755 });
-    const child = spawn("bun", ["--no-env-file", "scripts/run-e2e.ts"], { env: { PATH: `${bin}:${process.env.PATH}`, HOME: root, TMPDIR: root, E2E_PORT: "37022" }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("bun", ["--no-env-file", "scripts/run-e2e.ts"], { env: { PATH: `${bin}:${process.env.PATH}`, HOME: root, TMPDIR: root, E2E_PORT: "37022", PEW_E2E_DIST_DIR: ".next-e2e-unit" }, stdio: ["ignore", "pipe", "pipe"] });
     const exited = new Promise<number | null>((done) => child.once("exit", done));
     let output = "";
     child.stdout.on("data", (data) => { output += data; });
