@@ -1,6 +1,5 @@
 import { createReadStream } from "node:fs";
-import { open, stat } from "node:fs/promises";
-import { createInterface } from "node:readline";
+import { stat } from "node:fs/promises";
 import type { TokenDelta } from "@pew/core";
 import { jsonlStreamBound } from "../utils/jsonl-offset.js";
 import { isAllZero, toNonNegInt } from "../utils/token-delta.js";
@@ -42,19 +41,16 @@ export async function parseCopilotCliFile(opts: {
   const fileSize = jsonlStreamBound(st.size, opts.endBound);
   if (startOffset >= fileSize) return { deltas, endOffset: fileSize };
 
-  // Detect line ending width (LF=1, CRLF=2) from the first 4 KB.
-  // readline with crlfDelay:Infinity strips both \n and \r\n, but we
-  // must account for the actual on-disk bytes to keep offset tracking
-  // accurate. Windows-generated logs use \r\n.
-  const eolBytes = await detectEolSize(filePath);
-
+  // Line endings are counted from the bytes actually consumed, not from a
+  // width probed once. The old probe read the first 4 KB and assumed every
+  // line used that ending: a CRLF log whose first line is longer than the
+  // probe reported LF, so each line under-counted a byte, endOffset fell short
+  // of EOF, and the next sync re-read (and, with no dedup here, re-emitted)
+  // the tail. Mixed-ending files had the same drift in either direction.
   const stream = createReadStream(filePath, {
     start: startOffset,
     end: fileSize - 1,
-    encoding: "utf8",
   });
-
-  const rl = createInterface({ input: stream, crlfDelay: Infinity });
 
   // Timestamp pattern that starts a new log line
   const LOG_LINE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
@@ -68,6 +64,7 @@ export async function parseCopilotCliFile(opts: {
   // parsed position so the incomplete block gets re-parsed next sync.
   let bytesConsumed = 0;
   let lastCompletedOffset = startOffset;
+  let pending: Buffer = Buffer.alloc(0);
 
   /**
    * Try to parse the accumulated JSON lines.
@@ -91,66 +88,78 @@ export async function parseCopilotCliFile(opts: {
     }
   }
 
-  try {
-    for await (const line of rl) {
-      // Add line content bytes + EOL bytes that readline stripped
-      bytesConsumed += Buffer.byteLength(line, "utf8") + eolBytes;
-
-      if (LOG_LINE_RE.test(line)) {
-        // New log line — flush any in-progress JSON block first
-        if (collectingJson) {
-          // Force-flush: a new log line means the JSON block ended (or was malformed).
-          // tryFlushJson clears jsonLines on success; on failure the block was
-          // malformed and we discard it below.
-          tryFlushJson();
-          jsonLines = [];
-          collectingJson = false;
-        }
-
-        if (line.includes(TELEMETRY_MARKER)) {
-          collectingJson = true;
-          // Do NOT advance lastCompletedOffset past the marker line.
-          // If the JSON block that follows is incomplete (file truncated),
-          // we need to rewind to BEFORE this marker so the next sync
-          // re-reads it and re-enters collectingJson mode.
-        } else {
-          // Non-telemetry log line — safe to advance past it
-          lastCompletedOffset = startOffset + bytesConsumed;
-        }
-        continue;
-      }
-
+  /** One complete line (EOL already stripped); `bytesConsumed` is updated by the caller. */
+  function handleLine(line: string): void {
+    if (LOG_LINE_RE.test(line)) {
+      // New log line — flush any in-progress JSON block first
       if (collectingJson) {
-        jsonLines.push(line);
-
-        // Attempt JSON.parse after each line containing "}" — this is
-        // more robust than brace-depth counting which breaks on braces
-        // inside JSON string values.
-        if (line.includes("}")) {
-          const parsed = tryFlushJson();
-          if (parsed) {
-            collectingJson = false;
-            lastCompletedOffset = startOffset + bytesConsumed;
-          }
-          // If parse failed, keep accumulating — might be nested object
-        }
+        // Force-flush: a new log line means the JSON block ended (or was malformed).
+        // tryFlushJson clears jsonLines on success; on failure the block was
+        // malformed and we discard it below.
+        tryFlushJson();
+        jsonLines = [];
+        collectingJson = false;
       }
+
+      if (line.includes(TELEMETRY_MARKER)) {
+        collectingJson = true;
+        // Do NOT advance lastCompletedOffset past the marker line.
+        // If the JSON block that follows is incomplete (file truncated),
+        // we need to rewind to BEFORE this marker so the next sync
+        // re-reads it and re-enters collectingJson mode.
+      } else {
+        // Non-telemetry log line — safe to advance past it
+        lastCompletedOffset = startOffset + bytesConsumed;
+      }
+      return;
+    }
+
+    if (!collectingJson) return;
+    jsonLines.push(line);
+
+    // Attempt JSON.parse after each line containing "}" — this is
+    // more robust than brace-depth counting which breaks on braces
+    // inside JSON string values.
+    if (line.includes("}")) {
+      const parsed = tryFlushJson();
+      if (parsed) {
+        collectingJson = false;
+        lastCompletedOffset = startOffset + bytesConsumed;
+      }
+      // If parse failed, keep accumulating — might be nested object
+    }
+  }
+
+  try {
+    for await (const chunk of stream) {
+      const piece: Buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
+      pending = pending.length === 0 ? piece : Buffer.concat([pending, piece]);
+      let offset = 0;
+      for (;;) {
+        const nl = pending.indexOf(0x0a, offset);
+        if (nl === -1) break;
+        // Strip the trailing \r of a CRLF pair, matching readline's crlfDelay.
+        const end = nl > offset && pending[nl - 1] === 0x0d ? nl - 1 : nl;
+        const line = pending.subarray(offset, end).toString("utf8");
+        bytesConsumed += nl - offset + 1; // includes the \n on disk
+        handleLine(line);
+        offset = nl + 1;
+      }
+      pending = pending.subarray(offset);
     }
   } finally {
-    rl.close();
     stream.destroy();
   }
 
+  // A trailing unterminated line is left unread: it may still be written to,
+  // and consuming it would risk parsing half a record.
+  //
   // Do NOT flush trailing incomplete blocks — leave them for next sync.
   // A pending marker means its JSON body has not been fully consumed: either
   // nothing has been written after it yet or only part of it. Both must rewind
   // to before the marker, because the next sync only re-enters collectingJson
   // mode by re-reading it; a body that arrives later would otherwise look like
   // ordinary non-log lines and be skipped forever.
-  //
-  // The final line of a file without a trailing newline carries no EOL bytes
-  // on disk even though readline strips one, so the running byte count can
-  // overshoot the file by up to one; never report an offset past the end.
   const consumed = Math.min(startOffset + bytesConsumed, fileSize);
   const endOffset = collectingJson ? lastCompletedOffset : consumed;
 
@@ -216,29 +225,4 @@ export function normalizeCopilotCliUsage(
     outputTokens: toNonNegInt(metrics.output_tokens),
     reasoningOutputTokens: 0,
   };
-}
-
-// ---------------------------------------------------------------------------
-// EOL detection
-// ---------------------------------------------------------------------------
-
-/**
- * Detect the line ending width of a file by scanning its first 4 KB.
- * Returns 2 for CRLF (`\r\n`), 1 for LF (`\n`).
- * Falls back to 1 (LF) if no newline is found in the probe window.
- */
-async function detectEolSize(filePath: string): Promise<1 | 2> {
-  const fh = await open(filePath, "r");
-  try {
-    const buf = Buffer.alloc(4096);
-    const { bytesRead } = await fh.read(buf, 0, 4096);
-    for (let i = 0; i < bytesRead; i++) {
-      if (buf[i] === 0x0a) {
-        return i > 0 && buf[i - 1] === 0x0d ? 2 : 1;
-      }
-    }
-    return 1;
-  } finally {
-    await fh.close();
-  }
 }

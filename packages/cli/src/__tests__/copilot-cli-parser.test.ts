@@ -583,4 +583,39 @@ describe("parseCopilotCliFile", () => {
     expect(r2.deltas[0]!.tokens.inputTokens).toBe(2000);
     expect(r2.endOffset).toBe(Buffer.byteLength(block1 + block2, "utf8"));
   });
+
+  // The EOL width used to come from a 4 KB probe of the head of the file. A
+  // CRLF log whose first line is longer than that probe reported LF, so every
+  // line under-counted one byte: endOffset drifted short of EOF, the next sync
+  // re-read already-parsed lines, and copilot has no dedup — each pass
+  // re-emitted those deltas. The count must be exact per line, not guessed.
+  it("accounts bytes exactly when the first line exceeds the EOL probe window", async () => {
+    const filePath = join(tempDir, "process-long-first-line.log");
+    const longLine = `2026-03-16T10:39:00.000Z [INFO] ${"x".repeat(5000)}`;
+    const content = `${[longLine, buildLogWithUsage().trimEnd()].join("\r\n")}\r\n`;
+    await writeFile(filePath, content);
+
+    const r1 = await parseCopilotCliFile({ filePath, startOffset: 0 });
+    expect(r1.deltas).toHaveLength(1);
+    expect(r1.endOffset).toBe(Buffer.byteLength(content, "utf8"));
+
+    const r2 = await parseCopilotCliFile({ filePath, startOffset: r1.endOffset });
+    expect(r2.deltas).toHaveLength(0);
+    expect(r2.endOffset).toBe(r1.endOffset);
+  });
+
+  it("accounts bytes exactly in a file with mixed LF and CRLF lines", async () => {
+    const filePath = join(tempDir, "process-mixed-eol.log");
+    // First line CRLF (the old probe would then assume 2 bytes for every line),
+    // the telemetry block LF-only.
+    const content = `2026-03-16T10:39:00.000Z [INFO] header\r\n${buildLogWithUsage()}`;
+    await writeFile(filePath, content);
+
+    const r1 = await parseCopilotCliFile({ filePath, startOffset: 0 });
+    expect(r1.deltas).toHaveLength(1);
+    expect(r1.endOffset).toBe(Buffer.byteLength(content, "utf8"));
+
+    const r2 = await parseCopilotCliFile({ filePath, startOffset: r1.endOffset });
+    expect(r2.deltas).toHaveLength(0);
+  });
 });
