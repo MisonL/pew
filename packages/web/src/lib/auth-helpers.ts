@@ -24,10 +24,11 @@ export interface AuthResult {
   email?: string | undefined;
   /**
    * How the caller authenticated. Admin routes must require "session": a
-   * Bearer api_key is a long-lived credential that a password reset does NOT
-   * invalidate (it only changes password_hash), so allowing it on admin
-   * routes would let a leaked CLI key mint password-reset tokens for any
-   * user. Undefined on the E2E bypass path (treated as a session).
+   * Bearer api_key is a long-lived CLI credential with no expiry and no
+   * per-request second factor, and it is only revoked when the account's
+   * password is reset — so allowing it on admin routes would let a leaked CLI
+   * key mint password-reset tokens for any user with no independent check.
+   * Undefined on the E2E bypass path (treated as a session).
    */
   via?: "session" | "bearer";
 }

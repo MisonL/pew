@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { scryptSync, timingSafeEqual } from "node:crypto";
-import { hashPasswordForReset, parseArg, resolvePassword } from "./reset-password";
+import { applyPasswordReset, hashPasswordForReset, parseArg, resolvePassword } from "./reset-password";
 
 /**
  * Re-implements the web app's verifyPassword() against the storage format.
@@ -34,6 +34,28 @@ describe("hashPasswordForReset", () => {
 
   it("uses a fresh salt each time", () => {
     expect(hashPasswordForReset("x")).not.toBe(hashPasswordForReset("x"));
+  });
+});
+
+describe("applyPasswordReset revokes the CLI credential", () => {
+  function recordingDb() {
+    const calls: Array<{ sql: string; values: unknown[] }> = [];
+    return {
+      calls,
+      prepare(sql: string) {
+        return { bind: (...values: unknown[]) => ({ run: async () => { calls.push({ sql, values }); } }) };
+      },
+    };
+  }
+
+  it("nulls api_key alongside password_hash", async () => {
+    const db = recordingDb();
+    await applyPasswordReset(db, "user-1", "a-long-enough-password");
+    expect(db.calls).toHaveLength(1);
+    expect(db.calls[0]?.sql).toContain("api_key = NULL");
+    expect(db.calls[0]?.values[1]).toBe("user-1");
+    // The stored hash still verifies, so the revocation is not accidental.
+    expect(verifyLikeWebApp("a-long-enough-password", String(db.calls[0]?.values[0]))).toBe(true);
   });
 });
 

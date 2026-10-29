@@ -72,6 +72,30 @@ function readAllStdin(): Promise<string> {
   });
 }
 
+/**
+ * The break-glass write, extracted so a test can pin its exact effect.
+ *
+ * `api_key = NULL` is not decoration: this script exists for the case where the
+ * operator believes the account is compromised or simply unreachable. Changing
+ * `password_hash` kills every JWT session (the token carries a password-version
+ * tag), but the Bearer `api_key` is compared against its own column and no
+ * other code path rotates it, so a stolen CLI key would keep full write access
+ * to `/api/ingest` and `/api/sessions` through the reset meant to lock its
+ * holder out. The in-app flow already revokes it for exactly this reason
+ * (`packages/web/src/lib/credentials.ts` consumeResetToken); the two reset
+ * paths must not diverge. The legitimate owner re-runs `pew login`.
+ */
+export async function applyPasswordReset(
+  db: { prepare(sql: string): { bind(...values: unknown[]): { run(): Promise<unknown> } } },
+  userId: string,
+  password: string,
+): Promise<void> {
+  await db
+    .prepare("UPDATE users SET password_hash = ?, api_key = NULL, updated_at = datetime('now') WHERE id = ?")
+    .bind(hashPasswordForReset(password), userId)
+    .run();
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const email = parseArg(argv, "--email");
@@ -104,14 +128,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  await db
-    .prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?")
-    .bind(hashPasswordForReset(password), existing.id)
-    .run();
+  await applyPasswordReset(db, existing.id, password);
 
-  // Existing sessions are invalidated automatically: the JWT carries a
-  // password-version tag that no longer matches (auth.ts sessionCallback).
-  console.log(`password updated for ${email} (${existing.id})`);
+  // Existing sessions are invalidated automatically (the JWT carries a
+  // password-version tag that no longer matches, auth.ts sessionCallback) and
+  // the Bearer api_key is revoked by applyPasswordReset. The CLI must re-login.
+  console.log(`password updated for ${email} (${existing.id}); the CLI api key was revoked, run \`pew login\` again`);
 }
 
 // Only run when invoked directly, so the module can be imported by tests.
