@@ -348,10 +348,15 @@ export async function handleAdminRpc(
       ) {
         return Response.json({ error: "Invalid comparison parameters" }, { status: 400 });
       }
+      // Summing usage_bases with the view's zero-token evidence filter is
+      // identical here — the query already aggregates to the same grain, so
+      // the view's extra bucket grouping and accounting join bought nothing
+      // and could not push the user/time predicate inside.
       let sql = `SELECT date(datetime(hour_start, ? || ' minutes')) AS date,
                         user_id, SUM(total_tokens) AS total_tokens, source, model
-                 FROM usage_totals
-                 WHERE user_id IN (${placeholders}) AND hour_start >= ? AND hour_start < ?`;
+                 FROM usage_bases
+                 WHERE user_id IN (${placeholders}) AND hour_start >= ? AND hour_start < ?
+                   AND (event_id = '' OR total_tokens > 0)`;
       const params: unknown[] = [String(-tzOffset), ...request.userIds, request.fromDate, request.toDate];
       if (request.source) {
         sql += " AND source = ?";

@@ -10,14 +10,16 @@ describe("read RPC SQL semantics", () => {
   it("keeps half-open UTC bounds and aggregates local-day totals across sources", async () => {
     const sqlite = new DatabaseSync(":memory:");
     try {
-      sqlite.exec(`CREATE TABLE usage_totals (user_id TEXT, hour_start TEXT, total_tokens INTEGER, source TEXT, model TEXT);
-        INSERT INTO usage_totals VALUES
-          ('u1', '2026-01-01T15:59:00.000Z', 10, 's', 'm'),
-          ('u1', '2026-01-01T16:00:00.000Z', 20, 's', 'm'),
-          ('u1', '2026-01-01T16:30:00.000Z', 30, 's', 'm'),
-          ('u1', '2026-01-01T16:30:00.000Z', 40, 'other', 'm'),
-          ('u2', '2026-01-02T00:00:00.000Z', 50, 's', 'm'),
-          ('excluded', '2026-01-01T16:30:00.000Z', 60, 's', 'm');`);
+      // The read path consumes usage_bases (the combined records/evidence
+      // view); usage_totals is the accounting-bucketed projection on top.
+      sqlite.exec(`CREATE TABLE usage_bases (user_id TEXT, hour_start TEXT, total_tokens INTEGER, source TEXT, model TEXT, event_id TEXT);
+        INSERT INTO usage_bases VALUES
+          ('u1', '2026-01-01T15:59:00.000Z', 10, 's', 'm', ''),
+          ('u1', '2026-01-01T16:00:00.000Z', 20, 's', 'm', ''),
+          ('u1', '2026-01-01T16:30:00.000Z', 30, 's', 'm', ''),
+          ('u1', '2026-01-01T16:30:00.000Z', 40, 'other', 'm', ''),
+          ('u2', '2026-01-02T00:00:00.000Z', 50, 's', 'm', ''),
+          ('excluded', '2026-01-01T16:30:00.000Z', 60, 's', 'm', '');`);
       const db = {
         prepare: (sql: string) => ({
           bind: (...params: SQLInputValue[]) => ({

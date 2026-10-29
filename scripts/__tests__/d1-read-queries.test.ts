@@ -166,6 +166,17 @@ describe("D1 read queries against real SQLite", () => {
     }
   });
 
+  it("reports the admin usage comparison identical to the view it replaces", async () => {
+    const body = await (await handleAdminRpc({
+      method: "admin.getUsageComparison", userIds: ["u1", "u2"], fromDate, toDate, tzOffset: -480,
+    } as never, db)).json();
+    const { sql, params } = queries.at(-1)!;
+    expect(sql).not.toContain("usage_totals");
+    const reference = sqlite.prepare(sql.replace("FROM usage_bases", "FROM usage_totals").replace("\n                   AND (event_id = '' OR total_tokens > 0)", "")).all(...params as never[]);
+    expect(body.result).toEqual(reference);
+    expect(body.result.length).toBeGreaterThan(0);
+  });
+
   it("reports the system token total identical to the view it replaces", async () => {
     const body = await (await handleAdminRpc({ method: "admin.getSystemStats" }, db)).json();
     const reference = sqlite.prepare("SELECT COALESCE(SUM(total_tokens), 0) AS n FROM usage_totals").get() as { n: number };
