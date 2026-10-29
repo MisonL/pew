@@ -809,3 +809,44 @@ describe("PATCH /api/teams/[teamId]", () => {
     expect((await res.json()).error).toContain("Only the team owner");
   });
 });
+
+describe("GET /api/teams/[teamId] — reads after the membership check", () => {
+  let GET: (req: Request, ctx: { params: Promise<{ teamId: string }> }) => Promise<Response>;
+  let mockDbRead: ReturnType<typeof createMockDbRead>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockDbRead = createMockDbRead();
+    vi.mocked(dbModule.getDbRead).mockResolvedValue(mockDbRead as never);
+    const mod = await import("@/app/api/teams/[teamId]/route");
+    GET = mod.GET;
+  });
+
+  // Team, members and registrations are independent once the role is known.
+  // Awaiting them one at a time costs three round trips instead of one.
+  it("keeps the three post-membership reads in flight together", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" } as never);
+    mockDbRead.getTeamMembership.mockResolvedValueOnce("owner");
+    let inFlight = 0;
+    let peak = 0;
+    const track = <T>(value: T) =>
+      new Promise<T>((resolve) => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        setTimeout(() => {
+          inFlight -= 1;
+          resolve(value);
+        }, 5);
+      });
+    mockDbRead.getTeamById.mockImplementation(() => track({
+      id: "t1", name: "Team Alpha", slug: "team-alpha", invite_code: "abc12345",
+      created_at: "2026-01-01T00:00:00Z", logo_url: null, auto_register_season: null,
+    } as never));
+    mockDbRead.getTeamMembers.mockImplementation(() => track([] as never));
+    mockDbRead.getTeamSeasonRegistrations.mockImplementation(() => track([] as never));
+
+    const res = await GET(makeRequest("GET"), makeParams());
+    expect(res.status).toBe(200);
+    expect(peak).toBe(3);
+  });
+});

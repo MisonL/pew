@@ -47,26 +47,30 @@ export async function GET(
       return NextResponse.json({ error: "Not a member" }, { status: 403 });
     }
 
-    // Get team details
-    const team = await dbRead.getTeamById(teamId);
+    // Team, members and season registrations are independent once the role
+    // is known; awaiting them one at a time costs three round trips.
+    // Registrations still degrade gracefully — a missing table must not fail
+    // the whole request.
+    const registrationsPromise = (async () => {
+      try {
+        return await dbRead.getTeamSeasonRegistrations(teamId);
+      } catch (regErr) {
+        const regMsg = regErr instanceof Error ? regErr.message : "";
+        if (!regMsg.includes("no such table")) {
+          console.error("Failed to query season registrations:", regErr);
+        }
+        // Gracefully degrade — season tables may not exist yet
+        return [] as string[];
+      }
+    })();
+    const [team, members, registeredSeasonIds] = await Promise.all([
+      dbRead.getTeamById(teamId),
+      dbRead.getTeamMembers(teamId),
+      registrationsPromise,
+    ]);
 
     if (!team) {
       return NextResponse.json({ error: "Team not found" }, { status: 404 });
-    }
-
-    // Get members
-    const members = await dbRead.getTeamMembers(teamId);
-
-    // Fetch season registrations for this team (graceful if table missing)
-    let registeredSeasonIds: string[] = [];
-    try {
-      registeredSeasonIds = await dbRead.getTeamSeasonRegistrations(teamId);
-    } catch (regErr) {
-      const regMsg = regErr instanceof Error ? regErr.message : "";
-      if (!regMsg.includes("no such table")) {
-        console.error("Failed to query season registrations:", regErr);
-      }
-      // Gracefully degrade — season tables may not exist yet
     }
 
     // Strip invite_code for non-owners
