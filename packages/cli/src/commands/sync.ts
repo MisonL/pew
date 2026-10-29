@@ -3,6 +3,7 @@ import type {
   CodexScopeState,
   ContinuityAnchor,
   CursorState,
+  EvidenceRecord,
   FileCursor,
   FileCursorBase,
   HermesSqliteCursor,
@@ -1223,7 +1224,25 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     }
   }
 
-  const evidenceRecords = allDeltas.filter((d) => d.evidence).map((d) => toEvidenceRecord(d, opts.deviceId));
+  // Project only the evidence events the wire contract can express. The
+  // projection throws on counters outside the server's bounds, and it runs
+  // here — before any queue or cursor write — so an uncaught throw discarded
+  // every source's results for the run, and because the cursor never advanced
+  // it did so again on every later sync. One corrupt log line must cost one
+  // event, not the whole tool: the event is dropped with a warning and the
+  // cursor moves past it (the raw log is untouched).
+  const evidenceRecords: EvidenceRecord[] = [];
+  let unprojectableEvidence = 0;
+  for (const delta of allDeltas) {
+    if (!delta.evidence) continue;
+    try { evidenceRecords.push(toEvidenceRecord(delta, opts.deviceId)); }
+    catch { unprojectableEvidence++; }
+  }
+  if (unprojectableEvidence > 0) {
+    onProgress?.({ source: "all", phase: "warn",
+      message: `Skipped ${unprojectableEvidence} usage evidence events that cannot pass the upload contract; original usage is preserved` });
+  }
+
   const { records: oldRecords } = await queue.readFromOffset(0);
   const retiredRecords = opts.previousRetiredRecords ?? [];
   // A full scan is authoritative only when it actually scanned something.

@@ -3628,4 +3628,55 @@ describe("executeSync", () => {
 
   // ===== ZCode SQLite token driver integration =====
 
+  // ===== Unprojectable usage evidence =====
+
+  // `toEvidenceRecord` throws on counters the wire contract cannot express.
+  // The projection runs during sync, before any queue or cursor is written, so
+  // an uncaught throw aborted every source's results and — because the cursor
+  // never advanced — repeated on every later sync. A single corrupt log line
+  // must cost one event, not the whole tool.
+  it("skips a usage-evidence event it cannot represent instead of failing the sync", async () => {
+    const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-bad-evidence");
+    await mkdir(piDir, { recursive: true });
+    await writeFile(
+      join(piDir, "session.jsonl"),
+      [
+        JSON.stringify({ type: "session", id: "sess-bad", timestamp: "2026-03-07T10:00:00.000Z" }),
+        // A compaction event whose counter is not a safe integer: the evidence
+        // projection rejects it, but the ordinary message below must survive.
+        JSON.stringify({ type: "compaction", id: "c1", timestamp: "2026-03-07T10:05:00.000Z",
+          usage: { input: 1e21, output: 5 } }),
+        JSON.stringify({ type: "message", timestamp: "2026-03-07T10:15:00.000Z",
+          message: { role: "assistant", model: "pi-model", usage: { input: 2000, output: 200 } } }),
+      ].join("\n") + "\n",
+    );
+
+    const warnings: string[] = [];
+    const result = await executeSync({
+      stateDir,
+      deviceId: "dev-1",
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
+      onProgress: (event) => {
+        if (event.phase === "warn") warnings.push(event.message ?? "");
+      },
+    });
+
+    expect(result.totalRecords).toBeGreaterThan(0);
+    const records = (await readFile(join(stateDir, "queue.jsonl"), "utf-8"))
+      .split("\n").filter(Boolean).map((l) => JSON.parse(l) as QueueRecord);
+    const pi = records.find((r) => r.source === "pi");
+    expect(pi).toBeDefined();
+    expect(pi!.input_tokens).toBe(2000);
+    expect(warnings.some((w) => w.includes("evidence"))).toBe(true);
+
+    // The cursor advanced past the corrupt line: a second sync finds nothing
+    // new and does not repeat the warning forever.
+    const second = await executeSync({
+      stateDir,
+      deviceId: "dev-1",
+      piSessionsDir: join(dataDir, ".pi", "agent", "sessions"),
+    });
+    expect(second.totalDeltas).toBe(0);
+  });
+
 });
