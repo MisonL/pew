@@ -11,7 +11,7 @@ import { AccountingQueue, accountingKey } from "../storage/accounting-queue.js";
 import { recoverSyncCommit } from "../storage/sync-commit.js";
 import { withStateLock } from "../storage/state-lock.js";
 import { evidenceKey } from "../utils/usage-evidence.js";
-import { tokenRecordRejection } from "../utils/ingest-contract.js";
+import { evidenceRecordRejection, tokenRecordRejection } from "../utils/ingest-contract.js";
 import type { OnCorruptLine } from "../storage/base-queue.js";
 import { createUploadEngine } from "./upload-engine.js";
 import type {
@@ -115,7 +115,7 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
   const supplemental = await createUploadEngine<EvidenceRecord>({
     queue: new EvidenceQueue(opts.stateDir), endpoint: "/api/ingest/evidence",
     entityName: "usage evidence", preprocess: (records) => records,
-    recordKey: evidenceKey,
+    recordKey: evidenceKey, rejectRecord: evidenceRecordRejection,
   }).execute(opts);
   // The token stage is the only one that records the target, so it is also the
   // one that notices a switch — but it says nothing when its own queue is
