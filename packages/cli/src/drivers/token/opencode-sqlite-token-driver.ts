@@ -11,6 +11,7 @@
 
 import { stat } from "node:fs/promises";
 import type { OpenCodeSqliteCursor } from "@pew/core";
+import { maxOf } from "../../utils/append.js";
 import { processOpenCodeMessages } from "../../parsers/opencode-sqlite.js";
 import type { QueryMessagesFn } from "../../parsers/opencode-sqlite.js";
 import type { DbTokenDriver, DbTokenResult, SyncContext } from "../types.js";
@@ -123,10 +124,10 @@ export function createOpenCodeSqliteTokenDriver(
         // run still lets them through the `>=` boundary filter.
         // Pending re-reads can sit below the watermark, so never let the
         // watermark regress: a lower value would re-scan rows already counted.
-        const maxTime = Math.max(
-          lastTimeCreated,
-          ...rawRows.map((r) => r.time_created),
-        );
+        // maxOf, not Math.max(acc, ...rows): a cursor-loss re-read returns the
+        // whole table, and a spread argument list overflows the stack past
+        // roughly 125k entries.
+        const maxTime = maxOf(rawRows.map((r) => r.time_created), lastTimeCreated);
         const pendingSet = new Set(result.pendingIds);
         const idsAtMax = rawRows
           .filter((r) => r.time_created === maxTime && !pendingSet.has(r.id))

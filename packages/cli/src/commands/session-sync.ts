@@ -13,6 +13,7 @@
  * separate queue, separate files.
  */
 
+import { appendAll } from "../utils/append.js";
 import { readAntigravitySource } from "../parsers/antigravity.js";
 import { stat } from "node:fs/promises";
 import type {
@@ -169,7 +170,7 @@ async function sessionSyncLocked(
   if (opts.antigravityDir) {
     try {
       const snapshot = await readAntigravitySource(opts.antigravityDir);
-      allSnapshots.push(...snapshot.snapshots);
+      appendAll(allSnapshots, snapshot.snapshots);
       sourceCounts.antigravity = snapshot.snapshots.length;
       filesScanned.antigravity = snapshot.dbCount;
       dbsScanned.antigravity = snapshot.dbCount;
@@ -281,7 +282,7 @@ async function sessionSyncLocked(
       // SessionFileCursor | unknown union back to SessionFileCursor)
       cursors.files[filePath] = driver.buildCursor(fingerprint) as SessionFileCursor;
 
-      allSnapshots.push(...snapshots);
+      appendAll(allSnapshots, snapshots);
       sourceCounts[key] += snapshots.length;
 
       onProgress?.({
@@ -387,7 +388,7 @@ async function sessionSyncLocked(
 
     }
 
-    allSnapshots.push(...result.snapshots);
+    appendAll(allSnapshots, result.snapshots);
     sourceCounts[key] += result.snapshots.length;
 
     onProgress?.({

@@ -26,6 +26,7 @@ import { AccountingQueue, accountingJson, accountingKey, planAccountingUpdates }
 import { commitSync, recoverSyncCommit } from "../storage/sync-commit.js";
 import { withStateLock } from "../storage/state-lock.js";
 import { toEvidenceRecord } from "../utils/usage-evidence.js";
+import { appendAll } from "../utils/append.js";
 import { pruneAliasCursors } from "../storage/prune-alias-cursors.js";
 import type { OnCorruptLine } from "../storage/base-queue.js";
 import type { QueryMessagesFn } from "../parsers/opencode-sqlite.js";
@@ -793,7 +794,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
       cursors.files[filePath] = built;
 
       // Collect deltas
-      allDeltas.push(...result.deltas);
+      appendAll(allDeltas, result.deltas);
       sourceCounts[key] += result.deltas.length;
 
       onProgress?.({
@@ -888,7 +889,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     allHermesDbs.push({ dbPath: opts.hermesDbPath, dbKey: "default" });
   }
   if (opts.hermesProfileDbPaths) {
-    allHermesDbs.push(...opts.hermesProfileDbPaths);
+    appendAll(allHermesDbs, opts.hermesProfileDbPaths);
   }
 
   for (const { dbPath, dbKey } of allHermesDbs) {
@@ -1052,7 +1053,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     knownDb[dbSourceKey] = true;
     cursors.knownDbSources = knownDb;
 
-    allDeltas.push(...result.deltas);
+    appendAll(allDeltas, result.deltas);
     sourceCounts[key] += result.deltas.length;
     if (key === "opencode" || key === "hermes") {
       dbsScanned[key] += 1;
@@ -1306,7 +1307,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     deltas: allDeltas, replay: initialCursorEmpty, deviceId: opts.deviceId, onWarning: onAccountingWarning, onVerified });
   if (ctx.accountingSnapshots?.length) {
     const current = [...new Map([...priorAccounting, ...accounting].map((r) => [accountingKey(r), r])).values()];
-    accounting.push(...planAccountingUpdates({ previous: current, before: [], after: finalRecords ?? oldRecords,
+    appendAll(accounting, planAccountingUpdates({ previous: current, before: [], after: finalRecords ?? oldRecords,
       deltas: ctx.accountingSnapshots, replay: true, deviceId: opts.deviceId, onWarning: onAccountingWarning, onVerified }));
   }
   if (opts.antigravitySnapshot) {
@@ -1316,7 +1317,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
         accounting: inclusiveAccounting(tokens, { input: 0, read: 0, write: 0, output: 0, reasoning: 0 },
           { origin: "antigravity:step", model: r.model, aggregate: true }) };
     });
-    accounting.push(...planAccountingUpdates({ previous: priorAccounting, before: [], after: antigravity.records,
+    appendAll(accounting, planAccountingUpdates({ previous: priorAccounting, before: [], after: antigravity.records,
       deltas: [...opts.antigravitySnapshot.deltas, ...tombstoneDeltas], replay: true,
       deviceId: opts.deviceId, onWarning: onAccountingWarning, onVerified }));
   }

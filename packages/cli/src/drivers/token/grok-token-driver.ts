@@ -7,6 +7,7 @@
  */
 
 import { dirname, join } from "node:path";
+import { appendAll } from "../../utils/append.js";
 import type { ByteOffsetCursor } from "@pew/core";
 import { discoverGrokLogFile } from "../../discovery/sources.js";
 import { buildGrokModelMaps, parseGrokLogFile } from "../../parsers/grok.js";
@@ -40,7 +41,7 @@ export const grokTokenDriver: FileTokenDriver<ByteOffsetCursor> = {
     if (ctx.collectAccounting) {
       const sessions = opts.grokSessionsDir ?? join(dirname(opts.grokLogsPath), "..", "sessions");
       ctx.accountingSnapshots ??= [];
-      ctx.accountingSnapshots.push(...await readGrokAccountingSnapshots(sessions));
+      appendAll(ctx.accountingSnapshots, await readGrokAccountingSnapshots(sessions));
     }
     return discoverGrokLogFile(opts.grokLogsPath);
   },
