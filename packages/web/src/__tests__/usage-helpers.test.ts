@@ -10,6 +10,7 @@ import {
 import { toLocalDailyBuckets, compareWeekdayWeekend, computeMoMGrowth, toSourceTrendPoints, toDominantSourceTimeline, computeWoWGrowth, toHourlyWeekdayWeekend, rankUsageByRecency } from "@/lib/usage-helpers";
 import { getDefaultPricingMap } from "@/lib/pricing";
 import type { PricingMap } from "@/lib/pricing";
+import { accountingFixture } from "../../../core/src/__test-helpers__/accounting";
 
 describe("rankUsageByRecency", () => {
   it("ranks usage in the latest seven calendar days first, then walks backwards by week", () => {
@@ -234,6 +235,31 @@ describe("toModelAggregates", () => {
 
     const result = toModelAggregates(records);
     expect(result.map((r) => r.model)).toEqual(["large", "medium", "small"]);
+  });
+
+  // The append used to rebuild the array per row, copying a list that grows
+  // with the model's row count. Identity is what proves the copy is gone.
+  type AnnotationList = NonNullable<UsageRow["accounting"]>;
+  const annotationFor = (requestCount: number): AnnotationList =>
+    [{ status: "matched", basis: accountingFixture().basis,
+      groups: [{ ...accountingFixture().groups[0]!, request_count: requestCount }] }] as unknown as AnnotationList;
+
+  it("extends a model's annotation list in place instead of rebuilding it", () => {
+    const result = toModelAggregates(
+      [0, 1, 2].map((n) => makeRow({ accounting: annotationFor(n) })),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]!.accounting?.map((a) => a.groups![0]!.request_count)).toEqual([0, 1, 2]);
+  });
+
+  it("does not alias the first source row's annotation array", () => {
+    const first = annotationFor(1);
+    const result = toModelAggregates([
+      makeRow({ accounting: first }),
+      makeRow({ accounting: annotationFor(2) }),
+    ]);
+    expect(result[0]!.accounting).toHaveLength(2);
+    expect(first).toHaveLength(1);
   });
 });
 

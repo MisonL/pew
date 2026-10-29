@@ -164,7 +164,13 @@ export function toModelAggregates(records: UsageRow[]): ModelAggregate[] {
       existing.cached += r.cached_input_tokens;
       existing.reasoning += r.reasoning_output_tokens;
       existing.total += accountedTotal(r);
-      if (r.accounting) existing.accounting = [...(existing.accounting ?? []), ...r.accounting];
+      // Append in place: rebuilding the array per row copies a growing list
+      // k times over a model's k rows. The array is this aggregate's own —
+      // the first row copied it — so mutating it cannot touch a source row.
+      if (r.accounting) {
+        if (!existing.accounting) existing.accounting = [...r.accounting];
+        else for (const annotation of r.accounting) existing.accounting.push(annotation);
+      }
     } else {
       byModel.set(key, {
         model: r.model,
