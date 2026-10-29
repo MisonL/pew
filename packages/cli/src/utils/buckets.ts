@@ -4,27 +4,19 @@ import type { TokenDelta } from "@pew/core";
  * Floor a timestamp to the nearest half-hour UTC boundary.
  * Returns ISO string like "2026-03-07T10:00:00.000Z" or "2026-03-07T10:30:00.000Z".
  * Returns null if the timestamp is unparseable.
+ *
+ * Computed from epoch milliseconds rather than `Date.UTC(getUTCFullYear(), …)`
+ * so it is byte-identical to the server's own derivation
+ * (`new Date(Math.floor(time / 1_800_000) * 1_800_000).toISOString()` in
+ * core's evidence validator). The component form disagreed on two inputs: it
+ * remapped years 0000–0099 to 1900+year (ECMAScript's two-digit rule for
+ * `Date.UTC`), silently filing such a bucket in the wrong century, and it
+ * preserved a >= 10000 year that the canonical `hour_start` contract rejects.
  */
 export function toUtcHalfHourStart(ts: string | number): string | null {
-  const dt = new Date(ts);
-  if (!Number.isFinite(dt.getTime())) return null;
-
-  const minutes = dt.getUTCMinutes();
-  const halfMinute = minutes >= 30 ? 30 : 0;
-
-  const bucketStart = new Date(
-    Date.UTC(
-      dt.getUTCFullYear(),
-      dt.getUTCMonth(),
-      dt.getUTCDate(),
-      dt.getUTCHours(),
-      halfMinute,
-      0,
-      0,
-    ),
-  );
-
-  return bucketStart.toISOString();
+  const time = new Date(ts).getTime();
+  if (!Number.isFinite(time)) return null;
+  return new Date(Math.floor(time / 1_800_000) * 1_800_000).toISOString();
 }
 
 /**

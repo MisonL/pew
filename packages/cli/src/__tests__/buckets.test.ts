@@ -59,6 +59,30 @@ describe("toUtcHalfHourStart", () => {
     const epochMs = new Date("2026-03-07T10:15:00.000Z").getTime();
     expect(toUtcHalfHourStart(epochMs)).toBe("2026-03-07T10:00:00.000Z");
   });
+
+  // The server derives evidence hour_start as
+  // `new Date(Math.floor(time / 1_800_000) * 1_800_000).toISOString()`, so a
+  // local bucket that differs on any input is a 400 on upload. The component
+  // form this used to take (Date.UTC(getUTCFullYear(), …)) remapped two-digit
+  // years to 1900+year and preserved years >= 10000.
+  it.each([
+    "0000-01-01T00:00:00.000Z",
+    "0050-06-15T10:15:00.000Z",
+    "0099-12-31T23:45:00.000Z",
+    "1900-01-01T00:15:00.000Z",
+    "9999-12-31T23:45:00.000Z",
+  ])("matches the server's own derivation for %s", (iso) => {
+    const time = Date.parse(iso);
+    expect(toUtcHalfHourStart(iso)).toBe(
+      new Date(Math.floor(time / 1_800_000) * 1_800_000).toISOString(),
+    );
+  });
+
+  it("does not remap a two-digit year into the 1900s", () => {
+    expect(toUtcHalfHourStart("0050-06-15T10:15:00.000Z")).toBe(
+      "0050-06-15T10:00:00.000Z",
+    );
+  });
 });
 
 describe("bucketKey", () => {
