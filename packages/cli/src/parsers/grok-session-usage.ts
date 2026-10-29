@@ -10,6 +10,7 @@ import { isAllZero, toNonNegInt } from "../utils/token-delta.js";
 import { inclusiveAccounting, optionalToken, reportedCost } from "../utils/accounting.js";
 import { jsonlCompleteBound } from "../utils/jsonl-offset.js";
 import { discoverGrokUsageFiles } from "../discovery/sources.js";
+import { MAX_EPOCH_MS } from "../utils/time.js";
 
 const GROK_SOURCE: Source = "grok";
 
@@ -108,6 +109,19 @@ function readMeta(
   return meta as Record<string, unknown>;
 }
 
+/**
+ * Largest instant a canonical `hour_start` can express: 9999-12-31T23:59:59.999Z.
+ *
+ * Values beyond it are the difference between one unusable event and a
+ * permanently broken `pew sync`. `new Date(x).toISOString()` throws RangeError
+ * past the Date limit and silently produces a `+055840-…` year otherwise; both
+ * reach `readGrokAccountingSnapshots`, whose per-file try/catch does not cover
+ * the accumulate step, so the throw escapes `driver.discover()` — and `sync`
+ * has no catch there. Cursors are only committed at the end of a run, so the
+ * offending file is re-parsed and re-thrown on every subsequent sync, with the
+ * other eight sources' results discarded each time. Nanosecond-precision
+ * timestamps (a plausible upstream mistake) land exactly here.
+ */
 function readTimestampMs(
   obj: Record<string, unknown>,
   params: Record<string, unknown>,
@@ -115,13 +129,14 @@ function readTimestampMs(
   const meta = readMeta(params);
   if (meta) {
     const ms = meta.agentTimestampMs;
-    if (typeof ms === "number" && Number.isFinite(ms) && ms > 0) {
+    if (typeof ms === "number" && Number.isFinite(ms) && ms > 0 && ms <= MAX_EPOCH_MS) {
       return ms;
     }
   }
   const ts = obj.timestamp;
   if (typeof ts === "number" && Number.isFinite(ts) && ts > 0) {
-    return ts < 1e12 ? ts * 1000 : ts;
+    const ms = ts < 1e12 ? ts * 1000 : ts;
+    if (ms <= MAX_EPOCH_MS) return ms;
   }
   return null;
 }

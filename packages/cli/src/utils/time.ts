@@ -3,7 +3,7 @@
  * `new Date(1e20).toISOString()` throws RangeError outright, and anything past
  * this bound serializes to a year the server's ISO validator rejects.
  */
-const MAX_EPOCH_MS = 253_402_300_799_999;
+export const MAX_EPOCH_MS = 253_402_300_799_999;
 
 /**
  * Coerce an epoch value to milliseconds.

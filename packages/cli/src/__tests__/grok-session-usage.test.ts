@@ -243,6 +243,36 @@ describe("parseTurnCompletedLine", () => {
     expect(parseTurnCompletedLine(line)?.timestampMs).toBe(1_788_245_632_000);
   });
 
+  // An out-of-range timestamp used to reach `new Date(ms).toISOString()` and
+  // throw RangeError out of `driver.discover()`, which has no catch — every
+  // later sync died on the same file because the cursor never advanced. The
+  // out-of-range source is now unusable, not fatal: the event is dropped when
+  // nothing else supplies a time, and otherwise falls back to `timestamp`.
+  it.each([
+    ["nanoseconds", { agentTimestampMs: 1_788_245_632_727_000_000 }],
+    ["beyond the Date range", { agentTimestampMs: 1e21 }],
+  ])("never yields an unrepresentable instant when _meta carries %s", (_label, opts) => {
+    const parsed = parseTurnCompletedLine(turnLine({ usage: { inputTokens: 1, numTurns: 1, modelCalls: 1 }, ...opts }));
+    if (parsed !== null) expect(() => new Date(parsed.timestampMs).toISOString()).not.toThrow();
+  });
+
+  it("drops a turn whose only timestamp is out of range", () => {
+    const line = turnLine({
+      omitMeta: true,
+      timestamp: 1_788_245_632_727_000_000,
+      usage: { inputTokens: 1, numTurns: 1, modelCalls: 1 },
+    });
+    expect(parseTurnCompletedLine(line)).toBeNull();
+  });
+
+  it("keeps the largest representable instant", () => {
+    const line = turnLine({
+      agentTimestampMs: 253_402_300_799_999,
+      usage: { inputTokens: 1, numTurns: 1, modelCalls: 1 },
+    });
+    expect(parseTurnCompletedLine(line)?.timestampMs).toBe(253_402_300_799_999);
+  });
+
   it("ignores non turn_completed lines", () => {
     expect(parseTurnCompletedLine('{"params":{"update":{"sessionUpdate":"agent_thought_chunk"}}}')).toBeNull();
     expect(parseTurnCompletedLine("not json")).toBeNull();
