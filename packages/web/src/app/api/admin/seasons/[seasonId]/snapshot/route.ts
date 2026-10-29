@@ -213,6 +213,11 @@ export async function POST(
       [1, seasonId]
     );
 
+    // `seasons:list` selects snapshot_ready AS has_snapshot and is cached for
+    // ten minutes, so without this the dashboard keeps prompting for a
+    // snapshot that now exists.
+    await dbRead.invalidateCacheKey("seasons:list").catch(() => undefined);
+
     return NextResponse.json(
       {
         season_id: seasonId,

@@ -419,3 +419,45 @@ describe("POST /api/admin/seasons/[seasonId]/snapshot", () => {
     expect(data.error).toContain("not yet migrated");
   });
 });
+
+describe("POST /api/admin/seasons/[seasonId]/snapshot — cached seasons list", () => {
+  let localRead: ReturnType<typeof createMockDbRead>;
+  let localWrite: ReturnType<typeof createMockDbWrite>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localRead = createMockDbRead();
+    localWrite = createMockDbWrite();
+    vi.mocked(dbModule.getDbRead).mockResolvedValue(localRead as never);
+    vi.mocked(dbModule.getDbWrite).mockResolvedValue(localWrite as never);
+  });
+
+  // The list query selects snapshot_ready AS has_snapshot and is cached for
+  // ten minutes. Without an invalidation the season keeps reporting
+  // `has_snapshot: false` after a successful build, so the dashboard keeps
+  // prompting for a snapshot that already exists.
+  it("invalidates the cached seasons list after the snapshot is marked ready", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    localRead.getSeasonById.mockResolvedValueOnce(ENDED_SEASON);
+    localRead.getRegisteredTeamIds.mockResolvedValueOnce(["team-a"]);
+    localRead.aggregateSeasonMemberTokens.mockResolvedValueOnce([]);
+    localWrite.batch.mockResolvedValue([]);
+
+    const res = await POST(makeRequest(), { params: routeParams });
+    expect(res.status).toBe(201);
+
+    expect(localRead.invalidateCacheKey).toHaveBeenCalledWith("seasons:list");
+  });
+
+  it("still answers 201 when the invalidation fails", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    localRead.getSeasonById.mockResolvedValueOnce(ENDED_SEASON);
+    localRead.getRegisteredTeamIds.mockResolvedValueOnce(["team-a"]);
+    localRead.aggregateSeasonMemberTokens.mockResolvedValueOnce([]);
+    localWrite.batch.mockResolvedValue([]);
+    localRead.invalidateCacheKey.mockRejectedValueOnce(new Error("KV down"));
+
+    const res = await POST(makeRequest(), { params: routeParams });
+    expect(res.status).toBe(201);
+  });
+});
