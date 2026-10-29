@@ -120,6 +120,19 @@ export async function PUT(request: Request) {
 
     return NextResponse.json({ success: true });
   } catch (err) {
+    // The duplicate check above is a read; two concurrent requests can both
+    // pass it and the loser then trips the LOWER(TRIM(alias)) unique index.
+    // That is the same conflict the sequential path answers with 409, so it
+    // must not surface as a generic 500. SQLite names a unique *index* in the
+    // message ("index 'idx_device_alias_unique'") and a unique *column set*
+    // as "device_aliases.…", so match either spelling.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/UNIQUE constraint failed/i.test(msg) && /device_alias|idx_device_alias_unique/i.test(msg)) {
+      return NextResponse.json(
+        { error: "Alias already in use by another device" },
+        { status: 409 }
+      );
+    }
     console.error("Failed to update device alias:", err);
     return NextResponse.json(
       { error: "Failed to update device alias" },

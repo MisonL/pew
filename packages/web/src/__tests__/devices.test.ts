@@ -374,6 +374,38 @@ describe("PUT /api/devices", () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain("alias");
   });
+
+  // The duplicate check is a read; two concurrent requests both pass it and
+  // the loser trips the LOWER(TRIM(alias)) unique index. That is the same
+  // conflict the sequential path answers with 409.
+  it("maps a concurrent alias conflict to 409 instead of 500", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1", email: "x" });
+    mockDbRead.checkDeviceExists.mockResolvedValueOnce(true);
+    mockDbRead.checkDuplicateDeviceAlias.mockResolvedValueOnce(false);
+    mockDbWrite.execute.mockRejectedValueOnce(
+      new Error("UNIQUE constraint failed: index 'idx_device_alias_unique'"),
+    );
+
+    const res = await PUT(
+      makePutRequest({ device_id: "aaaa-1111", alias: "MacBook" }),
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/already in use/i);
+  });
+
+  it("still returns 500 for an unrelated write failure", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1", email: "x" });
+    mockDbRead.checkDeviceExists.mockResolvedValueOnce(true);
+    mockDbRead.checkDuplicateDeviceAlias.mockResolvedValueOnce(false);
+    mockDbWrite.execute.mockRejectedValueOnce(new Error("D1 down"));
+
+    const res = await PUT(
+      makePutRequest({ device_id: "aaaa-1111", alias: "MacBook" }),
+    );
+
+    expect(res.status).toBe(500);
+  });
 });
 
 describe("DELETE /api/devices", () => {
