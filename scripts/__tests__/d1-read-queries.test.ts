@@ -7,6 +7,7 @@ import { handleUsageRpc, type UsageRpcRequest } from "../../packages/worker-read
 import { handleDevicesRpc } from "../../packages/worker-read/src/rpc/devices";
 import { withAccounting } from "../../packages/worker-read/src/rpc/accounting";
 import { handleAdminRpc } from "../../packages/worker-read/src/rpc/admin";
+import { handleSeasonsRpc } from "../../packages/worker-read/src/rpc/seasons";
 
 describe("D1 read queries against real SQLite", () => {
   let sqlite: DatabaseSync;
@@ -20,7 +21,7 @@ describe("D1 read queries against real SQLite", () => {
     vi.mocked(kv.get).mockReset();
     vi.mocked(kv.get).mockResolvedValue(null);
     sqlite = new DatabaseSync(":memory:");
-    for (const name of ["001-init", "009-device-aliases", "019-organizations", "022-usage-evidence", "026-usage-accounting", "029-leaderboard-revision"]) {
+    for (const name of ["001-init", "006b-seasons", "007b-season-team-members", "009-device-aliases", "013-season-datetime", "019-organizations", "022-usage-evidence", "026-usage-accounting", "029-leaderboard-revision"]) {
       sqlite.exec(readFileSync(`scripts/migrations/${name}.sql`, "utf8"));
     }
     sqlite.exec(`INSERT INTO users(id,email,name,is_public) VALUES ('u1','a@test.invalid','A',1), ('u2','b@test.invalid','B',1), ('private','c@test.invalid','C',0);
@@ -162,5 +163,42 @@ describe("D1 read queries against real SQLite", () => {
       const [dc, tt, n] = viewStamp.get(row.user_id as string) ?? [0, 0, 0];
       expect([row.device_count, row.total_tokens, row.usage_row_count]).toEqual([dc, tt, n]);
     }
+  });
+
+  it("reports season token totals identical to the usage_totals join it replaces", async () => {
+    sqlite.exec(`INSERT INTO seasons(id,name,slug,start_date,end_date,created_by) VALUES ('s1','S','s','2026-01-01T00:00:00Z','2026-12-31T00:00:00Z','u1');
+      INSERT INTO teams(id,name,slug,invite_code,created_by,created_at) VALUES ('st1','T1','st1','i','u1','${fromDate}');
+      INSERT INTO season_teams(season_id,team_id,registered_by) VALUES ('s1','st1','u1');
+      INSERT INTO season_team_members(season_id,team_id,user_id) VALUES ('s1','st1','u1'),('s1','st1','u2');`);
+    const body = await (await handleSeasonsRpc({
+      method: "seasons.getTeamTokens", seasonId: "s1", fromDate, toDate,
+    } as never, db, kv)).json();
+
+    const expected = sqlite.prepare(`SELECT COALESCE(SUM(ur.total_tokens), 0) AS total_tokens,
+        COALESCE(SUM(ur.input_tokens), 0) AS input_tokens
+      FROM season_teams st
+      LEFT JOIN season_team_members tm ON tm.team_id = st.team_id AND tm.season_id = st.season_id
+      LEFT JOIN usage_totals ur ON ur.user_id = tm.user_id AND ur.hour_start >= ? AND ur.hour_start < ?
+      WHERE st.season_id = ? GROUP BY st.team_id`).get(fromDate, toDate, "s1") as { total_tokens: number; input_tokens: number };
+
+    expect(body.result).toHaveLength(1);
+    expect(body.result[0].total_tokens).toBe(expected.total_tokens);
+    expect(body.result[0].input_tokens).toBe(expected.input_tokens);
+    // u1 contributes 65 + 100 + 18 (the zero-token evidence checkpoint is
+    // filtered) and u2 another 200; the 999 bucket sits at `toDate` and is
+    // outside the half-open window.
+    expect(body.result[0].total_tokens).toBe(383);
+    expect(queries.at(-1)!.sql).not.toContain("usage_totals");
+
+    // The member aggregate is the same shape over the same window.
+    const members = await (await handleSeasonsRpc({
+      method: "seasons.getMemberTokens", seasonId: "s1", teamIds: ["st1"], fromDate, toDate,
+    } as never, db, kv)).json();
+    const memberExpected = sqlite.prepare(`SELECT tm.user_id, COALESCE(SUM(ur.total_tokens), 0) AS total_tokens
+      FROM season_team_members tm
+      LEFT JOIN usage_totals ur ON ur.user_id = tm.user_id AND ur.hour_start >= ? AND ur.hour_start < ?
+      WHERE tm.season_id = ? GROUP BY tm.team_id, tm.user_id`).all(fromDate, toDate, "s1") as Array<{ user_id: string; total_tokens: number }>;
+    expect(members.result.map((r: { user_id: string; total_tokens: number }) => [r.user_id, r.total_tokens]).sort())
+      .toEqual(memberExpected.map((r) => [r.user_id, r.total_tokens]).sort());
   });
 });

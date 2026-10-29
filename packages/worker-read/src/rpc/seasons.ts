@@ -13,6 +13,31 @@ import { withCache, TTL_10M } from "../cache";
 
 const CACHE_KEY_SEASONS_LIST = "seasons:list";
 
+/**
+ * Per-user token totals inside one season window.
+ *
+ * The callers used to `LEFT JOIN usage_totals`, which is a view over
+ * usage_bases grouped by bucket and joined to the accounting details. SQLite
+ * materialises that whole view before the join can discard anything, so each
+ * of these aggregates paid for the entire history. This folds the same
+ * window, over the same bucket grain and with the same zero-token evidence
+ * filter, into one materialisation per query.
+ *
+ * `usage_bases` is exported by the accounting migration; the window columns
+ * come from the season's date range.
+ */
+const SEASON_USER_TOKENS_CTE = `WITH season_tokens AS (
+    SELECT user_id,
+           SUM(total_tokens)         AS total_tokens,
+           SUM(input_tokens)         AS input_tokens,
+           SUM(output_tokens)        AS output_tokens,
+           SUM(cached_input_tokens)  AS cached_input_tokens
+    FROM usage_bases
+    WHERE hour_start >= ? AND hour_start < ?
+      AND (event_id = '' OR total_tokens > 0)
+    GROUP BY user_id
+  )`;
+
 // ---------------------------------------------------------------------------
 // Response Types
 // ---------------------------------------------------------------------------
@@ -469,21 +494,20 @@ async function handleGetSeasonTeamTokens(
 
   const results = await db
     .prepare(
-      `SELECT
+      `${SEASON_USER_TOKENS_CTE}
+      SELECT
         st.team_id,
         t.name AS team_name,
         t.slug AS team_slug,
         t.logo_url AS team_logo_url,
-        COALESCE(SUM(ur.total_tokens), 0) AS total_tokens,
-        COALESCE(SUM(ur.input_tokens), 0) AS input_tokens,
-        COALESCE(SUM(ur.output_tokens), 0) AS output_tokens,
-        COALESCE(SUM(ur.cached_input_tokens), 0) AS cached_input_tokens
+        COALESCE(SUM(stk.total_tokens), 0) AS total_tokens,
+        COALESCE(SUM(stk.input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(stk.output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(stk.cached_input_tokens), 0) AS cached_input_tokens
       FROM season_teams st
       JOIN teams t ON t.id = st.team_id
       LEFT JOIN season_team_members tm ON tm.team_id = st.team_id AND tm.season_id = st.season_id
-      LEFT JOIN usage_totals ur ON ur.user_id = tm.user_id
-        AND ur.hour_start >= ?
-        AND ur.hour_start < ?
+      LEFT JOIN season_tokens stk ON stk.user_id = tm.user_id
       WHERE st.season_id = ?
       GROUP BY st.team_id
       ORDER BY total_tokens DESC, st.team_id`
@@ -505,7 +529,8 @@ async function handleGetSeasonMemberTokens(
     );
   }
 
-  let sql = `SELECT
+  let sql = `${SEASON_USER_TOKENS_CTE}
+    SELECT
       tm.team_id,
       tm.user_id,
       u.slug,
@@ -513,15 +538,13 @@ async function handleGetSeasonMemberTokens(
       u.nickname,
       u.image,
       u.is_public,
-      COALESCE(SUM(ur.total_tokens), 0) AS total_tokens,
-      COALESCE(SUM(ur.input_tokens), 0) AS input_tokens,
-      COALESCE(SUM(ur.output_tokens), 0) AS output_tokens,
-      COALESCE(SUM(ur.cached_input_tokens), 0) AS cached_input_tokens
+      COALESCE(SUM(stk.total_tokens), 0) AS total_tokens,
+      COALESCE(SUM(stk.input_tokens), 0) AS input_tokens,
+      COALESCE(SUM(stk.output_tokens), 0) AS output_tokens,
+      COALESCE(SUM(stk.cached_input_tokens), 0) AS cached_input_tokens
     FROM season_team_members tm
     JOIN users u ON u.id = tm.user_id
-    LEFT JOIN usage_totals ur ON ur.user_id = tm.user_id
-      AND ur.hour_start >= ?
-      AND ur.hour_start < ?
+    LEFT JOIN season_tokens stk ON stk.user_id = tm.user_id
     WHERE tm.season_id = ?
       AND tm.team_id IN (SELECT value FROM json_each(?))`;
 
@@ -629,17 +652,16 @@ async function handleAggregateTeamTokens(
 
   const results = await db
     .prepare(
-      `SELECT
+      `${SEASON_USER_TOKENS_CTE}
+      SELECT
         st.team_id,
-        COALESCE(SUM(ur.total_tokens), 0) AS total_tokens,
-        COALESCE(SUM(ur.input_tokens), 0) AS input_tokens,
-        COALESCE(SUM(ur.output_tokens), 0) AS output_tokens,
-        COALESCE(SUM(ur.cached_input_tokens), 0) AS cached_input_tokens
+        COALESCE(SUM(stk.total_tokens), 0) AS total_tokens,
+        COALESCE(SUM(stk.input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(stk.output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(stk.cached_input_tokens), 0) AS cached_input_tokens
       FROM season_teams st
       LEFT JOIN season_team_members tm ON tm.team_id = st.team_id AND tm.season_id = st.season_id
-      LEFT JOIN usage_totals ur ON ur.user_id = tm.user_id
-        AND ur.hour_start >= ?
-        AND ur.hour_start < ?
+      LEFT JOIN season_tokens stk ON stk.user_id = tm.user_id
       WHERE st.season_id = ?
       GROUP BY st.team_id
       ORDER BY total_tokens DESC, st.team_id`
@@ -663,17 +685,16 @@ async function handleAggregateMemberTokens(
 
   const results = await db
     .prepare(
-      `SELECT
+      `${SEASON_USER_TOKENS_CTE}
+      SELECT
         tm.team_id,
         tm.user_id,
-        COALESCE(SUM(ur.total_tokens), 0) AS total_tokens,
-        COALESCE(SUM(ur.input_tokens), 0) AS input_tokens,
-        COALESCE(SUM(ur.output_tokens), 0) AS output_tokens,
-        COALESCE(SUM(ur.cached_input_tokens), 0) AS cached_input_tokens
+        COALESCE(SUM(stk.total_tokens), 0) AS total_tokens,
+        COALESCE(SUM(stk.input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(stk.output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(stk.cached_input_tokens), 0) AS cached_input_tokens
       FROM season_team_members tm
-      LEFT JOIN usage_totals ur ON ur.user_id = tm.user_id
-        AND ur.hour_start >= ?
-        AND ur.hour_start < ?
+      LEFT JOIN season_tokens stk ON stk.user_id = tm.user_id
       WHERE tm.season_id = ?
         AND tm.team_id IN (SELECT value FROM json_each(?))
       GROUP BY tm.team_id, tm.user_id

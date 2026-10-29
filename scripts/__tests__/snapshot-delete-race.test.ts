@@ -29,6 +29,11 @@ describe("account deletion concurrent with snapshot generation", () => {
         INSERT INTO season_teams(id,season_id,team_id,registered_by) VALUES ('st1','s1','t1','owner'),('st0','s1','zero','owner');
         INSERT INTO season_team_members(id,season_id,team_id,user_id) VALUES ('m1','s1','t1','owner'),('m2','s1','t1','deleted');
         INSERT INTO usage_records(user_id,source,model,hour_start,input_tokens,total_tokens) VALUES ('owner','codex','m','2026-01-15T00:00:00.000Z',40,40),('deleted','codex','m','2026-01-15T00:00:00.000Z',100,100);
+        CREATE VIEW usage_bases AS
+          SELECT user_id, device_id, source, model, hour_start, '' AS event_id,
+                 input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens,
+                 total_tokens, 0 AS evidence_tokens, 0 AS approximate_tokens, created_at
+          FROM usage_records;
         CREATE VIEW usage_totals AS SELECT * FROM usage_records;
         INSERT INTO season_snapshots(id,season_id,team_id,rank,total_tokens,input_tokens) VALUES ('ss','s1','t1',1,140,140);
         INSERT INTO season_member_snapshots(id,season_id,team_id,user_id,total_tokens,input_tokens) VALUES ('ms1','s1','t1','owner',40,40),('ms2','s1','t1','deleted',100,100);
