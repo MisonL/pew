@@ -49,6 +49,14 @@ export interface PruneAliasOptions {
    * discovered it.
    */
   inDiscoveryPaths?: ReadonlySet<string>;
+
+  /**
+   * dev:ino already observed for these paths by the caller's own stat pass.
+   * Supplying them removes a second full stat of every discovered file, which
+   * on a 10k-file account costs about half a second per sync. A path missing
+   * from the map is stat'ed as before.
+   */
+  liveIdentities?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -134,7 +142,13 @@ export async function pruneAliasCursors<TCursor>(
   const inDiscovery = options?.inDiscoveryPaths ?? discoveredFiles;
 
   const liveInodes = new Set<string>();
+  const liveIdentities = options?.liveIdentities;
   for (const fp of discoveredFiles) {
+    const known = liveIdentities?.get(fp);
+    if (known !== undefined) {
+      liveInodes.add(known);
+      continue;
+    }
     const st = await stat(fp).catch(() => null);
     if (st) liveInodes.add(`${st.dev}:${st.ino}`);
   }

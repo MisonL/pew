@@ -109,6 +109,12 @@ interface InternalSyncOptions extends SyncOptions {
    * produces.
    */
   reconcilePreviousQueueRecords?: QueueRecord[];
+  /**
+   * Cursor state already parsed by the caller. Consumed once, then cleared:
+   * the reset branches below rewrite cursors.json and recurse, and those runs
+   * must see the rewritten file rather than this snapshot.
+   */
+  preloadedCursors?: CursorState;
 }
 
 /** Progress event for UI display */
@@ -225,7 +231,14 @@ export async function executeSync(opts: SyncOptions): Promise<SyncResult> {
     const retained = await readAntigravityBaseline(opts.stateDir, true, { tolerant: true });
     internal.previousAntigravityRecords = retained.filter((r) => r.source === "antigravity");
     internal.previousRetiredRecords = retained.filter((r) => isRetiredSource(r.source));
-    internal.previousAntigravityCursor = (await new CursorStore(opts.stateDir).load()).antigravity;
+    // Read the cursor state once. It is the largest state file by far — a
+    // heavy account's seenIds alone run to tens of MB — and both the
+    // antigravity baseline here and the scan inside executeSyncInternal need
+    // it. `preloadedCursors` is consumed exactly once, so the reset branches
+    // below still re-read the state they just rewrote.
+    const loadedCursors = await new CursorStore(opts.stateDir).load();
+    internal.previousAntigravityCursor = loadedCursors.antigravity;
+    internal.preloadedCursors = loadedCursors;
     if (opts.antigravityDir) {
       try {
         const snapshot = await readAntigravitySource(opts.antigravityDir);
@@ -257,7 +270,13 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   const evidenceQueue = new EvidenceQueue(stateDir);
   const priorEvidence = (await evidenceQueue.readFromOffset(0)).records;
   const priorAccounting = (await new AccountingQueue(stateDir).readFromOffset(0)).records;
-  const cursors = Object.fromEntries(Object.entries(await cursorStore.load()).filter(([key]) => key !== "zcodeSqlite")) as CursorState;
+  // Read the cursor state once: it is the largest state file by far, and the
+  // caller may already have parsed it for the antigravity baseline. Consumed
+  // exactly once so a reset-and-recurse still observes the rewritten file.
+  const preloadedCursors = opts.preloadedCursors;
+  opts.preloadedCursors = undefined;
+  const loadedCursors = preloadedCursors ?? (await cursorStore.load());
+  const cursors = Object.fromEntries(Object.entries(loadedCursors).filter(([key]) => key !== "zcodeSqlite")) as CursorState;
   const activePaths = [opts.claudeDir, opts.codexSessionsDir, ...(opts.multicaCodexDirs ?? []),
     opts.openCodeMessageDir, opts.openclawDir, opts.piSessionsDir, opts.copilotCliLogsDir,
     ...(opts.copilotCliOtelPaths ?? []), opts.grokLogsPath, opts.grokSessionsDir];
@@ -464,6 +483,9 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   };
 
   // ---------- Phase 1: File-based drivers (generic loop) ----------
+  // dev:ino observed by this run's stat pass, so the prune below does not
+  // stat every discovered file a second time.
+  const liveIdentities = new Map<string, string>();
   for (const driver of fileDrivers) {
     const key = sourceKey(driver.source);
 
@@ -544,6 +566,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
         mtimeMs: st.mtimeMs,
         size: st.size,
       };
+      liveIdentities.set(filePath, `${st.dev}:${st.ino}`);
 
       const cursor = cursors.files[filePath] as FileCursorBase | undefined;
       const offsetCursor = isOffsetCursor(cursor) ? cursor : undefined;
@@ -1095,6 +1118,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     {
       protectedPrefixes: ctx.mtimeSkippedDirs,
       inDiscoveryPaths: discoveredFiles,
+      liveIdentities,
     },
   );
   cursors.files = pruned.cursorFiles;

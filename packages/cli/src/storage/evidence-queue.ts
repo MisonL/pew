@@ -50,6 +50,9 @@ export class EvidenceQueue extends BaseQueue<EvidenceRecord> {
 
   /** Union by stable identity; snapshots replace, never SUM. */
   async merge(incoming: EvidenceRecord[], replay = false): Promise<void> {
+    // Same short-circuit as the accounting ledger: with nothing to merge and
+    // no replay this would read and re-validate the ledger to write nothing.
+    if (incoming.length === 0 && !replay) return;
     const { records } = await this.readFromOffset(0);
     const merged = new Map(records.map((r) => [evidenceKey(r), r]));
     const dirtyKeys = await this.loadDirtyKeys();
