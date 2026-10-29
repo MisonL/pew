@@ -6,7 +6,7 @@ import type { SeasonStatus } from "@pew/core";
 import { throwApiError } from "@/lib/api-error";
 import { toErrorMessage } from "@/lib/error-message";
 import { fetcher } from "@/lib/fetcher";
-import { applySeasonOverrides } from "@/lib/season-registration";
+import { applySeasonOverrides, registrationErrorMessage } from "@/lib/season-registration";
 
 export interface AvailableSeason {
   id: string;
@@ -76,6 +76,7 @@ export function useSeasonRegistration(
 
   const {
     data: teamData,
+    error: teamError,
     isLoading: teamLoading,
     mutate: mutateTeam,
   } = useSWR<TeamResponse>(`/api/teams/${teamId}`, fetcher);
@@ -142,16 +143,15 @@ export function useSeasonRegistration(
     [teamId],
   );
 
+  // A failed team fetch leaves `teamData` undefined, so every season renders
+  // as "not registered" — the wrong answer, presented confidently. Surface it
+  // instead of the empty state: the caller's banner already shows `error`.
+  const loadError = seasonsError ?? teamError ?? null;
+
   return {
     seasons,
     loading: seasonsLoading || teamLoading,
-    error:
-      mutationError ??
-      (seasonsError
-        ? seasonsError instanceof Error
-          ? seasonsError.message
-          : String(seasonsError)
-        : null),
+    error: registrationErrorMessage(mutationError, loadError),
     register,
     withdraw,
     refetch,

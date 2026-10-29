@@ -11,6 +11,24 @@
 
 export type SeasonOverrideState = ReadonlyMap<string, boolean>;
 
+/**
+ * The message the hook surfaces, in precedence order: the last action's error
+ * wins over a load failure, because it is the more recent answer to what the
+ * user just did.
+ *
+ * The team fetch counts as a load failure. Its data decides `is_registered`
+ * for every season, so a failed request would otherwise render every season as
+ * "not registered" — a confident wrong answer instead of an error.
+ */
+export function registrationErrorMessage(
+  mutationError: string | null,
+  loadError: unknown,
+): string | null {
+  if (mutationError) return mutationError;
+  if (!loadError) return null;
+  return loadError instanceof Error ? loadError.message : String(loadError);
+}
+
 export function applySeasonOverrides<T extends { id: string; team_count: number }>(
   seasons: readonly T[],
   registeredIds: ReadonlySet<string>,

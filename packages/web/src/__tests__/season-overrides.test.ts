@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applySeasonOverrides } from "@/lib/season-registration";
+import { applySeasonOverrides, registrationErrorMessage } from "@/lib/season-registration";
 
 interface Season {
   id: string;
@@ -64,5 +64,25 @@ describe("applySeasonOverrides", () => {
     );
     expect(out[0]!.is_registered).toBe(false);
     expect(out[0]!.team_count).toBe(4);
+  });
+});
+
+describe("registrationErrorMessage", () => {
+  it("prefers the last action's error over a load failure", () => {
+    expect(registrationErrorMessage("Register failed", new Error("load boom")))
+      .toBe("Register failed");
+  });
+
+  it("surfaces a failed team fetch, not the empty state", () => {
+    // A failed /api/teams/:id leaves every season rendering as "not
+    // registered"; the hook must report the error instead of the wrong answer.
+    expect(registrationErrorMessage(null, new Error("HTTP 500")))
+      .toBe("HTTP 500");
+    expect(registrationErrorMessage(null, "network down")).toBe("network down");
+  });
+
+  it("is null when nothing failed", () => {
+    expect(registrationErrorMessage(null, null)).toBeNull();
+    expect(registrationErrorMessage(null, undefined)).toBeNull();
   });
 });
