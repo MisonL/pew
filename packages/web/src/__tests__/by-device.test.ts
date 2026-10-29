@@ -629,3 +629,41 @@ describe("GET /api/usage/by-device", () => {
     });
   });
 });
+
+describe("GET /api/usage/by-device — request fan-out", () => {
+  let mockDbRead: ReturnType<typeof createMockDbRead>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead = createMockDbRead();
+    mockDbRead.getDynamicPricing.mockResolvedValue({ entries: [], servedFrom: "baseline" });
+    vi.mocked(dbModule.getDbRead).mockResolvedValue(mockDbRead as any);
+  });
+
+  // Four independent reads on one page load. Awaiting them one at a time
+  // costs four round trips where one does; a Promise.all leaves all four in
+  // flight at once. Asserting on the peak in-flight count is deterministic,
+  // unlike a wall-clock threshold.
+  it("keeps every independent RPC in flight at the same time", async () => {
+    vi.mocked(resolveUser).mockResolvedValue({ userId: "u1", email: "test@example.com" });
+    let inFlight = 0;
+    let peak = 0;
+    const track = <T>(value: T) =>
+      new Promise<T>((resolve) => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        setTimeout(() => {
+          inFlight -= 1;
+          resolve(value);
+        }, 5);
+      });
+    mockDbRead.getDeviceSummary.mockImplementation(() => track([] as never));
+    mockDbRead.getDeviceCostDetails.mockImplementation(() => track([] as never));
+    mockDbRead.getDeviceTimeline.mockImplementation(() => track([] as never));
+    mockDbRead.getDynamicPricing.mockImplementation(() => track({ entries: [], servedFrom: "baseline" } as never));
+
+    const response = await GET(makeGetRequest("/api/usage/by-device", { from: "2026-09-01", to: "2026-09-02" }));
+    expect(response.status).toBe(200);
+    expect(peak).toBe(4);
+  });
+});

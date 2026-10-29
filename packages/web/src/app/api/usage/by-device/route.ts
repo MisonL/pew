@@ -130,20 +130,14 @@ export async function GET(request: Request) {
   const db = await getDbRead();
 
   try {
-    // Summary query — one row per device with aggregated stats + alias
-    const summaryRows = await db.getDeviceSummary(userId, fromDate, toDate);
-
-    // Cost detail query — per (device, source, model) for accurate pricing
-    const costRows = await db.getDeviceCostDetails(userId, fromDate, toDate);
-
-    // Timeline query — totals per device (day or half-hour granularity)
-    const timelineRows = await db.getDeviceTimeline(userId, fromDate, toDate, {
-      granularity,
-      tzOffset,
-    });
-
-    // 4. Build pricing map (dynamic + admin DB rows + safety net)
-    const pricingMap = await loadPricingMap(db);
+    // Four independent reads. Awaiting them in sequence costs four round
+    // trips where one does, and this route backs the heaviest pages.
+    const [summaryRows, costRows, timelineRows, pricingMap] = await Promise.all([
+      db.getDeviceSummary(userId, fromDate, toDate),
+      db.getDeviceCostDetails(userId, fromDate, toDate),
+      db.getDeviceTimeline(userId, fromDate, toDate, { granularity, tzOffset }),
+      loadPricingMap(db),
+    ]);
 
     // 5. Compute estimated_cost per device from cost detail rows
     const costByDevice = new Map<string, { total: number; complete: boolean }>();
