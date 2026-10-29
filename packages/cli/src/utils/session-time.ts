@@ -17,7 +17,7 @@
 import { isValidIsoInstant } from "./ingest-contract.js";
 
 /** Ingest contract cap for `duration_seconds` (see core MAX_SESSION_DURATION_SECONDS). */
-const MAX_SESSION_DURATION_SECONDS = 315_576_000;
+export const MAX_SESSION_DURATION_SECONDS = 315_576_000;
 
 /**
  * Canonical UTC spelling of an instant, or null when the value is not one.

@@ -9,6 +9,7 @@
 import type { SessionSnapshot, Source } from "@pew/core";
 import { hashProjectRef } from "../utils/hash-project-ref.js";
 import { coerceEpochMs } from "../utils/time.js";
+import { MAX_SESSION_DURATION_SECONDS } from "../utils/session-time.js";
 
 /** Row shape from the session table */
 export interface SessionRow {
@@ -129,7 +130,7 @@ export function collectOpenCodeSqliteSessions(
       kind: "human",
       startedAt: new Date(minEpochMs).toISOString(),
       lastMessageAt: new Date(endMs).toISOString(),
-      durationSeconds: Math.max(0, Math.floor((endMs - minEpochMs) / 1000)),
+      durationSeconds: Math.min(MAX_SESSION_DURATION_SECONDS, Math.max(0, Math.floor((endMs - minEpochMs) / 1000))),
       userMessages,
       assistantMessages,
       totalMessages,

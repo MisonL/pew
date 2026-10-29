@@ -9,6 +9,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join, basename } from "node:path";
 import type { SessionSnapshot, Source } from "@pew/core";
 import { coerceEpochMs } from "../utils/time.js";
+import { MAX_SESSION_DURATION_SECONDS } from "../utils/session-time.js";
 
 /**
  * Collect session snapshots from an OpenCode session directory.
@@ -108,9 +109,13 @@ export async function collectOpenCodeSessions(
 
   const startedAt = new Date(minEpochMs).toISOString();
   const lastMessageAt = new Date(maxEpochMs ?? minEpochMs).toISOString();
-  const durationSeconds = Math.max(
-    0,
-    Math.floor(((maxEpochMs ?? minEpochMs) - minEpochMs) / 1000),
+  // Clamped to the ingest cap: one corrupt message timestamp otherwise makes
+  // `sessionRecordRejection` drop this whole snapshot at upload, and a session
+  // that is dropped there is never retried — its message counts and duration
+  // are lost for good.
+  const durationSeconds = Math.min(
+    MAX_SESSION_DURATION_SECONDS,
+    Math.max(0, Math.floor(((maxEpochMs ?? minEpochMs) - minEpochMs) / 1000)),
   );
 
   // Derive session key: prefer sessionID from messages, fallback to directory name

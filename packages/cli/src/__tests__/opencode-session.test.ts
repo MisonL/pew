@@ -342,4 +342,25 @@ describe("collectOpenCodeSessions", () => {
     expect(result).toHaveLength(1);
     expect(result[0].totalMessages).toBe(1);
   });
+
+  // One corrupt message timestamp otherwise produces a duration the ingest
+  // contract rejects, and `sessionRecordRejection` then drops the entire
+  // snapshot at upload with no retry — the session's counts vanish silently.
+  it("clamps a duration that exceeds the ingest cap", async () => {
+    const dir = join(tmpDir, "ses_long");
+    await mkdir(dir);
+    await writeFile(
+      join(dir, "msg_001.json"),
+      JSON.stringify({
+        id: "msg_001",
+        sessionID: "ses_long",
+        role: "assistant",
+        modelID: "claude-opus-4.6",
+        time: { created: 1_000_000, completed: 253_402_300_799_999 },
+      }),
+    );
+
+    const [snapshot] = await collectOpenCodeSessions(dir);
+    expect(snapshot?.durationSeconds).toBe(315_576_000);
+  });
 });
