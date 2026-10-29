@@ -235,6 +235,15 @@ describe("GET /api/usage/by-device", () => {
       );
     });
 
+    // Silently answering a request for hourly buckets with daily ones is worse
+    // than refusing it: /api/usage already 400s an unknown granularity.
+    it("should reject an unknown granularity instead of downgrading it", async () => {
+      const res = await GET(makeGetRequest("/api/usage/by-device", { from: "2026-03-01", to: "2026-03-11", granularity: "hour" }));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe("Invalid granularity parameter");
+      expect(mockDbRead.getDeviceTimeline).not.toHaveBeenCalled();
+    });
+
     it("should handle bare date (YYYY-MM-DD) in to param by bumping +1 day", async () => {
       mockDbRead.getDeviceSummary.mockResolvedValueOnce([]);
       mockDbRead.getDeviceCostDetails.mockResolvedValueOnce([]);

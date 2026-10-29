@@ -98,9 +98,17 @@ export async function GET(request: Request) {
     defaultValue: 0,
   });
 
-  // Validate granularity
-  const granularity: "half-hour" | "day" =
-    granularityParam === "half-hour" ? "half-hour" : "day";
+  // Validate granularity. A value the route does not implement must be a 400,
+  // not a silent downgrade to "day": /api/usage already rejects it, and a
+  // caller that asked for hourly buckets would otherwise get a 200 carrying
+  // daily ones.
+  if (granularityParam !== null && granularityParam !== "half-hour" && granularityParam !== "day") {
+    return NextResponse.json(
+      { error: "Invalid granularity parameter" },
+      { status: 400 }
+    );
+  }
+  const granularity: "half-hour" | "day" = granularityParam === "half-hour" ? "half-hour" : "day";
 
   const dateRange = parseDateRange(fromParam, toParam);
   if (!dateRange) {
