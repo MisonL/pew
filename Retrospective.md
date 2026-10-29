@@ -1,5 +1,27 @@
 # Retrospective
 
+### 2026-10-29: Two lanes, one build directory
+
+A pre-push L2 run failed with ENOENT on Next's `pages-manifest.json` followed
+by ECONNRESET while the server was up. The cause was not the lane: the unit
+suite's three real-process cases (interrupted startup, interrupted run, failed
+Next startup) spawn a real lane in the same worktree, and both that lane and
+the running L2 lane built into `packages/web/.next-e2e` and removed it in their
+`finally`. One finished, deleted the other's build, and the survivor kept
+serving from a directory that no longer existed. Proven with a canary: a file
+planted in `packages/web/.next-e2e` survived a suite run once the suite's lanes
+had their own dist dir and was deleted without it; deleting the directory under
+a live lane reproduced the same ENOENT/ECONNRESET pair.
+
+Shared mutable state is the whole problem, so the fix is a per-caller dist
+dir (`PEW_E2E_DIST_DIR`), not a retry or a longer timeout. The value reaches a
+recursive `rmSync`, so it is validated to stay a relative path inside
+`packages/web`; a bad value is refused rather than deleted. Any new build
+directory has to be registered wherever `.next-e2e` is (gitignore, Biome, the
+AST gates' skip lists, the web tsconfig) or tooling starts scanning build
+output — and pre-registering it also makes `next dev`'s tsconfig rewrite a
+no-op.
+
 ### 2026-10-29: A permanently refused record blocked the whole outbox
 
 The details stage sends accounting annotations to `/api/ingest/details` and
