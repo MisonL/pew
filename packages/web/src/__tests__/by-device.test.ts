@@ -105,6 +105,37 @@ describe("GET /api/usage/by-device", () => {
     expect(lean.devices[0].estimated_cost).toBe(full.devices[0].estimated_cost);
   });
 
+  it("pre-splits the drill-down rows too when includeAccounting=0", async () => {
+    // deviceDetails used to keep the raw legacy counters while devices and
+    // timeline were projected, so summing a device's drill-down rows disagreed
+    // with the device row it was drilled from.
+    vi.mocked(resolveUser).mockResolvedValue({ userId: "u1", email: "test@example.com" });
+    const r = accountingFixture();
+    const group = r.groups[0]!;
+    // A group whose explicit cache split differs from the legacy basis: the
+    // projection moves 200 tokens from input to cached.
+    const accounting = [{ status: "matched" as const, basis: r.basis,
+      groups: [{ ...group, counts: { ...group.counts, cache_read_input_tokens: 600, cache_write_input_tokens: 300 } }] }];
+    const row = { ...r.basis, source: r.source, model: r.model, device_id: r.device_id, accounting };
+    mockDbRead.getDeviceSummary.mockResolvedValue([{ ...row, alias: null, first_seen: r.hour_start, last_seen: r.hour_start,
+      sources: r.source, models: r.model }]);
+    mockDbRead.getDeviceCostDetails.mockResolvedValue([row]);
+    mockDbRead.getDeviceTimeline.mockResolvedValue([{ ...row, date: "2026-09-01" }]);
+
+    const lean = await (await GET(makeGetRequest("/api/usage/by-device", { from: "2026-09-01", to: "2026-09-02", includeAccounting: "0" }))).json();
+    const projected = displayCounters(row as Parameters<typeof displayCounters>[0]);
+
+    expect(projected.input_tokens).not.toBe(row.input_tokens); // the fixture is discriminating
+    expect(lean.deviceDetails[0]).toMatchObject({
+      input_tokens: projected.input_tokens,
+      cached_input_tokens: projected.cached_input_tokens,
+      output_tokens: projected.output_tokens,
+      total_tokens: projected.total_tokens,
+    });
+    // And the drill-down agrees with the device row it belongs to.
+    expect(lean.deviceDetails[0].total_tokens).toBe(lean.devices[0].total_tokens);
+  });
+
   it("keeps annotations only on the drill-down rows when includeAccounting=details", async () => {
     // /devices reads labels, totals and its UsageInformation coverage notes:
     // the notes need the per-(device,source,model) evidence, while the device

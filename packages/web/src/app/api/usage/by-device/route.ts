@@ -187,18 +187,22 @@ export async function GET(request: Request) {
       };
     });
 
-    // 7. Map cost detail rows for client-side drill-down charts
+    // 7. Map cost detail rows for client-side drill-down charts. When the
+    // annotations are dropped the counters must be projected like `devices`
+    // and `timeline` above, or a client that sums the drill-down rows gets the
+    // raw legacy split and disagrees with the device row it drilled from.
     const deviceDetails = includeDetails ? costRows.map((row) => {
-      const reasoning = row.reasoning_output_tokens ?? 0;
+      const counters = includeDetailAccounting ? row : displayCounters(row);
+      const reasoning = counters.reasoning_output_tokens ?? 0;
       return {
         device_id: row.device_id,
         source: row.source,
         model: row.model,
         total_tokens:
-          sumCounts(row.input_tokens, row.output_tokens, row.cached_input_tokens, reasoning),
-        input_tokens: row.input_tokens,
-        output_tokens: row.output_tokens,
-        cached_input_tokens: row.cached_input_tokens,
+          sumCounts(counters.input_tokens, counters.output_tokens, counters.cached_input_tokens, reasoning),
+        input_tokens: counters.input_tokens,
+        output_tokens: counters.output_tokens,
+        cached_input_tokens: counters.cached_input_tokens,
         reasoning_output_tokens: reasoning,
         ...(row.accounting && includeDetailAccounting ? { accounting: row.accounting } : {}),
       };
