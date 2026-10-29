@@ -120,6 +120,17 @@ export function mergePricingSources(input: MergeInput): MergeResult {
   });
 
   const claimed = new Set(sorted.map((e) => e.model));
+  // How many entries claim each bare (vendor-stripped) name. The alias is
+  // only unambiguous when exactly one entry would produce it; counting up
+  // front keeps this linear instead of re-scanning `sorted` per entry.
+  const bareCounts = new Map<string, number>();
+  for (const entry of sorted) {
+    const slash = entry.model.indexOf("/");
+    if (slash < 0) continue;
+    const bare = entry.model.slice(slash + 1);
+    if (!bare) continue;
+    bareCounts.set(bare, (bareCounts.get(bare) ?? 0) + 1);
+  }
   for (const entry of sorted) {
     const slash = entry.model.indexOf("/");
     if (slash < 0) continue;
@@ -127,11 +138,7 @@ export function mergePricingSources(input: MergeInput): MergeResult {
     if (!bare || claimed.has(bare)) continue;
     // Only claim if no other entry already has this bare name AND no other
     // entry would also produce the same alias (collision check).
-    const collisions = sorted.filter((e) => {
-      const i = e.model.indexOf("/");
-      return i >= 0 && e.model.slice(i + 1) === bare;
-    });
-    if (collisions.length > 1) continue;
+    if ((bareCounts.get(bare) ?? 0) > 1) continue;
     entry.aliases = [...new Set([...(entry.aliases ?? []), bare])];
     claimed.add(bare);
   }
