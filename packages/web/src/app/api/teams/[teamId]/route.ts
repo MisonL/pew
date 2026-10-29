@@ -284,6 +284,12 @@ export async function DELETE(
       }
     }
 
+    // Deleting the team can remove its season registrations (season_teams),
+    // and the cached seasons list carries a team_count computed from that
+    // table. Register/withdraw and the admin season routes already invalidate
+    // this key; without it the list served a deleted team for up to 10 minutes.
+    await dbRead.invalidateCacheKey("seasons:list").catch(() => undefined);
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

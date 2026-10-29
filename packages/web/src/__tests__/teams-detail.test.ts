@@ -462,6 +462,21 @@ describe("DELETE /api/teams/[teamId]", () => {
 
     expect(res.status).toBe(500);
   });
+
+  it("invalidates the cached seasons list when the team is gone", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
+    mockDbRead.getTeamMembership.mockResolvedValueOnce("owner");
+    mockDbRead.countTeamMembers.mockResolvedValueOnce(1);
+    mockDbRead.getTeamLogoUrl.mockResolvedValueOnce(null);
+    mockDbWrite.batch.mockResolvedValue([{ results: [{ user_id: "u1" }], meta: { changes: 1, duration: 0 } }, { results: [], meta: { changes: 0, duration: 0 } }, { results: [], meta: { changes: 0, duration: 0 } }, { results: [], meta: { changes: 1, duration: 0 } }]);
+
+    const res = await DELETE(makeRequest("DELETE"), makeParams());
+
+    expect(res.status).toBe(200);
+    // season_teams rows were deleted, so a cached count would name a team
+    // that no longer exists.
+    expect(mockDbRead.invalidateCacheKey).toHaveBeenCalledWith("seasons:list");
+  });
   it.each([
     ["active", 0, 409], ["active", 1, 200], ["upcoming", 0, 200], ["ended", 1, 409],
     ["concurrent-member", 1, 409], ["late-failure", 1, 500], ["closing-minute", 1, 200],
