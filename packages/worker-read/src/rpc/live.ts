@@ -160,14 +160,25 @@ async function handleGetLiveStats(db: D1Database): Promise<Response> {
   // session_records uses last_message_at instead of ended_at.
   // tokens_last_hour sums total_tokens (input + cached + output + reasoning),
   // the same definition every other aggregate uses. requests_last_hour counts
-  // usage buckets, not individual requests: usage_totals collapses events, so
-  // the value is a lower bound on requests, not an exact count.
+  // usage buckets, not individual requests: the bucket grain collapses events,
+  // so the value is a lower bound on requests, not an exact count.
+  //
+  // `recent` folds the last hour at the same bucket grain in one pass. The
+  // drei separate references to `usage_totals` would each re-materialise a
+  // view that groups the entire history before the predicate applies.
   const sql = `
+    WITH recent AS (
+      SELECT user_id, device_id, source, model, hour_start, SUM(total_tokens) AS total_tokens
+      FROM usage_bases
+      WHERE (event_id = '' OR total_tokens > 0)
+        AND julianday(hour_start) >= julianday('now', '-1 hour')
+      GROUP BY user_id, device_id, source, model, hour_start
+    )
     SELECT
       (SELECT COUNT(*) FROM session_records WHERE julianday(last_message_at) >= julianday('now', '-30 minutes')) AS active_sessions,
-      (SELECT COALESCE(SUM(total_tokens), 0) FROM usage_totals WHERE julianday(hour_start) >= julianday('now', '-1 hour')) AS tokens_last_hour,
-      (SELECT COUNT(*) FROM usage_totals WHERE julianday(hour_start) >= julianday('now', '-1 hour')) AS requests_last_hour,
-      (SELECT COUNT(DISTINCT user_id) FROM usage_totals WHERE julianday(hour_start) >= julianday('now', '-1 hour')) AS unique_users_last_hour
+      (SELECT COALESCE(SUM(total_tokens), 0) FROM recent) AS tokens_last_hour,
+      (SELECT COUNT(*) FROM recent) AS requests_last_hour,
+      (SELECT COUNT(DISTINCT user_id) FROM recent) AS unique_users_last_hour
   `;
 
   const result = await db.prepare(sql).first<LiveStatsRow>();
@@ -187,15 +198,23 @@ async function handleGetUserLiveStats(
   // tokens_last_hour sums total_tokens for the same definition as everywhere
   // else; requests_last_hour counts usage buckets (a lower bound).
   const sql = `
+    WITH recent AS (
+      SELECT user_id, device_id, source, model, hour_start, SUM(total_tokens) AS total_tokens
+      FROM usage_bases
+      WHERE user_id = ?
+        AND (event_id = '' OR total_tokens > 0)
+        AND julianday(hour_start) >= julianday('now', '-1 hour')
+      GROUP BY user_id, device_id, source, model, hour_start
+    )
     SELECT
       (SELECT COUNT(*) FROM session_records WHERE user_id = ? AND julianday(last_message_at) >= julianday('now', '-30 minutes')) AS active_sessions,
-      (SELECT COALESCE(SUM(total_tokens), 0) FROM usage_totals WHERE user_id = ? AND julianday(hour_start) >= julianday('now', '-1 hour')) AS tokens_last_hour,
-      (SELECT COUNT(*) FROM usage_totals WHERE user_id = ? AND julianday(hour_start) >= julianday('now', '-1 hour')) AS requests_last_hour
+      (SELECT COALESCE(SUM(total_tokens), 0) FROM recent) AS tokens_last_hour,
+      (SELECT COUNT(*) FROM recent) AS requests_last_hour
   `;
 
   const result = await db
     .prepare(sql)
-    .bind(req.userId, req.userId, req.userId)
+    .bind(req.userId, req.userId)
     .first<{
       active_sessions: number;
       tokens_last_hour: number;

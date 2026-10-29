@@ -8,6 +8,7 @@ import { handleDevicesRpc } from "../../packages/worker-read/src/rpc/devices";
 import { withAccounting } from "../../packages/worker-read/src/rpc/accounting";
 import { handleAdminRpc } from "../../packages/worker-read/src/rpc/admin";
 import { handleSeasonsRpc } from "../../packages/worker-read/src/rpc/seasons";
+import { handleLiveRpc } from "../../packages/worker-read/src/rpc/live";
 
 describe("D1 read queries against real SQLite", () => {
   let sqlite: DatabaseSync;
@@ -163,6 +164,35 @@ describe("D1 read queries against real SQLite", () => {
       const [dc, tt, n] = viewStamp.get(row.user_id as string) ?? [0, 0, 0];
       expect([row.device_count, row.total_tokens, row.usage_row_count]).toEqual([dc, tt, n]);
     }
+  });
+
+  it("reports live stats identical to the usage_totals references it replaces", async () => {
+    const stamp = (offsetMs: number) => new Date(Date.now() - offsetMs).toISOString();
+    sqlite.exec(`INSERT INTO usage_records(user_id,device_id,source,model,hour_start,input_tokens,cached_input_tokens,output_tokens,reasoning_output_tokens,total_tokens)
+      VALUES ('u1','d1','codex','m1','${stamp(10 * 60_000)}',10,0,0,0,10),
+             ('u2','d1','codex','m1','${stamp(20 * 60_000)}',20,0,0,0,20),
+             ('u1','d1','codex','m1','${stamp(90 * 60_000)}',999,0,0,0,999);
+      INSERT INTO usage_evidence(user_id,device_id,event_id,group_id,source,model,hour_start,timestamp,call_type,origin,provider,granularity,time_precision,snapshot_seq,input_tokens,cached_input_tokens,output_tokens,reasoning_output_tokens,total_tokens)
+      VALUES ('u1','d1','' || '${"9".repeat(63)}','${"8".repeat(64)}','codex','m1','${stamp(15 * 60_000)}','${stamp(15 * 60_000)}','request','test','test','operation','exact',1,5,0,0,0,5);`);
+    const body = await (await handleLiveRpc({ method: "live.getStats" } as never, db)).json();
+    const reference = sqlite.prepare(`SELECT
+      (SELECT COALESCE(SUM(total_tokens),0) FROM usage_totals WHERE julianday(hour_start) >= julianday('now','-1 hour')) AS tokens_last_hour,
+      (SELECT COUNT(*) FROM usage_totals WHERE julianday(hour_start) >= julianday('now','-1 hour')) AS requests_last_hour,
+      (SELECT COUNT(DISTINCT user_id) FROM usage_totals WHERE julianday(hour_start) >= julianday('now','-1 hour')) AS unique_users_last_hour`).get();
+
+    expect(body.result.tokens_last_hour).toBe(reference.tokens_last_hour);
+    expect(body.result.requests_last_hour).toBe(reference.requests_last_hour);
+    expect(body.result.unique_users_last_hour).toBe(reference.unique_users_last_hour);
+    expect(body.result.tokens_last_hour).toBe(35);
+    expect(body.result.requests_last_hour).toBe(3);
+
+    const own = await (await handleLiveRpc({ method: "live.getUserStats", userId: "u1" } as never, db)).json();
+    const ownRef = sqlite.prepare(`SELECT
+      (SELECT COALESCE(SUM(total_tokens),0) FROM usage_totals WHERE user_id = ? AND julianday(hour_start) >= julianday('now','-1 hour')) AS tokens_last_hour,
+      (SELECT COUNT(*) FROM usage_totals WHERE user_id = ? AND julianday(hour_start) >= julianday('now','-1 hour')) AS requests_last_hour`).get("u1", "u1");
+    expect(own.result.tokens_last_hour).toBe(ownRef.tokens_last_hour);
+    expect(own.result.requests_last_hour).toBe(ownRef.requests_last_hour);
+    expect(queries.at(-1)!.sql).not.toContain("usage_totals");
   });
 
   it("reports season token totals identical to the usage_totals join it replaces", async () => {
