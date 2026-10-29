@@ -8,9 +8,20 @@ export type CodexSharedSnapshot = {
   usageKeys: string[];
 } | null;
 
+/**
+ * Claude dedup-set rollback marker.
+ *
+ * The set only ever grows during a parse — nothing removes from it — so a
+ * discarded parse is undone by deleting whatever was appended after the
+ * marker. Recording a size instead of a copy keeps this O(1) on the happy
+ * path: a cold scan holds one entry per emitted id across every file, and
+ * copying all of them once per file made the copy 39% of a wide scan.
+ */
+export type ClaudeIdsSnapshot = { existed: false } | { existed: true; size: number };
+
 export type JsonlSharedSnapshot = {
   codex: CodexSharedSnapshot;
-  claudeIds: string[] | null;
+  claudeIds: ClaudeIdsSnapshot;
 };
 
 export function snapshotCodexSharedState(
@@ -55,9 +66,10 @@ export function snapshotJsonlSharedState(
   ctx: SyncContext,
   filePath: string,
 ): JsonlSharedSnapshot {
+  const seen = ctx.seenClaudeMessageIds;
   return {
     codex: snapshotCodexSharedState(ctx, filePath),
-    claudeIds: ctx.seenClaudeMessageIds ? [...ctx.seenClaudeMessageIds] : null,
+    claudeIds: seen ? { existed: true, size: seen.size } : { existed: false },
   };
 }
 
@@ -66,12 +78,21 @@ export function restoreJsonlSharedState(
   snapshot: JsonlSharedSnapshot,
 ): void {
   restoreCodexSharedState(ctx, snapshot.codex);
-  if (snapshot.claudeIds === null) {
+  const seen = ctx.seenClaudeMessageIds;
+  if (!snapshot.claudeIds.existed) {
+    // Nothing owned the set before this parse; a Set created during it holds
+    // only discarded ids.
     ctx.seenClaudeMessageIds?.clear();
     return;
   }
-  const seen = ctx.seenClaudeMessageIds ?? new Set<string>();
-  seen.clear();
-  for (const id of snapshot.claudeIds) seen.add(id);
-  ctx.seenClaudeMessageIds = seen;
+  if (!seen) return;
+  // Insertion order is stable and nothing deletes mid-parse, so the entries
+  // after the marker are exactly the ones this parse appended.
+  const appended: string[] = [];
+  let index = 0;
+  for (const id of seen) {
+    if (index >= snapshot.claudeIds.size) appended.push(id);
+    index += 1;
+  }
+  for (const id of appended) seen.delete(id);
 }
