@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { SessionSnapshot } from "@pew/core";
 import { inclusiveAccounting } from "../utils/accounting.js";
+import { appendAll } from "../utils/append.js";
 import { hashProjectRef } from "../utils/hash-project-ref.js";
 import { isAllZero } from "../utils/token-delta.js";
 import { usageLabel } from "../utils/usage-evidence.js";
@@ -270,8 +271,8 @@ export async function readAntigravitySource(
   }
   for (const name of names) {
     const result = await readDatabase(join(rootDir, name), opener, snapshotAt, signatures.get(name) as Array<string | null>);
-    deltas.push(...result.deltas);
-    snapshots.push(...result.snapshots);
+    appendAll(deltas, result.deltas);
+    appendAll(snapshots, result.snapshots);
   }
   const current = (await readdir(rootDir)).filter((name) => name.endsWith(".db")).sort();
   if (JSON.stringify(current) !== JSON.stringify(names)) throw new Error("Unstable Antigravity source discovery");

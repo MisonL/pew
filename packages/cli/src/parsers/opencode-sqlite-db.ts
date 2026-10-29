@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { appendAll } from "../utils/append.js";
 import type { MessageRow, QueryMessagesFn } from "./opencode-sqlite.js";
 import type { SessionRow, SessionMessageRow } from "./opencode-sqlite-session.js";
 
@@ -204,7 +205,7 @@ export function openSessionDb(
            WHERE session_id IN (${placeholders})
            ORDER BY time_created ASC`,
         );
-        results.push(...(stmt.all(...chunk) as SessionMessageRow[]));
+        appendAll(results, stmt.all(...chunk) as SessionMessageRow[]);
       }
       // Re-sort across chunks to maintain global time_created order
       if (sessionIds.length > CHUNK_SIZE) {

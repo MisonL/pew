@@ -1,5 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { appendAll } from "../utils/append.js";
 
 /**
  * Recursively collect files matching a predicate under a directory.
@@ -193,13 +194,13 @@ export async function discoverCodexFiles(
 
   // Primary directory
   const primaryFiles = await collectFiles(codexSessionsDir, predicate, onWalkError);
-  results.push(...primaryFiles);
+  appendAll(results, primaryFiles);
 
   // Extra directories (e.g. Multica Codex sessions)
   if (extraDirs && extraDirs.length > 0) {
     for (const extraDir of extraDirs) {
       const extraFiles = await collectFiles(extraDir, predicate, onWalkError);
-      results.push(...extraFiles);
+      appendAll(results, extraFiles);
     }
   }
 
