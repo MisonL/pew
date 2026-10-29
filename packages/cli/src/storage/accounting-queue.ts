@@ -40,10 +40,13 @@ const TOKEN_FIELDS = new Set(("input_tokens cached_input_tokens output_tokens re
 const NUMBER_FIELDS = new Set(("details_version evidence_snapshot_seq source_revision parser_revision detail_revision " +
   "request_count scale").split(" "));
 const LABEL_FIELDS = new Set("source model origin provider route service_tier quality currency kind status code".split(" "));
+function boundedToken(value: unknown, cap: number): boolean {
+  const n = optionalToken(value);
+  return n !== null && n <= cap;
+}
 function safeTree(value: unknown, key = "record"): boolean {
-  const bounded = (cap: number) => { const n = optionalToken(value); return n !== null && n <= cap; };
-  if (TOKEN_FIELDS.has(key)) return value === null || bounded(MAX_RECORD_TOKENS);
-  if (key === "request_count") return value === null || bounded(MAX_RECORD_MESSAGES);
+  if (TOKEN_FIELDS.has(key)) return value === null || boundedToken(value, MAX_RECORD_TOKENS);
+  if (key === "request_count") return value === null || boundedToken(value, MAX_RECORD_MESSAGES);
   if (NUMBER_FIELDS.has(key)) return value === null || optionalToken(value) !== null;
   if (LABEL_FIELDS.has(key)) return value === null || (typeof value === "string" && usageLabel(value) === value);
   if (key === "device_id") return typeof value === "string" && /^[\w.-]{1,128}$/.test(value);
@@ -53,13 +56,41 @@ function safeTree(value: unknown, key = "record"): boolean {
   if (["groups", "reported_costs", "diagnostics"].includes(key)) return Array.isArray(value) && value.length <= 256 && value.every((v) => safeTree(v, "item"));
   if (!["record", "item", "basis", "counts"].includes(key)) return false;
   if (key === "counts" && value === null) return true;
-  return value !== null && typeof value === "object" && !Array.isArray(value) && Object.entries(value).every(([k, v]) => safeTree(v, k));
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const fields = value as Record<string, unknown>;
+  return Object.keys(fields).every((k) => safeTree(fields[k], k));
+}
+
+/**
+ * The `names` arguments are literals, so their key sets are built once.
+ * Comparing sets avoids the per-call sort+join+split the previous
+ * implementation spent most of its time in: the ledger is re-validated on
+ * every sync, and at 5.5k records that overhead was measurable on its own.
+ */
+const KEY_SETS = new Map<string, Set<string>>();
+function keySetFor(names: string): Set<string> {
+  let set = KEY_SETS.get(names);
+  if (!set) {
+    set = new Set(names.split(" "));
+    KEY_SETS.set(names, set);
+  }
+  return set;
+}
+function hasKeys(v: object, names: string): boolean {
+  const expected = keySetFor(names);
+  const keys = Object.keys(v);
+  if (keys.length !== expected.size) return false;
+  for (const k of keys) if (!expected.has(k)) return false;
+  return true;
+}
+const BASIS_KEYS = "input_tokens cached_input_tokens output_tokens reasoning_output_tokens total_tokens";
+function validBasis(v: LegacyTokenCounts): boolean {
+  return hasKeys(v, BASIS_KEYS) &&
+    Object.values(v).every((n) => optionalToken(n) !== null) &&
+    v.total_tokens === v.input_tokens + v.cached_input_tokens + v.output_tokens + v.reasoning_output_tokens;
 }
 
 function checkedRecord(value: AccountingRecord): AccountingRecord {
-  const hasKeys = (v: object, names: string) => Object.keys(v).sort().join(" ") === names.split(" ").sort().join(" ");
-  const validBasis = (v: LegacyTokenCounts) => hasKeys(v, "input_tokens cached_input_tokens output_tokens reasoning_output_tokens total_tokens") &&
-    Object.values(v).every((n) => optionalToken(n) !== null) && v.total_tokens === v.input_tokens + v.cached_input_tokens + v.output_tokens + v.reasoning_output_tokens;
   const invalid = () => { throw new Error("Invalid accounting ledger"); };
   if (!safeTree(value) || value.details_version !== 1 || !value.basis || !Array.isArray(value.groups) || value.groups.length === 0 ||
     ![value.source_revision, value.parser_revision, value.detail_revision].every((n) => optionalToken(n) !== null && n > 0)) throw new Error("Invalid accounting ledger");
@@ -120,6 +151,10 @@ export class AccountingQueue extends BaseQueue<AccountingRecord> {
   }
 
   async merge(incoming: AccountingRecord[], replay = false, preserveSources: Source[] = []): Promise<void> {
+    // Nothing to merge and no replay: the whole method would read and
+    // re-validate the ledger only to find `changed` false and write nothing.
+    // Every sync ends here through the commit journal, including no-op ones.
+    if (incoming.length === 0 && !replay) return;
     const { records } = await this.readFromOffset(0);
     const merged = new Map(records.map((r) => [accountingKey(r), r]));
     const dirtyKeys = await this.loadDirtyKeys();
