@@ -91,23 +91,38 @@ export async function readContinuityAnchors(
   }
 }
 
-function completeRecords(data: Uint8Array, fromFileStart: boolean): ContinuityAnchor[] {
-  let i = 0;
-  if (!fromFileStart) {
-    const firstNl = data.indexOf(0x0a);
-    if (firstNl === -1) return [];
-    i = firstNl + 1;
+/**
+ * The last `limit` newline-terminated records in the window. Scanning
+ * backwards means a 1 MB window costs `limit` hashes instead of one per
+ * line — the caller only ever keeps `CONTINUITY_ANCHOR_COUNT` of them, and
+ * at ~40-byte records the forward version hashed twenty-six thousand.
+ */
+function completeRecords(
+  data: Uint8Array,
+  fromFileStart: boolean,
+  limit = CONTINUITY_ANCHOR_COUNT,
+): ContinuityAnchor[] {
+  const firstNl = data.indexOf(0x0a);
+  // Without a newline this window holds no complete record: a leading
+  // fragment whose terminator is outside the window is unhashable, and a
+  // trailing one is still being written.
+  if (firstNl === -1) return [];
+  const regionStart = fromFileStart ? 0 : firstNl + 1;
+  const lastNl = data.lastIndexOf(0x0a);
+  if (lastNl < regionStart) return [];
+
+  const reversed: ContinuityAnchor[] = [];
+  let end = lastNl + 1;
+  while (reversed.length < limit && end > regionStart) {
+    // `cursor - 2` is the last byte before this record's terminator.
+    const before = end - 2;
+    const prevNl = before < 0 ? -1 : data.lastIndexOf(0x0a, before);
+    const start = prevNl >= regionStart ? prevNl + 1 : regionStart;
+    const rec = data.subarray(start, end);
+    reversed.push({ sha256: hashRecord(rec), length: rec.length });
+    end = start;
   }
-  const lines: ContinuityAnchor[] = [];
-  let lineStart = i;
-  for (; i < data.length; i++) {
-    if (data[i] === 0x0a) {
-      const rec = data.subarray(lineStart, i + 1);
-      lines.push({ sha256: hashRecord(rec), length: rec.length });
-      lineStart = i + 1;
-    }
-  }
-  return lines;
+  return reversed.reverse();
 }
 
 export async function resolveJsonlContinuity(opts: {
