@@ -440,7 +440,7 @@ async function sendBatchWithRetry<T>(opts: {
         if (opts.validateResponse) {
           const verdict = opts.validateResponse(await resp.json().catch(() => null), batch);
           if (typeof verdict === "string") return { ok: false, error: verdict };
-          if (verdict) return { ok: true, refused: verdict };
+          if (verdict && verdict.keys.length > 0) return { ok: true, refused: verdict };
         }
         return { ok: true };
       }

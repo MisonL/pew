@@ -1400,6 +1400,32 @@ describe("upload-engine", () => {
       expect(await queue.loadDirtyKeys()).toEqual(["key-1"]);
     });
 
+    it("treats an empty refusal list as a fully accepted batch", async () => {
+      // The verdict carries "nothing was refused"; that must not turn into a
+      // zero-count warning or a dirty key that was never in the batch.
+      const queue = new BaseQueue<TestRecord>(dir, "test.jsonl", "test.state.json");
+      await new ConfigManager(dir).save({ token: "pk_test" });
+      await queue.appendBatch([makeRecord(1)]);
+      await queue.saveDirtyKeys(["key-1"]);
+      const config: UploadEngineConfig<TestRecord> = {
+        queue, endpoint: "/api/test-ingest", entityName: "test records",
+        preprocess: (records) => records,
+        recordKey: (r) => `key-${r.id}`,
+        validateResponse: () => ({ keys: [], reason: "nothing refused" }),
+      };
+
+      const { fetchFn } = createMockFetch([{ status: 200, body: { ingested: 1 } }]);
+      const result = await createUploadEngine(config).execute({
+        stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.uploaded).toBe(1);
+      expect(result.refused).toBeUndefined();
+      expect(result.warning).toBeUndefined();
+      expect(await queue.loadDirtyKeys()).toEqual([]);
+    });
+
     it("fails instead of dropping a refusal in offset mode", async () => {
       // Without dirty keys there is nowhere for a refused record to stay
       // pending: advancing the offset would strand it silently.
