@@ -6,6 +6,7 @@ import { handleLeaderboardRpc } from "../../packages/worker-read/src/rpc/leaderb
 import { handleUsageRpc, type UsageRpcRequest } from "../../packages/worker-read/src/rpc/usage";
 import { handleDevicesRpc } from "../../packages/worker-read/src/rpc/devices";
 import { withAccounting } from "../../packages/worker-read/src/rpc/accounting";
+import { handleAdminRpc } from "../../packages/worker-read/src/rpc/admin";
 
 describe("D1 read queries against real SQLite", () => {
   let sqlite: DatabaseSync;
@@ -125,5 +126,41 @@ describe("D1 read queries against real SQLite", () => {
     }
     const plan = JSON.stringify(sqlite.prepare(`EXPLAIN QUERY PLAN ${queries[0].sql}`).all(...queries[0].params as never[]));
     expect(plan).not.toContain("usage_details");
+  });
+
+  it("reports storage stats identical to the usage_totals view it replaces", async () => {
+    sqlite.exec(`INSERT INTO teams(id,name,slug,invite_code,created_by,created_at) VALUES ('t9','T9','t9','invite','u1','${fromDate}');
+      INSERT INTO team_members(id,team_id,user_id,role,joined_at) VALUES ('tm1','t9','u1','owner','${fromDate}');
+      INSERT INTO session_records(user_id,session_key,source,kind,started_at,last_message_at,duration_seconds,total_messages,snapshot_at)
+      VALUES ('u1','s1','codex','session','${fromDate}','${toDate}',120,4,'${toDate}');`);
+    const body = await (await handleAdminRpc({ method: "admin.getStorageStats" }, db)).json();
+    const byUser = new Map((body.result as Array<{ user_id: string }>).map((r) => [r.user_id, r]));
+
+    // u1: legacy 65 + 100 + 999 and evidence 18 (the zero-token checkpoint is
+    // excluded), so 1182 over four buckets across d1, d2 and the zero-token
+    // legacy device — the alias-only device holds no usage bucket and is not
+    // counted here, unlike in devices.list. u2 and `private` carry legacy rows
+    // only, and a user with neither usage nor sessions is absent.
+    expect(byUser.get("u1")).toMatchObject({
+      device_count: 3, total_tokens: 1182, usage_row_count: 4,
+      team_count: 1, session_count: 1, total_messages: 4, total_duration_seconds: 120,
+    });
+    expect(byUser.get("u2")).toMatchObject({ device_count: 1, total_tokens: 200, usage_row_count: 1 });
+    expect(byUser.get("private")).toMatchObject({ total_tokens: 9999 });
+    expect(byUser.has("u3")).toBe(false);
+
+    // The rewrite must not change any column, so compare it to the view it
+    // replaces on the same data rather than to hand-written numbers alone.
+    const sql = queries.at(-1)!.sql;
+    expect(sql).not.toContain("usage_totals");
+    const reference = sqlite.prepare(sql.replace("WITH bucket AS (", "WITH bucket AS (")).all() as Array<Record<string, unknown>>;
+    const viewStamp = new Map<string, unknown[]>();
+    for (const row of sqlite.prepare("SELECT user_id, COUNT(DISTINCT device_id) dc, SUM(total_tokens) tt, COUNT(*) n, SUM(evidence_tokens) ev FROM usage_totals GROUP BY user_id").all() as Array<Record<string, unknown>>) {
+      viewStamp.set(row.user_id as string, [row.dc, row.tt, row.n]);
+    }
+    for (const row of reference) {
+      const [dc, tt, n] = viewStamp.get(row.user_id as string) ?? [0, 0, 0];
+      expect([row.device_count, row.total_tokens, row.usage_row_count]).toEqual([dc, tt, n]);
+    }
   });
 });

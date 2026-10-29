@@ -225,7 +225,21 @@ async function handleCountUsers(
 }
 
 async function handleGetStorageStats(db: D1Database): Promise<Response> {
+  // `usage_totals` is a view over (usage_records UNION ALL usage_evidence)
+  // with a GROUP BY, so SQLite materialises it once per reference and none of
+  // these four aggregates can push their predicate inside. Folding the bucket
+  // grain into one CTE costs one materialisation instead of four. The grain
+  // and the `total_tokens > 0` evidence filter match the view exactly, so
+  // every column is unchanged — including `usage_row_count`, which counts
+  // buckets rather than source rows.
   const sql = `
+    WITH bucket AS (
+      SELECT user_id, device_id, source, model, hour_start,
+             SUM(total_tokens) AS total_tokens, MIN(created_at) AS created_at
+      FROM usage_bases
+      WHERE event_id = '' OR total_tokens > 0
+      GROUP BY user_id, device_id, source, model, hour_start
+    )
     SELECT
       u.id              AS user_id,
       u.slug            AS slug,
@@ -251,7 +265,7 @@ async function handleGetStorageStats(db: D1Database): Promise<Response> {
     ) tm_cnt ON tm_cnt.user_id = u.id
     LEFT JOIN (
       SELECT user_id, COUNT(DISTINCT device_id) AS device_count
-      FROM usage_totals
+      FROM bucket
       GROUP BY user_id
     ) dev_cnt ON dev_cnt.user_id = u.id
     LEFT JOIN (
@@ -261,18 +275,18 @@ async function handleGetStorageStats(db: D1Database): Promise<Response> {
         COUNT(*)                        AS usage_row_count,
         MIN(hour_start)                AS first_seen,
         MAX(hour_start)                AS last_seen
-      FROM usage_totals
+      FROM bucket
       GROUP BY user_id
     ) tok ON tok.user_id = u.id
     LEFT JOIN (
       SELECT user_id, SUM(total_tokens) AS tokens_7d
-      FROM usage_totals
+      FROM bucket
       WHERE julianday(hour_start) >= julianday('now', '-7 days')
       GROUP BY user_id
     ) tok7 ON tok7.user_id = u.id
     LEFT JOIN (
       SELECT user_id, SUM(total_tokens) AS tokens_30d
-      FROM usage_totals
+      FROM bucket
       WHERE julianday(hour_start) >= julianday('now', '-30 days')
       GROUP BY user_id
     ) tok30 ON tok30.user_id = u.id
