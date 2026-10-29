@@ -166,6 +166,17 @@ describe("D1 read queries against real SQLite", () => {
     }
   });
 
+  it("reports the system token total identical to the view it replaces", async () => {
+    const body = await (await handleAdminRpc({ method: "admin.getSystemStats" }, db)).json();
+    const reference = sqlite.prepare("SELECT COALESCE(SUM(total_tokens), 0) AS n FROM usage_totals").get() as { n: number };
+    expect(body.result.total_tokens).toBe(reference.n);
+    // The view's zero-token evidence filter is a no-op for a SUM, so the
+    // real risk here is the bucket grain changing which rows are counted —
+    // covered by the count-based assertions in the storage-stats case.
+    expect((sqlite.prepare("SELECT COUNT(*) AS n FROM usage_evidence WHERE total_tokens = 0").get() as { n: number }).n).toBeGreaterThan(0);
+    expect(queries.at(-1)!.sql).not.toContain("usage_totals");
+  });
+
   it("reports live stats identical to the usage_totals references it replaces", async () => {
     const stamp = (offsetMs: number) => new Date(Date.now() - offsetMs).toISOString();
     sqlite.exec(`INSERT INTO usage_records(user_id,device_id,source,model,hour_start,input_tokens,cached_input_tokens,output_tokens,reasoning_output_tokens,total_tokens)

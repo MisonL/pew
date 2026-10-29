@@ -147,11 +147,15 @@ async function handleGetSystemStats(db: D1Database): Promise<Response> {
   // total_tokens = input + cached_input + output + reasoning (schema CHECK);
   // summing input + output alone under-reported every user with cached or
   // reasoning tokens, disagreeing with every other aggregate.
+  //
+  // Summing usage_bases directly, with the zero-token evidence filter the
+  // view applies, skips the view's bucket grouping and its accounting join.
+  // This is an all-time total, so there is nothing to push down.
   const sql = `
     SELECT
       (SELECT COUNT(*) FROM users) AS total_users,
       (SELECT COUNT(*) FROM session_records) AS total_sessions,
-      (SELECT COALESCE(SUM(total_tokens), 0) FROM usage_totals) AS total_tokens,
+      (SELECT COALESCE(SUM(total_tokens), 0) FROM usage_bases WHERE event_id = '' OR total_tokens > 0) AS total_tokens,
       (SELECT COUNT(DISTINCT user_id) FROM session_records WHERE julianday(started_at) >= julianday('now', '-1 day')) AS active_users_24h
   `;
 
