@@ -81,6 +81,7 @@ export default function SessionsPage() {
     from,
     ...(to ? { to } : {}),
     summaryOnly: true,
+    derived: false,
   });
 
   // Half-hour granularity for peak hour detection. Peaks are ranked by
@@ -91,6 +92,7 @@ export default function SessionsPage() {
     ...(to ? { to } : {}),
     granularity: "half-hour",
     includeAccounting: false,
+    derived: false,
   });
 
   // Daily device timeline for the "By Device" dimension on Daily Activity;

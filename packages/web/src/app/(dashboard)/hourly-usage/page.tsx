@@ -365,6 +365,7 @@ export default function RecentPage() {
     from: recentFrom,
     to: recentTo,
     granularity: "half-hour",
+    derived: false,
   });
 
   // Fetch device timeline with half-hour granularity for the main chart.
@@ -405,6 +406,7 @@ export default function RecentPage() {
     to: patternTo,
     granularity: "half-hour",
     includeAccounting: "project",
+    derived: false,
   });
 
   // Fetch device data for the same period at half-hour granularity: the

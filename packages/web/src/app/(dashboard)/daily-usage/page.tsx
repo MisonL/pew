@@ -284,7 +284,7 @@ export default function DailyUsagePage() {
 
   const { from, to } = getMonthRange(year, month);
 
-  const { data, loading: usageLoading, error } = useUsageData({ from, to });
+  const { data, loading: usageLoading, error } = useUsageData({ from, to, derived: false });
 
   // Device timeline for the By Device area and donut charts: labels and
   // totals only, so neither the drill-down rows nor the annotations are read.

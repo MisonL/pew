@@ -259,6 +259,7 @@ export default function ByDevicePage() {
     granularity: "day",
     includeAccounting: "project",
     enabled: Boolean(effectiveDevice),
+    derived: false,
   });
 
   const agentTrend = useMemo(

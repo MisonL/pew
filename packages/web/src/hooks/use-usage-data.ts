@@ -56,6 +56,12 @@ interface UseUsageDataOptions {
   includeAccounting?: boolean | "project";
   /** Fetch the summary only, with an empty record list. */
   summaryOnly?: boolean;
+  /**
+   * Compute the daily/source/model aggregates. Default true; pass false on
+   * pages that read `data.records` directly, where each pass walks every row
+   * and annotation for a result nobody consumes.
+   */
+  derived?: boolean;
 }
 
 interface UseUsageDataResult {
@@ -72,7 +78,7 @@ export function useUsageData(
   options: UseUsageDataOptions = {}
 ): UseUsageDataResult {
   const { days = 30, from: fromDate, to: toDate, source, deviceId, granularity = "day", enabled = true,
-    includeAccounting = true, summaryOnly = false } = options;
+    includeAccounting = true, summaryOnly = false, derived = true } = options;
 
   // Frozen per mount — acceptable; page refresh handles DST changes
   const tzOffset = useTzOffset();
@@ -108,7 +114,7 @@ export function useUsageData(
   const { data, loading, error, refetch } = useFetchData<UsageData>(url, { enabled });
 
   // Memoize derived data to avoid recalculation on every render
-  const { daily, sources, models } = useDerivedUsageData(data?.records ?? null, tzOffset);
+  const { daily, sources, models } = useDerivedUsageData(data?.records ?? null, tzOffset, derived);
 
   return { data, daily, sources, models, loading, error, refetch };
 }

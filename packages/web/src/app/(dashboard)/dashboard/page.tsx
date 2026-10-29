@@ -60,7 +60,7 @@ export default function DashboardPage() {
   const yearCovered =
     allTime || (range.from !== undefined && new Date(range.from).getTime() <= new Date(yearStart).getTime());
 
-  const yearData = useUsageData({ from: yearStart, to: range.to, enabled: !yearCovered });
+  const yearData = useUsageData({ from: yearStart, to: range.to, enabled: !yearCovered, derived: false });
   const yearStartDate = `${currentYear}-01-01`;
   const derivedYearRecords = useMemo(
     () => (yearCovered
@@ -83,9 +83,9 @@ export default function DashboardPage() {
   // extend before the selected period (e.g. a 14-day window asks for the
   // whole previous week). Only the all-time view is guaranteed to contain
   // them, so the extra fetches stay enabled for shorter periods.
-  const halfHourData = useUsageData({ from: range.from, to: range.to, granularity: "half-hour" });
-  const wowData = useUsageData({ days: 14, granularity: "half-hour", enabled: !allTime });
-  const momData = useUsageData({ days: 62, granularity: "half-hour", enabled: !allTime });
+  const halfHourData = useUsageData({ from: range.from, to: range.to, granularity: "half-hour", derived: false });
+  const wowData = useUsageData({ days: 14, granularity: "half-hour", enabled: !allTime, derived: false });
+  const momData = useUsageData({ days: 62, granularity: "half-hour", enabled: !allTime, derived: false });
   const comparisonLoading = wowData.loading || momData.loading;
   const comparisonError = wowData.error ?? momData.error;
 
