@@ -111,6 +111,18 @@ describe("kv-store", () => {
     expect(warnSpy).toHaveBeenCalled();
   });
 
+  // KV limits bytes; `string.length` counts UTF-16 code units. Astral
+  // characters are two units but four UTF-8 bytes, so a code-unit check would
+  // let an over-limit payload through to fail at KV instead of here.
+  it("writeLastFetch measures bytes, not UTF-16 code units", async () => {
+    // 7M astral chars = 14M code units (under the cap) but 28M bytes (over it).
+    const astral = "\u{1F600}".repeat(7 * 1024 * 1024);
+    expect(astral.length).toBeLessThan(24 * 1024 * 1024);
+    await writeLastFetch(kv, "openrouter", { json: { astral }, fetchedAt: "T" });
+    expect(kv.store.has(KEY_LAST_FETCH_OPENROUTER)).toBe(false);
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
   it("readDynamic returns null when kv.get throws and logs", async () => {
     kv.get = vi.fn(async () => {
       throw new Error("kv get 503");

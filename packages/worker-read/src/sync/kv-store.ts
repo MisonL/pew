@@ -104,9 +104,13 @@ export async function writeLastFetch(
     console.error(`dynamic pricing last-fetch serialize error source=${source}:`, err);
     return;
   }
-  if (serialized.length > MAX_LAST_FETCH_BYTES) {
+  // KV's limit is on bytes, not UTF-16 code units: `string.length` counts
+  // astral characters as two units while they occupy four bytes, so a payload
+  // of non-ASCII model names could pass this guard and then fail at KV.
+  const bytes = new TextEncoder().encode(serialized).byteLength;
+  if (bytes > MAX_LAST_FETCH_BYTES) {
     console.warn(
-      `dynamic pricing last-fetch skipped source=${source} bytes=${serialized.length} (over 24 MB)`
+      `dynamic pricing last-fetch skipped source=${source} bytes=${bytes} (over 24 MB)`
     );
     return;
   }
