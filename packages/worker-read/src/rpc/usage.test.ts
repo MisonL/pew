@@ -162,6 +162,29 @@ describe("usage RPC handlers", () => {
       expect(sqlCall).toContain("GROUP BY hour_start, source, model, accounting_json");
     });
 
+    it("projects the counters and drops the annotations when projectAccounting is set", async () => {
+      const basis = { input_tokens: 300, cached_input_tokens: 600, output_tokens: 90, reasoning_output_tokens: 10, total_tokens: 1000 };
+      const group = { basis, counts: { input_total_tokens: 900, cache_read_input_tokens: 500, cache_write_input_tokens: 100,
+          cache_write_5m_input_tokens: null, cache_write_1h_input_tokens: null, output_total_tokens: 100, reasoning_output_tokens: 10 },
+        origin: "codex", model: "m", provider: "openai", route: null, service_tier: null,
+        context_tokens_min: null, context_tokens_max: null, request_count: 1, quality: "reported",
+        reported_costs: [], diagnostics: [] };
+      db.all.mockResolvedValue({ results: [{
+        source: "codex", model: "m", hour_start: "2026-04-01T10:00:00.000Z", ...basis, accounting_count: 1,
+        accounting_json: JSON.stringify([{ status: "matched", basis, groups: [group] }]),
+      }] });
+
+      const response = await handleUsageRpc({
+        method: "usage.get", userId: "u1",
+        fromDate: "2026-04-01T00:00:00.000Z", toDate: "2026-04-02T00:00:00.000Z",
+        projectAccounting: true,
+      }, db);
+      expect(await response.json()).toEqual({ result: [{
+        source: "codex", model: "m", hour_start: "2026-04-01T10:00:00.000Z",
+        input_tokens: 400, cached_input_tokens: 500, output_tokens: 90, reasoning_output_tokens: 10, total_tokens: 1000,
+      }] });
+    });
+
     it("should return 400 when params missing", async () => {
       const request = {
         method: "usage.get",
@@ -267,6 +290,32 @@ describe("usage RPC handlers", () => {
 
       expect(response.status).toBe(200);
       expect(body).toEqual({ result: mockSummary });
+    });
+
+    it("projects the device counters when projectAccounting is set", async () => {
+      const basis = { input_tokens: 300, cached_input_tokens: 600, output_tokens: 90, reasoning_output_tokens: 10, total_tokens: 1000 };
+      const group = { basis, counts: { input_total_tokens: 900, cache_read_input_tokens: 500, cache_write_input_tokens: 100,
+          cache_write_5m_input_tokens: null, cache_write_1h_input_tokens: null, output_total_tokens: 100, reasoning_output_tokens: 10 },
+        origin: "codex", model: "m", provider: "openai", route: null, service_tier: null,
+        context_tokens_min: null, context_tokens_max: null, request_count: 1, quality: "reported",
+        reported_costs: [], diagnostics: [] };
+      db.all.mockResolvedValue({ results: [{
+        device_id: "d1", alias: null, first_seen: "2026-04-01T10:00:00.000Z", last_seen: "2026-04-01T10:00:00.000Z",
+        ...basis, sources: "codex", models: "m", accounting_count: 1,
+        accounting_json: JSON.stringify([{ status: "matched", basis, groups: [group] }]),
+      }] });
+
+      const body = await (await handleUsageRpc({
+        method: "usage.getDeviceSummary", userId: "u1",
+        fromDate: "2026-04-01T00:00:00.000Z", toDate: "2026-04-02T00:00:00.000Z",
+        projectAccounting: true,
+      }, db)).json() as { result: Array<Record<string, unknown>> };
+
+      expect(body.result[0]).toMatchObject({
+        device_id: "d1", input_tokens: 400, cached_input_tokens: 500, output_tokens: 90,
+        reasoning_output_tokens: 10, total_tokens: 1000,
+      });
+      expect(body.result[0].accounting).toBeUndefined();
     });
 
     it("should return 400 when params missing", async () => {

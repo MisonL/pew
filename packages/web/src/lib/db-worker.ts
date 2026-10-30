@@ -585,6 +585,7 @@ export function createWorkerDbRead(): DbRead {
       options?: {
         includeReportedCosts?: boolean;
         includeAccounting?: boolean;
+        projectAccounting?: boolean;
         source?: string;
         deviceId?: string;
         granularity?: "half-hour" | "day";
@@ -595,6 +596,7 @@ export function createWorkerDbRead(): DbRead {
         method: "usage.get",
         ...(options?.includeReportedCosts ? { includeReportedCosts: true } : {}),
         ...(options?.includeAccounting === false ? { includeAccounting: false } : {}),
+        ...(options?.projectAccounting ? { projectAccounting: true } : {}),
         userId,
         fromDate,
         toDate,
@@ -625,12 +627,14 @@ export function createWorkerDbRead(): DbRead {
       userId: string,
       fromDate: string,
       toDate: string,
+      options?: { projectAccounting?: boolean },
     ): Promise<UsageDeviceSummaryRow[]> {
       return rpc<UsageDeviceSummaryRow[]>({
         method: "usage.getDeviceSummary",
         userId,
         fromDate,
         toDate,
+        ...(options?.projectAccounting ? { projectAccounting: true } : {}),
       });
     },
 
@@ -651,7 +655,7 @@ export function createWorkerDbRead(): DbRead {
       userId: string,
       fromDate: string,
       toDate: string,
-      options?: { granularity?: "half-hour" | "day"; tzOffset?: number },
+      options?: { granularity?: "half-hour" | "day"; tzOffset?: number; projectAccounting?: boolean },
     ): Promise<UsageDeviceTimelineRow[]> {
       return rpc<UsageDeviceTimelineRow[]>({
         method: "usage.getDeviceTimeline",
@@ -660,6 +664,7 @@ export function createWorkerDbRead(): DbRead {
         toDate,
         ...(options?.granularity && { granularity: options.granularity }),
         tzOffset: options?.tzOffset,
+        ...(options?.projectAccounting ? { projectAccounting: true } : {}),
       });
     },
 

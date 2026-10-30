@@ -1,66 +1,22 @@
-import type { AccountingAnnotation, AccountingGroup, LegacyTokenCounts, PublicPriceRates, ReportedCost } from "@pew/core";
+import type { AccountedCounts, AccountingAnnotation, AccountingGroup, LegacyTokenCounts, PublicPriceRates, ReportedCost } from "@pew/core";
+import { accountedBasis as basis, accountedParts as parts } from "@pew/core";
 import { estimateCost, lookupPricing, type CostBreakdown, type ModelPricing, type PricingMap } from "./pricing";
 import { normalizeForMatch } from "./model-info-helpers";
 
-export interface AccountedUsage {
+// The counter projection is shared count math: the read Worker applies the
+// same function when it serves a caller that drops the annotations, so both
+// sides must be the one implementation in @pew/core.
+export { displayCounters, accountedTotal } from "@pew/core";
+
+export interface AccountedUsage extends AccountedCounts {
   source: string;
   model: string;
-  input_tokens: number;
-  cached_input_tokens: number;
-  output_tokens: number;
-  reasoning_output_tokens?: number;
-  total_tokens?: number;
-  accounting?: AccountingAnnotation[];
 }
-type AccountedCounts = Omit<AccountedUsage, "source" | "model">;
 
 export function modelUsage(m: { source: string; model: string; input: number; output: number; cached: number; reasoning?: number; accounting?: AccountingAnnotation[] }): AccountedUsage {
   return { source: m.source, model: m.model, input_tokens: m.input, output_tokens: m.output, cached_input_tokens: m.cached,
     reasoning_output_tokens: m.reasoning ?? 0, ...(m.accounting ? { accounting: m.accounting } : {}) };
 }
-
-const fields = ["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"] as const;
-function basis(r: AccountedCounts): LegacyTokenCounts {
-  return { input_tokens: r.input_tokens, cached_input_tokens: r.cached_input_tokens, output_tokens: r.output_tokens,
-    reasoning_output_tokens: r.reasoning_output_tokens ?? 0,
-    total_tokens: r.total_tokens ?? r.input_tokens + r.cached_input_tokens + r.output_tokens + (r.reasoning_output_tokens ?? 0) };
-}
-
-/** Only joined, mutually exclusive bases may be subtracted from an aggregate. */
-function parts(r: AccountedCounts): { groups: AccountingGroup[]; remaining: LegacyTokenCounts; invalid: boolean; pending: boolean } {
-  const original = basis(r); const remaining = { ...original }; const groups: AccountingGroup[] = [];
-  const pending = r.accounting?.some((a) => a.status === "pending") ?? false;
-  for (const a of r.accounting ?? []) {
-    if (a.status !== "matched") continue;
-    if (fields.some((f) => !Number.isSafeInteger(a.basis[f]) || a.basis[f] < 0 ||
-      a.groups.reduce((n, g) => n + g.basis[f], 0) !== a.basis[f])) return { groups: [], remaining: original, invalid: true, pending };
-    for (const f of fields) remaining[f] -= a.basis[f];
-    groups.push(...a.groups);
-  }
-  if (fields.some((f) => remaining[f] < 0)) return { groups: [], remaining: original, invalid: true, pending };
-  return { groups, remaining, invalid: false, pending };
-}
-
-/** Disjoint display counters. Original API fields remain the reconciliation basis. */
-export function displayCounters(r: AccountedCounts): LegacyTokenCounts {
-  const p = parts(r); const out = { ...p.remaining };
-  for (const g of p.groups) {
-    const c = g.counts;
-    if (!c) { for (const f of fields) out[f] += g.basis[f]; continue; }
-    // Unknown read classification retains the legacy chart partition. It must
-    // not turn Hermes' unsplit read/write cache bucket into uncached input.
-    const read = c.cache_read_input_tokens ?? g.basis.cached_input_tokens;
-    const reasoning = c.reasoning_output_tokens ?? g.basis.reasoning_output_tokens;
-    out.input_tokens += c.input_total_tokens - read;
-    out.cached_input_tokens += read;
-    out.output_tokens += c.output_total_tokens - reasoning;
-    out.reasoning_output_tokens += reasoning;
-    out.total_tokens += c.input_total_tokens + c.output_total_tokens;
-  }
-  return out;
-}
-
-export const accountedTotal = (r: AccountedCounts): number => displayCounters(r).total_tokens;
 
 function fromRates(r: PublicPriceRates): ModelPricing {
   return { input: r.inputPerMillion, output: r.outputPerMillion,

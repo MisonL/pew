@@ -6,6 +6,7 @@ import { handleLeaderboardRpc } from "../../packages/worker-read/src/rpc/leaderb
 import { handleUsageRpc, type UsageRpcRequest } from "../../packages/worker-read/src/rpc/usage";
 import { handleDevicesRpc } from "../../packages/worker-read/src/rpc/devices";
 import { withAccounting } from "../../packages/worker-read/src/rpc/accounting";
+import { displayCounters } from "@pew/core";
 import { handleAdminRpc } from "../../packages/worker-read/src/rpc/admin";
 import { handleSeasonsRpc } from "../../packages/worker-read/src/rpc/seasons";
 import { handleLiveRpc } from "../../packages/worker-read/src/rpc/live";
@@ -254,6 +255,51 @@ describe("D1 read queries against real SQLite", () => {
     }
     expect(body.result.total_tokens).toBeGreaterThan(0);
     expect(queries[before].sql).not.toContain("usage_details");
+  });
+
+  it("projects the per-device counters the caller would derive, without the annotations", async () => {
+    // The annotation is ~99.9% of a large by-device response and the modes that
+    // drop it still chart the projected split. The Worker runs the same
+    // accounted query and returns displayCounters() itself, so these counters
+    // must be exactly what the caller computed before.
+    const basis = { input_tokens: 300, cached_input_tokens: 600, output_tokens: 90, reasoning_output_tokens: 10, total_tokens: 1000 };
+    const group = { basis, counts: { input_total_tokens: 900, cache_read_input_tokens: 500, cache_write_input_tokens: 100,
+        cache_write_5m_input_tokens: null, cache_write_1h_input_tokens: null, output_total_tokens: 100, reasoning_output_tokens: 10 },
+      origin: "codex", model: "m9", provider: "openai", route: null, service_tier: null,
+      context_tokens_min: null, context_tokens_max: null, request_count: 1, quality: "reported",
+      reported_costs: [], diagnostics: [] };
+    sqlite.exec(`INSERT INTO usage_records(user_id,device_id,source,model,hour_start,input_tokens,cached_input_tokens,output_tokens,reasoning_output_tokens,total_tokens)
+      VALUES ('u1','d3','codex','m9','${fromDate}',300,600,90,10,1000);
+      INSERT INTO usage_details(user_id,device_id,source,model,hour_start,event_id,evidence_snapshot_seq,details_version,source_revision,parser_revision,detail_revision,input_tokens,cached_input_tokens,output_tokens,reasoning_output_tokens,total_tokens,groups_json)
+      VALUES ('u1','d3','codex','m9','${fromDate}','',NULL,1,1,1,1,300,600,90,10,1000,'${JSON.stringify([group])}');`);
+
+    const compare = async (request: Record<string, unknown>, pick: (rows: Array<Record<string, unknown>>) => Record<string, unknown> | undefined) => {
+      const annotated = (await (await handleUsageRpc({ ...request } as never, db)).json()).result;
+      const projected = (await (await handleUsageRpc({ ...request, projectAccounting: true } as never, db)).json()).result;
+      const full = pick(annotated)!; const lean = pick(projected)!;
+      expect(full.accounting).toBeDefined();
+      expect(lean.accounting).toBeUndefined();
+      // The fixture is discriminating: the split moves 200 tokens from
+      // uncached input into the cached bucket.
+      expect(lean.input_tokens).not.toBe(full.input_tokens);
+      expect(lean).toMatchObject(displayCounters(full as never));
+      return lean;
+    };
+
+    const byDevice = (rows: Array<Record<string, unknown>>) => rows.find((r) => r.device_id === "d3");
+    const summary = await compare({ method: "usage.getDeviceSummary", userId: "u1", fromDate, toDate }, byDevice);
+    expect(summary.input_tokens).toBe(400);
+    expect(summary.cached_input_tokens).toBe(500);
+    expect(summary.total_tokens).toBe(1000);
+
+    const byDay = (rows: Array<Record<string, unknown>>) => rows.find((r) => r.device_id === "d3" && r.date === "2026-09-01");
+    const timeline = await compare({ method: "usage.getDeviceTimeline", userId: "u1", fromDate, toDate }, byDay);
+    const counters = ["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"];
+    expect(Object.fromEntries(counters.map((f) => [f, timeline[f]]))).toEqual(Object.fromEntries(counters.map((f) => [f, summary[f]])));
+
+    // Only the response changed: the projection is defined over the details,
+    // so the query still reads them.
+    expect(queries.at(-1)!.sql).toContain("usage_details");
   });
 
   it("reports recent activity identical to the usage_totals read it replaces", async () => {

@@ -5,8 +5,20 @@
  */
 
 import type { D1Database } from "@cloudflare/workers-types";
+import { displayCounters, type AccountedCounts } from "@pew/core";
 import { ACCOUNTED_USAGE_SQL } from "./accounting";
 import { mergeUsageRows } from "./usage-aggregation";
+
+/**
+ * Replace the annotation with the counters a display-side caller derives from
+ * it. The annotations are ~99.9% of a large response (measured: 140 MB of a
+ * by-device timeline against a few KB of counters) and the callers that ask
+ * for this shape drop them immediately after projecting.
+ */
+function projectCounters<T extends AccountedCounts>(row: T): Omit<T, "accounting"> {
+  const { accounting: _annotations, ...rest } = row;
+  return { ...rest, ...displayCounters(row) };
+}
 
 // ---------------------------------------------------------------------------
 // Response Types
@@ -75,6 +87,14 @@ export interface GetUsageRequest {
    * discarding the annotations in the web process.
    */
   includeAccounting?: boolean;
+  /**
+   * Return counters already projected through displayCounters() and no
+   * annotations. Unlike `includeAccounting: false` this still reads the
+   * details, because the projection is defined over them; it only drops them
+   * from the response. A caller that would derive the same split itself gets
+   * the identical numbers without the payload.
+   */
+  projectAccounting?: boolean;
   method: "usage.get";
   userId: string;
   fromDate: string;
@@ -90,6 +110,8 @@ export interface GetDeviceSummaryRequest {
   userId: string;
   fromDate: string;
   toDate: string;
+  /** See GetUsageRequest.projectAccounting. */
+  projectAccounting?: boolean;
 }
 
 /**
@@ -130,6 +152,8 @@ export interface GetDeviceTimelineRequest {
   toDate: string;
   granularity?: "half-hour" | "day";
   tzOffset?: number;
+  /** See GetUsageRequest.projectAccounting. */
+  projectAccounting?: boolean;
 }
 
 export type UsageRpcRequest =
@@ -246,11 +270,9 @@ async function handleGetUsage(
     .bind(...prependParams, ...params)
     .all<UsageRow>();
 
-  return Response.json({
-    result: req.includeAccounting === false
-      ? results.results
-      : mergeUsageRows(results.results, ["hour_start", "source", "model"], req.includeReportedCosts === true),
-  });
+  if (req.includeAccounting === false) return Response.json({ result: results.results });
+  const rows = mergeUsageRows(results.results, ["hour_start", "source", "model"], req.includeReportedCosts === true);
+  return Response.json({ result: req.projectAccounting ? rows.map(projectCounters) : rows });
 }
 
 async function handleGetUsageTotals(
@@ -337,7 +359,8 @@ async function handleGetDeviceSummary(
     .all<DeviceSummaryRow>();
 
   const rows = mergeUsageRows(results.results, ["device_id"]);
-  return Response.json({ result: rows.sort((a, b) => b.total_tokens - a.total_tokens) });
+  const sorted = rows.sort((a, b) => b.total_tokens - a.total_tokens);
+  return Response.json({ result: req.projectAccounting ? sorted.map(projectCounters) : sorted });
 }
 
 async function handleGetDeviceCostDetails(
@@ -429,7 +452,8 @@ async function handleGetDeviceTimeline(
     .all<TimelineRow>();
 
   const rows = mergeUsageRows(results.results, ["date", "device_id"]);
-  return Response.json({ result: rows.sort((a, b) => Date.parse(a.date) - Date.parse(b.date)) });
+  const sorted = rows.sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+  return Response.json({ result: req.projectAccounting ? sorted.map(projectCounters) : sorted });
 }
 
 // ---------------------------------------------------------------------------

@@ -239,12 +239,14 @@ describe("GET /api/usage", () => {
 
     it("returns displayCounters-projected counters when includeAccounting=project", async () => {
       // The devices page's trend and model-mix charts rank by accountedTotal(),
-      // i.e. displayCounters().total_tokens. Projecting server-side reproduces
-      // those numbers exactly while dropping the annotations from the payload.
+      // i.e. displayCounters().total_tokens. The read Worker projects, so the
+      // annotations never cross the Worker boundary; the summary is still the
+      // raw basis, so it comes from its own one-row aggregate.
       const r = accountingFixture();
       const accounting = [{ status: "matched" as const, basis: r.basis, groups: [r.groups[0]!] }];
       const row = { ...r.basis, source: r.source, model: r.model, hour_start: r.hour_start, accounting };
       mockDbRead.getUsageRecords.mockResolvedValue([row]);
+      mockDbRead.getUsageTotals.mockResolvedValue({ ...r.basis, evidence_tokens: 0, approximate_tokens: 0 });
 
       const full = await (await GET(makeGetRequest("/api/usage"))).json();
       const projected = await (await GET(makeGetRequest("/api/usage", { includeAccounting: "project" }))).json();
@@ -254,6 +256,9 @@ describe("GET /api/usage", () => {
       const expected = displayCounters(full.records[0] as Parameters<typeof displayCounters>[0]);
       for (const field of counters) expect(projected.records[0][field]).toBe(expected[field]);
       expect(projected.summary).toEqual(full.summary);
+      // The Worker is told to project, and the raw summary is fetched separately.
+      expect(mockDbRead.getUsageRecords.mock.calls[1]?.[3]).toMatchObject({ projectAccounting: true });
+      expect(mockDbRead.getUsageTotals).toHaveBeenCalledOnce();
     });
 
     it("returns the summary without records when summaryOnly=1", async () => {

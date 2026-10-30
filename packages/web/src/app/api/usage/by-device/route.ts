@@ -131,11 +131,15 @@ export async function GET(request: Request) {
 
   try {
     // Four independent reads. Awaiting them in sequence costs four round
-    // trips where one does, and this route backs the heaviest pages.
+    // trips where one does, and this route backs the heaviest pages. The
+    // modes that drop the per-device annotations ask the read Worker to
+    // project them: the same function, but the ~11 MB of reconciliation
+    // evidence for an all-time window never leaves the Worker.
+    const projectDeviceAccounting = !includeDeviceAccounting;
     const [summaryRows, costRows, timelineRows, pricingMap] = await Promise.all([
-      db.getDeviceSummary(userId, fromDate, toDate),
+      db.getDeviceSummary(userId, fromDate, toDate, { projectAccounting: projectDeviceAccounting }),
       db.getDeviceCostDetails(userId, fromDate, toDate),
-      db.getDeviceTimeline(userId, fromDate, toDate, { granularity, tzOffset }),
+      db.getDeviceTimeline(userId, fromDate, toDate, { granularity, tzOffset, projectAccounting: projectDeviceAccounting }),
       loadPricingMap(db),
     ]);
 

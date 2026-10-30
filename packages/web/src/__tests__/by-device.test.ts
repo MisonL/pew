@@ -168,6 +168,43 @@ describe("GET /api/usage/by-device", () => {
     expect(body.timeline[0].total_tokens).toBe(projected.total_tokens);
   });
 
+  it("asks the read Worker to project the per-device annotations instead of shipping them", async () => {
+    // The annotations are 99.9% of the payload in the modes that drop them, so
+    // the projection runs where the details are already read.
+    vi.mocked(resolveUser).mockResolvedValue({ userId: "u1", email: "test@example.com" });
+    mockDbRead.getDeviceSummary.mockResolvedValue([]);
+    mockDbRead.getDeviceCostDetails.mockResolvedValue([]);
+    mockDbRead.getDeviceTimeline.mockResolvedValue([]);
+
+    await GET(makeGetRequest("/api/usage/by-device", { from: "2026-09-01", to: "2026-09-02", includeAccounting: "details" }));
+    expect(mockDbRead.getDeviceSummary).toHaveBeenLastCalledWith(
+      "u1", expect.any(String), expect.any(String), { projectAccounting: true });
+    expect(mockDbRead.getDeviceTimeline).toHaveBeenLastCalledWith(
+      "u1", expect.any(String), expect.any(String), expect.objectContaining({ projectAccounting: true }));
+
+    await GET(makeGetRequest("/api/usage/by-device", { from: "2026-09-01", to: "2026-09-02" }));
+    expect(mockDbRead.getDeviceSummary).toHaveBeenLastCalledWith(
+      "u1", expect.any(String), expect.any(String), { projectAccounting: false });
+    expect(mockDbRead.getDeviceTimeline).toHaveBeenLastCalledWith(
+      "u1", expect.any(String), expect.any(String), expect.objectContaining({ projectAccounting: false }));
+  });
+
+  it("passes through counters the read Worker already projected", async () => {
+    vi.mocked(resolveUser).mockResolvedValue({ userId: "u1", email: "test@example.com" });
+    mockDbRead.getDeviceSummary.mockResolvedValue([{ device_id: "d1", alias: null, first_seen: "2026-09-01T00:00:00.000Z",
+      last_seen: "2026-09-01T00:00:00.000Z", input_tokens: 60, cached_input_tokens: 40, output_tokens: 50,
+      reasoning_output_tokens: 0, total_tokens: 150, sources: "claude-code", models: "m" }]);
+    mockDbRead.getDeviceCostDetails.mockResolvedValue([]);
+    mockDbRead.getDeviceTimeline.mockResolvedValue([{ date: "2026-09-01", device_id: "d1", input_tokens: 60,
+      cached_input_tokens: 40, output_tokens: 50, reasoning_output_tokens: 0, total_tokens: 150 }]);
+
+    const body = await (await GET(makeGetRequest("/api/usage/by-device", { from: "2026-09-01", to: "2026-09-02", includeAccounting: "0" }))).json();
+    // displayCounters() is idempotent, so the route's fallback projection must
+    // leave an already-projected row exactly as the Worker sent it.
+    expect(body.devices[0]).toMatchObject({ input_tokens: 60, cached_input_tokens: 40, output_tokens: 50, total_tokens: 150 });
+    expect(body.timeline[0]).toMatchObject({ input_tokens: 60, cached_input_tokens: 40, output_tokens: 50, total_tokens: 150 });
+  });
+
   describe("authentication", () => {
     it("should reject unauthenticated requests", async () => {
       vi.mocked(resolveUser).mockResolvedValueOnce(null);

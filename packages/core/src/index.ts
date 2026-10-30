@@ -4,6 +4,7 @@ export * from "./validation.js";
 export * from "./evidence-validation.js";
 export type * from "./accounting-types.js";
 export * from "./accounting.js";
+export * from "./display-counters.js";
 export type * from "./pricing-types.js";
 export * from "./request-body.js";
 export * from "./count-math.js";

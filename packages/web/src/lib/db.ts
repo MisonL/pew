@@ -335,6 +335,8 @@ export interface DbRead {
       includeReportedCosts?: boolean;
       /** `false` skips the accounting annotations (and the details join) in the read Worker. */
       includeAccounting?: boolean;
+      /** `true` keeps the details join but returns counters already projected, without the annotations. */
+      projectAccounting?: boolean;
       source?: string;
       deviceId?: string;
       granularity?: "half-hour" | "day";
@@ -355,6 +357,7 @@ export interface DbRead {
     userId: string,
     fromDate: string,
     toDate: string,
+    options?: { projectAccounting?: boolean },
   ): Promise<UsageDeviceSummaryRow[]>;
 
   /** Get cost details for by-device pricing calculation */
@@ -369,7 +372,7 @@ export interface DbRead {
     userId: string,
     fromDate: string,
     toDate: string,
-    options?: { granularity?: "half-hour" | "day"; tzOffset?: number },
+    options?: { granularity?: "half-hour" | "day"; tzOffset?: number; projectAccounting?: boolean },
   ): Promise<UsageDeviceTimelineRow[]>;
 
   // ---------------------------------------------------------------------------

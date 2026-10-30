@@ -59,11 +59,15 @@ export async function GET(request: Request) {
   // the annotations away. Callers whose charts rank by accountedTotal() pass
   // includeAccounting=project instead: the counters come back already
   // projected through displayCounters(), which is what those charts computed
-  // locally from the annotations anyway. Default stays true for API
-  // compatibility.
+  // locally from the annotations anyway. That projection runs in the read
+  // Worker too, so the evidence never crosses the Worker boundary either; the
+  // summary stays the raw reconciliation basis, so it comes from its own
+  // one-row aggregate rather than the projected records.
+  // Default stays true for API compatibility.
   const accountingMode = url.searchParams.get("includeAccounting");
   const includeAccounting = accountingMode !== "0" && accountingMode !== "project";
   const omitAccounting = accountingMode === "0";
+  const projectAccounting = accountingMode === "project";
   // Some callers only read the summary (e.g. sessions' efficiency stat). The
   // records are the multi-MB part; the summary is computed here either way.
   const summaryOnly = url.searchParams.get("summaryOnly") === "1";
@@ -155,45 +159,68 @@ export async function GET(request: Request) {
       });
     }
 
-    const records = await db.getUsageRecords(userId, fromDate, toDate, {
-      includeReportedCosts: true,
-      ...(omitAccounting && { includeAccounting: false }),
+    const filters = {
       ...(sourceFilter && { source: sourceFilter }),
       ...(deviceIdFilter && { deviceId: deviceIdFilter }),
-      granularity: granularity as "half-hour" | "day",
-      tzOffset,
-    });
+    };
+    // In "project" mode the records arrive already projected, so the summary's
+    // documented raw basis has to come from its own one-row aggregate rather
+    // than from summing the projected rows.
+    const [records, rawTotals] = await Promise.all([
+      db.getUsageRecords(userId, fromDate, toDate, {
+        includeReportedCosts: true,
+        ...(omitAccounting && { includeAccounting: false }),
+        ...(projectAccounting && { projectAccounting: true }),
+        ...filters,
+        granularity: granularity as "half-hour" | "day",
+        tzOffset,
+      }),
+      projectAccounting ? db.getUsageTotals(userId, fromDate, toDate, filters) : Promise.resolve(null),
+    ]);
 
     // Compute summary
-    const summary = records.reduce(
-      (acc, r) => ({
-        input_tokens: sumCounts(acc.input_tokens, r.input_tokens),
-        cached_input_tokens:
-          sumCounts(acc.cached_input_tokens, r.cached_input_tokens),
-        output_tokens: sumCounts(acc.output_tokens, r.output_tokens),
-        reasoning_output_tokens:
-          sumCounts(acc.reasoning_output_tokens, r.reasoning_output_tokens),
-        total_tokens: sumCounts(acc.total_tokens, r.total_tokens),
-      }),
-      {
-        input_tokens: 0,
-        cached_input_tokens: 0,
-        output_tokens: 0,
-        reasoning_output_tokens: 0,
-        total_tokens: 0,
-      }
-    );
+    const summary = rawTotals
+      ? {
+          input_tokens: rawTotals.input_tokens,
+          cached_input_tokens: rawTotals.cached_input_tokens,
+          output_tokens: rawTotals.output_tokens,
+          reasoning_output_tokens: rawTotals.reasoning_output_tokens,
+          total_tokens: rawTotals.total_tokens,
+        }
+      : records.reduce(
+          (acc, r) => ({
+            input_tokens: sumCounts(acc.input_tokens, r.input_tokens),
+            cached_input_tokens:
+              sumCounts(acc.cached_input_tokens, r.cached_input_tokens),
+            output_tokens: sumCounts(acc.output_tokens, r.output_tokens),
+            reasoning_output_tokens:
+              sumCounts(acc.reasoning_output_tokens, r.reasoning_output_tokens),
+            total_tokens: sumCounts(acc.total_tokens, r.total_tokens),
+          }),
+          {
+            input_tokens: 0,
+            cached_input_tokens: 0,
+            output_tokens: 0,
+            reasoning_output_tokens: 0,
+            total_tokens: 0,
+          }
+        );
 
-    const evidenceTokens = records.reduce((n, r) => sumCounts(n, r.evidence_tokens ?? 0), 0);
-    const approximateTokens = records.reduce((n, r) => sumCounts(n, r.approximate_tokens ?? 0), 0);
+    const evidenceTokens = rawTotals
+      ? rawTotals.evidence_tokens
+      : records.reduce((n, r) => sumCounts(n, r.evidence_tokens ?? 0), 0);
+    const approximateTokens = rawTotals
+      ? rawTotals.approximate_tokens
+      : records.reduce((n, r) => sumCounts(n, r.approximate_tokens ?? 0), 0);
     // The summary stays the sum of the raw legacy counters regardless of the
     // annotation mode: it is the documented reconciliation basis, not a display
-    // aggregate. Plain opt-out records keep their raw counters too — sessions'
-    // peak detection ranks by the raw total, so projecting there would move its
-    // numbers. "project" is for the display-side consumers whose accountedTotal()
-    // ranking the projection reproduces exactly. Mode "0" normally arrives
-    // already stripped by the read Worker; a Worker too old to honor
-    // includeAccounting still returns the annotations, so drop any that show up.
+    // aggregate (see `rawTotals` above for "project"). Plain opt-out records
+    // keep their raw counters too — sessions' peak detection ranks by the raw
+    // total, so projecting there would move its numbers. "project" is for the
+    // display-side consumers whose accountedTotal() ranking the projection
+    // reproduces exactly. Both modes normally arrive already stripped by the
+    // read Worker; a Worker too old to honor the flags still returns the
+    // annotations, so project or drop any that show up here as well.
     const projected = includeAccounting
       ? records
       : accountingMode === "project"
