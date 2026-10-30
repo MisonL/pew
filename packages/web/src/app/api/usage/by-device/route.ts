@@ -89,6 +89,9 @@ export async function GET(request: Request) {
   //   "0"        none; the counters come back already projected through
   //              displayCounters() so a client that skips them still charts the
   //              same split — /dashboard's breakdown charts pass this
+  // The two modes that drop the per-device annotations have the read Worker
+  // project them, so the evidence never leaves the Worker either (measured:
+  // 140.8 MB of a by-device timeline against a few KB of counters).
   const accountingMode = url.searchParams.get("includeAccounting");
   const includeDeviceAccounting = accountingMode !== "0" && accountingMode !== "details";
   const includeDetailAccounting = accountingMode !== "0";
