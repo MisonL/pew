@@ -117,23 +117,30 @@ async function handleGetRecentActivity(
   // carry offsets or extra precision, which sort wrong as text. This predicate
   // is not sargable (full scan), but the handler has no caller and the table
   // is small; correctness on legacy rows wins.
-  const conditions = ["julianday(ur.hour_start) >= julianday('now', '-1 hour')"];
+  const conditions = ["julianday(hour_start) >= julianday('now', '-1 hour')"];
   const params: unknown[] = [];
 
   if (req.userId) {
-    conditions.push("ur.user_id = ?");
+    conditions.push("user_id = ?");
     params.push(req.userId);
   }
 
   if (req.source) {
-    conditions.push("ur.source = ?");
+    conditions.push("source = ?");
     params.push(req.source);
   }
 
-  // usage_totals is a view of (user, device, source, model, hour) buckets —
-  // there is no per-row id to select. Selecting ur.id made every call fail
-  // at prepare time with "no such column".
+  // Buckets are the display grain, so the bases are folded to one row per
+  // (user, device, source, model, hour) before the join — `usage_totals`
+  // would re-materialise the whole view to reach the same rows.
   const sql = `
+    WITH recent AS (
+      SELECT user_id, device_id, source, model, hour_start,
+        SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens
+      FROM usage_bases
+      WHERE (event_id = '' OR total_tokens > 0) AND ${conditions.join(" AND ")}
+      GROUP BY user_id, device_id, source, model, hour_start
+    )
     SELECT
       ur.user_id,
       u.name,
@@ -142,9 +149,8 @@ async function handleGetRecentActivity(
       ur.input_tokens,
       ur.output_tokens,
       ur.hour_start AS created_at
-    FROM usage_totals ur
+    FROM recent ur
     JOIN users u ON u.id = ur.user_id
-    WHERE ${conditions.join(" AND ")}
     ORDER BY ur.hour_start DESC
     LIMIT ?
   `;

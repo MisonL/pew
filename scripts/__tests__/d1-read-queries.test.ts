@@ -239,6 +239,27 @@ describe("D1 read queries against real SQLite", () => {
     expect(queries.at(-1)!.sql).not.toContain("usage_totals");
   });
 
+  it("reports recent activity identical to the usage_totals read it replaces", async () => {
+    const stamp = (offsetMs: number) => new Date(Date.now() - offsetMs).toISOString();
+    sqlite.exec(`INSERT INTO usage_records(user_id,device_id,source,model,hour_start,input_tokens,cached_input_tokens,output_tokens,reasoning_output_tokens,total_tokens)
+      VALUES ('u1','d1','codex','m1','${stamp(10 * 60_000)}',10,0,0,0,10),
+             ('u1','d2','codex','m1','${stamp(10 * 60_000)}',20,0,0,0,20),
+             ('u1','d1','codex','m1','${stamp(90 * 60_000)}',999,0,0,0,999);
+      INSERT INTO usage_evidence(user_id,device_id,event_id,group_id,source,model,hour_start,timestamp,call_type,origin,provider,granularity,time_precision,snapshot_seq,input_tokens,cached_input_tokens,output_tokens,reasoning_output_tokens,total_tokens)
+      VALUES ('u1','d1','${"7".repeat(64)}','${"6".repeat(64)}','codex','m1','${stamp(12 * 60_000)}','${stamp(12 * 60_000)}','request','test','test','operation','exact',1,5,0,0,0,5),
+             ('u1','d3','${"5".repeat(64)}','${"4".repeat(64)}','codex','m1','${stamp(13 * 60_000)}','${stamp(13 * 60_000)}','request','test','test','operation','exact',1,0,0,0,0,0);`);
+    const body = await (await handleLiveRpc({ method: "live.getRecentActivity", userId: "u1" } as never, db)).json();
+    const reference = sqlite.prepare(`SELECT ur.user_id, u.name, ur.source, ur.model, ur.input_tokens, ur.output_tokens, ur.hour_start AS created_at
+      FROM usage_totals ur JOIN users u ON u.id = ur.user_id
+      WHERE julianday(ur.hour_start) >= julianday('now','-1 hour') AND ur.user_id = ?
+      ORDER BY ur.hour_start DESC LIMIT ?`).all("u1", 50);
+    expect(body.result).toEqual(reference);
+    // One row per device bucket, and the zero-token evidence checkpoint is
+    // excluded exactly as the view excluded it.
+    expect(body.result).toHaveLength(3);
+    expect(queries.at(-1)!.sql).not.toContain("usage_totals");
+  });
+
   it("reports season token totals identical to the usage_totals join it replaces", async () => {
     sqlite.exec(`INSERT INTO seasons(id,name,slug,start_date,end_date,created_by) VALUES ('s1','S','s','2026-01-01T00:00:00Z','2026-12-31T00:00:00Z','u1');
       INSERT INTO teams(id,name,slug,invite_code,created_by,created_at) VALUES ('st1','T1','st1','i','u1','${fromDate}');

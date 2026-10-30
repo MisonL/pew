@@ -106,7 +106,7 @@ describe("live RPC handlers", () => {
       expect(body).toEqual({ result: mockActivity });
     });
 
-    it("does not select columns the usage_totals view lacks", async () => {
+    it("does not select columns the aggregation lacks", async () => {
       db.all.mockResolvedValue({ results: [] });
       await handleLiveRpc({ method: "live.getRecentActivity" }, db);
 
@@ -114,7 +114,10 @@ describe("live RPC handlers", () => {
       // Selecting ur.id made every call fail at prepare time ("no such
       // column") with a 500.
       expect(sql).not.toMatch(/\bur\.id\b/);
-      expect(sql).toContain("FROM usage_totals ur");
+      // Folds the bases to the same bucket grain usage_totals exposed, instead
+      // of materialising the whole view.
+      expect(sql).toContain("FROM usage_bases");
+      expect(sql).not.toContain("usage_totals");
     });
 
     it("should filter by userId", async () => {
