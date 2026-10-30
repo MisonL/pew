@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GET } from "@/app/api/usage/by-device/route";
 import * as dbModule from "@/lib/db";
 import { createMockDbRead, loadMockedAuthHelpers, makeGetRequest } from "./test-utils";
+import { resetPricingMapCache } from "@/lib/load-pricing-map";
 import { accountingFixture } from "../../../core/src/__test-helpers__/accounting";
 import { displayCounters } from "@/lib/accounting";
 
@@ -18,6 +19,12 @@ vi.mock("@/lib/auth-helpers", () => ({
 }));
 
 const { resolveUser } = await loadMockedAuthHelpers();
+
+// loadPricingMap serves from a per-process cache; without a reset between
+// tests each case would inherit the stub a previous case installed.
+beforeEach(() => {
+  resetPricingMapCache();
+});
 
 describe("GET /api/usage/by-device", () => {
   let mockDbRead: ReturnType<typeof createMockDbRead>;

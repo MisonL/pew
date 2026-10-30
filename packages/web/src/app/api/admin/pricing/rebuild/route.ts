@@ -15,6 +15,7 @@ import { NextResponse } from "next/server";
 import { resolveAdmin } from "@/lib/admin";
 import { forbiddenResponse } from "@/lib/api-responses";
 import { getDbRead } from "@/lib/db";
+import { resetPricingMapCache } from "@/lib/load-pricing-map";
 
 export async function POST(request: Request): Promise<Response> {
   const admin = await resolveAdmin(request);
@@ -26,6 +27,9 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const outcome = await dbRead.rebuildDynamicPricing({ forceRefetch: true });
+    // The catalogue just changed; serve it on the next request rather than
+    // from a map built up to a minute ago.
+    if (outcome.ok) resetPricingMapCache();
     return NextResponse.json(outcome, {
       status: outcome.ok ? 200 : 207,
       headers: { "Cache-Control": "private, no-store" },

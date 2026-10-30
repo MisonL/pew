@@ -21,6 +21,7 @@ const { getDbRead } = (await import("@/lib/db")) as unknown as {
 };
 
 import { createMockDbRead, loadMockedAuthHelpers } from "./test-utils";
+import { resetPricingMapCache } from "@/lib/load-pricing-map";
 
 // ---------------------------------------------------------------------------
 // GET /api/pricing
@@ -32,6 +33,7 @@ describe("GET /api/pricing", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    resetPricingMapCache();
     mockDbRead = createMockDbRead();
     mockDbRead.getDynamicPricing.mockResolvedValue({
       entries: [],

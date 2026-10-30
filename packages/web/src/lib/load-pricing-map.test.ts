@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { loadPricingMap } from "./load-pricing-map";
+import { loadPricingMap, resetPricingMapCache } from "./load-pricing-map";
 import { DEFAULT_PREFIX_PRICES, DEFAULT_SOURCE_DEFAULTS } from "./pricing";
 import type { DbRead } from "./db";
 
@@ -28,6 +28,7 @@ describe("loadPricingMap", () => {
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
+    resetPricingMapCache();
     consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
@@ -80,13 +81,39 @@ describe("loadPricingMap", () => {
     await expect(loadPricingMap(db)).resolves.toBeDefined();
   });
 
+  it("serves from the module cache within the window and refetches after reset", async () => {
+    const dynamic = vi.fn().mockResolvedValue({ entries: [], servedFrom: "baseline" });
+    const db = makeDb({ dynamic });
+    const first = await loadPricingMap(db);
+    const second = await loadPricingMap(db);
+    expect(second).toBe(first);
+    expect(dynamic).toHaveBeenCalledTimes(1);
+    resetPricingMapCache();
+    await loadPricingMap(db);
+    expect(dynamic).toHaveBeenCalledTimes(2);
+  });
+
+  it("collapses concurrent loads into one fetch", async () => {
+    let release!: (value: { entries: never[]; servedFrom: "baseline" }) => void;
+    const dynamic = vi.fn().mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    const db = makeDb({ dynamic });
+    const a = loadPricingMap(db);
+    const b = loadPricingMap(db);
+    release({ entries: [], servedFrom: "baseline" });
+    await expect(Promise.all([a, b])).resolves.toHaveLength(2);
+    expect(dynamic).toHaveBeenCalledTimes(1);
+  });
+
   it("identifies price content independently of fetch time, including alternate route writes", async () => {
     const entry = { model: "openai/test", provider: "OpenAI", displayName: null, contextWindow: null,
       inputPerMillion: 4, outputPerMillion: 20, cachedPerMillion: 0.4, cacheWritePerMillion: 5,
       origin: "models.dev" as const, updatedAt: "2026-09-01T00:00:00.000Z", route: "direct" as const,
       routePrices: { openrouter: { inputPerMillion: 2, outputPerMillion: 10, cachedPerMillion: 0.2,
         cacheWritePerMillion: 2.5, origin: "openrouter", updatedAt: "2026-09-01T00:00:00.000Z" } } };
-    const get = (value: typeof entry) => loadPricingMap(makeDb({ dynamic: vi.fn().mockResolvedValue({ entries: [value], servedFrom: "kv" }) }));
+    const get = (value: typeof entry) => {
+      resetPricingMapCache();
+      return loadPricingMap(makeDb({ dynamic: vi.fn().mockResolvedValue({ entries: [value], servedFrom: "kv" }) }));
+    };
     const first = await get(entry);
     const later = { ...entry, updatedAt: "2026-09-02T00:00:00.000Z", routePrices: { openrouter: {
       ...entry.routePrices.openrouter, updatedAt: "2026-09-02T00:00:00.000Z",

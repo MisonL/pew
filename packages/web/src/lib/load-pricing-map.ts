@@ -9,6 +9,13 @@
  *   - dynamic fails    → getDefaultPricingMap() (prefix/source/fallback only)
  *
  * Never throws. Each rejection is logged with its source tag.
+ *
+ * Per-process cache: the dynamic catalogue is one KV read plus a rebuild over
+ * the whole entry list, and the dashboard calls this on every page load. The
+ * entry (60 s) matches /api/pricing's own `max-age=60`, so a client can never
+ * see a map fresher than this one would serve. `resetPricingMapCache` drops it
+ * the moment the catalogue is actually mutated, so an admin force-sync is
+ * reflected immediately rather than within the window.
  */
 
 import type { DbRead } from "./db";
@@ -21,7 +28,26 @@ import {
 
 type PricingMapDb = Pick<DbRead, "getDynamicPricing">;
 
-export async function loadPricingMap(db: PricingMapDb): Promise<PricingMap> {
+const CACHE_MS = 60_000;
+
+interface CachedMap {
+  map: PricingMap;
+  at: number;
+}
+
+let cached: CachedMap | null = null;
+let inflight: Promise<PricingMap> | null = null;
+
+function isFresh(entry: CachedMap): boolean {
+  return Date.now() - entry.at < CACHE_MS;
+}
+
+export function resetPricingMapCache(): void {
+  cached = null;
+  inflight = null;
+}
+
+async function loadPricingMapUncached(db: PricingMapDb): Promise<PricingMap> {
   try {
     const dynamicResult = await db.getDynamicPricing();
     const dynamic = dynamicResult?.entries ?? [];
@@ -38,4 +64,14 @@ export async function loadPricingMap(db: PricingMapDb): Promise<PricingMap> {
     map.meta = { status: "fallback", snapshotId: createHash("sha256").update(JSON.stringify(map)).digest("hex"), fetchedAt: null, effectiveAt: null };
     return map;
   }
+}
+
+export async function loadPricingMap(db: PricingMapDb): Promise<PricingMap> {
+  if (cached && isFresh(cached)) return cached.map;
+  inflight ??= loadPricingMapUncached(db).then((map) => {
+    cached = { map, at: Date.now() };
+    inflight = null;
+    return map;
+  });
+  return inflight;
 }
