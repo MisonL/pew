@@ -408,6 +408,33 @@ describe("clearAllCache", () => {
     expect(result.truncated).toBe(true);
     expect(listMock).toHaveBeenCalledTimes(11);
   });
+
+  it("deletes a page with bounded concurrency instead of one round trip per key", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const deleteMock = vi.fn(() => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      return new Promise<void>((resolve) => setTimeout(() => {
+        inFlight -= 1;
+        resolve();
+      }, 1));
+    });
+    const kv = createMockKV({
+      delete: deleteMock,
+      list: vi.fn().mockResolvedValue({
+        keys: Array.from({ length: 100 }, (_, i) => ({ name: `key${i}` })),
+        list_complete: true,
+      }),
+    });
+
+    const result = await clearAllCache(kv);
+
+    expect(result.deleted).toBe(100);
+    expect(deleteMock).toHaveBeenCalledTimes(100);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(20);
+  });
 });
 
 // ---------------------------------------------------------------------------

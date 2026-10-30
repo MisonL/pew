@@ -33,6 +33,9 @@ export interface CacheOptions {
 /** Maximum keys to process in list/clear operations */
 const MAX_KEYS_LIMIT = 10000;
 
+/** In-flight deletes per batch in clearAllCache. */
+const DELETE_CONCURRENCY = 20;
+
 // ---------------------------------------------------------------------------
 // Cache-Aside Pattern
 // ---------------------------------------------------------------------------
@@ -148,21 +151,35 @@ export async function clearAllCache(
   let cursor: string | undefined;
   let hasMoreData = false;
 
-  outer: while (deleted < MAX_KEYS_LIMIT) {
+  while (deleted < MAX_KEYS_LIMIT) {
     const result = await kv.list({
       prefix: prefix ?? undefined,
       limit: 1000,
       cursor,
     });
 
+    const page: string[] = [];
+    let hitLimit = false;
     for (const key of result.keys) {
-      if (deleted >= MAX_KEYS_LIMIT) {
+      if (deleted + page.length >= MAX_KEYS_LIMIT) {
         // Hit limit — there's definitely more data (this key we couldn't delete)
-        hasMoreData = true;
-        break outer;
+        hitLimit = true;
+        break;
       }
-      await kv.delete(key.name);
-      deleted++;
+      page.push(key.name);
+    }
+
+    // Bounded concurrency: one delete per round trip is the whole cost of this
+    // loop (up to 10,000 of them), so a small batch turns minutes into
+    // seconds. Kept well under KV's per-invocation subrequest budget.
+    for (let i = 0; i < page.length; i += DELETE_CONCURRENCY) {
+      await Promise.all(page.slice(i, i + DELETE_CONCURRENCY).map((name) => kv.delete(name)));
+    }
+    deleted += page.length;
+
+    if (hitLimit) {
+      hasMoreData = true;
+      break;
     }
 
     // Finished processing this page
