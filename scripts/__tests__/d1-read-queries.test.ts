@@ -239,6 +239,23 @@ describe("D1 read queries against real SQLite", () => {
     expect(queries.at(-1)!.sql).not.toContain("usage_totals");
   });
 
+  it("reports counter-only totals identical to summing the records", async () => {
+    const before = queries.length;
+    const body = await (await handleUsageRpc({
+      method: "usage.getTotals", userId: "u1", fromDate, toDate, source: "codex",
+    } as never, db)).json();
+    const rows = await (await handleUsageRpc({
+      method: "usage.get", userId: "u1", fromDate, toDate, source: "codex",
+    } as never, db)).json();
+    const fields = ["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens",
+      "total_tokens", "evidence_tokens", "approximate_tokens"] as const;
+    for (const field of fields) {
+      expect(body.result[field]).toBe(rows.result.reduce((n: number, r: Record<string, number>) => n + (r[field] ?? 0), 0));
+    }
+    expect(body.result.total_tokens).toBeGreaterThan(0);
+    expect(queries[before].sql).not.toContain("usage_details");
+  });
+
   it("reports recent activity identical to the usage_totals read it replaces", async () => {
     const stamp = (offsetMs: number) => new Date(Date.now() - offsetMs).toISOString();
     sqlite.exec(`INSERT INTO usage_records(user_id,device_id,source,model,hour_start,input_tokens,cached_input_tokens,output_tokens,reasoning_output_tokens,total_tokens)

@@ -257,10 +257,10 @@ describe("GET /api/usage", () => {
     });
 
     it("returns the summary without records when summaryOnly=1", async () => {
-      mockDbRead.getUsageRecords.mockResolvedValueOnce([{
-        source: "claude-code", model: "m", hour_start: "2026-03-07T10:00:00.000Z",
-        input_tokens: 100, cached_input_tokens: 0, output_tokens: 50, reasoning_output_tokens: 0, total_tokens: 150,
-      }]);
+      mockDbRead.getUsageTotals.mockResolvedValueOnce({
+        input_tokens: 100, cached_input_tokens: 0, output_tokens: 50, reasoning_output_tokens: 0,
+        total_tokens: 150, evidence_tokens: 0, approximate_tokens: 0,
+      });
 
       const res = await GET(makeGetRequest("/api/usage", { summaryOnly: "1" }));
 
@@ -268,6 +268,9 @@ describe("GET /api/usage", () => {
       const body = await res.json();
       expect(body.records).toEqual([]);
       expect(body.summary.total_tokens).toBe(150);
+      // One aggregate RPC, not the whole record set.
+      expect(mockDbRead.getUsageRecords).not.toHaveBeenCalled();
+      expect(mockDbRead.getUsageTotals).toHaveBeenCalledWith("u1", expect.any(String), expect.any(String), {});
     });
 
     it("should return 500 on D1 error", async () => {

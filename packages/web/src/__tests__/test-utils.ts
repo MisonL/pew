@@ -130,6 +130,7 @@ export function createMockDbRead() {
     getSessionRecords: vi.fn(),
     // Usage RPC methods
     getUsageRecords: vi.fn(),
+    getUsageTotals: vi.fn(),
     getDeviceSummary: vi.fn(),
     getDeviceCostDetails: vi.fn(),
     getDeviceTimeline: vi.fn(),
@@ -218,6 +219,7 @@ export function createMockDbRead() {
     getAdminStorageStats: ReturnType<typeof vi.fn>;
     getSessionRecords: ReturnType<typeof vi.fn>;
     getUsageRecords: ReturnType<typeof vi.fn>;
+    getUsageTotals: ReturnType<typeof vi.fn>;
     getDeviceSummary: ReturnType<typeof vi.fn>;
     getDeviceCostDetails: ReturnType<typeof vi.fn>;
     getDeviceTimeline: ReturnType<typeof vi.fn>;

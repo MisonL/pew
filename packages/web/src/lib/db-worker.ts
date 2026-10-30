@@ -38,6 +38,7 @@ import type {
   SyncOutcomeDto,
   AdminStorageUserRow,
   UsageRecordRow,
+  UsageTotals,
   UsageDeviceSummaryRow,
   UsageCostDetailRow,
   UsageDeviceTimelineRow,
@@ -601,6 +602,22 @@ export function createWorkerDbRead(): DbRead {
         deviceId: options?.deviceId,
         granularity: options?.granularity,
         tzOffset: options?.tzOffset,
+      });
+    },
+
+    async getUsageTotals(
+      userId: string,
+      fromDate: string,
+      toDate: string,
+      options?: { source?: string; deviceId?: string },
+    ): Promise<UsageTotals> {
+      return rpc<UsageTotals>({
+        method: "usage.getTotals",
+        userId,
+        fromDate,
+        toDate,
+        source: options?.source,
+        deviceId: options?.deviceId,
       });
     },
 

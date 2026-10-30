@@ -92,6 +92,30 @@ export interface GetDeviceSummaryRequest {
   toDate: string;
 }
 
+/**
+ * The counters-only aggregate behind `/api/usage?summaryOnly=1`: pages that
+ * render a handful of totals were downloading the whole per-bucket record set
+ * (annotations included) to reduce it to five numbers.
+ */
+export interface GetUsageTotalsRequest {
+  method: "usage.getTotals";
+  userId: string;
+  fromDate: string;
+  toDate: string;
+  source?: string;
+  deviceId?: string;
+}
+
+export interface UsageTotals {
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  reasoning_output_tokens: number;
+  total_tokens: number;
+  evidence_tokens: number;
+  approximate_tokens: number;
+}
+
 export interface GetDeviceCostDetailsRequest {
   method: "usage.getDeviceCostDetails";
   userId: string;
@@ -110,6 +134,7 @@ export interface GetDeviceTimelineRequest {
 
 export type UsageRpcRequest =
   | GetUsageRequest
+  | GetUsageTotalsRequest
   | GetDeviceSummaryRequest
   | GetDeviceCostDetailsRequest
   | GetDeviceTimelineRequest;
@@ -225,6 +250,54 @@ async function handleGetUsage(
     result: req.includeAccounting === false
       ? results.results
       : mergeUsageRows(results.results, ["hour_start", "source", "model"], req.includeReportedCosts === true),
+  });
+}
+
+async function handleGetUsageTotals(
+  req: GetUsageTotalsRequest,
+  db: D1Database
+): Promise<Response> {
+  if (!req.userId || !req.fromDate || !req.toDate) {
+    return Response.json(
+      { error: "userId, fromDate, and toDate are required" },
+      { status: 400 }
+    );
+  }
+
+  const conditions: string[] = [];
+  const params: unknown[] = [req.userId, req.fromDate, req.toDate];
+
+  if (req.source) {
+    conditions.push("source = ?");
+    params.push(req.source);
+  }
+
+  if (req.deviceId) {
+    conditions.push("device_id = ?");
+    params.push(req.deviceId);
+  }
+
+  // Same filter the record query applies, so a totals-only caller sees the
+  // counters it would have summed itself.
+  const sql = `
+    SELECT
+      COALESCE(SUM(input_tokens), 0) AS input_tokens,
+      COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens,
+      COALESCE(SUM(output_tokens), 0) AS output_tokens,
+      COALESCE(SUM(reasoning_output_tokens), 0) AS reasoning_output_tokens,
+      COALESCE(SUM(total_tokens), 0) AS total_tokens,
+      COALESCE(SUM(evidence_tokens), 0) AS evidence_tokens,
+      COALESCE(SUM(approximate_tokens), 0) AS approximate_tokens
+    FROM usage_bases
+    WHERE user_id = ? AND hour_start >= ? AND hour_start < ?
+      AND (event_id = '' OR total_tokens > 0)
+      ${conditions.length ? `AND ${conditions.join(" AND ")}` : ""}
+  `;
+
+  const row = await db.prepare(sql).bind(...params).first<UsageTotals>();
+  return Response.json({
+    result: row ?? { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0,
+      total_tokens: 0, evidence_tokens: 0, approximate_tokens: 0 },
   });
 }
 
@@ -370,6 +443,8 @@ export async function handleUsageRpc(
   switch (request.method) {
     case "usage.get":
       return handleGetUsage(request, db);
+    case "usage.getTotals":
+      return handleGetUsageTotals(request, db);
     case "usage.getDeviceSummary":
       return handleGetDeviceSummary(request, db);
     case "usage.getDeviceCostDetails":

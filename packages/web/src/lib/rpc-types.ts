@@ -392,8 +392,18 @@ export interface UsageRecordRow {
   total_tokens: number;
 }
 
-/** Device summary row for by-device usage */
-export interface UsageDeviceSummaryRow {
+/** Counter-only aggregate behind `/api/usage?summaryOnly=1` */
+export interface UsageTotals {
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  reasoning_output_tokens: number;
+  total_tokens: number;
+  evidence_tokens: number;
+  approximate_tokens: number;
+}
+
+/** Device summary row for by-device usage */export interface UsageDeviceSummaryRow {
   accounting?: import("@pew/core").AccountingAnnotation[];
   device_id: string;
   alias: string | null;

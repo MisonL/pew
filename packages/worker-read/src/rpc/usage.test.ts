@@ -176,6 +176,64 @@ describe("usage RPC handlers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // usage.getTotals
+  // -------------------------------------------------------------------------
+
+  describe("usage.getTotals", () => {
+    it("returns the aggregate counters in one row", async () => {
+      const totals = { input_tokens: 100, cached_input_tokens: 20, output_tokens: 30,
+        reasoning_output_tokens: 5, total_tokens: 155, evidence_tokens: 0, approximate_tokens: 0 };
+      db.first.mockResolvedValue(totals);
+      const response = await handleUsageRpc({
+        method: "usage.getTotals", userId: "u1",
+        fromDate: "2026-04-01T00:00:00.000Z", toDate: "2026-04-02T00:00:00.000Z",
+      }, db);
+      expect(await response.json()).toEqual({ result: totals });
+      const sql = db.prepare.mock.calls.at(-1)?.[0] as string;
+      expect(sql).toContain("SUM(input_tokens)");
+      expect(sql).not.toContain("usage_details");
+      expect(sql).not.toContain("accounting_json");
+      expect(db.bind.mock.calls.at(-1)).toEqual(["u1", "2026-04-01T00:00:00.000Z", "2026-04-02T00:00:00.000Z"]);
+    });
+
+    it("falls back to zeroed counters when the window is empty", async () => {
+      db.first.mockResolvedValue(null);
+      const response = await handleUsageRpc({
+        method: "usage.getTotals", userId: "u1",
+        fromDate: "2026-04-01T00:00:00.000Z", toDate: "2026-04-02T00:00:00.000Z",
+      }, db);
+      expect(await response.json()).toEqual({ result: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0,
+        reasoning_output_tokens: 0, total_tokens: 0, evidence_tokens: 0, approximate_tokens: 0 } });
+    });
+
+    it("narrows the aggregate by source and device", async () => {
+      db.first.mockResolvedValue(null);
+      await handleUsageRpc({
+        method: "usage.getTotals", userId: "u1",
+        fromDate: "2026-04-01T00:00:00.000Z", toDate: "2026-04-02T00:00:00.000Z",
+        source: "codex", deviceId: "d1",
+      }, db);
+      const sql = db.prepare.mock.calls.at(-1)?.[0] as string;
+      expect(sql).toContain("source = ?");
+      expect(sql).toContain("device_id = ?");
+      expect(db.bind.mock.calls.at(-1)).toEqual([
+        "u1", "2026-04-01T00:00:00.000Z", "2026-04-02T00:00:00.000Z", "codex", "d1",
+      ]);
+    });
+
+    it("rejects a missing user or window", async () => {
+      for (const req of [
+        { method: "usage.getTotals" as const, userId: "", fromDate: "a", toDate: "b" },
+        { method: "usage.getTotals" as const, userId: "u1", fromDate: "", toDate: "b" },
+        { method: "usage.getTotals" as const, userId: "u1", fromDate: "a", toDate: "" },
+      ]) {
+        expect((await handleUsageRpc(req, db)).status).toBe(400);
+      }
+      expect(db.prepare).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // usage.getDeviceSummary
   // -------------------------------------------------------------------------
 

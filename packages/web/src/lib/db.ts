@@ -37,6 +37,7 @@ import type {
   SyncOutcomeDto,
   AdminStorageUserRow,
   UsageRecordRow,
+  UsageTotals,
   UsageDeviceSummaryRow,
   UsageCostDetailRow,
   UsageDeviceTimelineRow,
@@ -340,6 +341,14 @@ export interface DbRead {
       tzOffset?: number;
     },
   ): Promise<UsageRecordRow[]>;
+
+  /** Counter-only totals for a window — one row instead of the whole record set. */
+  getUsageTotals(
+    userId: string,
+    fromDate: string,
+    toDate: string,
+    options?: { source?: string; deviceId?: string },
+  ): Promise<UsageTotals>;
 
   /** Get device summary for by-device usage */
   getDeviceSummary(

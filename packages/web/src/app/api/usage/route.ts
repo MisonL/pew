@@ -137,6 +137,24 @@ export async function GET(request: Request) {
   const db = await getDbRead();
 
   try {
+    // A summary-only caller (sessions' efficiency stat) needs five numbers; it
+    // used to download every bucket, annotations included, and reduce them
+    // here. The read Worker answers the same aggregate in one row.
+    if (summaryOnly) {
+      const totals = await db.getUsageTotals(userId, fromDate, toDate, {
+        ...(sourceFilter && { source: sourceFilter }),
+        ...(deviceIdFilter && { deviceId: deviceIdFilter }),
+      });
+      return jsonResponse(request, {
+        records: [],
+        summary: totals.evidence_tokens > 0
+          ? totals
+          : { input_tokens: totals.input_tokens, cached_input_tokens: totals.cached_input_tokens,
+              output_tokens: totals.output_tokens, reasoning_output_tokens: totals.reasoning_output_tokens,
+              total_tokens: totals.total_tokens },
+      });
+    }
+
     const records = await db.getUsageRecords(userId, fromDate, toDate, {
       includeReportedCosts: true,
       ...(omitAccounting && { includeAccounting: false }),
@@ -186,7 +204,7 @@ export async function GET(request: Request) {
         : records.some((r) => r.accounting !== undefined)
           ? records.map(({ accounting: _accounting, ...row }) => row)
           : records;
-    return jsonResponse(request, { records: summaryOnly ? [] : projected, summary: evidenceTokens > 0
+    return jsonResponse(request, { records: projected, summary: evidenceTokens > 0
       ? { ...summary, evidence_tokens: evidenceTokens, approximate_tokens: approximateTokens }
       : summary });
   } catch (err) {
