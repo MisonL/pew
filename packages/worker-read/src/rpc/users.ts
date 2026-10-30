@@ -379,22 +379,17 @@ async function handleGetPublicUserBySlugOrId(
     return Response.json({ error: "Missing slugOrId" }, { status: 400 });
   }
 
-  // Try by slug first, then by id
-  let row = await db
+  // One round trip, not a slug probe followed by an id probe. The ORDER BY
+  // keeps the old precedence when a slug and an id could match different
+  // rows, and the composite OR resolves through both unique indexes
+  // (MULTI-INDEX OR in the query plan) rather than a scan.
+  const row = await db
     .prepare(
-      "SELECT id, name, nickname, image, slug, created_at, is_public FROM users WHERE slug = ?",
+      `SELECT id, name, nickname, image, slug, created_at, is_public FROM users
+       WHERE slug = ? OR id = ? ORDER BY (slug = ?) DESC LIMIT 1`,
     )
-    .bind(req.slugOrId)
+    .bind(req.slugOrId, req.slugOrId, req.slugOrId)
     .first<UserProfile>();
-
-  if (!row) {
-    row = await db
-      .prepare(
-        "SELECT id, name, nickname, image, slug, created_at, is_public FROM users WHERE id = ?",
-      )
-      .bind(req.slugOrId)
-      .first<UserProfile>();
-  }
 
   return Response.json({ result: row ?? null });
 }

@@ -798,7 +798,7 @@ describe("Users RPC handlers", () => {
   // -------------------------------------------------------------------------
 
   describe("users.getPublicBySlugOrId", () => {
-    it("should return user matched by slug (no fallback)", async () => {
+    it("should look up a slug or an id in one round trip", async () => {
       const row = {
         id: "u1",
         name: "Alice",
@@ -816,39 +816,12 @@ describe("Users RPC handlers", () => {
       };
       const res = await handleUsersRpc(req, db);
       expect(await res.json()).toEqual({ result: row });
-      // slug query only — no fallback to id query
       expect(firstFn).toHaveBeenCalledTimes(1);
-    });
-
-    it("should fall back to id when slug not found", async () => {
-      const row = {
-        id: "u1",
-        name: "Alice",
-        nickname: null,
-        image: null,
-        slug: null,
-        created_at: "2026-01-01T00:00:00Z",
-        is_public: 0,
-      };
-      const firstFn = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(row);
-      db.bind.mockReturnValue({ first: firstFn });
-      const req: GetPublicUserBySlugOrIdRequest = {
-        method: "users.getPublicBySlugOrId",
-        slugOrId: "u1",
-      };
-      const res = await handleUsersRpc(req, db);
-      expect(await res.json()).toEqual({ result: row });
-      expect(firstFn).toHaveBeenCalledTimes(2);
-      // Both queries used
-      const calls = (db.prepare as ReturnType<typeof vi.fn>).mock.calls.map(
-        (c: unknown[]) => c[0],
-      );
-      expect(calls.some((s: unknown) => typeof s === "string" && s.includes("WHERE slug = ?"))).toBe(
-        true,
-      );
-      expect(calls.some((s: unknown) => typeof s === "string" && s.includes("WHERE id = ?"))).toBe(
-        true,
-      );
+      const sql = String((db.prepare as ReturnType<typeof vi.fn>).mock.calls[0]![0]);
+      expect(sql).toContain("WHERE slug = ? OR id = ?");
+      // The ORDER BY preserves slug-over-id precedence when both could match.
+      expect(sql).toContain("ORDER BY (slug = ?) DESC");
+      expect(db.bind).toHaveBeenCalledWith("alice", "alice", "alice");
     });
 
     it("should return null when neither slug nor id match", async () => {
@@ -859,7 +832,7 @@ describe("Users RPC handlers", () => {
         slugOrId: "none",
       };
       expect(await (await handleUsersRpc(req, db)).json()).toEqual({ result: null });
-      expect(firstFn).toHaveBeenCalledTimes(2);
+      expect(firstFn).toHaveBeenCalledTimes(1);
     });
 
     it("should return 400 when slugOrId missing", async () => {
