@@ -27,11 +27,19 @@ export function ModelEvolutionChart({ records, tzOffset, end, title = "Model Evo
     const dates = records.map((row) => toLocalDateStr(row.hour_start, tzOffset)).sort();
     return toUsageBreakdown(records, [], "model", { start: dates[0] ?? "", end: end ?? dates.at(-1) ?? "" }, tzOffset);
   }, [records, tzOffset, end]);
-  const series = breakdown.series.map((s) => ({ ...s, name: s.id ?? "Other models", color: s.id === null ? chartMuted : modelColor(s.id).color }));
-  const chartData = breakdown.daily.map((point) => {
-    const total = breakdown.series.reduce((sum, s) => sum + Number(point[s.key]), 0);
-    return { date: point.date, ...Object.fromEntries(breakdown.series.map((s) => [s.key, total ? Number(point[s.key]) / total * 100 : 0])) };
-  });
+  const series = useMemo(
+    () => breakdown.series.map((s) => ({ ...s, name: s.id ?? "Other models", color: s.id === null ? chartMuted : modelColor(s.id).color })),
+    [breakdown],
+  );
+  // Recomputed on every parent render otherwise: days × series across an
+  // all-time window is a few thousand entries per pass.
+  const chartData = useMemo(
+    () => breakdown.daily.map((point) => {
+      const total = breakdown.series.reduce((sum, s) => sum + Number(point[s.key]), 0);
+      return { date: point.date, ...Object.fromEntries(breakdown.series.map((s) => [s.key, total ? Number(point[s.key]) / total * 100 : 0])) };
+    }),
+    [breakdown],
+  );
 
   if (!breakdown.total) return <div className="flex items-center justify-center rounded-card bg-secondary p-8 text-sm text-muted-foreground">No model data yet</div>;
 
