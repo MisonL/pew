@@ -117,6 +117,28 @@ describe("D1 read queries against real SQLite", () => {
     expect(plan).toContain("SEARCH usage_evidence USING INDEX idx_evidence_user_time");
   });
 
+  it.each([
+    { granularity: "half-hour" as const },
+    { granularity: "day" as const, tzOffset: -480 },
+    { granularity: "day" as const, source: "codex", deviceId: "d1" },
+  ])("keeps the counters identical when the caller opts out of accounting ($granularity $tzOffset)", async (options) => {
+    const full = await (await handleUsageRpc({ ...options, method: "usage.get", userId: "u1", fromDate, toDate }, db)).json();
+    const before = queries.length;
+    const bare = await (await handleUsageRpc({ ...options, method: "usage.get", userId: "u1", fromDate, toDate, includeAccounting: false }, db)).json();
+    const fields = ["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens", "evidence_tokens", "approximate_tokens"] as const;
+    const counters = (rows: Array<Record<string, unknown>>) => rows.map((r) => ({
+      hour_start: r.hour_start, source: r.source, model: r.model,
+      ...Object.fromEntries(fields.map((f) => [f, r[f] ?? 0])),
+    }));
+    expect(counters(bare.result)).toEqual(counters(full.result));
+    expect(bare.result.some((r: { accounting?: unknown }) => r.accounting !== undefined)).toBe(false);
+    const { sql, params } = queries[before];
+    expect(sql).not.toContain("usage_details");
+    const plan = JSON.stringify(sqlite.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params as never[]));
+    expect(plan).toContain("SEARCH usage_records USING INDEX idx_usage_user_time");
+    expect(plan).toContain("SEARCH usage_evidence USING INDEX idx_evidence_user_time");
+  });
+
   it("keeps zero legacy buckets and alias-only devices, but excludes evidence checkpoints", async () => {
     const body = await (await handleDevicesRpc({ method: "devices.list", userId: "u1" }, db)).json();
     expect(body.result.map((r: { device_id: string }) => r.device_id)).toEqual(["d1", "d2", "alias-only", "zero"]);

@@ -51,13 +51,19 @@ export async function GET(request: Request) {
   // window they dominate the payload (~98% of the body). Pages that only read
   // counters pass includeAccounting=0; the records then come back with their
   // raw counters untouched, so a consumer that ranked raw totals before ranks
-  // identically now. Callers whose charts rank by accountedTotal() pass
+  // identically now. The read Worker drops the annotations itself for that
+  // mode: the details join, the per-row JSON build and the accounting_json
+  // group-by split cost roughly five times the plain aggregation over a
+  // two-year window (measured 3384 ms -> 698 ms at half-hour grain, 1751 ms ->
+  // 456 ms at day grain), and the web process used to pay all of it to throw
+  // the annotations away. Callers whose charts rank by accountedTotal() pass
   // includeAccounting=project instead: the counters come back already
   // projected through displayCounters(), which is what those charts computed
   // locally from the annotations anyway. Default stays true for API
   // compatibility.
   const accountingMode = url.searchParams.get("includeAccounting");
   const includeAccounting = accountingMode !== "0" && accountingMode !== "project";
+  const omitAccounting = accountingMode === "0";
   // Some callers only read the summary (e.g. sessions' efficiency stat). The
   // records are the multi-MB part; the summary is computed here either way.
   const summaryOnly = url.searchParams.get("summaryOnly") === "1";
@@ -133,6 +139,7 @@ export async function GET(request: Request) {
   try {
     const records = await db.getUsageRecords(userId, fromDate, toDate, {
       includeReportedCosts: true,
+      ...(omitAccounting && { includeAccounting: false }),
       ...(sourceFilter && { source: sourceFilter }),
       ...(deviceIdFilter && { deviceId: deviceIdFilter }),
       granularity: granularity as "half-hour" | "day",
@@ -166,11 +173,19 @@ export async function GET(request: Request) {
     // aggregate. Plain opt-out records keep their raw counters too — sessions'
     // peak detection ranks by the raw total, so projecting there would move its
     // numbers. "project" is for the display-side consumers whose accountedTotal()
-    // ranking the projection reproduces exactly.
-    const projected = includeAccounting ? records : records.map((r) => {
-      const { accounting: _accounting, ...row } = r;
-      return accountingMode === "project" ? { ...row, ...displayCounters(r) } : row;
-    });
+    // ranking the projection reproduces exactly. Mode "0" normally arrives
+    // already stripped by the read Worker; a Worker too old to honor
+    // includeAccounting still returns the annotations, so drop any that show up.
+    const projected = includeAccounting
+      ? records
+      : accountingMode === "project"
+        ? records.map((r) => {
+            const { accounting: _accounting, ...row } = r;
+            return { ...row, ...displayCounters(r) };
+          })
+        : records.some((r) => r.accounting !== undefined)
+          ? records.map(({ accounting: _accounting, ...row }) => row)
+          : records;
     return jsonResponse(request, { records: summaryOnly ? [] : projected, summary: evidenceTokens > 0
       ? { ...summary, evidence_tokens: evidenceTokens, approximate_tokens: approximateTokens }
       : summary });

@@ -218,8 +218,23 @@ describe("GET /api/usage", () => {
       expect(lean.records[0].accounting).toBeUndefined();
       const counters = ["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"] as const;
       for (const field of counters) expect(lean.records[0][field]).toBe(full.records[0][field]);
+      // The read Worker is told to skip the details join outright.
+      expect(mockDbRead.getUsageRecords.mock.calls[1]?.[3]).toMatchObject({ includeAccounting: false });
+      expect(mockDbRead.getUsageRecords.mock.calls[0]?.[3]).not.toHaveProperty("includeAccounting");
       // The summary stays the raw legacy reconciliation basis in both modes.
       expect(lean.summary).toEqual(full.summary);
+    });
+
+    it("passes through records the read Worker already stripped", async () => {
+      mockDbRead.getUsageRecords.mockResolvedValueOnce([{
+        source: "claude-code", model: "m", hour_start: "2026-03-07T10:00:00.000Z",
+        input_tokens: 100, cached_input_tokens: 0, output_tokens: 50, reasoning_output_tokens: 0, total_tokens: 150,
+      }]);
+      const body = await (await GET(makeGetRequest("/api/usage", { includeAccounting: "0" }))).json();
+      expect(body.records).toEqual([{
+        source: "claude-code", model: "m", hour_start: "2026-03-07T10:00:00.000Z",
+        input_tokens: 100, cached_input_tokens: 0, output_tokens: 50, reasoning_output_tokens: 0, total_tokens: 150,
+      }]);
     });
 
     it("returns displayCounters-projected counters when includeAccounting=project", async () => {

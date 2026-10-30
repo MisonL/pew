@@ -130,6 +130,38 @@ describe("usage RPC handlers", () => {
       expect(bindArgs).toContain("dev-1");
     });
 
+    it("skips the accounting join and the group-by split when includeAccounting is false", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      const request: GetUsageRequest = {
+        method: "usage.get",
+        userId: "u1",
+        fromDate: "2026-04-01T00:00:00.000Z",
+        toDate: "2026-04-02T00:00:00.000Z",
+        includeAccounting: false,
+      };
+      const response = await handleUsageRpc(request, db);
+      expect(await response.json()).toEqual({ result: [] });
+      const sqlCall = db.prepare.mock.calls.at(-1)?.[0] as string;
+      expect(sqlCall).not.toContain("accounting_json");
+      expect(sqlCall).not.toContain("usage_details");
+      expect(sqlCall).toContain("FROM usage_bases");
+      const bindArgs = db.bind.mock.calls.at(-1) as unknown[];
+      expect(bindArgs).toEqual(["u1", "2026-04-01T00:00:00.000Z", "2026-04-02T00:00:00.000Z"]);
+    });
+
+    it("keeps the annotations and the split by default", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      await handleUsageRpc({
+        method: "usage.get",
+        userId: "u1",
+        fromDate: "2026-04-01T00:00:00.000Z",
+        toDate: "2026-04-02T00:00:00.000Z",
+      }, db);
+      const sqlCall = db.prepare.mock.calls.at(-1)?.[0] as string;
+      expect(sqlCall).toContain("accounting_json, COUNT(*) AS accounting_count");
+      expect(sqlCall).toContain("GROUP BY hour_start, source, model, accounting_json");
+    });
+
     it("should return 400 when params missing", async () => {
       const request = {
         method: "usage.get",

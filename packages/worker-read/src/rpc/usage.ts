@@ -67,6 +67,14 @@ interface TimelineRow {
 
 export interface GetUsageRequest {
   includeReportedCosts?: boolean;
+  /**
+   * Default true. `false` skips the usage_details join and the
+   * accounting_json column entirely — callers that only chart counters were
+   * paying for the join, the JSON build, and the group-by split on every row
+   * (measured at ~5x the plain aggregation over a two-year window) and then
+   * discarding the annotations in the web process.
+   */
+  includeAccounting?: boolean;
   method: "usage.get";
   userId: string;
   fromDate: string;
@@ -162,7 +170,34 @@ async function handleGetUsage(
     params.push(req.deviceId);
   }
 
-  const sql = `
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  // Two shapes over the same filtered bases. With annotations, rows are split
+  // by accounting_json and merged back in JS; without them the aggregation is
+  // a single grouped pass over usage_bases with no details join at all. Both
+  // produce the same counters at the same grain — the split only exists to
+  // carry the annotations.
+  const sql = req.includeAccounting === false
+    ? `
+    SELECT
+      source,
+      model,
+      ${timeColumn},
+      SUM(input_tokens) AS input_tokens,
+      SUM(cached_input_tokens) AS cached_input_tokens,
+      SUM(output_tokens) AS output_tokens,
+      SUM(reasoning_output_tokens) AS reasoning_output_tokens,
+      SUM(total_tokens) AS total_tokens,
+      SUM(evidence_tokens) AS evidence_tokens,
+      SUM(approximate_tokens) AS approximate_tokens
+    FROM usage_bases
+    WHERE user_id = ? AND hour_start >= ? AND hour_start < ?
+      AND (event_id = '' OR total_tokens > 0)
+      ${conditions.length ? `AND ${conditions.join(" AND ")}` : ""}
+    GROUP BY ${groupBy}
+    ORDER BY hour_start ASC, source, model
+  `
+    : `
     SELECT
       source,
       model,
@@ -176,7 +211,7 @@ async function handleGetUsage(
       SUM(approximate_tokens) AS approximate_tokens,
       accounting_json, COUNT(*) AS accounting_count
     FROM (${ACCOUNTED_USAGE_SQL})
-    ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
+    ${where}
     GROUP BY ${groupBy}, accounting_json
     ORDER BY hour_start ASC, source, model
   `;
@@ -186,7 +221,11 @@ async function handleGetUsage(
     .bind(...prependParams, ...params)
     .all<UsageRow>();
 
-  return Response.json({ result: mergeUsageRows(results.results, ["hour_start", "source", "model"], req.includeReportedCosts === true) });
+  return Response.json({
+    result: req.includeAccounting === false
+      ? results.results
+      : mergeUsageRows(results.results, ["hour_start", "source", "model"], req.includeReportedCosts === true),
+  });
 }
 
 async function handleGetDeviceSummary(

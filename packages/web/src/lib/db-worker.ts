@@ -583,6 +583,7 @@ export function createWorkerDbRead(): DbRead {
       toDate: string,
       options?: {
         includeReportedCosts?: boolean;
+        includeAccounting?: boolean;
         source?: string;
         deviceId?: string;
         granularity?: "half-hour" | "day";
@@ -592,6 +593,7 @@ export function createWorkerDbRead(): DbRead {
       return rpc<UsageRecordRow[]>({
         method: "usage.get",
         ...(options?.includeReportedCosts ? { includeReportedCosts: true } : {}),
+        ...(options?.includeAccounting === false ? { includeAccounting: false } : {}),
         userId,
         fromDate,
         toDate,

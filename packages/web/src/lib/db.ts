@@ -332,6 +332,8 @@ export interface DbRead {
     toDate: string,
     options?: {
       includeReportedCosts?: boolean;
+      /** `false` skips the accounting annotations (and the details join) in the read Worker. */
+      includeAccounting?: boolean;
       source?: string;
       deviceId?: string;
       granularity?: "half-hour" | "day";
