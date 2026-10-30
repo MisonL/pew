@@ -41,7 +41,13 @@ class BodyTooLargeError extends Error {
   }
 }
 
-async function readBody(req: IncomingMessage, maxBytes: number): Promise<Buffer | undefined> {
+/**
+ * An ingest batch can approach the 32 MB cap. Buffer.concat plus the
+ * ArrayBuffer conversion in toRequest copied such a body twice and left the
+ * first copy in a pooled slab; assembling the exact-size view once is a
+ * single copy and hands Request an ArrayBuffer it already owns.
+ */
+async function readBody(req: IncomingMessage, maxBytes: number): Promise<Uint8Array | undefined> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
@@ -50,10 +56,17 @@ async function readBody(req: IncomingMessage, maxBytes: number): Promise<Buffer 
     if (total > maxBytes) throw new BodyTooLargeError();
     chunks.push(buf);
   }
-  return chunks.length > 0 ? Buffer.concat(chunks) : undefined;
+  if (chunks.length === 0) return undefined;
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return body;
 }
 
-function toRequest(req: IncomingMessage, body: Buffer | undefined): Request {
+function toRequest(req: IncomingMessage, body: Uint8Array | undefined): Request {
   const host = req.headers.host ?? "localhost";
   const url = new URL(req.url ?? "/", `http://${host}`).toString();
   const headers = new Headers();
@@ -63,11 +76,9 @@ function toRequest(req: IncomingMessage, body: Buffer | undefined): Request {
     else headers.set(name, value);
   }
   const method = req.method ?? "GET";
-  // Buffer is a Uint8Array at runtime but does not structurally satisfy
-  // BodyInit's DOM lib type; hand over an ArrayBuffer-backed view instead.
   // GET/HEAD have no body regardless of what readBody returned.
   const bodyInit: RequestInit["body"] =
-    body && method !== "GET" && method !== "HEAD" ? new Uint8Array(body).buffer : undefined;
+    body && method !== "GET" && method !== "HEAD" ? body.buffer as ArrayBuffer : undefined;
   return new Request(url, { method, headers, body: bodyInit });
 }
 
