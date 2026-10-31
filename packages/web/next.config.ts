@@ -77,23 +77,32 @@ const nextConfig: NextConfig = {
     ];
   },
   async headers() {
+    // HSTS only means anything over HTTPS: browsers ignore it on plain http,
+    // and carrying it on an intranet http deployment becomes wrong the day the
+    // hostname enters the preload list. Mirror shouldUseSecureCookies()
+    // (src/auth.ts) — the same decision that picks __Secure- cookies decides
+    // whether to claim HTTPS-only transport. Keep the two in sync.
+    const isHttpsDeployment = process.env.USE_SECURE_COOKIES !== "false" &&
+      (process.env.NODE_ENV === "production" ||
+        process.env.NEXTAUTH_URL?.startsWith("https://") === true ||
+        process.env.USE_SECURE_COOKIES === "true");
+    const headers: Array<{ key: string; value: string }> = [
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "X-Frame-Options", value: "DENY" },
+      { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      ...(isHttpsDeployment
+        ? [{ key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" }]
+        : []),
+      {
+        key: "Permissions-Policy",
+        value: "camera=(), microphone=(), geolocation=()",
+      },
+      { key: "X-DNS-Prefetch-Control", value: "on" },
+    ];
     return [
       {
         source: "/(.*)",
-        headers: [
-          { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "X-Frame-Options", value: "DENY" },
-          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          {
-            key: "Strict-Transport-Security",
-            value: "max-age=63072000; includeSubDomains; preload",
-          },
-          {
-            key: "Permissions-Policy",
-            value: "camera=(), microphone=(), geolocation=()",
-          },
-          { key: "X-DNS-Prefetch-Control", value: "on" },
-        ],
+        headers,
       },
     ];
   },

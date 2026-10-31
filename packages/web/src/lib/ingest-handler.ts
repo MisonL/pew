@@ -17,7 +17,7 @@ import { MAX_INGEST_BATCH_SIZE, MAX_INGEST_BODY_BYTES, MIN_CLIENT_VERSION, BodyT
 import type { AccountingAck, ValidationResult } from "@pew/core";
 import {
   INGEST_RATE_LIMIT,
-  getClientIp,
+  clientIpKey,
   inMemoryRateLimiter,
 } from "@/lib/rate-limit";
 
@@ -94,8 +94,9 @@ export function createIngestHandler<T>(
     const { userId } = authResult;
 
     // 2. Rate limit: 300 per minute per user
-    // (falls back to client IP if userId is somehow empty)
-    const rateKey = userId || `ip:${getClientIp(request)}`;
+    // (falls back to client IP if userId is somehow empty; the fallback keys
+    // through clientIpKey so IPv6 rotation cannot mint fresh buckets)
+    const rateKey = userId || `ip:${clientIpKey(request)}`;
     const rl = inMemoryRateLimiter.check(
       `ingest:${rateKey}`,
       INGEST_RATE_LIMIT,

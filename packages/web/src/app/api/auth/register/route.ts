@@ -17,7 +17,7 @@ import { getD1Client } from "@/lib/d1";
 import { bootstrapAdmin, registerWithInvite } from "@/lib/credentials";
 import {
   AUTH_REGISTER_RATE_LIMIT,
-  getClientIp,
+  clientIpKey,
   inMemoryRateLimiter,
 } from "@/lib/rate-limit";
 
@@ -32,6 +32,7 @@ const CLIENT_FACING_REGISTRATION_ERRORS = new Set([
   "A valid invite code is required to register",
   "Invalid or already used invite code",
   "Instance is already set up",
+  "This email address is reserved",
 ]);
 
 async function instanceIsEmpty(): Promise<boolean> {
@@ -44,7 +45,7 @@ async function instanceIsEmpty(): Promise<boolean> {
 export async function POST(request: Request) {
   // Rate limit before any password work: an anonymous caller otherwise turns
   // every request into a synchronous scrypt derivation on the event loop.
-  const ip = getClientIp(request);
+  const ip = clientIpKey(request);
   const rl = inMemoryRateLimiter.check(`auth-register:${ip}`, AUTH_REGISTER_RATE_LIMIT);
   if (!rl.allowed) {
     return NextResponse.json(

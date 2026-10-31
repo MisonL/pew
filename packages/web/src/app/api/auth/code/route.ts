@@ -12,7 +12,7 @@ import { resolveUser } from "@/lib/auth-helpers";
 import { getDbWrite } from "@/lib/db";
 import {
   AUTH_CODE_GENERATE_RATE_LIMIT,
-  getClientIp,
+  clientIpKey,
   inMemoryRateLimiter,
 } from "@/lib/rate-limit";
 
@@ -41,7 +41,7 @@ function generateCode(): string {
 
 export async function POST(request: Request) {
   // Rate limit: 10 code generations per hour per IP
-  const ip = getClientIp(request);
+  const ip = clientIpKey(request);
   const rl = inMemoryRateLimiter.check(
     `auth-code-generate:${ip}`,
     AUTH_CODE_GENERATE_RATE_LIMIT,

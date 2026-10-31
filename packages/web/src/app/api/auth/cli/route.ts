@@ -16,7 +16,7 @@ import { getDbRead, getDbWrite } from "@/lib/db";
 import { isE2EMode } from "@/lib/e2e-mode";
 import {
   AUTH_CLI_RATE_LIMIT,
-  getClientIp,
+  clientIpKey,
   inMemoryRateLimiter,
 } from "@/lib/rate-limit";
 
@@ -51,7 +51,7 @@ export async function GET(request: Request) {
 
   // Rate limit: 10 CLI auth attempts per hour per IP
   if (!isWarmupProbe) {
-    const ip = getClientIp(request);
+    const ip = clientIpKey(request);
     const rl = inMemoryRateLimiter.check(
       `auth-cli:${ip}`,
       AUTH_CLI_RATE_LIMIT,

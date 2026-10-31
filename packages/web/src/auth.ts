@@ -20,7 +20,7 @@ import { findCredentialUser, verifyPassword, verifyPasswordDummy, passwordVersio
 import {
   getClientIp,
   inMemoryRateLimiter,
-  ipv6PrefixKey,
+  boundedIpKey,
   type RateLimitConfig,
 } from "@/lib/rate-limit";
 import type { JWT } from "next-auth/jwt";
@@ -91,7 +91,7 @@ export async function authorizeCredentials(input: {
   // the cheaper rejection), then per-email.
   if (process.env.LOGIN_RATE_LIMIT_BACKEND === "rqlite") {
     const limiter = await import("@/lib/rate-limit").then((m) => m.rqliteRateLimiter);
-    const ipKey = `login:ip:${input.ip ? ipv6PrefixKey(input.ip) : "unknown"}`;
+    const ipKey = `login:ip:${input.ip ? boundedIpKey(input.ip) : "unknown"}`;
     // Clamp the email-derived key: the email comes from the request body and
     // the rqlite backend persists one row per attempt, so an unbounded key
     // turns each login POST into a storage write of attacker-chosen size.
@@ -107,7 +107,7 @@ export async function authorizeCredentials(input: {
     // bucket; both keys are clamped because they come from the request body /
     // headers and live in a Map for up to the longest limiter window.
     const ipLimit = inMemoryRateLimiter.check(
-      `login:ip:${input.ip ? ipv6PrefixKey(input.ip) : "unknown"}`,
+      `login:ip:${input.ip ? boundedIpKey(input.ip) : "unknown"}`,
       LOGIN_IP_RATE_LIMIT
     );
     if (!ipLimit.allowed) return null;

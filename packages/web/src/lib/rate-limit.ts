@@ -261,6 +261,25 @@ export function ipv6PrefixKey(ip: string): string {
 }
 
 /**
+ * The rate-limit bucket for an IP string that came from a request header.
+ *
+ * Folds IPv6 to /64 (privacy extensions rotate the low bits per connection,
+ * so the raw address hands every request its own bucket) and clamps the
+ * length: an arbitrary forwarded-header value would otherwise become an
+ * attacker-chosen Map key (and, on the rqlite backend, an attacker-chosen
+ * row). Every unauthenticated endpoint must key through this, not through
+ * `getClientIp` directly.
+ */
+export function boundedIpKey(ip: string): string {
+  return ipv6PrefixKey(ip).slice(0, 64);
+}
+
+/** {@link boundedIpKey} for a Request. */
+export function clientIpKey(request: Request): string {
+  return boundedIpKey(getClientIp(request));
+}
+
+/**
  * One atomic statement decides allow/deny: the INSERT happens only while the
  * window count is below the cap, so a single leader-side statement is the
  * whole decision (no COUNT-then-INSERT race across replicas). Window math is

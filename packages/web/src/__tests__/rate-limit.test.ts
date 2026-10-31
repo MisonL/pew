@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   inMemoryRateLimiter,
   getClientIp,
+  clientIpKey,
+  boundedIpKey,
   type RateLimitConfig,
 } from "@/lib/rate-limit";
 
@@ -166,6 +168,30 @@ describe("getClientIp", () => {
   it("returns 'unknown' when no proxy headers present", () => {
     const req = new Request("http://localhost");
     expect(getClientIp(req)).toBe("unknown");
+  });
+});
+
+describe("clientIpKey / boundedIpKey", () => {
+  const req = (headers: Record<string, string>) => new Request("http://localhost", { headers });
+
+  it("collapses IPv6 to its /64 so privacy-extension rotation cannot mint buckets", () => {
+    const a = clientIpKey(req({ "x-forwarded-for": "2001:db8:1:2:aaaa:bbbb:cccc:dddd" }));
+    const b = clientIpKey(req({ "x-forwarded-for": "2001:db8:1:2:1111:2222:3333:4444" }));
+    expect(a).toBe(b);
+    expect(a).toBe("2001:db8:1:2::/64");
+  });
+
+  it("leaves IPv4 untouched but clamps the length", () => {
+    expect(boundedIpKey("10.0.0.1")).toBe("10.0.0.1");
+    expect(boundedIpKey("x".repeat(400))).toHaveLength(64);
+  });
+
+  it("is not a fresh bucket per forwarded-header spelling", () => {
+    // The Map/rqlite key must be stable for one host regardless of what the
+    // client writes into the header beyond the address itself.
+    const a = clientIpKey(req({ "x-forwarded-for": "2001:db8::1" }));
+    const b = clientIpKey(req({ "x-real-ip": "2001:db8::2" }));
+    expect(a).toBe(b);
   });
 });
 

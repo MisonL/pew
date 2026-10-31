@@ -24,7 +24,7 @@ vi.mock("@/auth", () => ({
   shouldUseSecureCookies: () => false,
 }));
 
-import { findCredentialUser, registerWithInvite } from "@/lib/credentials";
+import { findCredentialUser, registerWithInvite, setScryptSlotForced } from "@/lib/credentials";
 import { getDbRead, getDbWrite } from "@/lib/db";
 
 const mockGetDbWrite = getDbWrite as unknown as ReturnType<typeof vi.fn>;
@@ -75,6 +75,29 @@ describe("registerWithInvite", () => {
     mockGetDbRead.mockResolvedValue(dbRead);
     // Default: invitations required (the upstream default is "true").
     dbRead.getAppSetting.mockResolvedValue("true");
+  });
+
+  it("rejects a reserved admin email before touching the database", async () => {
+    // registerWithInvite does not verify email ownership (OAuth does), so an
+    // invite holder could register an ADMIN_EMAILS address ahead of the real
+    // owner's first login and inherit admin. The guard is env-only and
+    // synchronous; restore the real value afterwards.
+    const before = process.env.ADMIN_EMAILS;
+    process.env.ADMIN_EMAILS = "admin@corp.example";
+    try {
+      await expect(
+        registerWithInvite({
+          email: "ADMIN@corp.example",
+          name: "A",
+          password: "password123",
+          inviteCode: "ABCD2345",
+        })
+      ).rejects.toThrow(/reserved/i);
+      expect(dbWrite.execute).not.toHaveBeenCalled();
+    } finally {
+      if (before === undefined) delete process.env.ADMIN_EMAILS;
+      else process.env.ADMIN_EMAILS = before;
+    }
   });
 
   it("rejects a malformed invite code before touching the database", async () => {
@@ -162,4 +185,19 @@ describe("registerWithInvite", () => {
     const releaseSql = dbWrite.execute.mock.calls[2]![0] as string;
     expect(releaseSql).toMatch(/UPDATE invite_codes SET used_by = NULL/);
   });
+  it("refuses without touching the database when the derivation slot is exhausted", async () => {
+    dbRead.getAppSetting.mockResolvedValue("false");
+    setScryptSlotForced(true);
+    try {
+      await expect(
+        registerWithInvite({ email: "open@x.y", name: "O", password: "password123", inviteCode: "" })
+      ).rejects.toThrow(/Too many concurrent requests/i);
+      // The guard sits above the invite consume and the INSERT, so nothing is
+      // touched — an exhausted slot must not burn a code.
+      expect(dbWrite.execute).not.toHaveBeenCalled();
+    } finally {
+      setScryptSlotForced(false);
+    }
+  });
+
 });

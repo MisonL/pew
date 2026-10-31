@@ -9,11 +9,12 @@
  *     their own tests.
  */
 
-import { randomBytes, scrypt as scryptCallback, scryptSync, timingSafeEqual } from "node:crypto";
+import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import type { ScryptOptions } from "node:crypto";
 import { getD1Client } from "./d1";
 import { getDbRead, getDbWrite } from "./db";
 import { validateInviteCode } from "./invite";
+import { isAdmin } from "./admin";
 
 function scryptAsync(
   password: string,
@@ -45,35 +46,42 @@ const SCRYPT = { N: 32768, r: 8, p: 1, keylen: 64, maxmem: 64 * 1024 * 1024 } as
  */
 const MAX_CONCURRENT_SCRYPT = 8;
 let scryptInFlight = 0;
-
-async function deriveWithSlot(
-  password: string,
-  salt: Buffer,
-  keylen: number,
-  params: { N: number; r: number; p: number; maxmem: number },
-): Promise<Buffer | null> {
-  if (scryptInFlight >= MAX_CONCURRENT_SCRYPT) return null;
-  scryptInFlight++;
-  try {
-    return (await scryptAsync(password, salt, keylen, params)) as Buffer;
-  } finally {
-    scryptInFlight--;
-  }
-}
+// Test-only: force the derivation slot to appear exhausted so the callers'
+// null-handling branches are reachable without queueing 8 real scrypt runs.
+let forceSlotExhausted = false;
+export function setScryptSlotForced(value: boolean): void { forceSlotExhausted = value; }
 
 /** Test-only introspection: current number of in-flight derivations. */
 export function scryptInFlightCount(): number {
   return scryptInFlight;
 }
 
-export function hashPassword(password: string): string {
+/** Bound the in-flight derivations and await the result on the threadpool. */
+export function deriveScrypt(password: string, salt: Buffer, keylen: number, params: { N: number; r: number; p: number; maxmem: number }): Promise<Buffer | null> {
+  if (forceSlotExhausted || scryptInFlight >= MAX_CONCURRENT_SCRYPT) return Promise.resolve(null);
+  scryptInFlight++;
+  return (async () => {
+    try {
+      return (await scryptAsync(password, salt, keylen, params)) as Buffer;
+    } finally {
+      scryptInFlight--;
+    }
+  })();
+}
+
+/**
+ * Hash a password for storage. Returns null when the global derivation slot
+ * is exhausted so the caller can reject without blocking the event loop.
+ */
+export async function hashPassword(password: string): Promise<string | null> {
   const salt = randomBytes(16);
-  const hash = scryptSync(password, salt, SCRYPT.keylen, {
+  const hash = await deriveScrypt(password, salt, SCRYPT.keylen, {
     N: SCRYPT.N,
     r: SCRYPT.r,
     p: SCRYPT.p,
     maxmem: SCRYPT.maxmem,
   });
+  if (!hash) return null;
   return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString("base64")}$${hash.toString("base64")}`;
 }
 
@@ -96,7 +104,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
   }
   let actual: Buffer | null;
   try {
-    actual = await deriveWithSlot(password, salt, expected.length, {
+    actual = await deriveScrypt(password, salt, expected.length, {
       N,
       r,
       p,
@@ -115,7 +123,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
  */
 export async function verifyPasswordDummy(password: string): Promise<void> {
   const salt = randomBytes(16);
-  await deriveWithSlot(password, salt, SCRYPT.keylen, {
+  await deriveScrypt(password, salt, SCRYPT.keylen, {
     N: SCRYPT.N,
     r: SCRYPT.r,
     p: SCRYPT.p,
@@ -178,6 +186,13 @@ export async function registerWithInvite(input: {
 }): Promise<{ userId: string }> {
   const { email, name, password, inviteCode } = input;
 
+  // Admin status is a string match on ADMIN_EMAILS (lib/admin.ts), and this
+  // path does not verify that the caller owns the address — OAuth does. An
+  // invite holder could otherwise register `admin@example.com` before the real
+  // owner's first Google login and inherit admin. Bootstrap is exempt: it is
+  // the first user and becomes admin by design.
+  if (isAdmin(email)) throw new Error("This email address is reserved");
+
   const dbRead = await getDbRead();
   const requireInvite = (await dbRead.getAppSetting("require_invite_code")) !== "false";
 
@@ -190,6 +205,12 @@ export async function registerWithInvite(input: {
 
   const dbWrite = await getDbWrite();
   const userId = crypto.randomUUID();
+
+  // Derive before consuming the invite: the insert used to compute the hash
+  // synchronously inside its parameter list (65 ms of event-loop block), and
+  // a hash failure here must not burn a code.
+  const passwordHash = await hashPassword(password);
+  if (!passwordHash) throw new Error("Too many concurrent requests");
 
   if (requireInvite) {
     // Consume the invite first: if this returns changes === 0 the code was
@@ -209,7 +230,7 @@ export async function registerWithInvite(input: {
     await dbWrite.execute(
       `INSERT INTO users (id, email, name, password_hash, is_public, created_at, updated_at)
        VALUES (?, ?, ?, ?, 1, datetime('now'), datetime('now'))`,
-      [userId, email, name ?? null, hashPassword(password)]
+      [userId, email, name ?? null, passwordHash]
     );
   } catch (err) {
     // The user INSERT failed (e.g. duplicate email): release the invite so it
@@ -280,6 +301,10 @@ export async function consumePasswordReset(
 
   const dbWrite = await getDbWrite();
   const now = new Date().toISOString();
+  // Derive before the claim so the batch's second statement can reference the
+  // result; the old code derived synchronously inside the parameter list.
+  const passwordHash = await hashPassword(newPassword);
+  if (!passwordHash) return null;
   // Claim and write in one transaction. A 0-row UPDATE is NOT an error, so
   // "claim then write" alone would let a concurrent consumer still set the
   // password; the password write is therefore gated on the claim with an
@@ -307,7 +332,7 @@ export async function consumePasswordReset(
               SELECT 1 FROM password_resets
               WHERE token = ? AND used_at = ?
             )`,
-      params: [hashPassword(newPassword), row.user_id, token, now],
+      params: [passwordHash, row.user_id, token, now],
     },
   ]);
   const claimChanges = claim[0]?.meta?.changes ?? 0;
@@ -363,11 +388,13 @@ export async function bootstrapAdmin(input: {
   }
 
   const userId = crypto.randomUUID();
+  const passwordHash = await hashPassword(password);
+  if (!passwordHash) throw new Error("Too many concurrent requests");
   await dbWrite.batch([
     {
       sql: `INSERT INTO users (id, email, name, password_hash, is_admin, is_public, created_at, updated_at)
             VALUES (?, ?, ?, ?, 1, 1, datetime('now'), datetime('now'))`,
-      params: [userId, email, name ?? null, hashPassword(password)],
+      params: [userId, email, name ?? null, passwordHash],
     },
     {
       sql: `INSERT INTO instance_setup (id, admin_user_id, completed_at)

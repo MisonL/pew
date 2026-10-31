@@ -16,7 +16,9 @@ vi.mock("@/lib/d1", () => ({
 vi.mock("@/auth", () => ({ shouldUseSecureCookies: () => false }));
 
 import {
+  deriveScrypt,
   hashPassword,
+  setScryptSlotForced,
   verifyPassword,
   verifyPasswordDummy,
   createPasswordReset,
@@ -30,25 +32,46 @@ import { getDbWrite } from "@/lib/db";
 const mockGetDbWrite = getDbWrite as unknown as ReturnType<typeof vi.fn>;
 
 describe("password hashing (scrypt)", () => {
+  /** Hash inside a slot; the helper returns null only when the cap is exhausted. */
+  const hash = async (password: string): Promise<string> => {
+    const stored = await hashPassword(password);
+    if (!stored) throw new Error("synthetic: derivation slot exhausted");
+    return stored;
+  };
+
   it("round-trips a password", async () => {
-    const stored = hashPassword("correct horse battery staple");
+    const stored = await hash("correct horse battery staple");
     expect(stored).toMatch(/^scrypt\$32768\$8\$1\$[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+$/);
     expect(await verifyPassword("correct horse battery staple", stored)).toBe(true);
   });
 
   it("rejects a wrong password", async () => {
-    const stored = hashPassword("right");
+    const stored = await hash("right");
     expect(await verifyPassword("wrong", stored)).toBe(false);
   });
 
-  it("uses a fresh salt each time", () => {
-    expect(hashPassword("x")).not.toBe(hashPassword("x"));
+  it("uses a fresh salt each time", async () => {
+    expect(await hashPassword("x")).not.toBe(await hashPassword("x"));
   });
 
   it("returns false for a malformed stored value without throwing", async () => {
     for (const bad of ["", "not-a-hash", "scrypt$bad", "bcrypt$1$2$3$4$5"]) {
       expect(await verifyPassword("x", bad)).toBe(false);
     }
+  });
+
+  it("returns false when a stored parameter is not an integer", async () => {
+    // Six segments, but N is not a number: Number("abc") is NaN and the
+    // derivation must be refused before it reaches scrypt.
+    expect(await verifyPassword("x", "scrypt$abc$8$1$AAAA$BBBB")).toBe(false);
+  });
+
+  it("surfaces a derivation failure from the worker instead of resolving", async () => {
+    // maxmem far below what N=32768,r=8 needs makes scrypt itself reject; the
+    // promisified wrapper must propagate that, not swallow it into a resolve.
+    await expect(
+      deriveScrypt("x", Buffer.alloc(16), 64, { N: 32768, r: 8, p: 1, maxmem: 1024 })
+    ).rejects.toThrow();
   });
 
   it("returns false when a hash component is empty", async () => {
@@ -58,8 +81,8 @@ describe("password hashing (scrypt)", () => {
   });
 
   it("works with the production scrypt params (maxmem set, no throw)", async () => {
-    // A missing maxmem makes scryptSync throw "Invalid scrypt params" here.
-    const stored = hashPassword("p@ssw0rd");
+    // A missing maxmem makes the derivation throw "Invalid scrypt params".
+    const stored = await hash("p@ssw0rd");
     expect(await verifyPassword("p@ssw0rd", stored)).toBe(true);
   });
 
@@ -67,17 +90,28 @@ describe("password hashing (scrypt)", () => {
     await expect(verifyPasswordDummy("anything")).resolves.toBeUndefined();
   });
 
+  it("fails closed when the stored parameters cannot be derived", async () => {
+    // A tampered row forcing N beyond maxmem makes scrypt reject; the server
+    // must answer "wrong password" rather than throw a 500.
+    const stored = await hash("p@ssw0rd");
+    const params = stored.split("$");
+    params[1] = "1048576";
+    expect(await verifyPassword("p@ssw0rd", params.join("$"))).toBe(false);
+  });
+
   it("fails closed once the concurrent-derivation cap is reached, and recovers after", async () => {
     // Each scrypt costs ~33 MiB and runs on the libuv threadpool. The cap is
     // what stops unauthenticated login POSTs from queueing unbounded work, so
     // it must reject (not queue) and must release its slots afterwards.
-    const stored = hashPassword("p@ssw0rd");
+    const stored = await hash("p@ssw0rd");
     expect(scryptInFlightCount()).toBe(0);
 
     const inFlight = Array.from({ length: 8 }, () => verifyPassword("p@ssw0rd", stored));
     expect(scryptInFlightCount()).toBeLessThanOrEqual(8);
     // The 9th concurrent attempt is refused outright.
     expect(await verifyPassword("p@ssw0rd", stored)).toBe(false);
+    // The registration path shares the same cap and refuses instead of blocking.
+    expect(await hashPassword("another")).toBeNull();
     await Promise.all(inFlight);
 
     // All slots released: the next attempt succeeds again.
@@ -147,6 +181,20 @@ describe("password reset", () => {
     // survive the reset meant to lock the attacker out.
     expect(stmts[1]!.sql).toMatch(/api_key = NULL/);
     expect(stmts[1]!.params![0]).toMatch(/^scrypt\$/);
+  });
+
+  it("consumePasswordReset reports failure without claiming when the slot is exhausted", async () => {
+    mockQuery.mockResolvedValueOnce({
+      results: [{ user_id: "u1", expires_at: new Date(Date.now() + 60_000).toISOString() }],
+    });
+    setScryptSlotForced(true);
+    try {
+      expect(await consumePasswordReset("tok", "newpassword")).toBeNull();
+      // The token is left unclaimed: a failed derivation must not burn it.
+      expect(dbWrite.batch).not.toHaveBeenCalled();
+    } finally {
+      setScryptSlotForced(false);
+    }
   });
 
   it("consumePasswordReset returns null when a concurrent request won the claim", async () => {

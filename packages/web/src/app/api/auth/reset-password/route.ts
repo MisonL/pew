@@ -11,14 +11,14 @@ import { BodyTooLargeError, MAX_AUTH_BODY_BYTES, readBoundedJson } from "@pew/co
 import { consumePasswordReset } from "@/lib/credentials";
 import {
   AUTH_RESET_RATE_LIMIT,
-  getClientIp,
+  clientIpKey,
   inMemoryRateLimiter,
 } from "@/lib/rate-limit";
 
 const MIN_PASSWORD_LENGTH = 8;
 
 export async function POST(request: Request) {
-  const ip = getClientIp(request);
+  const ip = clientIpKey(request);
   const rl = inMemoryRateLimiter.check(`auth-reset:${ip}`, AUTH_RESET_RATE_LIMIT);
   if (!rl.allowed) {
     return NextResponse.json(

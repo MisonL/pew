@@ -16,7 +16,7 @@ import { BodyTooLargeError, MAX_AUTH_BODY_BYTES, readBoundedJson } from "@pew/co
 import { getDbRead, getDbWrite } from "@/lib/db";
 import {
   AUTH_CODE_VERIFY_RATE_LIMIT,
-  getClientIp,
+  clientIpKey,
   inMemoryRateLimiter,
 } from "@/lib/rate-limit";
 
@@ -34,7 +34,7 @@ function generateApiKey(): string {
 
 export async function POST(request: Request) {
   // Rate limit: 5 verification attempts per minute per IP
-  const ip = getClientIp(request);
+  const ip = clientIpKey(request);
   const rl = inMemoryRateLimiter.check(
     `auth-code-verify:${ip}`,
     AUTH_CODE_VERIFY_RATE_LIMIT,
