@@ -8,7 +8,7 @@
 
 **Architecture:** 仍是「不重写业务逻辑」。认证接缝集中在 `auth.ts` 一处组装：`providers` 按环境条件挂 Google/Credentials，`signIn` 对 credentials 直接放行，邀请闸门逻辑从 `lib/invite.ts`（不改）移到新的 `lib/credentials.ts`。密码哈希（scrypt）与注册都由新增文件承担；`password_hash` 的读取走 D1 REST 原始查询（`getD1Client().query`），从而**不改 worker-read、不改 `lib/db.ts`**。管理员判定从「纯 `ADMIN_EMAILS`」扩展为「`ADMIN_EMAILS` 命中 OR 库内 `is_admin=1`」。首个用户即管理员，用一次性单行表 `instance_setup` 做并发安全的认领，解开「无用户建不了邀请码、无邀请码建不了用户」的死锁。
 
-**Tech Stack:** Next.js（App Router）+ Auth.js（NextAuth v5，JWT strategy）、Node `crypto.scryptSync`（密码哈希）、rqlite/D1（经 Plan 1 的 `D1_BASE_URL` → d1-http）、Vitest 5（`bun run test`）
+**Tech Stack:** Next.js（App Router）+ Auth.js（NextAuth v5，JWT strategy）、Node `crypto.scrypt`（密码哈希；交付时用 `scryptSync`，2026-10-31 改为回调版异步，见 Task 2 实现更正）、rqlite/D1（经 Plan 1 的 `D1_BASE_URL` → d1-http）、Vitest 5（`bun run test`）
 
 **Spec:** `docs/57-self-hosted-deployment-design.md`（§4.4 认证、§4.5 CLI、§4.7 改动面）
 
@@ -165,6 +165,8 @@ git commit -m "feat: add credentials auth migration (password_hash, is_admin, in
   - `verifyPasswordDummy(password: string): Promise<void>` —— 用户不存在时也消耗等价时间
 - Consumes: 无（只依赖 `node:crypto`）
 
+> **实现更正 2026-10-31**：本节及下方代码块记录的是 Plan 2 交付时的**同步**签名（`scryptSync`，`hashPassword(password): string`）。此后 `lib/credentials.ts` 已改为异步：`scrypt`（回调版）经 `deriveScrypt(password, salt, keylen, params): Promise<Buffer | null>` 派发，`hashPassword(password): Promise<string | null>`，槽位耗尽时返回 `null` 并由调用方转 `Too many concurrent requests`（Web 侧 503 + `Retry-After`）。原因是 65 ms 的 `scryptSync` 会阻塞单进程 Web 的事件循环，而 `/api/auth/register` 是公开路由。存储格式、`SCRYPT` 参数与 `verifyPassword` 契约未变。此处保留原文作为交付记录，不再逐行回填。
+
 **背景**：参数用 `N=32768, r=8, p=1, keylen=64, maxmem=64MiB`。存储格式带参数，便于日后调整而兼容旧记录。
 
 - [x] **Step 1: 写失败测试**
@@ -217,6 +219,8 @@ Expected: FAIL —— `Failed to resolve import "../lib/credentials"`
 - [x] **Step 3: 实现**
 
 创建 `packages/web/src/lib/credentials.ts`（本步只放哈希部分，注册逻辑在 Task 3 追加）：
+
+> 下方保存 Plan 2 交付时的实现原文（同步 `scryptSync`），仅作历史记录；当前实现见 Task 2 的「实现更正 2026-10-31」。
 
 ```typescript
 /**

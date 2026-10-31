@@ -331,7 +331,7 @@ CREATE TABLE kv_cache (
 
 **密码哈希（scrypt，实测参数陷阱）**
 
-- **必须显式传 `maxmem`**。实测 `scryptSync(pw, salt, 64, { N: 32768, r: 8, p: 1 })` 在默认 `maxmem = 32 MiB` 下抛 `Invalid scrypt params`：OpenSSL 需求 `128*N*r + 128*r*p = 33,555,456` 字节 > `33,554,432`。修法：`maxmem: 64*1024*1024`，或降到 `N = 16384`。
+- **必须显式传 `maxmem`**。实测 `scryptSync(pw, salt, 64, { N: 32768, r: 8, p: 1 })` 在默认 `maxmem = 32 MiB` 下抛 `Invalid scrypt params`：OpenSSL 需求 `128*N*r + 128*r*p = 33,555,456` 字节 > `33,554,432`。修法：`maxmem: 64*1024*1024`，或降到 `N = 16384`。（实现更正 2026-10-31：派发方式已从 `scryptSync` 改为回调版 `scrypt`——`hashPassword` 现为 `Promise<string | null>`，单进程 Web 上 65 ms 的同步派发会阻塞事件循环。`maxmem` 与该存储格式不变。）
 - 存储格式 `scrypt$N$r$p$<salt_b64>$<hash_b64>` 单列，便于日后调参。
 - **用户不存在时也做一次等价 dummy 校验**，避免通过响应时间枚举邮箱。
 - 迁移：新增迁移文件包含 `ALTER TABLE users ADD COLUMN password_hash TEXT` 与 `ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`（现有 `users` 无任何 password/role 字段，已核验）。

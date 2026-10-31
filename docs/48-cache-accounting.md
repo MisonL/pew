@@ -91,7 +91,7 @@ The public pricing API includes a content snapshot ID, fetch time and dynamic/ba
 
 ## Durable local state and delivery
 
-`accounting-queue.jsonl` is a retained companion ledger, with independent dirty/outbox state. Resetting cursors preserves it and the evidence ledger. Same-revision conflicts are rejected; lower parser revisions cannot win. Incremental annotation updates need an exact BEFORE basis; a full replay needs an exact AFTER basis. Unverified history is left intact.
+`accounting-queue.jsonl` is a retained companion ledger, with independent dirty/outbox state. Resetting cursors preserves it and the evidence ledger. A same-revision conflict is not an error: the stored copy is kept, the incoming replacement is dropped, and a single summary warning reports the count through the command's warning channel (sync/upload progress, `reset` output). Treating it as fatal wedged every later sync, upload and reset, because `recoverSyncCommit` re-runs the merge before anything else. Lower parser revisions cannot win. Incremental annotation updates need an exact BEFORE basis; a full replay needs an exact AFTER basis. Unverified history is left intact.
 
 Sync uses `sync-commit.json` to recover absolute evidence, accounting, legacy queue and cursor writes before parsing or uploading again. This supports retry after a process interruption between file replacements. State-changing commands use a separate `state.lock`, including sync/upload, session sync/upload, reset and enrichment apply. A stale lock fails closed: verify its owner has stopped before removing that lock alone. Preserve a pending journal for normal sync recovery; do not erase the ledger or reset to bypass it.
 
