@@ -117,9 +117,9 @@ describe("Pew ponytail readonly audit", { timeout: 300_000 }, () => {
     for (const [path, before, after] of [
       [journal, "await new EvidenceQueue(stateDir).merge", "new EvidenceQueue(stateDir).merge"],
       [journal, "await new AccountingQueue(stateDir).merge", "new AccountingQueue(stateDir).merge"],
-      [journal, "await new EvidenceQueue(stateDir).merge(commit.evidence, commit.replay);", ""],
+      [journal, "await new EvidenceQueue(stateDir).merge(commit.evidence, commit.replay, onWarning);", ""],
       [sync, "await commitSync(stateDir,", "commitSync(stateDir,"],
-      [sync, "await recoverSyncCommit(opts.stateDir)", "recoverSyncCommit(opts.stateDir)"],
+      [sync, "await recoverSyncCommit(opts.stateDir,", "recoverSyncCommit(opts.stateDir,"],
     ]) {
       const report = run(mutate(path, (s) => s.replace(before, after)));
       expect(hasError(report, "cursor.evidence-before-commit")).toBe(true);

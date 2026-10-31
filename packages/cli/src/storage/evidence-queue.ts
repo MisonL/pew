@@ -48,8 +48,21 @@ export class EvidenceQueue extends BaseQueue<EvidenceRecord> {
     }
   }
 
-  /** Union by stable identity; snapshots replace, never SUM. */
-  async merge(incoming: EvidenceRecord[], replay = false): Promise<void> {
+  /**
+   * Union by stable identity; snapshots replace, never SUM.
+   *
+   * A conflicting snapshot (same or newer seq with different content or
+   * provenance) keeps the stored record and reports through `onWarning`
+   * instead of throwing. The server's UPSERT discards the incoming copy in
+   * both cases — it only replaces a strictly newer seq whose provenance is
+   * identical — so keeping the stored one is exactly what the durable state
+   * already agrees with. Throwing here used to wedge every later sync,
+   * upload and reset: recoverSyncCommit re-runs this merge before anything
+   * else, so one forked copy of an entry blocked the whole tool forever with
+   * no CLI recovery path.
+   */
+  async merge(incoming: EvidenceRecord[], replay = false,
+    onWarning?: (message: string) => void): Promise<void> {
     // Same short-circuit as the accounting ledger: with nothing to merge and
     // no replay this would read and re-validate the ledger to write nothing.
     if (incoming.length === 0 && !replay) return;
@@ -63,6 +76,7 @@ export class EvidenceQueue extends BaseQueue<EvidenceRecord> {
     const dirty = new Set(dirtyKeys ?? (await this.readFromOffset(await this.loadOffset())).records.map(evidenceKey));
     if (replay) for (const key of merged.keys()) dirty.add(key);
     let changed = false;
+    let conflicts = 0;
     for (const raw of incoming) {
       const r = checkedRecord(raw);
       const key = evidenceKey(r);
@@ -77,7 +91,10 @@ export class EvidenceQueue extends BaseQueue<EvidenceRecord> {
           r.evidence.origin !== prev.evidence.origin || r.evidence.provider !== prev.evidence.provider ||
           r.evidence.granularity !== prev.evidence.granularity || r.evidence.timePrecision !== prev.evidence.timePrecision ||
           r.evidence.intervalStart !== prev.evidence.intervalStart) {
-          throw new Error("Conflicting usage evidence snapshot");
+          // Divergent but immutable-by-the-server (the UPSERT guard would drop
+          // it anyway): keep what we have and surface it once at the end.
+          conflicts++;
+          continue;
         }
       }
       merged.set(key, r);
@@ -89,6 +106,9 @@ export class EvidenceQueue extends BaseQueue<EvidenceRecord> {
     if (changed || (replay && records.length > 0)) {
       await this.saveDirtyKeys([...dirty].sort());
       if (changed) await this.overwrite([...merged.values()].sort((a, b) => evidenceKey(a).localeCompare(evidenceKey(b))));
+    }
+    if (conflicts > 0) {
+      onWarning?.(`Kept the stored copy of ${conflicts} usage evidence snapshot(s) that a newer scan disagreed with; the server's guard would reject the replacement.`);
     }
   }
 }

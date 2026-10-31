@@ -19,7 +19,7 @@ interface SyncCommit {
 }
 
 /** Recover absolute writes BEFORE reading a source cursor or uploading any queue. */
-export async function recoverSyncCommit(stateDir: string): Promise<void> {
+export async function recoverSyncCommit(stateDir: string, onWarning?: (message: string) => void): Promise<void> {
   const path = join(stateDir, "sync-commit.json");
   let raw: string;
   try { raw = await readFile(path, "utf8"); }
@@ -29,8 +29,8 @@ export async function recoverSyncCommit(stateDir: string): Promise<void> {
     commit = JSON.parse(raw);
     if (commit.version !== 1 || !commit.cursors || !Array.isArray(commit.accounting) || !Array.isArray(commit.evidence)) throw new Error();
   } catch { throw new Error("Invalid pending sync commit; preserve Pew state for recovery"); }
-  await new EvidenceQueue(stateDir).merge(commit.evidence, commit.replay);
-  await new AccountingQueue(stateDir).merge(commit.accounting, commit.replay, commit.preserveAccountingSources);
+  await new EvidenceQueue(stateDir).merge(commit.evidence, commit.replay, onWarning);
+  await new AccountingQueue(stateDir).merge(commit.accounting, commit.replay, commit.preserveAccountingSources, onWarning);
   if (commit.records) {
     const queue = new LocalQueue(stateDir);
     await queue.saveDirtyKeys(commit.dirtyKeys ?? []);
@@ -42,10 +42,10 @@ export async function recoverSyncCommit(stateDir: string): Promise<void> {
 }
 
 /** The single journal makes queue/detail/cursor replacement retryable after any partial write. */
-export async function commitSync(stateDir: string, commit: SyncCommit): Promise<void> {
+export async function commitSync(stateDir: string, commit: SyncCommit, onWarning?: (message: string) => void): Promise<void> {
   await ensureSecureDir(stateDir, { recursive: true });
   const path = join(stateDir, "sync-commit.json");
   await writeFile(`${path}.tmp`, JSON.stringify(commit), { mode: 0o600 });
   await rename(`${path}.tmp`, path);
-  await recoverSyncCommit(stateDir);
+  await recoverSyncCommit(stateDir, onWarning);
 }

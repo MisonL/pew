@@ -29,12 +29,18 @@ describe("durable usage evidence", () => {
     expect((await queue.readFromOffset(0)).records).toEqual([newer]);
   });
 
-  it("fails closed for conflicting same-revision values and rebucketing attempts", async () => {
+  it("keeps the stored copy and warns on conflicting same-revision values and rebucketing attempts", async () => {
     await queue.merge([good]);
-    await expect(queue.merge([{ ...good, input_tokens: 200, total_tokens: 220 }])).rejects.toThrow("Conflicting usage evidence snapshot");
-    await expect(queue.merge([{ ...good, timestamp: "2026-09-07T16:00:01.000Z", hour_start: "2026-09-07T16:00:00.000Z",
-      evidence: { ...good.evidence, snapshotSeq: 2 } }])).rejects.toThrow("Conflicting usage evidence snapshot");
+    const warnings: string[] = [];
+    await queue.merge([{ ...good, input_tokens: 200, total_tokens: 220 }], false, (m) => warnings.push(m));
+    await queue.merge([{ ...good, timestamp: "2026-09-07T16:00:01.000Z", hour_start: "2026-09-07T16:00:00.000Z",
+      evidence: { ...good.evidence, snapshotSeq: 2 } }], false, (m) => warnings.push(m));
     expect((await queue.readFromOffset(0)).records).toEqual([good]);
+    // The operator learns about it; the batch is never rejected, because the
+    // server's UPSERT guard would discard the incoming copy anyway and a throw
+    // wedged every later sync/upload/reset behind the journal.
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toMatch(/Kept the stored copy/);
   });
 
   it.each([
@@ -52,14 +58,15 @@ describe("durable usage evidence", () => {
       .toThrow("Invalid usage evidence");
   });
 
-  it("rejects immutable provenance changes that the server cannot accept", async () => {
+  it("rejects immutable provenance changes the server cannot accept, keeping the stored copy", async () => {
     await queue.merge([good]);
     for (const change of [
       { origin: "hermes-acp-ledger" as const }, { provider: "anthropic" }, { granularity: "operation" as const },
       { timePrecision: "unattributed" as const }, { intervalStart: "2026-09-05T00:00:00.000Z" },
     ]) {
-      await expect(queue.merge([{ ...good, evidence: { ...good.evidence, ...change, snapshotSeq: 2 } }]))
-        .rejects.toThrow("Conflicting usage evidence snapshot");
+      const warnings: string[] = [];
+      await queue.merge([{ ...good, evidence: { ...good.evidence, ...change, snapshotSeq: 2 } }], false, (m) => warnings.push(m));
+      expect(warnings).toHaveLength(1);
     }
     expect((await queue.readFromOffset(0)).records).toEqual([good]);
   });

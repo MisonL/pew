@@ -95,13 +95,16 @@ describe("durable independent accounting revisions", () => {
     }
     expect((await q.readFromOffset(0)).records).toEqual([]);
   });
-  it("allows reclassification without changing legacy totals and rejects same-revision conflicts", async () => {
+  it("allows reclassification without changing legacy totals and keeps the stored copy on same-revision conflicts", async () => {
     const q = new AccountingQueue(await temp()); const r = fixture();
     await q.merge([r]);
     const reclassified = { ...r, detail_revision: 2, groups: [group(80)] };
     await q.merge([reclassified]); await q.merge([r]); await q.merge([reclassified]);
     expect((await q.readFromOffset(0)).records).toEqual([reclassified]);
-    await expect(q.merge([{ ...reclassified, groups: [group(70)] }])).rejects.toThrow(/Conflicting/);
+    const warnings: string[] = [];
+    await q.merge([{ ...reclassified, groups: [group(70)] }], false, [], (m) => warnings.push(m));
+    expect((await q.readFromOffset(0)).records).toEqual([reclassified]);
+    expect(warnings).toHaveLength(1);
     expect(await q.loadDirtyKeys()).toEqual([accountingKey(r)]);
   });
 

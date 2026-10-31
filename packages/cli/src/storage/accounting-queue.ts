@@ -150,7 +150,8 @@ export class AccountingQueue extends BaseQueue<AccountingRecord> {
     catch { throw new Error("Invalid accounting ledger"); }
   }
 
-  async merge(incoming: AccountingRecord[], replay = false, preserveSources: Source[] = []): Promise<void> {
+  async merge(incoming: AccountingRecord[], replay = false, preserveSources: Source[] = [],
+    onWarning?: (message: string) => void): Promise<void> {
     // Nothing to merge and no replay: the whole method would read and
     // re-validate the ledger only to find `changed` false and write nothing.
     // Every sync ends here through the commit journal, including no-op ones.
@@ -161,6 +162,7 @@ export class AccountingQueue extends BaseQueue<AccountingRecord> {
     const dirty = new Set(dirtyKeys ?? (await this.readFromOffset(await this.loadOffset())).records.map(accountingKey));
     if (replay) for (const [key, record] of merged) if (!preserveSources.includes(record.source)) dirty.add(key);
     let changed = false;
+    let conflicts = 0;
     for (const raw of incoming) {
       const r = checkedRecord(raw); const key = accountingKey(r); const prev = merged.get(key);
       if (prev) {
@@ -168,7 +170,13 @@ export class AccountingQueue extends BaseQueue<AccountingRecord> {
         if (accountingJson(r) === accountingJson(prev)) continue;
         if (compareAccountingRevision(r, prev) === 0 ||
           (r.source_revision === prev.source_revision && (!sameBasis(r.basis, prev.basis) || r.evidence_snapshot_seq !== prev.evidence_snapshot_seq))) {
-          throw new Error("Conflicting accounting snapshot");
+          // Same revision, different content: no ordering can decide which copy
+          // is right, and the server's UPSERT has the same ambiguity. Keep the
+          // stored copy and report it. Throwing here wedged every later sync,
+          // upload and reset forever, because recoverSyncCommit re-runs this
+          // merge before anything else — a fork of one bucket blocked the tool.
+          conflicts++;
+          continue;
         }
       }
       merged.set(key, r); dirty.add(key); changed = true;
@@ -176,6 +184,9 @@ export class AccountingQueue extends BaseQueue<AccountingRecord> {
     if (changed || (replay && records.length > 0)) {
       await this.saveDirtyKeys([...dirty].sort());
       if (changed) await this.overwrite([...merged.values()].sort((a, b) => accountingKey(a).localeCompare(accountingKey(b))));
+    }
+    if (conflicts > 0) {
+      onWarning?.(`Kept the stored copy of ${conflicts} accounting snapshot(s) that a newer scan disagreed with at the same revision.`);
     }
   }
 }

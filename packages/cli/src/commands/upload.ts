@@ -93,7 +93,11 @@ export async function executeUpload(opts: UploadOptions): Promise<UploadResult> 
 }
 
 async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
-  await recoverSyncCommit(opts.stateDir);
+  // Recovery can discard a snapshot a newer scan disagreed with (see
+  // EvidenceQueue.merge). That is not a failure, but it is the only moment
+  // the operator can learn about it, so carry it into the stage warnings.
+  const recoveryWarnings: string[] = [];
+  await recoverSyncCommit(opts.stateDir, (message) => recoveryWarnings.push(message));
   const queue = new LocalQueue(opts.stateDir, opts.onCorruptLine);
 
   const engine = createUploadEngine<QueueRecord>({
@@ -108,10 +112,10 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
 
   const main = await engine.execute(opts);
   if (!main.success) return main;
-  // Keep the token stage's warning (a host switch) when merging: the spread
-  // below takes the supplemental result, which has no idea a re-route
-  // happened and would otherwise swallow the only line telling the operator.
-  const warnings = [main.warning];
+  // Keep each stage's own warning when merging: the spread below takes the
+  // supplemental result, which has no idea a re-route happened, and the
+  // evidence stage's "skipped/refused" line exists only on its own result.
+  const warnings = [main.warning, ...recoveryWarnings];
   const supplemental = await createUploadEngine<EvidenceRecord>({
     queue: new EvidenceQueue(opts.stateDir), endpoint: "/api/ingest/evidence",
     entityName: "usage evidence", preprocess: (records) => records,
@@ -123,7 +127,15 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
   // new host. Report the switch when any stage actually sends to a different
   // origin than the last recorded drain.
   const usage = { ...supplemental, uploaded: main.uploaded + supplemental.uploaded, batches: main.batches + supplemental.batches };
-  if (!supplemental.success) return { ...usage, ...mergeWarnings(warnings) };
+  warnings.push(supplemental.warning);
+  // A failure here is an evidence-stage failure, but the caller only sees one
+  // combined result. Prefix the message with its stage: an old server that
+  // answers 404 for /api/ingest/evidence otherwise prints "Token upload
+  // failed" while the token stage succeeded, sending the operator after the
+  // wrong queue.
+  if (!supplemental.success) {
+    return { ...usage, error: `usage evidence: ${supplemental.error}`, ...mergeWarnings(warnings) };
+  }
   const details = await createUploadEngine<AccountingRecord>({
     queue: new AccountingQueue(opts.stateDir), endpoint: "/api/ingest/details", entityName: "accounting details",
     preprocess: (records) => records, recordKey: accountingKey, maxBatchSize: 25, maxBatchBytes: 600_000,

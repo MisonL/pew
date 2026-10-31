@@ -958,14 +958,18 @@ async function runUpload(stateDir: string, apiUrl: string, dev: boolean): Promis
 
   if (uploadResult.success) {
     if (uploadResult.uploaded === 0) {
-      log.info("No pending token records to upload.");
+      log.info("No pending records to upload.");
     } else {
       log.success(
-        `Uploaded ${pc.bold(String(uploadResult.uploaded))} token records in ${uploadResult.batches} batch(es).`,
+        `Uploaded ${pc.bold(String(uploadResult.uploaded))} records in ${uploadResult.batches} batch(es).`,
       );
     }
   } else {
-    log.error(`Token upload failed: ${uploadResult.error}`);
+    // Stage-neutral: the engine merges token, evidence and accounting stages
+    // into one result, so naming a stage here would misreport whichever one
+    // actually failed (an evidence 404 used to read "Token upload failed"
+    // while the token stage had already succeeded).
+    log.error(`Upload failed: ${uploadResult.error}`);
     if (uploadResult.uploaded > 0) {
       log.text(`${pc.yellow(String(uploadResult.uploaded))} records uploaded before failure.`);
     }

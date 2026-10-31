@@ -227,7 +227,7 @@ function emptyEpochCursor(
  */
 export async function executeSync(opts: SyncOptions): Promise<SyncResult> {
   return withStateLock(opts.stateDir, async () => {
-    await recoverSyncCommit(opts.stateDir);
+    await recoverSyncCommit(opts.stateDir, (message) => opts.onProgress?.({ source: "all", phase: "warn", message }));
     const internal: InternalSyncOptions = { ...opts };
     const retained = await readAntigravityBaseline(opts.stateDir, true, { tolerant: true });
     internal.previousAntigravityRecords = retained.filter((r) => r.source === "antigravity");
@@ -1059,7 +1059,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
       dbsScanned[key] += 1;
     }
 
-    const dedupSkipped = result.rowCount - (result.deltas.length > 0 ? result.deltas.length : 0);
+    const dedupSkipped = Math.max(0, result.rowCount - (result.deltas.length > 0 ? result.deltas.length : 0));
     onProgress?.({
       source: driver.source,
       phase: "parse",
@@ -1380,7 +1380,8 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   cursors.accountingSchemaVersion = ACCOUNTING_SCHEMA_VERSION;
   cursors.updatedAt = new Date().toISOString();
   await commitSync(stateDir, { version: 1, records: finalRecords, dirtyKeys, evidence: evidenceRecords, accounting,
-    replay: initialCursorEmpty, preserveAccountingSources: ["antigravity", ...RETIRED_SOURCES], cursors });
+    replay: initialCursorEmpty, preserveAccountingSources: ["antigravity", ...RETIRED_SOURCES], cursors },
+    (message) => onProgress?.({ source: "all", phase: "warn", message }));
 
   onProgress?.({
     source: "all",
