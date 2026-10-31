@@ -74,6 +74,23 @@ describe("assertAuthReconciled (expectAuth=true)", () => {
       .rejects.toThrow(/anonymous query succeeded/);
   });
 
+  it("fails when /status itself is not 200 (the '*' entry lost its permissions)", async () => {
+    // The old check was `if (status.ok && body.http?.auth !== "enabled")`, so a
+    // 401 on /status skipped the assertion entirely: the anonymous-SELECT probe
+    // still 401'd and the reconciliation "passed" without ever confirming auth
+    // was on. The eventual failure surfaced at the first data query with a
+    // message pointing at the wrong layer.
+    const f = vi.fn().mockImplementationOnce(stub(401, { error: "unauthorized" }));
+    await expect(assertAuthReconciled(f, URL, true))
+      .rejects.toThrow(/\/status answered 401/);
+  });
+
+  it("fails when /status returns a non-JSON body", async () => {
+    const f = vi.fn().mockImplementationOnce(async () => new Response("<html>", { status: 200 }));
+    await expect(assertAuthReconciled(f, URL, true))
+      .rejects.toThrow(/non-JSON body/);
+  });
+
   it("is a no-op when expectAuth is false", async () => {
     const f = vi.fn();
     await expect(assertAuthReconciled(f, URL, false)).resolves.toBeUndefined();

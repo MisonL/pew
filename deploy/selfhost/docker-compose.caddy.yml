@@ -5,7 +5,15 @@
 # compose network you do NOT need docker-compose.proxy.yml on top.
 services:
   caddy:
-    image: caddy:2
+    # Pinned patch version, matching the pin-patch rule the rest of the stack
+    # follows (rqlite 10.5.3, oven/bun 1.4.3, node 22.23.4-slim).
+    image: caddy:2.10.2
+    # Without this the ONLY public entry point does not come back after a
+    # host or docker-daemon restart: every backend service has
+    # `restart: unless-stopped`, but the port override below removes web's
+    # direct publish, so an unrestarted caddy leaves the site unreachable
+    # with no healthcheck to report it.
+    restart: unless-stopped
     ports: ["80:80", "443:443"]
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro

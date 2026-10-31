@@ -35,6 +35,20 @@ const LEDGER_DDL = [
 ];
 
 /**
+ * Migrations squashed into later files. Upstream (wrangler) skips them, so a
+ * runner that applied them would create tables/columns the hosted deployment
+ * never has — and both the migrate service and verify-migrations.ts must
+ * exclude the same set, so the list lives here rather than in each caller.
+ */
+export const SQUASHED_MIGRATIONS = ["004-is-public.sql", "006-device-id.sql", "006c-team-logo-url.sql"] as const;
+
+/** `readDir` filter shared by the compose migrate service and verify-migrations. */
+export function unsquashedSqlFiles(names: string[]): string[] {
+  const squashed = new Set<string>(SQUASHED_MIGRATIONS);
+  return names.filter((f) => f.endsWith(".sql") && !squashed.has(f));
+}
+
+/**
  * True for statements that define schema (CREATE/ALTER/DROP). Those must run
  * with rqlite's ?norwtime&norwrandom so their non-deterministic text is kept
  * verbatim. DML (INSERT/UPDATE/DELETE) must NOT: rqlite's default rewrite is
@@ -286,10 +300,22 @@ export async function applyMigrations(
       }
     }
     await flushDdl();
-    await options.db
-      .prepare("INSERT INTO _migrations (id, applied_at) VALUES (?, datetime('now'))")
-      .bind(name)
-      .run();
+    try {
+      await options.db
+        .prepare("INSERT INTO _migrations (id, applied_at) VALUES (?, datetime('now'))")
+        .bind(name)
+        .run();
+    } catch (ledgerError) {
+      // Two migrate processes can run concurrently (`docker compose run --rm
+      // migrate` alongside `up`, or an operator re-running recovery). The DDL
+      // is idempotent, so the loser's statements are harmless; but its ledger
+      // INSERT hits the PRIMARY KEY and a raw SQLite error would abort a run
+      // whose migration is in fact applied, and block every dependent service.
+      // "Already recorded" is the same end state this process wanted.
+      const message = ledgerError instanceof Error ? ledgerError.message : String(ledgerError);
+      if (!/UNIQUE constraint failed/i.test(message)) throw ledgerError;
+      log(`recorded concurrently by another migrate process: ${name}`);
+    }
     applied.push(name);
     log(`applied ${name} (${statements.length} statements)`);
   }

@@ -113,6 +113,10 @@ export function createWorkerServer<E>(options: WorkerServerOptions<E>) {
             if (!res.headersSent) {
               res.statusCode = tooLarge ? 413 : 500;
               res.setHeader("Connection", "close");
+              // Match d1-http's error responses: without this a client that
+              // keys off Content-Type (or an operator reading curl -i) sees the
+              // body as opaque text.
+              res.setHeader("Content-Type", "application/json");
             }
             res.end(
               JSON.stringify({ error: tooLarge ? "Request body too large" : "Internal server error" }),

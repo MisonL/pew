@@ -120,8 +120,14 @@ if (import.meta.main) {
     });
 
   registerShutdownSignals(
-    // http.Server.close() returns the Server, not a Promise; wrap the callback
-    // so the shutdown handler actually waits for in-flight requests to drain.
-    () => new Promise<void>((resolve, reject) => nodeServer.close((err) => (err ? reject(err) : resolve())))
+    // closeIdleConnections first: the sole upstream is web's undici pool, which
+    // holds keep-alive sockets between requests. Draining only waits for
+    // ACTIVE requests; an idle pooled socket keeps close() pending until the
+    // 10 s forced exit, so every `docker compose up -d` ended in an exit code
+    // 1 the supervisor reads as a crash.
+    () => new Promise<void>((resolve, reject) => {
+      nodeServer.closeIdleConnections();
+      nodeServer.close((err) => (err ? reject(err) : resolve()));
+    })
   );
 }

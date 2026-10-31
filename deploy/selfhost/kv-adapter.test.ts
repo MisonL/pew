@@ -33,12 +33,15 @@ function makeFakeDb() {
         },
         all: async <T,>(): Promise<D1Result<T>> => {
           if (sql.includes("SELECT key FROM kv_cache")) {
-            // Bind order is (pattern, after, stamp, limit).
-            const [pattern, after, stamp, limit] = params as [string, string, string, number];
-            const prefix = pattern.replace(/%$/, "").replace(/\\(.)/g, "$1");
+            // Byte-exact prefix range: bind order is
+            // (prefix, prefix+"￿", prefix, after, stamp, limit).
+            const [prefix, upper, gate, after, stamp, limit] = params as
+              [string, string, string, string, string, number];
             const matched = [...rows.values()]
-              .filter((r) => r.key.startsWith(prefix) && r.key > after && live(r, stamp))
-              .sort((a, b) => a.key.localeCompare(b.key))
+              .filter((r) => r.key >= prefix && (gate === "" || r.key < upper) && r.key > after && live(r, stamp))
+              // SQLite's TEXT PRIMARY KEY is BINARY collation; localeCompare
+              // would order case differently and hide the LIKE-folding bug.
+              .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
               .slice(0, limit)
               .map((r) => ({ key: r.key }) as unknown as T);
             return { success: true, results: matched, meta: { changes: 0, duration: 0 } };
@@ -147,6 +150,30 @@ describe("kv-adapter", () => {
     await kv.put("k", '"v"');
     await kv.delete("k");
     expect(await kv.get("k", "json")).toBeNull();
+  });
+
+  it("list matches the prefix byte-exactly, not case-insensitively", async () => {
+    // SQLite's LIKE folds ASCII case, so the old `key LIKE 'lb:%'` predicate
+    // also matched `LB:` and clearAllCache("lb:") would delete keys outside
+    // the requested prefix. Cloudflare KV compares bytes.
+    const { db } = makeFakeDb();
+    const kv = createKvAdapter({ db, now: () => NOW });
+    await kv.put("lb:1", "1");
+    await kv.put("LB:2", "2");
+    await kv.put("lbz:3", "3");
+    const page = await kv.list({ prefix: "lb:" });
+    expect(page.keys.map((k) => k.name)).toEqual(["lb:1"]);
+  });
+
+  it("list treats a prefix containing % or _ literally", async () => {
+    const { db } = makeFakeDb();
+    const kv = createKvAdapter({ db, now: () => NOW });
+    await kv.put("a%b:1", "1");
+    await kv.put("axb:2", "2");
+    await kv.put("a_b:3", "3");
+    await kv.put("aXb:4", "4");
+    expect((await kv.list({ prefix: "a%b:" })).keys.map((k) => k.name)).toEqual(["a%b:1"]);
+    expect((await kv.list({ prefix: "a_b:" })).keys.map((k) => k.name)).toEqual(["a_b:3"]);
   });
 
   it("list returns list_complete true when all keys fit", async () => {

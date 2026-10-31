@@ -10,10 +10,9 @@ import { dirname, join } from "node:path";
 import { resolveEnvBasicAuth } from "./basic-auth";
 import { createD1Adapter } from "./d1-adapter";
 import { createRqliteDdlExecutor } from "./rqlite-client";
-import { applyMigrations } from "./migrate";
+import { applyMigrations, unsquashedSqlFiles } from "./migrate";
 
 const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../scripts/migrations");
-const SQUASHED = new Set(["004-is-public.sql", "006-device-id.sql", "006c-team-logo-url.sql"]);
 const BASE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
 
 /**
@@ -61,9 +60,22 @@ export async function assertAuthReconciled(
   // web waits on read/ingest health), so a rqlite that accepts TCP but never
   // answers must not park the whole starter for undici's default headers
   // timeout on each of two sequential fetches.
+  // A non-2xx /status is a configuration failure in its own right (the '*'
+  // entry is missing the `status` permission, credentials are wrong), not a
+  // pass: treating `status.ok === false` as "skip the assertion" let a
+  // misconfigured auth.json reach the data probes and fail there with a
+  // message pointing at the wrong layer. The body may not even be JSON.
   const status = await fetchImpl(`${baseUrl}/status`, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
-  const body = (await status.json()) as { http?: { auth?: string } };
-  if (status.ok && body.http?.auth !== "enabled") {
+  if (!status.ok) {
+    throw new Error(`auth reconciliation failed: /status answered ${status.status} (expected 200; check the '*' entry's permissions and the credentials)`);
+  }
+  let body: { http?: { auth?: string } };
+  try {
+    body = (await status.json()) as { http?: { auth?: string } };
+  } catch {
+    throw new Error("auth reconciliation failed: /status returned a non-JSON body");
+  }
+  if (body.http?.auth !== "enabled") {
     throw new Error(
       "auth reconciliation failed: credentials configured but auth is disabled on the server"
     );
@@ -145,7 +157,7 @@ async function main(): Promise<void> {
     ddlExecutor,
     readDir: async (dir) => {
       const { readdir } = await import("node:fs/promises");
-      return (await readdir(dir)).filter((f) => f.endsWith(".sql") && !SQUASHED.has(f));
+      return unsquashedSqlFiles(await readdir(dir));
     },
     log: console.log,
   });

@@ -120,12 +120,19 @@ export function createKvAdapter(options: KvAdapterOptions): KvAdapter {
       // lists (cache.ts:152-186 clearAllCache does exactly that) — every page
       // of deletions shifts the remaining rows left and the loop loses one
       // page per page (verified: 10 keys, page 3, deleted 6 of 10).
+      //
+      // Byte-exact prefix via a range, not LIKE: SQLite's LIKE folds ASCII
+      // case, so a `lb:` scan would also match `LB:` and clearAllCache would
+      // delete keys outside the requested prefix. Cloudflare KV's list({prefix})
+      // is a byte comparison; the TEXT PRIMARY KEY uses BINARY collation, so
+      // [prefix, prefix+"￿") is exactly the prefix match. An empty prefix
+      // has no upper bound and lists everything, as before.
       const { results } = await db
         .prepare(
-          "SELECT key FROM kv_cache WHERE key LIKE ? ESCAPE '\\' AND key > ? " +
-            "AND (expires_at IS NULL OR expires_at > ?) ORDER BY key LIMIT ?"
+          "SELECT key FROM kv_cache WHERE key >= ? AND (key < ? OR ? = '') " +
+            "AND key > ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY key LIMIT ?"
         )
-        .bind(`${prefix.replace(/[%_\\]/g, "\\$&")}%`, after, stamp, limit + 1)
+        .bind(prefix, `${prefix}￿`, prefix, after, stamp, limit + 1)
         .all<{ key: string }>();
 
       const hasMore = results.length > limit;

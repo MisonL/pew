@@ -14,12 +14,9 @@ import { dirname, join } from "node:path";
 import { createD1Adapter } from "./d1-adapter";
 import { createRqliteDdlExecutor } from "./rqlite-client";
 import { resolveEnvBasicAuth } from "./basic-auth";
-import { applyMigrations } from "./migrate";
+import { applyMigrations, unsquashedSqlFiles } from "./migrate";
 
 const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../scripts/migrations");
-
-/** Migrations squashed into later files; wrangler skips them, so must we. */
-const SQUASHED = new Set(["004-is-public.sql", "006-device-id.sql", "006c-team-logo-url.sql"]);
 
 /**
  * Measured against rqlite 10.5.3 after applying every migration.
@@ -102,8 +99,7 @@ async function main(): Promise<void> {
 
   const readDir = async (dir: string) => {
     const { readdir } = await import("node:fs/promises");
-    const all = await readdir(dir);
-    return all.filter((f) => f.endsWith(".sql") && !SQUASHED.has(f));
+    return unsquashedSqlFiles(await readdir(dir));
   };
 
   const first = await applyMigrations({ db, dir: MIGRATIONS_DIR, ddlExecutor, readDir, log: console.log });

@@ -2,8 +2,21 @@ import { describe, it, expect, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { splitStatements, applyMigrations, isDdlStatement } from "./migrate";
+import { splitStatements, applyMigrations, isDdlStatement, unsquashedSqlFiles, SQUASHED_MIGRATIONS } from "./migrate";
 import type { D1Like, D1Result, D1StatementLike } from "./d1-adapter";
+
+describe("unsquashedSqlFiles", () => {
+  it("keeps every .sql except the squashed set, in the order given", () => {
+    expect(
+      unsquashedSqlFiles([
+        "001-init.sql",
+        SQUASHED_MIGRATIONS[0],
+        "README.md",
+        "033-rate-limit.sql",
+      ])
+    ).toEqual(["001-init.sql", "033-rate-limit.sql"]);
+  });
+});
 
 describe("splitStatements", () => {
   it("splits plain statements on semicolons", () => {
@@ -96,10 +109,9 @@ describe("splitStatements", () => {
     // (a string literal, a CASE inside a trigger, a comment) still surfaces
     // here. Executes in-process against node:sqlite, so no rqlite is needed.
     const dir = join(import.meta.dirname, "../../scripts/migrations");
-    const squashed = new Set(["004-is-public.sql", "006-device-id.sql", "006c-team-logo-url.sql"]);
     const db = new DatabaseSync(":memory:");
     try {
-      for (const name of readdirSync(dir).filter((n) => n.endsWith(".sql") && !squashed.has(n)).sort()) {
+      for (const name of unsquashedSqlFiles(readdirSync(dir)).sort()) {
         for (const statement of splitStatements(readFileSync(join(dir, name), "utf8"))) {
           expect(() => db.exec(statement), `${name}: ${statement.slice(0, 80)}`).not.toThrow();
         }
