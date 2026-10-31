@@ -286,6 +286,10 @@ services:
       args:
         PEW_REVISION: ${PEW_REVISION:-}
         PEW_VERSION: ${PEW_VERSION:-}
+        # Passed into the web image at build so next.config's headers() (which
+        # runs at build and is baked into routes-manifest.json) honours the
+        # runtime cookie-secure decision instead of always emitting HSTS.
+        USE_SECURE_COOKIES: ${USE_SECURE_COOKIES:-}
     image: pew:standalone
     restart: unless-stopped
     environment:

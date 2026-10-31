@@ -85,6 +85,19 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
     expect(web).toContain("LOGIN_RATE_LIMIT_BACKEND: ${LOGIN_RATE_LIMIT_BACKEND:-}");
   });
 
+  it("passes the cookie-security decision into the web image build", () => {
+    // next.config's headers() runs at BUILD time and its output is baked into
+    // routes-manifest.json; the standalone server never re-evaluates it. A
+    // deployment that opts out of secure cookies must therefore carry the flag
+    // into the build, or HSTS is emitted on a plain-http intranet host.
+    const web = compose.slice(compose.indexOf("  web:"), compose.indexOf("\nvolumes:"));
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: compose var-expansion literal, not interpolation
+    expect(web).toContain("USE_SECURE_COOKIES: ${USE_SECURE_COOKIES:-}");
+    const rootDockerfile = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../Dockerfile"), "utf8");
+    expect(rootDockerfile).toMatch(/^ARG USE_SECURE_COOKIES=/m);
+    expect(rootDockerfile).toMatch(/^ENV USE_SECURE_COOKIES=\$\{USE_SECURE_COOKIES\}$/m);
+  });
+
   it("ignores the rendered auth file in git and docker contexts", () => {
     const gitignore = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../.gitignore"), "utf8");
     expect(gitignore).toContain("deploy/selfhost/.rqlite-auth.json");

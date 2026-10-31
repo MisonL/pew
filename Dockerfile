@@ -36,6 +36,13 @@ RUN node --version | grep -Eq '^v22\.'
 
 COPY --from=deps /app ./
 COPY . .
+# next.config's headers() runs at BUILD time and its result is baked into
+# routes-manifest.json — the standalone server reads that file and never
+# re-evaluates the function. A deployment that opts out of secure cookies
+# (intranet http) must therefore have USE_SECURE_COOKIES=false present here,
+# or HSTS is baked in regardless of the runtime env.
+ARG USE_SECURE_COOKIES=""
+ENV USE_SECURE_COOKIES=${USE_SECURE_COOKIES}
 # Build @pew/core with bun (pure TS, no native deps).
 # Build @pew/web with real Node.js — see comment above.
 RUN bun run --filter @pew/core build \

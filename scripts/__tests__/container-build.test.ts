@@ -7,11 +7,14 @@ const dockerfile = source("Dockerfile");
 
 describe("production container", () => {
   it("builds without application credentials or test switches", () => {
-    // Build args must be this allowlist: a base-image pin plus the two
-    // provenance values that only feed OCI labels. Anything else risks a
-    // build-time credential sitting in the image history.
+    // Build args must be this allowlist: the base-image pin, the two
+    // provenance values that only feed OCI labels, and the cookie-security
+    // decision. next.config's headers() runs at build and is baked into
+    // routes-manifest.json, so an intranet http deployment has to choose
+    // "no HSTS" before the image exists. Anything else risks a build-time
+    // credential sitting in the image history.
     expect([...dockerfile.matchAll(/^ARG (\w+)/gm)].map((match) => match[1]))
-      .toEqual(["NODE_VERSION", "PEW_REVISION", "PEW_VERSION"]);
+      .toEqual(["NODE_VERSION", "USE_SECURE_COOKIES", "PEW_REVISION", "PEW_VERSION"]);
     // The provenance args must reach only LABEL lines — never ENV, so they
     // cannot be read back from a running container.
     expect(dockerfile).not.toMatch(/^ENV\s+PEW_/m);
