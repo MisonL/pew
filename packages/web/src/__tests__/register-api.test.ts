@@ -166,4 +166,22 @@ describe("POST /api/auth/register", () => {
     const malformed = await post("{not json");
     expect(malformed.status).toBe(429);
   });
+
+  it("answers 503 + Retry-After when the derivation slot is exhausted", async () => {
+    // The instance is saturated, not the request: 400 would blame the caller's
+    // input and 500 would say "server fault, do not retry as-is". 503 is the
+    // status a client can actually back off on.
+    mockQuery.mockResolvedValue({ results: [{ n: 1 }] });
+    const { setScryptSlotForced } = await import("@/lib/credentials");
+    setScryptSlotForced(true);
+    try {
+      const res = await post({ email: "n@x.y", password: "password123", inviteCode: "ABCD2345" });
+      expect(res.status).toBe(503);
+      expect(res.headers.get("Retry-After")).toBeTruthy();
+      // The invite is not consumed and no user row is written.
+      expect(dbWrite.execute).not.toHaveBeenCalled();
+    } finally {
+      setScryptSlotForced(false);
+    }
+  });
 });

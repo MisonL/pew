@@ -26,7 +26,9 @@ const MIN_PASSWORD_LENGTH = 8;
 /**
  * The only messages from registerWithInvite that a caller may see verbatim.
  * An explicit set, not a substring match: "no such table: invite_codes" and
- * similar internal text contain the same words.
+ * similar internal text contain the same words. A message mapped here returns
+ * 400; SERVER_BUSY_ERROR is the one that answers 503 instead (the client's
+ * input was fine, the instance had no derivation slot left).
  */
 const CLIENT_FACING_REGISTRATION_ERRORS = new Set([
   "A valid invite code is required to register",
@@ -34,6 +36,9 @@ const CLIENT_FACING_REGISTRATION_ERRORS = new Set([
   "Instance is already set up",
   "This email address is reserved",
 ]);
+
+/** hashPassword's slot-exhaustion message (lib/credentials.ts). */
+const SERVER_BUSY_ERROR = "Too many concurrent requests";
 
 async function instanceIsEmpty(): Promise<boolean> {
   const { results } = await getD1Client().query<{ n: number }>(
@@ -100,6 +105,16 @@ export async function POST(request: Request) {
     // email, which must not be reported as "instance already set up".
     if (bootstrapping && /UNIQUE constraint failed/i.test(message)) {
       return NextResponse.json({ error: "Instance is already set up" }, { status: 400 });
+    }
+    // No derivation slot left: the request was well-formed, the instance is
+    // saturated. 500 would tell the client to fix its input and 400 would say
+    // the same; 503 + Retry-After is what actually lets it back off and retry.
+    // Reported before the allowlist so it never falls through as 500.
+    if (err instanceof Error && err.message === SERVER_BUSY_ERROR) {
+      return NextResponse.json(
+        { error: "The instance is busy. Please try again shortly." },
+        { status: 503, headers: { "Retry-After": "5" } },
+      );
     }
     // Only these two client-facing messages are echoed. Matching on a
     // substring ("invite"/"already") let any internal error text containing
