@@ -180,6 +180,10 @@ export async function parsePiFile(opts: {
           if (seenCompactions.has(eventId)) continue;
           seenCompactions.add(eventId);
           if (beforeCursor) continue;
+          // The model label feeds the evidence record and the price attribution.
+          // Prefer the entry's OWN model so a fork (a copy of the entry that
+          // does not copy the model_change prefix) cannot relabel it. The
+          // fallback to currentModel is only for entries with no model at all.
           const model = obj.model ? usageLabel(obj.model) : obj.fromHook ? "unknown" : currentModel;
           deltas.push({ source, model, timestamp: compactionAt, tokens,
             ...(opts.includeAccounting ? { accounting: piAccounting(tokens, obj.usage as Record<string, unknown>, model, currentProvider, true) } : {}), evidence: {

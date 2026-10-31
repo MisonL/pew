@@ -42,7 +42,14 @@ export function collectHermesUsageEvidence(opts: {
     const fields = ["inputTokens", "cachedInputTokens", "outputTokens", "reasoningOutputTokens"] as const;
     // Restored/decreasing ledgers cannot resurrect previously billed usage.
     if (fields.some((f) => current[f] < prior[f])) continue;
-    const knownCount = row.api_call_count !== null && previous.every((r) => r.evidence.callCount !== null);
+    // `previous` includes the zero-value baseline checkpoint, whose callCount
+    // stays null until every prior row has one. Requiring a count on every
+    // record — including that baseline — would disable exact attribution
+    // forever the first time an older schema wrote a null. Only the allocated
+    // (non-baseline) records actually consume the call budget, so THEY are
+    // what the predicate must look at.
+    const allocated = previous.filter((r) => r.evidence.eventId !== baselineId);
+    const knownCount = row.api_call_count !== null && allocated.every((r) => r.evidence.callCount !== null);
     let remainingCalls = knownCount ? (row.api_call_count as number) - previous.reduce((n, r) => n + (r.evidence.callCount ?? 0), 0) : null;
     if (remainingCalls !== null && remainingCalls < 0) continue;
     const remaining = { ...current };
@@ -55,7 +62,6 @@ export function collectHermesUsageEvidence(opts: {
     const cutoff = baseline?.evidence.intervalEnd ? Date.parse(baseline.evidence.intervalEnd) : -Infinity;
     const ceiling = validSeconds(row.last_seen) ? row.last_seen * 1000 : -Infinity;
     const routeCount = rows.filter((r) => r.session_id === row.session_id && r.model === row.model && r.billing_provider === row.billing_provider && r.task === row.task).length;
-    const allocated = previous.filter((r) => r.evidence.eventId !== baselineId);
     const split = (records: EvidenceRecord[]): { read: number | null; write: number | null } => {
       let read = 0; let write = 0;
       for (const record of records) {
@@ -97,8 +103,13 @@ export function collectHermesUsageEvidence(opts: {
     if (baseline && Number.isFinite(cutoff) && ceiling > cutoff && fields.some((f) => remaining[f] > 0)) {
       const intervalStart = new Date(cutoff).toISOString();
       const intervalEnd = new Date(ceiling).toISOString();
-      const intervalRead = priorSplit.read === null ? null : row.cache_read_tokens - priorSplit.read - newRead;
-      const intervalWrite = priorSplit.write === null ? null : row.cache_write_tokens - priorSplit.write - newWrite;
+      // A negative split means the cache components moved inconsistently (the
+      // decrease guard compares read+write as a sum). "Cannot split" is the
+      // honest answer, not a negative number that skews the residual below.
+      const readDelta = priorSplit.read === null ? null : row.cache_read_tokens - priorSplit.read - newRead;
+      const writeDelta = priorSplit.write === null ? null : row.cache_write_tokens - priorSplit.write - newWrite;
+      const intervalRead = readDelta !== null && readDelta < 0 ? null : readDelta;
+      const intervalWrite = writeDelta !== null && writeDelta < 0 ? null : writeDelta;
       output.push({ source: "hermes", model, timestamp: intervalEnd, tokens: { ...remaining }, evidence: {
         eventId: evidenceId([groupId, "interval", baseline.evidence.snapshotSeq, seq]), groupId, callType, origin, provider,
         granularity: "session", timePrecision: "interval", intervalStart, intervalEnd,
@@ -126,7 +137,9 @@ export function collectHermesUsageEvidence(opts: {
       intervalEnd: baseline?.evidence.snapshotSeq === seq ? baseline.evidence.intervalEnd :
         Number.isFinite(watermark) && watermark >= Date.parse(intervalStart) ? new Date(watermark).toISOString() : null,
       callCount: knownCount ? (row.api_call_count as number) - allocatedCount : null, snapshotSeq: seq,
-    }, ...(opts.includeAccounting ? { accounting: hermesAccounting(residual, row, residualRead, residualWrite, "hermes:aux_ledger",
+    }, ...(opts.includeAccounting ? { accounting: hermesAccounting(residual, row,
+      residualRead !== null && residualRead < 0 ? null : residualRead,
+      residualWrite !== null && residualWrite < 0 ? null : residualWrite, "hermes:aux_ledger",
       fields.every((f) => allocatedTotals[f] === 0)) } : {}) });
   }
   return output;
