@@ -46,6 +46,13 @@ interface ResetFileResult {
 
 export interface ResetResult {
   files: ResetFileResult[];
+  /**
+   * Non-fatal notes from the recovery step. Reset is the command an operator
+   * runs when sync is wedged, so a conflict the recovery merge resolved by
+   * keeping the stored copy has to reach them here — otherwise the run looks
+   * like a clean success while a forked snapshot stayed in the ledger.
+   */
+  warnings?: string[];
 }
 
 /**
@@ -57,7 +64,8 @@ export async function executeReset(opts: ResetOptions): Promise<ResetResult> {
 }
 
 async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
-  await recoverSyncCommit(opts.stateDir);
+  const warnings: string[] = [];
+  await recoverSyncCommit(opts.stateDir, (message) => warnings.push(message));
   const unlinkFn = opts.unlinkFn ?? unlink;
   const files: ResetFileResult[] = [];
   const tokens = await readAntigravityBaseline(opts.stateDir, true, { tolerant: true });
@@ -145,5 +153,6 @@ async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
     if (entry) entry.recreated = true;
   }
 
-  return { files: files.sort((a, b) => STATE_FILES.indexOf(a.file as typeof STATE_FILES[number]) - STATE_FILES.indexOf(b.file as typeof STATE_FILES[number])) };
+  return { files: files.sort((a, b) => STATE_FILES.indexOf(a.file as typeof STATE_FILES[number]) - STATE_FILES.indexOf(b.file as typeof STATE_FILES[number])),
+    ...(warnings.length ? { warnings } : {}) };
 }

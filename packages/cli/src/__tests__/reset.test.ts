@@ -167,4 +167,32 @@ describe("executeReset", () => {
     expect(calls[0]).toBe(join(tempDir, "cursors.json"));
     expect(calls[5]).toBe(join(tempDir, "session-queue.state.json"));
   });
+
+  it("surfaces the recovery merge's conflict warning instead of reporting a clean reset", async () => {
+    // reset is what an operator runs when sync is wedged, so a conflict the
+    // recovery merge resolved by keeping the stored copy has to reach them —
+    // otherwise the ledger still holds a forked snapshot while the command
+    // prints a plain success.
+    const evidence = {
+      source: "hermes" as const, model: "test-model", device_id: "test-device",
+      timestamp: "2026-09-06T16:00:01.000Z", hour_start: "2026-09-06T16:00:00.000Z",
+      input_tokens: 100, cached_input_tokens: 0, output_tokens: 20, reasoning_output_tokens: 0, total_tokens: 120,
+      evidence: { eventId: "a".repeat(64), groupId: "b".repeat(64), callType: "approval" as const,
+        origin: "hermes-aux-ledger" as const, provider: "openai", granularity: "session" as const,
+        timePrecision: "session-start" as const, intervalStart: null, intervalEnd: null, callCount: 1, snapshotSeq: 1 },
+    };
+    const { EvidenceQueue } = await import("../storage/evidence-queue.js");
+    await new EvidenceQueue(tempDir).merge([evidence]);
+    await writeFile(join(tempDir, "sync-commit.json"), JSON.stringify({
+      version: 1, evidence: [{ ...evidence, input_tokens: 200, total_tokens: 220 }],
+      accounting: [], replay: false,
+      cursors: { version: 1, files: {}, updatedAt: "2026-10-09T00:00:00.000Z" },
+    }));
+
+    const result = await executeReset({ stateDir: tempDir });
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings![0]).toMatch(/Kept the stored copy/);
+    // The conflicting copy never replaced the stored one.
+    expect((await new EvidenceQueue(tempDir).readFromOffset(0)).records[0]).toMatchObject({ input_tokens: 100 });
+  });
 });

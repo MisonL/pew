@@ -1069,6 +1069,8 @@ const resetCommand = defineCommand({
       }
     }
 
+    for (const message of result.warnings ?? []) log.warn(message);
+
     log.blank();
     log.success(
       `Cleared ${deleted.length} state file(s). Run ${pc.cyan("pew sync")} to rebuild.`,
