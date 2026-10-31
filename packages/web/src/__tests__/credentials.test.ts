@@ -17,6 +17,7 @@ vi.mock("@/auth", () => ({ shouldUseSecureCookies: () => false }));
 
 import {
   deriveScrypt,
+  DERIVATION_BUSY_ERROR,
   hashPassword,
   setScryptSlotForced,
   verifyPassword,
@@ -183,13 +184,15 @@ describe("password reset", () => {
     expect(stmts[1]!.params![0]).toMatch(/^scrypt\$/);
   });
 
-  it("consumePasswordReset reports failure without claiming when the slot is exhausted", async () => {
+  it("consumePasswordReset reports a busy instance without claiming when the slot is exhausted", async () => {
     mockQuery.mockResolvedValueOnce({
       results: [{ user_id: "u1", expires_at: new Date(Date.now() + 60_000).toISOString() }],
     });
     setScryptSlotForced(true);
     try {
-      expect(await consumePasswordReset("tok", "newpassword")).toBeNull();
+      // Not null: null means "bad token", which the route reports as 400
+      // invalid-or-expired — telling the user to discard a good token.
+      await expect(consumePasswordReset("tok", "newpassword")).rejects.toThrow(DERIVATION_BUSY_ERROR);
       // The token is left unclaimed: a failed derivation must not burn it.
       expect(dbWrite.batch).not.toHaveBeenCalled();
     } finally {

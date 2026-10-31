@@ -98,6 +98,24 @@ describe("POST /api/auth/reset-password", () => {
     expect((await res.json()).error).toMatch(/failed/i);
   });
 
+  it("answers 503 + Retry-After when the derivation slot is exhausted", async () => {
+    // The token row is valid, so a 400 here would tell the user to discard a
+    // token that is still good and unburned.
+    mockQuery.mockResolvedValueOnce({
+      results: [{ user_id: "u1", expires_at: new Date(Date.now() + 60_000).toISOString() }],
+    });
+    const { setScryptSlotForced } = await import("@/lib/credentials");
+    setScryptSlotForced(true);
+    try {
+      const res = await post({ token: "good-token", password: "newpassword" });
+      expect(res.status).toBe(503);
+      expect(res.headers.get("Retry-After")).toBeTruthy();
+      expect(dbWrite.batch).not.toHaveBeenCalled();
+    } finally {
+      setScryptSlotForced(false);
+    }
+  });
+
   it("returns 429 once the per-IP bucket is exhausted, before any DB work", async () => {
     // Token consumption is a write against the shared DB; the IP cap must
     // trip before the token lookup, not after.

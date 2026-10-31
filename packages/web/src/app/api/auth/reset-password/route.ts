@@ -8,7 +8,7 @@
 
 import { NextResponse } from "next/server";
 import { BodyTooLargeError, MAX_AUTH_BODY_BYTES, readBoundedJson } from "@pew/core";
-import { consumePasswordReset } from "@/lib/credentials";
+import { consumePasswordReset, DERIVATION_BUSY_ERROR } from "@/lib/credentials";
 import {
   AUTH_RESET_RATE_LIMIT,
   clientIpKey,
@@ -57,6 +57,14 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({ ok: true });
   } catch (err) {
+    // No derivation slot: the token is still valid and unburned, so 400
+    // "invalid or expired" would tell the user to discard a good token.
+    if (err instanceof Error && err.message === DERIVATION_BUSY_ERROR) {
+      return NextResponse.json(
+        { error: "The instance is busy. Please try again shortly." },
+        { status: 503, headers: { "Retry-After": "5" } },
+      );
+    }
     console.error("Failed to reset password:", err);
     return NextResponse.json({ error: "Failed to reset password" }, { status: 500 });
   }

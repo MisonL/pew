@@ -47,9 +47,16 @@ const SCRYPT = { N: 32768, r: 8, p: 1, keylen: 64, maxmem: 64 * 1024 * 1024 } as
 const MAX_CONCURRENT_SCRYPT = 8;
 let scryptInFlight = 0;
 // Test-only: force the derivation slot to appear exhausted so the callers'
-// null-handling branches are reachable without queueing 8 real scrypt runs.
+// slot-exhaustion branches are reachable without queueing 8 real scrypt runs.
 let forceSlotExhausted = false;
 export function setScryptSlotForced(value: boolean): void { forceSlotExhausted = value; }
+
+/**
+ * The message every registration/reset path uses when no derivation slot is
+ * free. The routes match on this exact string to answer 503 + Retry-After
+ * instead of a 4xx blaming the caller's input.
+ */
+export const DERIVATION_BUSY_ERROR = "Too many concurrent requests";
 
 /** Test-only introspection: current number of in-flight derivations. */
 export function scryptInFlightCount(): number {
@@ -210,7 +217,7 @@ export async function registerWithInvite(input: {
   // synchronously inside its parameter list (65 ms of event-loop block), and
   // a hash failure here must not burn a code.
   const passwordHash = await hashPassword(password);
-  if (!passwordHash) throw new Error("Too many concurrent requests");
+  if (!passwordHash) throw new Error(DERIVATION_BUSY_ERROR);
 
   if (requireInvite) {
     // Consume the invite first: if this returns changes === 0 the code was
@@ -283,6 +290,11 @@ export async function createPasswordReset(userId: string): Promise<string> {
 /**
  * Consume a reset token and set a new password. Returns the affected user id,
  * or null if the token is unknown, already used, or expired.
+ *
+ * Throws DERIVATION_BUSY_ERROR when no derivation slot is free. It
+ * must not fold that into the null return: null means "this token is bad", and
+ * the route turns it into 400 Invalid-or-expired — which would tell a user
+ * holding a good, unburned token to throw it away.
  */
 export async function consumePasswordReset(
   token: string,
@@ -302,9 +314,10 @@ export async function consumePasswordReset(
   const dbWrite = await getDbWrite();
   const now = new Date().toISOString();
   // Derive before the claim so the batch's second statement can reference the
-  // result; the old code derived synchronously inside the parameter list.
+  // result; the old code derived synchronously inside the parameter list. A
+  // failed derivation throws rather than returning null — see the docstring.
   const passwordHash = await hashPassword(newPassword);
-  if (!passwordHash) return null;
+  if (!passwordHash) throw new Error(DERIVATION_BUSY_ERROR);
   // Claim and write in one transaction. A 0-row UPDATE is NOT an error, so
   // "claim then write" alone would let a concurrent consumer still set the
   // password; the password write is therefore gated on the claim with an
@@ -389,7 +402,7 @@ export async function bootstrapAdmin(input: {
 
   const userId = crypto.randomUUID();
   const passwordHash = await hashPassword(password);
-  if (!passwordHash) throw new Error("Too many concurrent requests");
+  if (!passwordHash) throw new Error(DERIVATION_BUSY_ERROR);
   await dbWrite.batch([
     {
       sql: `INSERT INTO users (id, email, name, password_hash, is_admin, is_public, created_at, updated_at)

@@ -14,7 +14,7 @@
 import { NextResponse } from "next/server";
 import { BodyTooLargeError, MAX_AUTH_BODY_BYTES, readBoundedJson } from "@pew/core";
 import { getD1Client } from "@/lib/d1";
-import { bootstrapAdmin, registerWithInvite } from "@/lib/credentials";
+import { bootstrapAdmin, DERIVATION_BUSY_ERROR, registerWithInvite } from "@/lib/credentials";
 import {
   AUTH_REGISTER_RATE_LIMIT,
   clientIpKey,
@@ -27,7 +27,7 @@ const MIN_PASSWORD_LENGTH = 8;
  * The only messages from registerWithInvite that a caller may see verbatim.
  * An explicit set, not a substring match: "no such table: invite_codes" and
  * similar internal text contain the same words. A message mapped here returns
- * 400; SERVER_BUSY_ERROR is the one that answers 503 instead (the client's
+ * 400; DERIVATION_BUSY_ERROR is the one that answers 503 instead (the client's
  * input was fine, the instance had no derivation slot left).
  */
 const CLIENT_FACING_REGISTRATION_ERRORS = new Set([
@@ -36,9 +36,6 @@ const CLIENT_FACING_REGISTRATION_ERRORS = new Set([
   "Instance is already set up",
   "This email address is reserved",
 ]);
-
-/** hashPassword's slot-exhaustion message (lib/credentials.ts). */
-const SERVER_BUSY_ERROR = "Too many concurrent requests";
 
 async function instanceIsEmpty(): Promise<boolean> {
   const { results } = await getD1Client().query<{ n: number }>(
@@ -110,7 +107,7 @@ export async function POST(request: Request) {
     // saturated. 500 would tell the client to fix its input and 400 would say
     // the same; 503 + Retry-After is what actually lets it back off and retry.
     // Reported before the allowlist so it never falls through as 500.
-    if (err instanceof Error && err.message === SERVER_BUSY_ERROR) {
+    if (err instanceof Error && err.message === DERIVATION_BUSY_ERROR) {
       return NextResponse.json(
         { error: "The instance is busy. Please try again shortly." },
         { status: 503, headers: { "Retry-After": "5" } },
