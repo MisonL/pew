@@ -336,6 +336,10 @@ describe("sessions RPC handlers", () => {
 
       await handleSessionsRpc({ ...base, limit: 1000 }, db);
       expect(String(db.prepare.mock.calls[0]?.[0])).toContain("LIMIT ?");
+      // A LIMIT over a non-unique sort key truncates nondeterministically:
+      // sessions that start in the same second straddle the boundary and each
+      // request can cut a different one. The id tie-break makes the cut stable.
+      expect(String(db.prepare.mock.calls[0]?.[0])).toContain("ORDER BY sr.started_at DESC, sr.id DESC");
       expect(db.bind).toHaveBeenCalledWith("u1", base.fromDate, base.toDate, 1000);
 
       db.prepare.mockClear();

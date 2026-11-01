@@ -264,7 +264,7 @@ async function handleGetSessionRecords(
       sr.model
     FROM session_records sr
     WHERE ${conditions.join(" AND ")}
-    ORDER BY sr.started_at DESC${limit === undefined ? "" : "\n    LIMIT ?"}
+    ORDER BY sr.started_at DESC, sr.id DESC${limit === undefined ? "" : "\n    LIMIT ?"}
   `;
 
   const results = await db.prepare(sql).bind(...params, ...(limit === undefined ? [] : [limit])).all<SessionRecordRow>();
