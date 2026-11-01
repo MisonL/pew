@@ -121,18 +121,21 @@ export function createKvAdapter(options: KvAdapterOptions): KvAdapter {
       // of deletions shifts the remaining rows left and the loop loses one
       // page per page (verified: 10 keys, page 3, deleted 6 of 10).
       //
-      // Byte-exact prefix via a range, not LIKE: SQLite's LIKE folds ASCII
-      // case, so a `lb:` scan would also match `LB:` and clearAllCache would
-      // delete keys outside the requested prefix. Cloudflare KV's list({prefix})
-      // is a byte comparison; the TEXT PRIMARY KEY uses BINARY collation, so
-      // [prefix, prefix+"￿") is exactly the prefix match. An empty prefix
-      // has no upper bound and lists everything, as before.
+      // Byte-exact prefix via substr equality, not LIKE: SQLite's LIKE folds
+      // ASCII case, so a `lb:` scan would also match `LB:` and clearAllCache
+      // would delete keys outside the requested prefix. A [prefix,
+      // prefix+"￿") range is not a fix either: U+FFFF encodes as EF BF BF
+      // and every supplementary-plane character (emoji, F0..F4) sorts above
+      // it under BINARY collation, so those keys were silently skipped
+      // (verified against real SQLite). substr/length count characters on
+      // both sides and `=` compares bytes, which is Cloudflare KV's prefix
+      // rule. An empty prefix matches every key.
       const { results } = await db
         .prepare(
-          "SELECT key FROM kv_cache WHERE key >= ? AND (key < ? OR ? = '') " +
+          "SELECT key FROM kv_cache WHERE substr(key, 1, length(?)) = ? " +
             "AND key > ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY key LIMIT ?"
         )
-        .bind(prefix, `${prefix}￿`, prefix, after, stamp, limit + 1)
+        .bind(prefix, prefix, after, stamp, limit + 1)
         .all<{ key: string }>();
 
       const hasMore = results.length > limit;

@@ -66,7 +66,12 @@ export type SchemaCounts = {
   views: number;
 };
 
-/** The leaderboard revision is 16 random bytes hex-encoded (migration 030). */
+/**
+ * The leaderboard revision is 32 lowercase hex characters. Migration 029
+ * seeded it from randomblob(16); migration 030 replaced that with a monotonic
+ * counter (`printf('%032x', n)`) because randomblob in a trigger body diverges
+ * across rqlite replicas. Only the shape is stable across both.
+ */
 export const REVISION_PATTERN = /^[a-f0-9]{32}$/;
 
 /**

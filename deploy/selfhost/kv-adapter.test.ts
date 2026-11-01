@@ -33,12 +33,12 @@ function makeFakeDb() {
         },
         all: async <T,>(): Promise<D1Result<T>> => {
           if (sql.includes("SELECT key FROM kv_cache")) {
-            // Byte-exact prefix range: bind order is
-            // (prefix, prefix+"￿", prefix, after, stamp, limit).
-            const [prefix, upper, gate, after, stamp, limit] = params as
-              [string, string, string, string, string, number];
+            // Prefix by substr equality: bind order is
+            // (prefix, prefix, after, stamp, limit).
+            const [prefix, , after, stamp, limit] = params as
+              [string, string, string, string, number];
             const matched = [...rows.values()]
-              .filter((r) => r.key >= prefix && (gate === "" || r.key < upper) && r.key > after && live(r, stamp))
+              .filter((r) => r.key.startsWith(prefix) && r.key > after && live(r, stamp))
               // SQLite's TEXT PRIMARY KEY is BINARY collation; localeCompare
               // would order case differently and hide the LIKE-folding bug.
               .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
@@ -163,6 +163,20 @@ describe("kv-adapter", () => {
     await kv.put("lbz:3", "3");
     const page = await kv.list({ prefix: "lb:" });
     expect(page.keys.map((k) => k.name)).toEqual(["lb:1"]);
+  });
+
+  it("list keeps keys whose next character sorts above U+FFFF", async () => {
+    // A [prefix, prefix+"￿") range looked byte-exact but was not: U+FFFF
+    // encodes as EF BF BF and every supplementary-plane character (emoji,
+    // first byte F0..F4) sorts above it under BINARY collation, so those keys
+    // were dropped from the page — and clearAllCache("lb:") left them behind.
+    const { db } = makeFakeDb();
+    const kv = createKvAdapter({ db, now: () => NOW });
+    await kv.put("lb:a", "1");
+    await kv.put("lb:😀", "2");
+    await kv.put("lb:￿", "3");
+    const page = await kv.list({ prefix: "lb:" });
+    expect(page.keys.map((k) => k.name).sort()).toEqual(["lb:a", "lb:😀", "lb:￿"].sort());
   });
 
   it("list treats a prefix containing % or _ literally", async () => {
