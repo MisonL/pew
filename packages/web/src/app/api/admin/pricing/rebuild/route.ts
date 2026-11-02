@@ -35,10 +35,13 @@ export async function POST(request: Request): Promise<Response> {
       headers: { "Cache-Control": "private, no-store" },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
+    // The thrown message comes from the RPC layer and carries worker/DB
+    // internals (hostnames, SQL, stack fragments). Keep it in the server log
+    // and answer the operator with a fixed sentence: the UI shows its own copy
+    // anyway and never renders `error`.
     console.error("admin pricing rebuild failed:", err);
     return NextResponse.json(
-      { error: message, fallback: null },
+      { error: "Pricing rebuild failed", fallback: null },
       {
         status: 502,
         headers: { "Cache-Control": "private, no-store" },

@@ -78,10 +78,15 @@ describe("POST /api/admin/pricing/rebuild", () => {
   });
 
   it("returns 502 + { error, fallback: null } when RPC throws", async () => {
-    mockDbRead.rebuildDynamicPricing.mockRejectedValueOnce(new Error("worker-read down"));
+    // The thrown message can name internal hosts or SQL; it belongs in the
+    // log, never in the response body.
+    mockDbRead.rebuildDynamicPricing.mockRejectedValueOnce(new Error("worker-read down at 10.0.0.7:8787"));
     const res = await POST(makeJsonRequest("POST", "/api/admin/pricing/rebuild"));
     expect(res.status).toBe(502);
-    expect(await res.json()).toEqual({ error: "worker-read down", fallback: null });
+    const body = (await res.json()) as { error: string; fallback: null };
+    expect(body).toEqual({ error: "Pricing rebuild failed", fallback: null });
+    expect(JSON.stringify(body)).not.toContain("10.0.0.7");
+    expect(console.error).toHaveBeenCalled();
     expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 });
