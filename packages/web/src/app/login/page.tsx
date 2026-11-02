@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { safeCallbackUrl } from "@/lib/callback-url";
 import { Banner } from "@nocoo/basalt/components/banner";
 import { Button } from "@nocoo/basalt/components/button";
 import { chromeIconClassName } from "@/components/ui/button";
@@ -43,7 +44,7 @@ function LoginContent() {
   const searchParams = useSearchParams();
   const error = searchParams.get("error");
   const rawCallback = searchParams.get("callbackUrl");
-  const callbackUrl = rawCallback?.startsWith("/") && !rawCallback.startsWith("//") ? rawCallback : "/dashboard";
+  const callbackUrl = safeCallbackUrl(rawCallback);
 
   const [inviteCode, setInviteCode] = useState("");
   const [inviteError, setInviteError] = useState("");
