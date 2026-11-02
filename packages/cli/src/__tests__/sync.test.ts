@@ -179,6 +179,48 @@ describe("executeSync", () => {
     expect(await readFile(join(stateDir, "queue.jsonl"), "utf-8")).toBe(before);
   });
 
+  it("keeps pending active records when an empty scan finds only a retired row", async () => {
+    // A queue written by an older pew can still hold a retired-source row
+    // beside active pending records. On a run whose cursors are empty (a
+    // pruned alias cursor, an unmounted volume) that discovers nothing, the
+    // retired row must not be mistaken for scan output: counting it made the
+    // empty scan authoritative and dropped the active records next to it.
+    await mkdir(stateDir, { recursive: true });
+    const retired: QueueRecord = {
+      source: "zcode",
+      model: "z-model",
+      hour_start: "2026-03-07T09:00:00.000Z",
+      device_id: "dev-1",
+      input_tokens: 10,
+      cached_input_tokens: 0,
+      output_tokens: 5,
+      reasoning_output_tokens: 0,
+      total_tokens: 15,
+    };
+    const active: QueueRecord = {
+      source: "claude-code",
+      model: "glm-5",
+      hour_start: "2026-03-07T10:00:00.000Z",
+      device_id: "dev-1",
+      input_tokens: 5000,
+      cached_input_tokens: 0,
+      output_tokens: 800,
+      reasoning_output_tokens: 0,
+      total_tokens: 5800,
+    };
+    await writeFile(
+      join(stateDir, "queue.jsonl"),
+      `${JSON.stringify(retired)}\n${JSON.stringify(active)}\n`,
+    );
+    const before = await readFile(join(stateDir, "queue.jsonl"), "utf-8");
+
+    // No cursors and no reachable source: initialCursorEmpty + empty scan.
+    await executeSync({ stateDir, claudeDir: join(dataDir, ".claude") });
+    await executeSync({ stateDir, claudeDir: join(dataDir, ".claude") });
+
+    expect(await readFile(join(stateDir, "queue.jsonl"), "utf-8")).toBe(before);
+  });
+
   it("should sync Pi data files to queue", async () => {
     const piDir = join(dataDir, ".pi", "agent", "sessions", "proj-b");
     await mkdir(piDir, { recursive: true });

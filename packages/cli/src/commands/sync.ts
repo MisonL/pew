@@ -1265,7 +1265,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   }
   if (unprojectableEvidence > 0) {
     onProgress?.({ source: "all", phase: "warn",
-      message: `Skipped ${unprojectableEvidence} usage evidence events that cannot pass the upload contract; original usage is preserved` });
+      message: `Skipped ${unprojectableEvidence} usage evidence events that cannot pass the upload contract; the usage itself is not included` });
   }
 
   const { records: oldRecords } = await queue.readFromOffset(0);
@@ -1278,8 +1278,13 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   // silently destroys pending un-uploaded records — the same raw data would
   // not reproduce them while the source is still missing. Keep the queue and
   // let the full scan overwrite it once a source is actually reachable.
+  //
+  // `retiredRecords` is read back from queue.jsonl, not from this scan, so it
+  // must not count as evidence: a queue that happens to hold a retired-source
+  // row would otherwise make an empty scan authoritative and drop the active
+  // records sitting next to it.
   const fullScanFoundData =
-    records.length > 0 || retiredRecords.length > 0 || opts.antigravitySnapshot != null;
+    records.length > 0 || opts.antigravitySnapshot != null;
   let finalRecords = initialCursorEmpty
     ? (fullScanFoundData ? [...records, ...retiredRecords] : undefined)
     : records.length > 0 ? aggregateRecords([...oldRecords, ...records]) : undefined;

@@ -106,7 +106,12 @@ describe("retired sources", () => {
     await queue.overwrite([...history, row("claude-code")]);
     await queue.saveDirtyKeys([key(history[0])]);
     await executeSync({ stateDir, deviceId: "device" });
-    expect((await queue.readFromOffset(0)).records).toEqual(history);
+    // The rescan discovered nothing at all, so the queue is kept as it is: the
+    // retired rows this source no longer produces survive, and the active row
+    // beside them survives too. Retired rows are read back from the queue, not
+    // from the scan, so they must not be what makes an empty scan authoritative
+    // — that reading used to rewrite the file without the active row.
+    expect((await queue.readFromOffset(0)).records).toEqual([...history, row("claude-code")]);
     expect(await queue.loadDirtyKeys()).toEqual([key(history[0])]);
   });
 
