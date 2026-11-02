@@ -95,6 +95,36 @@ describe("RqliteRateLimiter", () => {
     expect(ipv6PrefixKey("2001:db8:0:0:0:0:0:1")).toBe(ipv6PrefixKey("2001:db8:0:0:ffff:ffff:ffff:ffff"));
   });
 
+  it("puts a malformed forwarded IPv6 header through the limiter as one bounded key", async () => {
+    // End-to-end through the path a login attempt actually takes: the raw
+    // header -> clientIpKey -> the SQL bound parameter. The fix must not only
+    // avoid the throw; whatever it falls back to has to be a bounded, stable
+    // key or the shared rate_limit_hits table takes an attacker-sized row.
+    //
+    // The input carries "::" on purpose: an address without it leaves through
+    // the earlier `!atTail` branch and never reaches the negative pad count
+    // this guards, so a no-":"-colon string would pass whether or not the fix
+    // is present.
+    mockQuery.mockResolvedValue({ results: [], meta: { changes: 1 } });
+    const { clientIpKey, rqliteRateLimiter } = await import("../rate-limit");
+    const header = "::1:2:3:4:5:6:7:8:9";
+    const request = new Request("http://localhost:7020/api/auth/register", {
+      headers: { "x-forwarded-for": header },
+    });
+
+    const key = `login:ip:${clientIpKey(request)}`;
+    expect(key.length).toBeLessThanOrEqual("login:ip:".length + 64);
+    const r = await rqliteRateLimiter.check(key, LOGIN_RATE_LIMIT);
+    expect(r.allowed).toBe(true);
+    // The key lands in the INSERT as a bound parameter, not interpolated SQL.
+    expect(mockQuery.mock.calls[0]?.[1]).toContain(key);
+    // The same header always lands on the same bucket, so the fallback is
+    // stable rather than a per-request unique key that would defeat the limit.
+    expect(clientIpKey(request)).toBe(clientIpKey(new Request("http://localhost:7020/", {
+      headers: { "x-forwarded-for": header },
+    })));
+  });
+
   it("runs the bounded cleanup DELETE at the 1/100 probability", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0.001);
     mockQuery.mockResolvedValue({ results: [], meta: { changes: 1 } });
