@@ -10,12 +10,16 @@ type Bindings = { DB: D1Database; CACHE: KVNamespace };
 type LocalWorker = { default: { fetch(request: Request, env: Bindings & { WORKER_SECRET?: string; WORKER_READ_SECRET?: string }): Promise<Response> } };
 
 export async function verifyLocalMarker(env: Record<string, string>): Promise<void> {
+  // Check the run marker before deriving the URL: localD1BaseUrl now requires
+  // it too, and its generic "isolated loopback" error would mask the more
+  // precise "configuration missing" this function exists to report.
+  if (!env.PEW_TEST_RUN_ID) throw new Error("Local D1 test marker configuration missing");
   const base = localD1BaseUrl({
     accountId: env.CF_ACCOUNT_ID ?? "",
     databaseId: env.CF_D1_DATABASE_ID ?? "",
     apiToken: env.CF_D1_API_TOKEN ?? "",
   }, env);
-  if (!base || !env.PEW_TEST_RUN_ID) throw new Error("Local D1 test marker configuration missing");
+  if (!base) throw new Error("Local D1 test marker configuration missing");
   for (const key of ["WORKER_INGEST_URL", "WORKER_READ_URL"]) {
     const url = new URL(env[key] ?? "");
     if (url.origin !== base) throw new Error("Local Worker must belong to the same isolated test target");

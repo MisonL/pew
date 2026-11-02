@@ -46,6 +46,7 @@ describe("GET /api/auth/cli", () => {
     inMemoryRateLimiter.reset();
     delete process.env.E2E_SKIP_AUTH;
     delete process.env.RESOURCE_ENV;
+    delete process.env.PEW_TEST_RUN_ID;
     mockDbRead = createMockDbRead();
     mockDbWrite = createMockDbWrite();
     vi.mocked(dbModule.getDbRead).mockResolvedValue(
@@ -68,11 +69,13 @@ describe("GET /api/auth/cli", () => {
     afterEach(() => {
       delete process.env.E2E_SKIP_AUTH;
       delete process.env.RESOURCE_ENV;
+      delete process.env.PEW_TEST_RUN_ID;
     });
 
     it("skips rate-limit accounting inside the isolated e2e environment", async () => {
       process.env.E2E_SKIP_AUTH = "true";
       process.env.RESOURCE_ENV = "test";
+      process.env.PEW_TEST_RUN_ID = "owned-run";
       vi.mocked(resolveUser).mockResolvedValue(null);
 
       for (let i = 0; i < AUTH_CLI_RATE_LIMIT.maxRequests + 5; i++) {
@@ -85,6 +88,7 @@ describe("GET /api/auth/cli", () => {
     it("still counts a normal request inside the e2e environment", async () => {
       process.env.E2E_SKIP_AUTH = "true";
       process.env.RESOURCE_ENV = "test";
+      process.env.PEW_TEST_RUN_ID = "owned-run";
       vi.mocked(resolveUser).mockResolvedValue(null);
 
       for (let i = 0; i < AUTH_CLI_RATE_LIMIT.maxRequests; i++) {

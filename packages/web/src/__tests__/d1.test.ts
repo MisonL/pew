@@ -13,7 +13,7 @@ const TEST_CONFIG = {
 
 describe("local D1 transport safety", () => {
   const config = { accountId: "pew-local-test", databaseId: "pew-local-test", apiToken: "synthetic" };
-  const env = { NODE_ENV: "production", RAILWAY_ENVIRONMENT: undefined, RESOURCE_ENV: "test", E2E_SKIP_AUTH: "true", PEW_LOCAL_D1_URL: "http://127.0.0.1:12345" };
+  const env = { NODE_ENV: "production", RAILWAY_ENVIRONMENT: undefined, RESOURCE_ENV: "test", E2E_SKIP_AUTH: "true", PEW_TEST_RUN_ID: "owned-run", PEW_LOCAL_D1_URL: "http://127.0.0.1:12345" };
   it("keeps production API selection when no local override exists", () => {
     expect(localD1BaseUrl(TEST_CONFIG, {})).toBeUndefined();
     expect(localD1BaseUrl(config, env)).toBe(env.PEW_LOCAL_D1_URL);

@@ -137,14 +137,15 @@ describe("GET /api/admin/check", () => {
   });
 
   // -------------------------------------------------------------------------
-  // E2E admin bypass guard (E2E_SKIP_AUTH + E2E_ADMIN_BYPASS + RESOURCE_ENV=test + !railway)
+  // E2E admin bypass guard (E2E_SKIP_AUTH + E2E_ADMIN_BYPASS + RESOURCE_ENV=test
+  // + PEW_TEST_RUN_ID + !railway)
   // -------------------------------------------------------------------------
 
   describe("E2E admin bypass", () => {
     async function callWithEnv(env: Record<string, string | undefined>) {
       vi.resetModules();
       const prev = { ...process.env };
-      process.env = { ...prev, ADMIN_EMAILS: "admin@example.com", RESOURCE_ENV: "test", ...env };
+      process.env = { ...prev, ADMIN_EMAILS: "admin@example.com", RESOURCE_ENV: "test", PEW_TEST_RUN_ID: "owned-run", ...env };
       try {
         vi.doMock("@/lib/db", () => ({
           getDbRead: vi.fn().mockResolvedValue(mockDbRead),

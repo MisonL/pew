@@ -53,6 +53,7 @@ describe("resolveUser", () => {
     // Default: not in E2E mode
     delete process.env.E2E_SKIP_AUTH;
     delete process.env.RESOURCE_ENV;
+    delete process.env.PEW_TEST_RUN_ID;
     // Ensure production-only guard is not set during tests
     delete process.env.RAILWAY_ENVIRONMENT;
   });
@@ -67,6 +68,7 @@ describe("resolveUser", () => {
     it("should return deterministic test user when E2E_SKIP_AUTH=true and RESOURCE_ENV=test", async () => {
       process.env.E2E_SKIP_AUTH = "true";
       vi.stubEnv("RESOURCE_ENV", "test");
+      vi.stubEnv("PEW_TEST_RUN_ID", "owned-run");
 
       const result = await resolveUser(makeRequest());
 
@@ -82,6 +84,7 @@ describe("resolveUser", () => {
     it("should NOT bypass when E2E_SKIP_AUTH is false", async () => {
       process.env.E2E_SKIP_AUTH = "false";
       vi.stubEnv("RESOURCE_ENV", "test");
+      vi.stubEnv("PEW_TEST_RUN_ID", "owned-run");
       auth.mockResolvedValueOnce(null);
 
       const result = await resolveUser(makeRequest());
@@ -92,6 +95,7 @@ describe("resolveUser", () => {
 
     it("should NOT bypass when RESOURCE_ENV is not test (no isolated runner environment)", async () => {
       process.env.E2E_SKIP_AUTH = "true";
+      vi.stubEnv("PEW_TEST_RUN_ID", "owned-run");
       auth.mockResolvedValueOnce(null);
 
       const result = await resolveUser(makeRequest());
@@ -103,6 +107,7 @@ describe("resolveUser", () => {
     it("should NOT bypass when RAILWAY_ENVIRONMENT is set (production guard)", async () => {
       process.env.E2E_SKIP_AUTH = "true";
       vi.stubEnv("RESOURCE_ENV", "test");
+      vi.stubEnv("PEW_TEST_RUN_ID", "owned-run");
       process.env.RAILWAY_ENVIRONMENT = "production";
       auth.mockResolvedValueOnce(null);
 

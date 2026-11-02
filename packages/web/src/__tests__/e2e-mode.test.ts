@@ -3,13 +3,13 @@ import { isE2EMode } from "../lib/e2e-mode";
 
 /**
  * The single E2E bypass gate. Every consumer (API auth, admin bypass, invite
- * gate, page proxy) calls this, so these are the only places the three-variable
+ * gate, page proxy) calls this, so these are the only places the four-variable
  * truth table needs to be asserted.
  */
 describe("isE2EMode", () => {
-  const base = { E2E_SKIP_AUTH: "true", RESOURCE_ENV: "test" };
+  const base = { E2E_SKIP_AUTH: "true", RESOURCE_ENV: "test", PEW_TEST_RUN_ID: "owned-run" };
 
-  it("is true only when all three conditions hold", () => {
+  it("is true only when all four conditions hold", () => {
     expect(isE2EMode(base)).toBe(true);
   });
 
@@ -20,10 +20,13 @@ describe("isE2EMode", () => {
   });
 
   it("is false when RESOURCE_ENV is not 'test' (no isolated runner environment)", () => {
-    // This is the gate that keeps a production build from bypassing auth: a
-    // deployed host never sets RESOURCE_ENV=test.
     expect(isE2EMode({ ...base, RESOURCE_ENV: "production" })).toBe(false);
     expect(isE2EMode({ ...base, RESOURCE_ENV: undefined })).toBe(false);
+  });
+
+  it("is false when PEW_TEST_RUN_ID is absent or empty", () => {
+    expect(isE2EMode({ ...base, PEW_TEST_RUN_ID: undefined })).toBe(false);
+    expect(isE2EMode({ ...base, PEW_TEST_RUN_ID: "" })).toBe(false);
   });
 
   it("is false on Railway regardless of the other two (deployed-path veto)", () => {
@@ -35,10 +38,15 @@ describe("isE2EMode", () => {
   });
 
   it("defaults to process.env when no argument is given", () => {
+    // Snapshot and restore the whole object: the AST gate forbids a dynamic
+    // `delete process.env[key]`, and an empty string is not the same as unset
+    // for RAILWAY_ENVIRONMENT (`!""` is true, so a stray empty value would
+    // not veto a deployed host).
     const saved = { ...process.env };
     try {
       process.env.E2E_SKIP_AUTH = "true";
       process.env.RESOURCE_ENV = "test";
+      process.env.PEW_TEST_RUN_ID = "owned-run";
       delete process.env.RAILWAY_ENVIRONMENT;
       expect(isE2EMode()).toBe(true);
       process.env.RESOURCE_ENV = "production";
