@@ -63,7 +63,18 @@ export interface UploadEngineConfig<T> {
    */
   rejectRecord?: (record: T) => string | null;
   maxBatchSize?: number;
+  /**
+   * Byte budget for one batch. Records that together exceed it are split into
+   * more batches; a single record larger than it is uploaded alone (up to
+   * `maxRecordBytes`) instead of being starved out of every batch forever.
+   */
   maxBatchBytes?: number;
+  /**
+   * Largest single record the endpoint accepts. A record above it is skipped
+   * and left pending rather than failing the stage, so one unshippable record
+   * can never stop the records behind it.
+   */
+  maxRecordBytes?: number;
   /**
    * Persist the upload origin in queue state and warn when pending records
    * are sent to a different origin than the last successful drain. Enable
@@ -276,19 +287,20 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
     // 3. Split into batches
     const batchSize = Math.max(1, Math.min(requestedBatchSize, config.maxBatchSize ?? DEFAULT_BATCH_SIZE));
     const batches: T[][] = [];
-    // Records larger than the batch byte budget cannot ride with anything
-    // else; where the key is trackable they are skipped and left pending
-    // instead of aborting the stage. Accounting sets this limit and an
-    // AccountingRecord has no independent size bound (up to 256 groups, each
-    // with reported costs and diagnostics), so `return`ing here stopped every
-    // later annotation from ever shipping and re-read the same record on each
-    // run. Without a trackable key there is no way to keep only that record
-    // pending, so the old abort (retained locally) still applies.
+    // Two different budgets. `maxBatchBytes` keeps a request small; it must not
+    // decide what can be sent, because an AccountingRecord legitimately
+    // measures a few hundred KB (up to 256 groups, each with reported costs and
+    // diagnostics) while the server accepts up to 24 MB. Treating it as a
+    // sendability limit used to `return` out of the stage, so every later
+    // annotation stayed pending and the same record was re-read on each run.
+    // A record over the batch budget therefore ships in a batch of its own;
+    // only one over the endpoint's `maxRecordBytes` ceiling is skipped and left
+    // pending, which keeps one unshippable record from stopping the rest.
     const oversizedKeys = new Set<string>();
     let pending: T[] = []; let bytes = 2;
     for (const record of records) {
-      const size = config.maxBatchBytes ? Buffer.byteLength(JSON.stringify(record)) + 1 : 0;
-      if (config.maxBatchBytes && size + 2 > config.maxBatchBytes) {
+      const size = config.maxBatchBytes || config.maxRecordBytes ? Buffer.byteLength(JSON.stringify(record)) + 1 : 0;
+      if (config.maxRecordBytes && size + 2 > config.maxRecordBytes) {
         if (useDirtyKeys && recordKey) { oversizedKeys.add(recordKey(record)); continue; }
         return { success: false, uploaded: 0, batches: 0, error: "Record exceeds the upload byte limit; retained locally" };
       }
@@ -389,7 +401,7 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
         ? `Server refused ${refusedKeys.size} ${entityName} and left them pending: ${refusalReason}`
         : undefined,
       oversizedKeys.size > 0
-        ? `Skipped ${oversizedKeys.size} ${entityName} larger than the ${config.maxBatchBytes} byte limit; left pending; the byte limit cannot be raised past the server body cap.`
+        ? `Skipped ${oversizedKeys.size} ${entityName} larger than the ${config.maxRecordBytes} byte record limit and left them pending; retrying would send the same bytes.`
         : undefined,
       targetChanged
         ? `Last successful upload went to ${previousTarget}; this run sent pending ${entityName} to ${apiUrl}.`

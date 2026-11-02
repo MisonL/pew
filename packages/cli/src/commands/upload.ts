@@ -139,6 +139,12 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
   const details = await createUploadEngine<AccountingRecord>({
     queue: new AccountingQueue(opts.stateDir), endpoint: "/api/ingest/details", entityName: "accounting details",
     preprocess: (records) => records, recordKey: accountingKey, maxBatchSize: 25, maxBatchBytes: 600_000,
+    // 600 KB is a network-timeout guard, not the server's ceiling: an
+    // AccountingRecord may carry 256 groups × 4 reported costs, and one that
+    // validates can measure ~617 KB. The engine skips a record over this limit
+    // and keeps it pending, so the rest of the outbox still ships; 24 MB is
+    // MAX_ACCOUNTING_BODY_BYTES (@pew/core, not a CLI runtime dependency).
+    maxRecordBytes: 24 * 1024 * 1024,
     validateResponse: (body, batch) => {
       const value = body as { details_version?: unknown; acknowledgments?: unknown } | null;
       if (value?.details_version !== 1 || !Array.isArray(value.acknowledgments) || value.acknowledgments.length !== batch.length) return "Server did not acknowledge accounting details v1";
