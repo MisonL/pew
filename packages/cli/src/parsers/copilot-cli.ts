@@ -151,8 +151,8 @@ export async function parseCopilotCliFile(opts: {
     stream.destroy();
   }
 
-  // A trailing unterminated line is left unread: it may still be written to,
-  // and consuming it would risk parsing half a record.
+  // A trailing unterminated line is normally left unread: it may still be
+  // written to, and consuming it would risk parsing half a record.
   //
   // Do NOT flush trailing incomplete blocks — leave them for next sync.
   // A pending marker means its JSON body has not been fully consumed: either
@@ -160,6 +160,21 @@ export async function parseCopilotCliFile(opts: {
   // to before the marker, because the next sync only re-enters collectingJson
   // mode by re-reading it; a body that arrives later would otherwise look like
   // ordinary non-log lines and be skipped forever.
+  //
+  // One exception: while collectingJson is true, the pending bytes are a
+  // continuation of the JSON body, not the start of a new log line. If the
+  // file was closed without a final newline after the closing brace, the block
+  // is complete and parses — leaving it unread would drop that usage until the
+  // file grows again, which may be never. The flush is limited to that case so
+  // a trailing fragment that could be a log line (above) keeps its rewind.
+  if (collectingJson && pending.length > 0) {
+    jsonLines.push(pending.toString("utf8"));
+    if (tryFlushJson()) {
+      collectingJson = false;
+      bytesConsumed += pending.length;
+      lastCompletedOffset = startOffset + bytesConsumed;
+    }
+  }
   const consumed = Math.min(startOffset + bytesConsumed, fileSize);
   const endOffset = collectingJson ? lastCompletedOffset : consumed;
 

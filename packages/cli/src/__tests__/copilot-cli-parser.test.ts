@@ -340,6 +340,29 @@ describe("parseCopilotCliFile", () => {
     expect(result.endOffset).toBeLessThanOrEqual(content.length - 1);
   });
 
+  it("reads a usage block whose closing brace has no trailing newline", async () => {
+    // The writer can close the file right after `}` without emitting a final
+    // newline. The streaming parser only sees \n-terminated lines, so the
+    // closing brace would sit in the unterminated tail and the whole block —
+    // budgeted from a marker that never flushed — would be dropped until the
+    // file grows again, which may be never. A trailing body fragment is safe
+    // to flush: it is JSON, not the start of a new log line.
+    const filePath = join(tempDir, "process-eof-at-brace.log");
+    const complete = buildLogWithUsage({ model: "claude-opus-4.6", input_tokens: 4096, output_tokens: 256 });
+    // Drop the DEBUG line and the final newline so the file ends on `}`.
+    const content = complete.replace(/\n[^\n]*\[DEBUG\][^\n]*\n$/, "");
+    expect(content.endsWith("}")).toBe(true);
+    await writeFile(filePath, content);
+
+    const result = await parseCopilotCliFile({ filePath, startOffset: 0 });
+
+    expect(result.deltas).toHaveLength(1);
+    expect(result.deltas[0]!.tokens.inputTokens).toBe(4096);
+    expect(result.deltas[0]!.tokens.outputTokens).toBe(256);
+    // The parsed block is fully consumed, so the next sync resumes at EOF.
+    expect(result.endOffset).toBe(Buffer.byteLength(content, "utf8"));
+  });
+
   it("handles braces inside JSON string values correctly", async () => {
     const filePath = join(tempDir, "process-braces.log");
     // Build a telemetry block where a string value contains braces
