@@ -577,6 +577,51 @@ describe("executeUpload", () => {
     expect(result.success).toBe(true);
     expect(result.warning).toContain("http://pew.corp:7020");
   });
+
+  it("warns on a host switch when the token stage rejected its whole backlog", async () => {
+    // The token stage reports "success" with a rejection warning when every
+    // record it read failed the ingest contract. Gating the switch notice on
+    // "the token stage produced no warning" hid the re-route exactly then —
+    // even though the evidence backlog behind it still shipped to the new
+    // host. total_tokens disagreeing with its components is rejected locally,
+    // so the poison never reaches the wire.
+    await new ConfigManager(dir).save({ token: "pk_saas" });
+    await new ConfigManager(dir, false, "http://pew.corp:7020").save({ token: "pk_selfhosted" });
+
+    const queue = new LocalQueue(dir);
+    await queue.appendBatch([makeRecord()]);
+    await executeUpload({
+      stateDir: dir,
+      apiUrl: "http://pew.corp:7020",
+      fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }]).fetchFn,
+    });
+
+    // A record whose total disagrees with its components: rejected before the
+    // batch is built, so the token stage ships nothing but comes back with a
+    // warning of its own.
+    await queue.append({ ...makeRecord({ model: "poison" }), total_tokens: 999 });
+    const evidence = new EvidenceQueue(dir);
+    await evidence.merge([{
+      source: "hermes", model: "test-model", device_id: "test-device",
+      timestamp: "2026-09-06T16:00:01.000Z", hour_start: "2026-09-06T16:00:00.000Z",
+      input_tokens: 100, cached_input_tokens: 0, output_tokens: 20, reasoning_output_tokens: 0, total_tokens: 120,
+      evidence: { eventId: "a".repeat(64), groupId: "b".repeat(64), callType: "approval",
+        origin: "hermes-aux-ledger", provider: "openai", granularity: "session",
+        timePrecision: "session-start", intervalStart: null, intervalEnd: null,
+        callCount: 1, snapshotSeq: 1 },
+    }]);
+
+    const result = await executeUpload({
+      stateDir: dir,
+      apiUrl: DEFAULT_HOST,
+      fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }, { status: 200, body: {} }]).fetchFn,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.warning).toContain("cannot pass the upload contract");
+    expect(result.warning).toContain("http://pew.corp:7020");
+    expect(result.warning).toContain(DEFAULT_HOST);
+  });
 });
 
 // ---------------------------------------------------------------------------

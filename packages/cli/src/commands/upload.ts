@@ -163,11 +163,14 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
   // stage's warning has to be carried into the merge explicitly.
   else warnings.push(details.warning);
   // The token stage is the only one that records the target, so it is also the
-  // one that detects a switch — but it stays silent when its own queue is
-  // empty, while the evidence/accounting backlogs behind it still ship to the
-  // new host. Warn whenever any stage actually shipped to a different origin
-  // than the last recorded drain.
-  if (main.targetChangedFrom && !main.warning &&
+  // one that detects a switch — but it only says so on its success path. A
+  // stage that rejected every record ships nothing yet still comes back
+  // "successful" with its own warning, and testing `!main.warning` there
+  // suppressed the notice even though the evidence/accounting backlogs behind
+  // it went to the new host. Dedupe on the sentence the engine actually emitted
+  // instead of on "the token stage produced any warning at all".
+  const engineReportedSwitch = main.warning?.includes("Last successful upload went to") ?? false;
+  if (main.targetChangedFrom && !engineReportedSwitch &&
       (main.uploaded > 0 || supplemental.uploaded > 0 || details.uploaded > 0)) {
     warnings.push(`Last successful upload went to ${main.targetChangedFrom}; this run sent pending records to ${opts.apiUrl}.`);
   }
