@@ -1449,3 +1449,60 @@ describe("upload-engine", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Per-record byte limit
+// ---------------------------------------------------------------------------
+
+describe("upload-engine record byte limit", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "pew-upload-engine-bytes-"));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function createLimitedEngine(testDir: string, maxBatchBytes: number) {
+    const queue = new BaseQueue<TestRecord>(testDir, "test.jsonl", "test.state.json");
+    const config: UploadEngineConfig<TestRecord> = {
+      queue,
+      endpoint: "/api/test-ingest",
+      entityName: "test records",
+      preprocess: (records) => records,
+      recordKey: (r) => `key-${r.id}`,
+      maxBatchBytes,
+    };
+    return { queue, config };
+  }
+
+  it("skips one oversized record instead of aborting the whole stage", async () => {
+    // The accounting stage caps a batch at 600 KB, and an AccountingRecord has
+    // no independent size bound (up to 256 groups, each carrying reported
+    // costs and diagnostics). One such record used to `return` from the stage
+    // before any batch was built, so the offset never advanced and every later
+    // annotation was re-read and re-blocked on every run.
+    const { queue, config } = createLimitedEngine(dir, 200);
+    const cm = new ConfigManager(dir);
+    await cm.save({ token: "pk_test" });
+
+    const oversized: TestRecord = { id: 2, value: 0 };
+    (oversized as unknown as { padding: string }).padding = "x".repeat(500);
+    await queue.appendBatch([makeRecord(1), oversized, makeRecord(3)]);
+    await queue.saveDirtyKeys(["key-1", "key-2", "key-3"]);
+
+    const { fetchFn, calls } = createMockFetch([{ status: 200, body: { ingested: 2 } }]);
+    const engine = createUploadEngine(config);
+    const result = await engine.execute({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn });
+
+    expect(result.success).toBe(true);
+    expect(result.uploaded).toBe(2);
+    const sent = (JSON.parse(calls[0]!.init.body as string) as TestRecord[]).map((r) => r.id).sort();
+    expect(sent).toEqual([1, 3]);
+    // The oversized record stays pending: it was neither shipped nor dropped.
+    expect(await queue.loadDirtyKeys()).toEqual(["key-2"]);
+    expect(result.warning).toContain("byte limit");
+  });
+});

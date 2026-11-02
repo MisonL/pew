@@ -276,10 +276,22 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
     // 3. Split into batches
     const batchSize = Math.max(1, Math.min(requestedBatchSize, config.maxBatchSize ?? DEFAULT_BATCH_SIZE));
     const batches: T[][] = [];
+    // Records larger than the batch byte budget cannot ride with anything
+    // else; where the key is trackable they are skipped and left pending
+    // instead of aborting the stage. Accounting sets this limit and an
+    // AccountingRecord has no independent size bound (up to 256 groups, each
+    // with reported costs and diagnostics), so `return`ing here stopped every
+    // later annotation from ever shipping and re-read the same record on each
+    // run. Without a trackable key there is no way to keep only that record
+    // pending, so the old abort (retained locally) still applies.
+    const oversizedKeys = new Set<string>();
     let pending: T[] = []; let bytes = 2;
     for (const record of records) {
       const size = config.maxBatchBytes ? Buffer.byteLength(JSON.stringify(record)) + 1 : 0;
-      if (config.maxBatchBytes && size + 2 > config.maxBatchBytes) return { success: false, uploaded: 0, batches: 0, error: "Record exceeds the upload byte limit; retained locally" };
+      if (config.maxBatchBytes && size + 2 > config.maxBatchBytes) {
+        if (useDirtyKeys && recordKey) { oversizedKeys.add(recordKey(record)); continue; }
+        return { success: false, uploaded: 0, batches: 0, error: "Record exceeds the upload byte limit; retained locally" };
+      }
       if (pending.length >= batchSize || (pending.length > 0 && config.maxBatchBytes && bytes + size > config.maxBatchBytes)) {
         batches.push(pending); pending = []; bytes = 2;
       }
@@ -356,7 +368,10 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
     // 5. All batches succeeded — save state
     await queue.saveOffset(newOffset);
     if (useDirtyKeys) {
-      await queue.saveDirtyKeys([...refusedKeys].sort());
+      // Both sets stay pending: the server-refused keys and the oversized ones
+      // this run never carried. Clearing the latter would drop local state for
+      // a record no server ever saw.
+      await queue.saveDirtyKeys([...refusedKeys, ...oversizedKeys].sort());
     }
     if (config.trackUploadTarget) {
       await queue.saveLastUploadTarget(apiUrl);
@@ -372,6 +387,9 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
       rejectionWarning,
       refusedKeys.size > 0
         ? `Server refused ${refusedKeys.size} ${entityName} and left them pending: ${refusalReason}`
+        : undefined,
+      oversizedKeys.size > 0
+        ? `Skipped ${oversizedKeys.size} ${entityName} larger than the ${config.maxBatchBytes} byte limit; left pending; the byte limit cannot be raised past the server body cap.`
         : undefined,
       targetChanged
         ? `Last successful upload went to ${previousTarget}; this run sent pending ${entityName} to ${apiUrl}.`
