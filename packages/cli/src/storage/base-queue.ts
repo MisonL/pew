@@ -72,7 +72,15 @@ export class BaseQueue<T> {
    * nothing.
    */
   private async separator(): Promise<string> {
-    const handle = await open(this.queuePath, "r").catch(() => null);
+    // Only a missing file means "nothing to separate from": the directory is
+    // created by the caller before any append, so ENOENT is the normal first
+    // append. Any other open failure (EACCES on a read-only state dir, EMFILE)
+    // must not be read as an empty file — that silently merges the new record
+    // into a torn tail.
+    const handle = await open(this.queuePath, "r").catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    });
     if (handle === null) return "";
     try {
       const { size } = await handle.stat();
