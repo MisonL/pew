@@ -116,8 +116,19 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ success: true });
   } catch (err) {
     if (err instanceof Error && /FOREIGN KEY constraint failed/i.test(err.message)) {
+      // Name what actually blocks the delete. The previous wording told the
+      // operator to "transfer or remove" the resources, but no transfer route
+      // exists (teams/seasons/organizations all keep a NOT NULL created_by, and
+      // there is no reassignment API), so the only honest instruction is what
+      // can be removed and by which means. Diagnose on the failure path only:
+      // the happy path stays a single batch.
+      const blockers = await describeAccountDeleteBlockers(dbWrite, authResult.userId).catch(() => "");
       return NextResponse.json(
-        { error: "Account still owns shared resources. Transfer or remove them before deleting your account." },
+        {
+          error: blockers
+            ? `Account still owns shared resources: ${blockers}.`
+            : "Account still owns shared resources that must be removed before the account can be deleted.",
+        },
         { status: 409 },
       );
     }
@@ -127,4 +138,44 @@ export async function DELETE(request: Request) {
       { status: 500 },
     );
   }
+}
+
+/**
+ * List the resources whose NOT NULL `created_by` (or `registered_by`) still
+ * points at this user, with the concrete way to remove each.
+ *
+ * Mirrors the locked-season predicate in `teams/[teamId]` DELETE: a team
+ * registered in a season that has ended, or that has started and does not
+ * allow late withdrawal, cannot be deleted or left through the API — so its
+ * owner is genuinely stuck until an operator intervenes.
+ */
+async function describeAccountDeleteBlockers(
+  dbWrite: Awaited<ReturnType<typeof getDbWrite>>,
+  userId: string,
+): Promise<string> {
+  const lockedSeason = `SELECT 1 FROM season_teams st JOIN seasons s ON s.id = st.season_id
+    WHERE st.team_id = t.id AND (julianday(s.end_date, '+1 minute') <= julianday('now') OR
+      (julianday(s.start_date) <= julianday('now') AND COALESCE(s.allow_late_withdrawal, 0) = 0))`;
+  const counts = await dbWrite.batch([
+    { sql: "SELECT COUNT(*) AS n FROM seasons WHERE created_by = ?", params: [userId] },
+    { sql: "SELECT COUNT(*) AS n FROM organizations WHERE created_by = ?", params: [userId] },
+    { sql: `SELECT COUNT(*) AS n FROM teams t WHERE t.created_by = ? AND EXISTS (${lockedSeason})`, params: [userId] },
+    { sql: `SELECT COUNT(*) AS n FROM teams t WHERE t.created_by = ? AND NOT EXISTS (${lockedSeason})`, params: [userId] },
+    {
+      sql: `SELECT COUNT(*) AS n FROM season_teams st WHERE st.registered_by = ?
+        AND NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = st.team_id AND t.created_by = ?)`,
+      params: [userId, userId],
+    },
+  ]);
+  const n = (i: number): number => {
+    const row = counts[i]?.results?.[0] as { n?: number } | undefined;
+    return row?.n ?? 0;
+  };
+  const parts: string[] = [];
+  if (n(0) > 0) parts.push(`${n(0)} season(s) you created (seasons have no delete API)`);
+  if (n(1) > 0) parts.push(`${n(1)} organization(s) you created (delete as admin: DELETE /api/admin/organizations/{orgId})`);
+  if (n(2) > 0) parts.push(`${n(2)} team(s) registered in a locked season (a locked season cannot be left or deleted)`);
+  if (n(3) > 0) parts.push(`${n(3)} team(s) you created (delete first: DELETE /api/teams/{teamId})`);
+  if (n(4) > 0) parts.push(`${n(4)} season registration(s) under your name (withdraw from the season first)`);
+  return parts.join("; ");
 }

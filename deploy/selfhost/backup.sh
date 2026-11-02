@@ -11,9 +11,20 @@
 #   -u when auth is enabled; anonymous .backup gets 401). A half-filled pair
 #   counts as unset, same rule as resolveBasicAuth in basic-auth.ts.
 # - Credentials reach the container through its ENVIRONMENT (docker exec -e
-#   forwards the value from this shell): argv is world-readable in `ps`, the
-#   environment is not. Same rule as reset-password.ts. A password with
-#   spaces therefore needs no array quoting games.
+#   forwards the value from this shell), not through docker's argv: the host
+#   `docker compose exec` command line carries only the variable NAMES. The
+#   rqlite CLI itself, however, accepts basic auth only as `-u user:password`,
+#   so the container-side `sh -c` below re-expands the password into the
+#   rqlite process's argv. Inside the container that is visible to any process
+#   reading /proc (and to host users, since the PID namespace is shared with
+#   the host). It is accepted rather than fixed because the image has no
+#   argv-free alternative: `curl`/`wget`/`nc` are absent (verified on
+#   rqlite/rqlite:10.5.3) and rqlite's HTTP port 4001 is deliberately not
+#   published to the host (docker-compose.yml publishes only web), so the
+#   backup cannot be fetched over HTTP from the host. Anyone who can read that
+#   argv on the host can also read .env (0600, same operator uid), so the
+#   exposure adds no new secret to that actor. A password with spaces
+#   therefore needs no array quoting games.
 # - chmod 600 immediately after the copy: the archive contains every
 #   password_hash/api_key, and docker compose cp PRESERVES the container-side
 #   mode (644 in the rqlite image), ignoring this shell's umask.

@@ -192,4 +192,99 @@ describe("DELETE /api/account/delete", () => {
       expect(mockWriteClient.execute).not.toHaveBeenCalled();
     });
   });
+
+  describe("blocker diagnosis", () => {
+    it("names the owned resource in the 409 instead of promising a transfer that does not exist", async () => {
+      // The pre-2026-11 message said "Transfer or remove them", but no
+      // transfer API exists anywhere: teams.created_by / seasons.created_by /
+      // organizations.created_by have no transfer route, seasons have no
+      // delete route at all, and a team registered in a locked season cannot
+      // be deleted. The message must name the actual blocker so the operator
+      // knows what to remove and by which means.
+      const db = new DatabaseSync(":memory:");
+      try {
+        db.exec(`PRAGMA foreign_keys = ON;
+          CREATE TABLE users (id TEXT PRIMARY KEY);
+          INSERT INTO users VALUES ('u1');
+          CREATE TABLE season_snapshots (season_id TEXT, team_id TEXT, rank INTEGER, total_tokens INTEGER,
+            input_tokens INTEGER, output_tokens INTEGER, cached_input_tokens INTEGER);
+          CREATE TABLE season_member_snapshots (season_id TEXT, team_id TEXT, user_id TEXT, total_tokens INTEGER,
+            input_tokens INTEGER, output_tokens INTEGER, cached_input_tokens INTEGER);
+          CREATE TABLE seasons (id TEXT PRIMARY KEY, created_by TEXT NOT NULL REFERENCES users(id), allow_late_withdrawal INTEGER, start_date TEXT, end_date TEXT);
+          INSERT INTO seasons VALUES ('s1', 'u1', 0, '2020-01-01T00:00:00Z', '2020-02-01T00:00:00Z');
+          CREATE TABLE organizations (id TEXT PRIMARY KEY, created_by TEXT NOT NULL REFERENCES users(id));
+          INSERT INTO organizations VALUES ('o1', 'u1');
+          CREATE TABLE teams (id TEXT PRIMARY KEY, created_by TEXT NOT NULL REFERENCES users(id));
+          INSERT INTO teams VALUES ('t1', 'u1'), ('t2', 'u1');
+          CREATE TABLE season_teams (season_id TEXT, team_id TEXT, registered_by TEXT REFERENCES users(id));
+          INSERT INTO season_teams VALUES ('s1', 't1', 'u1');
+          CREATE TABLE team_members (team_id TEXT, user_id TEXT);`);
+        const tables = ["usage_details", "usage_evidence", "usage_records", "session_records",
+          "season_team_members", "device_aliases", "organization_members", "auth_codes", "sessions", "accounts"];
+        for (const table of tables) db.exec(`CREATE TABLE ${table} (user_id TEXT);`);
+        db.exec(`CREATE TABLE invite_codes (code TEXT PRIMARY KEY, created_by TEXT, used_by TEXT, used_at TEXT);
+          CREATE TABLE instance_setup (id INTEGER PRIMARY KEY, admin_user_id TEXT, completed_at TEXT);`);
+        vi.mocked(authModule.resolveUser).mockResolvedValueOnce({ userId: "u1" });
+        mockReadClient.getUserById.mockResolvedValueOnce({ id: "u1", email: "user@example.com" });
+        mockWriteClient.batch.mockImplementation(async (statements: Array<{ sql: string; params?: string[] }>) => {
+          // The real adapter routes every statement of a batch through one
+          // write request; mirror that so the diagnostic SELECTs see the same
+          // tables the failing DELETE saw.
+          const results = statements.map(({ sql, params }) => ({ results: db.prepare(sql).all(...(params ?? [])), meta: { changes: 0, duration: 0 } }));
+          // Let the delete batch itself fail like the live FK error does.
+          if (statements.some((s) => s.sql.startsWith("DELETE FROM users"))) {
+            throw new Error("FOREIGN KEY constraint failed");
+          }
+          return results;
+        });
+
+        const res = await DELETE(makeDeleteRequest({ confirm_email: "user@example.com" }));
+
+        expect(res.status).toBe(409);
+        const body = await res.json();
+        expect(body.error).toContain("season");
+        expect(body.error).toContain("organization");
+        expect(body.error).toContain("team");
+        // No capability the API does not have may be promised.
+        expect(body.error).not.toMatch(/transfer/i);
+      } finally { db.close(); }
+    });
+
+    it("falls back to the generic 409 when the ownership diagnosis cannot run", async () => {
+      // The diagnosis is a best-effort extra query on the failure path. If it
+      // fails (a schema the instance predates, a degraded worker), the operator
+      // must still get a 409 rather than a 500 — the delete genuinely failed
+      // for a foreign-key reason, which the diagnosis only explains.
+      vi.mocked(authModule.resolveUser).mockResolvedValueOnce({ userId: "u1" });
+      mockReadClient.getUserById.mockResolvedValueOnce({ id: "u1", email: "user@example.com" });
+      mockWriteClient.batch
+        .mockRejectedValueOnce(new Error("FOREIGN KEY constraint failed"))
+        .mockRejectedValueOnce(new Error("no such table: seasons"));
+
+      const res = await DELETE(makeDeleteRequest({ confirm_email: "user@example.com" }));
+
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.error).toBe("Account still owns shared resources that must be removed before the account can be deleted.");
+    });
+
+    it("keeps the generic wording when the FK failure is not about an owned resource", async () => {
+      // Diagnose only what can be counted: an FK failure with none of the
+      // ownership counts above zero (e.g. a row written by an older schema)
+      // must not produce an empty "shared resources: ." sentence.
+      vi.mocked(authModule.resolveUser).mockResolvedValueOnce({ userId: "u1" });
+      mockReadClient.getUserById.mockResolvedValueOnce({ id: "u1", email: "user@example.com" });
+      mockWriteClient.batch
+        .mockRejectedValueOnce(new Error("FOREIGN KEY constraint failed"))
+        .mockResolvedValueOnce([{ results: [{ n: 0 }], meta: {} }, { results: [{ n: 0 }], meta: {} },
+          { results: [{ n: 0 }], meta: {} }, { results: [{ n: 0 }], meta: {} }, { results: [], meta: {} }]);
+
+      const res = await DELETE(makeDeleteRequest({ confirm_email: "user@example.com" }));
+
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.error).toBe("Account still owns shared resources that must be removed before the account can be deleted.");
+      expect(body.error).not.toContain(": .");
+    });
+  });
 });
