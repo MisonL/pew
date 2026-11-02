@@ -25,18 +25,49 @@ describe("state mutation lock", () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
-  it("still fails closed for a live owner and for content it cannot interpret", async () => {
+  it("still fails closed for a live owner", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pew-state-lock-"));
     try {
       const path = join(dir, "state.lock");
       // A live process (us) really holds it.
-      await writeFile(path, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+      const live = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
+      await writeFile(path, live);
       await expect(withStateLock(dir, async () => "must not run")).rejects.toThrow("Pew state is busy");
-      // Unparseable content is treated as "cannot verify the owner" — never
-      // silently deleted, because it might be a lock being written right now.
+      expect(await readFile(path, "utf8")).toBe(live);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it("gives an unreadable lock one chance to finish being written", async () => {
+    // `acquireLock` creates the file and then writes the JSON, so a reader can
+    // catch it empty. That first unreadable observation must not delete the
+    // lock: the writer completes during the recheck delay and keeps holding it.
+    const dir = await mkdtemp(join(tmpdir(), "pew-state-lock-"));
+    try {
+      const path = join(dir, "state.lock");
+      await writeFile(path, "");
+      let rechecks = 0;
+      await expect(withStateLock(dir, async () => "must not run", {
+        sleep: async () => {
+          rechecks += 1;
+          await writeFile(path, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+        },
+      })).rejects.toThrow("Pew state is busy");
+      expect(rechecks).toBe(1);
+      expect(JSON.parse(await readFile(path, "utf8")).pid).toBe(process.pid);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it("reclaims unreadable content that persists, so a torn lock cannot wedge every command", async () => {
+    // A crash or ENOSPC between the O_EXCL create and the write leaves content
+    // with no parseable PID. Unlike a live owner it never becomes readable, so
+    // failing closed forever would disable sync/upload/reset until an operator
+    // hand-edits the state directory.
+    const dir = await mkdtemp(join(tmpdir(), "pew-state-lock-"));
+    try {
+      const path = join(dir, "state.lock");
       await writeFile(path, "{");
-      await expect(withStateLock(dir, async () => "must not run")).rejects.toThrow("Pew state is busy");
-      expect(await readFile(path, "utf8")).toBe("{");
+      expect(await withStateLock(dir, async () => "recovered")).toBe("recovered");
+      expect(await exists(path)).toBe(false);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
