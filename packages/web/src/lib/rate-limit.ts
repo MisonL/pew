@@ -256,6 +256,11 @@ export function ipv6PrefixKey(ip: string): string {
   }
   if (!atTail) return `${head.slice(0, 4).join(":")}::/64`; // uncompressed form
   const tailCount = 8 - head.length - tail.length;
+  // More than 15 colons or an address split across the 8-group boundary is
+  // not an IPv6 literal (a forwarded header carries attacker bytes). Return
+  // the raw string unchanged instead of padding with a negative count, which
+  // threw RangeError out of the request handler.
+  if (tailCount < 0) return ip;
   const groups = [...head, ...Array(tailCount).fill("0"), ...tail];
   return `${groups.slice(0, 4).join(":")}::/64`;
 }
