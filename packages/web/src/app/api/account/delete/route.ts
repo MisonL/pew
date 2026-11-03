@@ -158,10 +158,20 @@ async function describeAccountDeleteBlockers(
   const lockedSeason = `SELECT 1 FROM season_teams st JOIN seasons s ON s.id = st.season_id
     WHERE st.team_id = t.id AND (julianday(s.end_date, '+1 minute') <= julianday('now') OR
       (julianday(s.start_date) <= julianday('now') AND COALESCE(s.allow_late_withdrawal, 0) = 0))`;
-  // The same predicate, but applied to a season joined in the outer query.
-  const lockedJoinedSeason = `(julianday(s.end_date, '+1 minute') <= julianday('now') OR
-    (julianday(s.start_date) <= julianday('now') AND COALESCE(s.allow_late_withdrawal, 0) = 0))`;
   const otherMember = "EXISTS (SELECT 1 FROM team_members tm WHERE tm.team_id = t.id AND tm.user_id != ?)";
+  // `registered_by` is written only by the register route (which requires
+  // `membership === "owner"`) and by auto-register (`getTeamOwner(team.id) ??
+  // team.created_by`), so it is always the team owner and this count is zero on
+  // data the current API can produce — it is kept for rows left by an older
+  // schema. It must NOT be split into locked/open halves pointing at
+  // DELETE /api/seasons/{seasonId}/register: that route is owner-only, so for a
+  // registrant who does not own the team it is a 403. Only an admin deleting
+  // the season clears such a row unconditionally: the owner-withdraw route also
+  // refuses an ended season ("Cannot withdraw from ended seasons") and an
+  // active season without late withdrawal, so it is not an alternative to name.
+  const registrationsNotOwner = `SELECT COUNT(*) AS n FROM season_teams st
+    WHERE st.registered_by = ?
+      AND NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = st.team_id AND t.created_by = ?)`;
   const counts = await dbWrite.batch([
     { sql: "SELECT COUNT(*) AS n FROM seasons WHERE created_by = ?", params: [userId] },
     { sql: "SELECT COUNT(*) AS n FROM organizations WHERE created_by = ?", params: [userId] },
@@ -170,20 +180,7 @@ async function describeAccountDeleteBlockers(
     // others are removed, so that removal has to be part of the instruction.
     { sql: `SELECT COUNT(*) AS n FROM teams t WHERE t.created_by = ? AND NOT EXISTS (${lockedSeason}) AND ${otherMember}`, params: [userId, userId] },
     { sql: `SELECT COUNT(*) AS n FROM teams t WHERE t.created_by = ? AND NOT EXISTS (${lockedSeason}) AND NOT (${otherMember})`, params: [userId, userId] },
-    // Registrations the user made for a team they do not own. Withdrawal is
-    // the user's own route, but only while the season is not locked.
-    {
-      sql: `SELECT COUNT(*) AS n FROM season_teams st JOIN seasons s ON s.id = st.season_id
-        WHERE st.registered_by = ? AND NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = st.team_id AND t.created_by = ?)
-        AND ${lockedJoinedSeason}`,
-      params: [userId, userId],
-    },
-    {
-      sql: `SELECT COUNT(*) AS n FROM season_teams st JOIN seasons s ON s.id = st.season_id
-        WHERE st.registered_by = ? AND NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = st.team_id AND t.created_by = ?)
-        AND NOT ${lockedJoinedSeason}`,
-      params: [userId, userId],
-    },
+    { sql: registrationsNotOwner, params: [userId, userId] },
   ]);
   const n = (i: number): number => {
     const row = counts[i]?.results?.[0] as { n?: number } | undefined;
@@ -195,7 +192,6 @@ async function describeAccountDeleteBlockers(
   if (n(2) > 0) parts.push(`${n(2)} team(s) registered in a locked season (delete the season as admin first: DELETE /api/admin/seasons/{seasonId})`);
   if (n(3) > 0) parts.push(`${n(3)} team(s) you created with other members (remove the other members first, then DELETE /api/teams/{teamId})`);
   if (n(4) > 0) parts.push(`${n(4)} team(s) you created (delete first: DELETE /api/teams/{teamId})`);
-  if (n(5) > 0) parts.push(`${n(5)} registration(s) from a locked season under your name (delete the season as admin: DELETE /api/admin/seasons/{seasonId})`);
-  if (n(6) > 0) parts.push(`${n(6)} season registration(s) under your name (withdraw first: DELETE /api/seasons/{seasonId}/register)`);
+  if (n(5) > 0) parts.push(`${n(5)} registration(s) under your name for a team you do not own (delete the season as admin: DELETE /api/admin/seasons/{seasonId})`);
   return parts.join("; ");
 }

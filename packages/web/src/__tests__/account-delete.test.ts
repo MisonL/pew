@@ -282,7 +282,7 @@ describe("DELETE /api/account/delete", () => {
         .mockRejectedValueOnce(new Error("FOREIGN KEY constraint failed"))
         .mockResolvedValueOnce([{ results: [{ n: 0 }], meta: {} }, { results: [{ n: 0 }], meta: {} },
           { results: [{ n: 0 }], meta: {} }, { results: [{ n: 0 }], meta: {} }, { results: [{ n: 0 }], meta: {} },
-          { results: [{ n: 0 }], meta: {} }, { results: [], meta: {} }]);
+          { results: [], meta: {} }]);
 
       const res = await DELETE(makeDeleteRequest({ confirm_email: "user@example.com" }));
 
@@ -377,11 +377,17 @@ describe("DELETE /api/account/delete", () => {
       expect(error).toContain("DELETE /api/teams/{teamId}");
     });
 
-    it("separates a withdrawable registration from one locked in a season", async () => {
-      // Withdrawal works only for upcoming seasons and for active seasons that
-      // allow late withdrawal; the same predicate the team route uses. A
-      // registration in an ended season is only clearable by deleting the
-      // season.
+    it("never tells a non-owner to withdraw a registration they cannot withdraw", async () => {
+      // `season_teams.registered_by` is written only by the register route and
+      // by auto-register, and both set it to the team OWNER (register checks
+      // `membership === "owner"` first; auto-register takes getTeamOwner(team.id)
+      // ?? team.created_by). Ownership is immutable — nothing writes
+      // team_members.role or teams.created_by — so a registration whose
+      // registrant does not own the team is not producible through the current
+      // API; it can only exist as legacy data. If it does, the FK still blocks
+      // the delete, but DELETE /api/seasons/{seasonId}/register would 403 (it
+      // requires ownership), so the message must not point there. Deleting the
+      // season as admin is the only route that clears it.
       const error = await diagnosisFor(`
         INSERT INTO users VALUES ('u1'), ('u2');
         INSERT INTO seasons VALUES ('s-open', 'u2', 1, '2020-01-01T00:00:00Z', '2099-12-31T23:59:00Z');
@@ -389,8 +395,10 @@ describe("DELETE /api/account/delete", () => {
         INSERT INTO teams VALUES ('t-other', 'u2');
         INSERT INTO season_teams VALUES ('s-open', 't-other', 'u1'), ('s-locked', 't-other', 'u1');`);
 
-      expect(error).toContain("DELETE /api/seasons/{seasonId}/register");
+      expect(error).toContain("2 registration(s) under your name for a team you do not own");
       expect(error).toContain("DELETE /api/admin/seasons/{seasonId}");
+      // Withdrawal is owner-only; offering it here would send the operator to a 403.
+      expect(error).not.toContain("/register");
     });
   });
 });
