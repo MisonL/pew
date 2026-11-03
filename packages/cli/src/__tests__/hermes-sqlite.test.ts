@@ -436,4 +436,86 @@ describe("parseHermesDatabase", () => {
 
     await teardownDb();
   });
+
+  it("does not throw when a session's started_at is not a representable instant", async () => {
+    // One corrupt row used to abort the entire Hermes database: `new Date(v * 1000)
+    // .toISOString()` throws RangeError for NaN and for values past the Date range.
+    // Because the cursor never advanced, every later sync re-read the same row and
+    // failed the same way — the whole source stayed wedged forever. Source isolation
+    // and idempotency both require the other sessions to keep landing.
+    await setupDb();
+
+    const sessions: SessionRow[] = [
+      {
+        id: "session-good",
+        model: "claude-opus-4",
+        input_tokens: 1000,
+        output_tokens: 500,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        started_at: testStartedAt,
+      },
+      {
+        id: "session-nan",
+        model: "claude-opus-4",
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        started_at: Number.NaN,
+      },
+      {
+        id: "session-overflow",
+        model: "claude-opus-4",
+        input_tokens: 20,
+        output_tokens: 7,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        started_at: 1e20, // far past 9999-12-31
+      },
+    ];
+
+    const result = await parseHermesDatabase(dbPath, mockSessions(sessions));
+
+    // The good session lands unchanged...
+    const good = result.deltas.find((d) => d.model === "claude-opus-4" && d.timestamp === "2026-04-03T10:00:00.000Z");
+    expect(good?.tokens.inputTokens).toBe(1000);
+    // ...and the corrupt rows are bucketed on the deterministic epoch fallback
+    // instead of throwing, so their usage is preserved and the source keeps moving.
+    const fallback = result.deltas.filter((d) => d.timestamp === "1970-01-01T00:00:00.000Z");
+    expect(fallback).toHaveLength(2);
+    expect(fallback.reduce((sum, d) => sum + d.tokens.inputTokens, 0)).toBe(30);
+    // Cursor still records every session, so the next sync does not replay them.
+    expect(result.cursor.sessionTotals["session-nan"]).toBeTruthy();
+    expect(result.cursor.sessionTotals["session-overflow"]).toBeTruthy();
+
+    await teardownDb();
+  });
+
+  it("keeps the fallback timestamp stable across reset+sync (idempotent for a corrupt row)", async () => {
+    await setupDb();
+
+    const sessions: SessionRow[] = [
+      {
+        id: "session-nan",
+        model: "claude-opus-4",
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        started_at: Number.NaN,
+      },
+    ];
+
+    const first = await parseHermesDatabase(dbPath, mockSessions(sessions));
+    const second = await parseHermesDatabase(dbPath, mockSessions(sessions));
+    expect(first.deltas[0].timestamp).toBe("1970-01-01T00:00:00.000Z");
+    expect(second.deltas[0].timestamp).toBe(first.deltas[0].timestamp);
+
+    await teardownDb();
+  });
 });

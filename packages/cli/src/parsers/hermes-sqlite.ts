@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import type { HermesSqliteCursor, TokenDelta } from "@pew/core";
 import type { ParsedDelta } from "./claude.js";
 import { isAllZero } from "../utils/token-delta.js";
+import { coerceEpochMs } from "../utils/time.js";
 import { accountingLabel, decimalCost, inclusiveAccounting, optionalToken } from "../utils/accounting.js";
 
 interface HermesBilling {
@@ -96,7 +97,7 @@ export function hermesAccountingSnapshots(rows: SessionRow[], modelRows: Auxilia
   const fields = ["input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens"] as const;
   for (const row of rows) {
     if (!fields.every((f) => optionalToken(row[f]) !== null) || !Number.isFinite(row.started_at)) continue;
-    const timestamp = new Date(row.started_at * 1000).toISOString();
+    const timestamp = new Date(coerceEpochMs(row.started_at)).toISOString();
     const candidates = modelRows.filter((m) => m.session_id === row.id && m.task === "");
     const matches = candidates.length > 0 && candidates.every((m) => fields.every((f) => optionalToken(m[f]) !== null)) &&
       fields.every((f) => candidates.reduce((sum, m) => sum + m[f], 0) === row[f]);
@@ -189,8 +190,12 @@ export async function parseHermesDatabase(
     // Use session's started_at as timestamp for idempotent uploads.
     // Hermes stores started_at as Unix timestamp (seconds since epoch).
     // This ensures reset && sync produces the same hour_start, enabling
-    // proper ON CONFLICT deduplication in D1.
-    const sessionTimestamp = new Date(row.started_at * 1000).toISOString();
+    // proper ON CONFLICT deduplication in D1. A corrupt value (NaN, NULL, or
+    // an epoch past the Date range) must not throw — `toISOString()` would
+    // raise RangeError, the cursor would never advance, and the whole source
+    // would stay wedged on every later sync — so it falls back to the epoch,
+    // exactly where a `started_at` of 0 already lands.
+    const sessionTimestamp = new Date(coerceEpochMs(row.started_at)).toISOString();
 
     // Emit delta
     deltas.push({
