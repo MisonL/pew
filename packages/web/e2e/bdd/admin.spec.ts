@@ -113,5 +113,44 @@ test.describe("Feature: Admin", () => {
         timeout: 10_000,
       });
     });
+
+    test("Given the edited season, When I delete it and confirm, Then the row disappears", async ({ page }) => {
+      // Given: route-mocked GET + DELETE on the season from the earlier scenarios
+      await page.route("**/api/admin/seasons", async (route) => {
+        if (route.request().method() === "GET") {
+          return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ seasons }),
+          });
+        }
+      });
+      await page.route(`**/api/admin/seasons/${seasonId}`, async (route) => {
+        if (route.request().method() === "DELETE") {
+          seasons.length = 0;
+          return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ success: true }),
+          });
+        }
+      });
+
+      // When: open /admin/seasons, click the row's delete control, confirm
+      await page.goto("/admin/seasons");
+      await expect(page.getByText(updatedName, { exact: true })).toBeVisible({
+        timeout: 10_000,
+      });
+      const row = page.locator("tr", { hasText: updatedName });
+      await row.getByRole("button", { name: "Delete season" }).click();
+      // The row control is "Delete season"; the dialog's action is exactly "Delete".
+      await page.getByRole("button", { name: "Delete", exact: true }).click();
+
+      // Then: the row is gone and the success banner confirms the delete
+      await expect(page.getByText(updatedName, { exact: true })).toHaveCount(0, {
+        timeout: 10_000,
+      });
+      await expect(page.getByText(`Season "${updatedName}" deleted.`)).toBeVisible();
+    });
   });
 });

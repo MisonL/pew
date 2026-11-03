@@ -147,7 +147,9 @@ export async function DELETE(request: Request) {
  * Mirrors the locked-season predicate in `teams/[teamId]` DELETE: a team
  * registered in a season that has ended, or that has started and does not
  * allow late withdrawal, cannot be deleted or left through the API — so its
- * owner is genuinely stuck until an operator intervenes.
+ * owner is genuinely stuck until an operator intervenes. The season itself
+ * can now be removed by an admin via `DELETE /api/admin/seasons/{seasonId}`,
+ * which is what the message instructs.
  */
 async function describeAccountDeleteBlockers(
   dbWrite: Awaited<ReturnType<typeof getDbWrite>>,
@@ -156,14 +158,30 @@ async function describeAccountDeleteBlockers(
   const lockedSeason = `SELECT 1 FROM season_teams st JOIN seasons s ON s.id = st.season_id
     WHERE st.team_id = t.id AND (julianday(s.end_date, '+1 minute') <= julianday('now') OR
       (julianday(s.start_date) <= julianday('now') AND COALESCE(s.allow_late_withdrawal, 0) = 0))`;
+  // The same predicate, but applied to a season joined in the outer query.
+  const lockedJoinedSeason = `(julianday(s.end_date, '+1 minute') <= julianday('now') OR
+    (julianday(s.start_date) <= julianday('now') AND COALESCE(s.allow_late_withdrawal, 0) = 0))`;
+  const otherMember = "EXISTS (SELECT 1 FROM team_members tm WHERE tm.team_id = t.id AND tm.user_id != ?)";
   const counts = await dbWrite.batch([
     { sql: "SELECT COUNT(*) AS n FROM seasons WHERE created_by = ?", params: [userId] },
     { sql: "SELECT COUNT(*) AS n FROM organizations WHERE created_by = ?", params: [userId] },
     { sql: `SELECT COUNT(*) AS n FROM teams t WHERE t.created_by = ? AND EXISTS (${lockedSeason})`, params: [userId] },
-    { sql: `SELECT COUNT(*) AS n FROM teams t WHERE t.created_by = ? AND NOT EXISTS (${lockedSeason})`, params: [userId] },
+    // Owner with other members: DELETE /api/teams/{teamId} refuses until the
+    // others are removed, so that removal has to be part of the instruction.
+    { sql: `SELECT COUNT(*) AS n FROM teams t WHERE t.created_by = ? AND NOT EXISTS (${lockedSeason}) AND ${otherMember}`, params: [userId, userId] },
+    { sql: `SELECT COUNT(*) AS n FROM teams t WHERE t.created_by = ? AND NOT EXISTS (${lockedSeason}) AND NOT (${otherMember})`, params: [userId, userId] },
+    // Registrations the user made for a team they do not own. Withdrawal is
+    // the user's own route, but only while the season is not locked.
     {
-      sql: `SELECT COUNT(*) AS n FROM season_teams st WHERE st.registered_by = ?
-        AND NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = st.team_id AND t.created_by = ?)`,
+      sql: `SELECT COUNT(*) AS n FROM season_teams st JOIN seasons s ON s.id = st.season_id
+        WHERE st.registered_by = ? AND NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = st.team_id AND t.created_by = ?)
+        AND ${lockedJoinedSeason}`,
+      params: [userId, userId],
+    },
+    {
+      sql: `SELECT COUNT(*) AS n FROM season_teams st JOIN seasons s ON s.id = st.season_id
+        WHERE st.registered_by = ? AND NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = st.team_id AND t.created_by = ?)
+        AND NOT ${lockedJoinedSeason}`,
       params: [userId, userId],
     },
   ]);
@@ -172,10 +190,12 @@ async function describeAccountDeleteBlockers(
     return row?.n ?? 0;
   };
   const parts: string[] = [];
-  if (n(0) > 0) parts.push(`${n(0)} season(s) you created (seasons have no delete API)`);
+  if (n(0) > 0) parts.push(`${n(0)} season(s) you created (delete as admin: DELETE /api/admin/seasons/{seasonId})`);
   if (n(1) > 0) parts.push(`${n(1)} organization(s) you created (delete as admin: DELETE /api/admin/organizations/{orgId})`);
-  if (n(2) > 0) parts.push(`${n(2)} team(s) registered in a locked season (a locked season cannot be left or deleted)`);
-  if (n(3) > 0) parts.push(`${n(3)} team(s) you created (delete first: DELETE /api/teams/{teamId})`);
-  if (n(4) > 0) parts.push(`${n(4)} season registration(s) under your name (withdraw from the season first)`);
+  if (n(2) > 0) parts.push(`${n(2)} team(s) registered in a locked season (delete the season as admin first: DELETE /api/admin/seasons/{seasonId})`);
+  if (n(3) > 0) parts.push(`${n(3)} team(s) you created with other members (remove the other members first, then DELETE /api/teams/{teamId})`);
+  if (n(4) > 0) parts.push(`${n(4)} team(s) you created (delete first: DELETE /api/teams/{teamId})`);
+  if (n(5) > 0) parts.push(`${n(5)} registration(s) from a locked season under your name (delete the season as admin: DELETE /api/admin/seasons/{seasonId})`);
+  if (n(6) > 0) parts.push(`${n(6)} season registration(s) under your name (withdraw first: DELETE /api/seasons/{seasonId}/register)`);
   return parts.join("; ");
 }

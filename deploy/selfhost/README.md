@@ -675,10 +675,12 @@ bash deploy/selfhost/backup.sh /var/backups/pew/pew.db
   `docker compose exec` 的 argv 里只有变量名，值走环境，所以宿主 `ps` 与 shell history 都看不到，
   密码含空格也无需引号技巧。**但容器内不是**：rqlite CLI 只接受 `-u user:password` 这一种
   基本认证写法，所以容器侧的 `sh -c` 会把口令展开进 rqlite 进程的 argv，容器内（以及共享
-  PID namespace 的宿主）任何能读 `/proc` 的进程都可见。**这不是疏忽而是环境所迫**：镜像里没有
-  `curl`/`wget`/`nc`（rqlite/rqlite:10.5.3 实测），且 rqlite 的 4001 端口**不发布到宿主**
-  （compose 只发布 web），无法在宿主用 HTTP 取备份。能在宿主读到该 argv 的身份同样能读
-  `.env`（0600、同一操作员 uid），该暴露不向其新增任何秘密。
+  PID namespace 的宿主）任何能读 `/proc` 的进程都可见。**这不是疏忽而是环境所迫**：镜像只缺
+  `curl`（rqlite/rqlite:10.5.3 ���测），busybox 提供了 `wget`/`nc`/`base64`，但 wget 同样把
+  `--header 'Authorization: Basic ...'` 写入 argv、且 wget 没有持久的 `--config` 管道式隐藏
+  方法；rqlite 的 4001 端口**不发布到宿主**（compose 只发布 web），也无法在宿主用 HTTP 取
+  备份。能在宿主读到该 argv 的身份同样能读 `.env`（0600、同一操作员 uid），该暴露不向其
+  新增任何秘密。
 - **校验是白名单式的**：不仅非空，还要求 REPL 打出成功行 `backup file written successfully`
   且前 16 字节是 `SQLite format 3\0` 魔数。成功行是必需的一道：磁盘写满时 `.backup` 打出
   `ERR! write ... no space left on device`（stdout，退出码仍是 0）并留下一个**截断**文件，

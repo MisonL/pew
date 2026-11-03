@@ -1,5 +1,5 @@
 /**
- * PATCH /api/admin/seasons/[seasonId] — update a season.
+ * PATCH/DELETE /api/admin/seasons/[seasonId] — update or delete a season.
  *
  * - upcoming: can modify name, slug, start_date, end_date
  * - active/ended: can only modify name
@@ -203,6 +203,73 @@ export async function PATCH(
     console.error("Failed to update season:", err);
     return NextResponse.json(
       { error: "Failed to update season" },
+      { status: 500 }
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DELETE — delete a season and everything that belongs to it
+// ---------------------------------------------------------------------------
+//
+// This is the only way a season is ever removed. `seasons.created_by` is NOT
+// NULL with no ON DELETE CASCADE and no reassignment route, so a season that
+// stays in the table pins its creator's account forever; `DELETE
+// /api/account/delete` names exactly this case as a blocker. The child tables
+// all declare `season_id ... REFERENCES seasons(id)` with no cascade either, so
+// the rows have to be named explicitly — SQLite (and therefore D1) only
+// enforces the FK, it does not clean it up.
+//
+// Ending a season freezes results in `season_snapshots`
+// / `season_member_snapshots`; deleting the season discards that frozen
+// history together with the registrations and rosters. That is the point of an
+// admin-only route, and the UI confirms it before calling.
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ seasonId: string }> }
+) {
+  const admin = await resolveAdmin(request);
+  if (!admin) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { seasonId } = await params;
+  const dbRead = await getDbRead();
+  const dbWrite = await getDbWrite();
+
+  try {
+    const season = await dbRead.getSeasonById(seasonId);
+    if (!season) {
+      return NextResponse.json({ error: "Season not found" }, { status: 404 });
+    }
+
+    // One batch keeps the teardown atomic: a partial delete would leave orphan
+    // snapshots or rosters behind, and `season_teams` values are the only
+    // record of which teams competed.
+    await dbWrite.batch([
+      { sql: "DELETE FROM season_team_members WHERE season_id = ?", params: [seasonId] },
+      { sql: "DELETE FROM season_member_snapshots WHERE season_id = ?", params: [seasonId] },
+      { sql: "DELETE FROM season_snapshots WHERE season_id = ?", params: [seasonId] },
+      { sql: "DELETE FROM season_teams WHERE season_id = ?", params: [seasonId] },
+      { sql: "DELETE FROM seasons WHERE id = ?", params: [seasonId] },
+    ]);
+
+    // `seasons:list` selects registered-team and snapshot counts, so a cached
+    // entry would keep advertising the season after this returns.
+    await dbRead.invalidateCacheKey("seasons:list").catch(() => undefined);
+
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "";
+    if (msg.includes("no such table")) {
+      return NextResponse.json(
+        { error: "Season tables not yet migrated" },
+        { status: 503 }
+      );
+    }
+    console.error("Failed to delete season:", err);
+    return NextResponse.json(
+      { error: "Failed to delete season" },
       { status: 500 }
     );
   }

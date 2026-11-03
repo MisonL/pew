@@ -26,7 +26,7 @@ vi.mock("@/auth", () => ({
 }));
 
 import { GET, POST } from "@/app/api/admin/seasons/route";
-import { PATCH } from "@/app/api/admin/seasons/[seasonId]/route";
+import { DELETE, PATCH } from "@/app/api/admin/seasons/[seasonId]/route";
 import { createMockDbRead, createMockDbWrite, makeJsonRequest } from "./test-utils";
 import * as dbModule from "@/lib/db";
 
@@ -984,5 +984,136 @@ describe("PATCH /api/admin/seasons/[seasonId]", () => {
     expect(res.status).toBe(200);
     const values = mockDbWrite.execute.mock.calls[0]![1] as unknown[];
     expect(values).toContain(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /api/admin/seasons/[seasonId]
+// ---------------------------------------------------------------------------
+//
+// A season owner's NOT NULL `created_by` is the last thing that keeps the owner
+// from deleting their own account, and nothing in the user-facing API deletes a
+// season. The admin route is that exit, so its contract is load-bearing.
+
+describe("DELETE /api/admin/seasons/[seasonId]", () => {
+  let mockDbRead: ReturnType<typeof createMockDbRead>;
+  let mockDbWrite: ReturnType<typeof createMockDbWrite>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead = createMockDbRead();
+    mockDbWrite = createMockDbWrite();
+    vi.mocked(dbModule.getDbRead).mockResolvedValue(mockDbRead as never);
+    vi.mocked(dbModule.getDbWrite).mockResolvedValue(mockDbWrite as never);
+  });
+
+  const deleteParams = Promise.resolve({ seasonId: "season-1" });
+  const EXISTING = {
+    id: "season-1",
+    name: "Season 1",
+    slug: "s1",
+    start_date: "2099-01-01T00:00:00Z",
+    end_date: "2099-12-31T23:59:00Z",
+  };
+
+  /** The tables that carry a season_id FK and must be emptied before `seasons`. */
+  const seasonChildren = [
+    "season_team_members",
+    "season_member_snapshots",
+    "season_snapshots",
+    "season_teams",
+  ];
+
+  it("should return 403 when not an admin", async () => {
+    resolveAdmin.mockResolvedValueOnce(null);
+
+    const res = await DELETE(
+      makeJsonRequest("DELETE", "/api/admin/seasons/season-1"),
+      { params: deleteParams }
+    );
+
+    expect(res.status).toBe(403);
+    expect(mockDbWrite.batch).not.toHaveBeenCalled();
+    expect(mockDbWrite.execute).not.toHaveBeenCalled();
+  });
+
+  it("should return 404 when the season does not exist", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getSeasonById.mockResolvedValueOnce(null);
+
+    const res = await DELETE(
+      makeJsonRequest("DELETE", "/api/admin/seasons/missing"),
+      { params: deleteParams }
+    );
+
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe("Season not found");
+    expect(mockDbWrite.batch).not.toHaveBeenCalled();
+  });
+
+  it("should delete every season-owned row and then the season in one batch", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getSeasonById.mockResolvedValueOnce(EXISTING);
+    mockDbWrite.batch.mockResolvedValueOnce([]);
+
+    const res = await DELETE(
+      makeJsonRequest("DELETE", "/api/admin/seasons/season-1"),
+      { params: deleteParams }
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ success: true });
+    expect(mockDbWrite.batch).toHaveBeenCalledTimes(1);
+    const statements = mockDbWrite.batch.mock.calls[0]![0] as {
+      sql: string;
+      params: unknown[];
+    }[];
+    // Every statement targets this season, so a stray id cannot widen the delete.
+    for (const { sql, params } of statements) {
+      expect(params).toEqual(["season-1"]);
+      expect(sql).not.toContain("LIKE");
+    }
+    const deletes = statements.map(({ sql }) => sql.trim());
+    for (const table of seasonChildren) {
+      expect(deletes).toContain(`DELETE FROM ${table} WHERE season_id = ?`);
+    }
+    expect(deletes[deletes.length - 1]).toBe("DELETE FROM seasons WHERE id = ?");
+    // Children before the parent: no statement's target may outrank a row
+    // that still references it when the batch runs.
+    expect(new Set(deletes).size).toBe(deletes.length);
+    expect(mockDbRead.invalidateCacheKey).toHaveBeenCalledWith("seasons:list");
+  });
+
+  it("should return 503 when the season tables are not migrated", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getSeasonById.mockRejectedValueOnce(new Error("no such table: seasons"));
+
+    const res = await DELETE(
+      makeJsonRequest("DELETE", "/api/admin/seasons/season-1"),
+      { params: deleteParams }
+    );
+
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toBe("Season tables not yet migrated");
+  });
+
+  it("should return 500 when the delete fails for another reason", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getSeasonById.mockResolvedValueOnce(EXISTING);
+    mockDbWrite.batch.mockRejectedValueOnce(new Error("disk I/O error"));
+
+    const res = await DELETE(
+      makeJsonRequest("DELETE", "/api/admin/seasons/season-1"),
+      { params: deleteParams }
+    );
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("Failed to delete season");
+    // The raw SQLite message is server-side detail, not a client hint.
+    expect(body.error).not.toContain("disk I/O");
+    consoleSpy.mockRestore();
   });
 });

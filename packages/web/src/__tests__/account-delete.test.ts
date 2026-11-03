@@ -197,10 +197,11 @@ describe("DELETE /api/account/delete", () => {
     it("names the owned resource in the 409 instead of promising a transfer that does not exist", async () => {
       // The pre-2026-11 message said "Transfer or remove them", but no
       // transfer API exists anywhere: teams.created_by / seasons.created_by /
-      // organizations.created_by have no transfer route, seasons have no
-      // delete route at all, and a team registered in a locked season cannot
-      // be deleted. The message must name the actual blocker so the operator
-      // knows what to remove and by which means.
+      // organizations.created_by have no transfer route, a season can only be
+      // removed by an admin (DELETE /api/admin/seasons/{seasonId}), and a team
+      // registered in a locked season cannot be deleted. The message must name
+      // the actual blocker so the operator knows what to remove and by which
+      // means.
       const db = new DatabaseSync(":memory:");
       try {
         db.exec(`PRAGMA foreign_keys = ON;
@@ -245,6 +246,9 @@ describe("DELETE /api/account/delete", () => {
         expect(body.error).toContain("season");
         expect(body.error).toContain("organization");
         expect(body.error).toContain("team");
+        // The instruction must name the route that now exists, so the operator
+        // is not sent to a capability the API lacks.
+        expect(body.error).toContain("/api/admin/seasons/");
         // No capability the API does not have may be promised.
         expect(body.error).not.toMatch(/transfer/i);
       } finally { db.close(); }
@@ -277,7 +281,8 @@ describe("DELETE /api/account/delete", () => {
       mockWriteClient.batch
         .mockRejectedValueOnce(new Error("FOREIGN KEY constraint failed"))
         .mockResolvedValueOnce([{ results: [{ n: 0 }], meta: {} }, { results: [{ n: 0 }], meta: {} },
-          { results: [{ n: 0 }], meta: {} }, { results: [{ n: 0 }], meta: {} }, { results: [], meta: {} }]);
+          { results: [{ n: 0 }], meta: {} }, { results: [{ n: 0 }], meta: {} }, { results: [{ n: 0 }], meta: {} },
+          { results: [{ n: 0 }], meta: {} }, { results: [], meta: {} }]);
 
       const res = await DELETE(makeDeleteRequest({ confirm_email: "user@example.com" }));
 
@@ -285,6 +290,107 @@ describe("DELETE /api/account/delete", () => {
       const body = await res.json();
       expect(body.error).toBe("Account still owns shared resources that must be removed before the account can be deleted.");
       expect(body.error).not.toContain(": .");
+    });
+
+    // -----------------------------------------------------------------------
+    // Each instruction must be executable by the operator who reads it. These
+    // cases pin the three ways the old wording sent people into a wall: the
+    // season only an admin can delete, the shared team whose owner cannot
+    // leave, and the registration that a locked season will not let them
+    // withdraw.
+    // -----------------------------------------------------------------------
+
+    const diagnosisSchema = `PRAGMA foreign_keys = ON;
+      CREATE TABLE users (id TEXT PRIMARY KEY);
+      CREATE TABLE season_snapshots (season_id TEXT, team_id TEXT, rank INTEGER, total_tokens INTEGER,
+        input_tokens INTEGER, output_tokens INTEGER, cached_input_tokens INTEGER);
+      CREATE TABLE season_member_snapshots (season_id TEXT, team_id TEXT, user_id TEXT, total_tokens INTEGER,
+        input_tokens INTEGER, output_tokens INTEGER, cached_input_tokens INTEGER);
+      CREATE TABLE seasons (id TEXT PRIMARY KEY, created_by TEXT NOT NULL REFERENCES users(id),
+        allow_late_withdrawal INTEGER, start_date TEXT, end_date TEXT);
+      CREATE TABLE organizations (id TEXT PRIMARY KEY, created_by TEXT NOT NULL REFERENCES users(id));
+      CREATE TABLE teams (id TEXT PRIMARY KEY, created_by TEXT NOT NULL REFERENCES users(id));
+      CREATE TABLE season_teams (season_id TEXT, team_id TEXT, registered_by TEXT REFERENCES users(id));
+      CREATE TABLE team_members (team_id TEXT, user_id TEXT);
+      CREATE TABLE invite_codes (code TEXT PRIMARY KEY, created_by TEXT, used_by TEXT, used_at TEXT);
+      CREATE TABLE instance_setup (id INTEGER PRIMARY KEY, admin_user_id TEXT, completed_at TEXT);
+      CREATE TABLE usage_details (user_id TEXT);
+      CREATE TABLE usage_evidence (user_id TEXT);
+      CREATE TABLE usage_records (user_id TEXT);
+      CREATE TABLE session_records (user_id TEXT);
+      CREATE TABLE season_team_members (user_id TEXT);
+      CREATE TABLE device_aliases (user_id TEXT);
+      CREATE TABLE organization_members (user_id TEXT);
+      CREATE TABLE auth_codes (user_id TEXT);
+      CREATE TABLE sessions (user_id TEXT);
+      CREATE TABLE accounts (user_id TEXT);`;
+
+    /** Trigger the diagnostic against a real SQLite schema and return the 409 text. */
+    async function diagnosisFor(rows: string): Promise<string> {
+      const db = new DatabaseSync(":memory:");
+      try {
+        db.exec(diagnosisSchema + rows);
+        vi.mocked(authModule.resolveUser).mockResolvedValueOnce({ userId: "u1" });
+        mockReadClient.getUserById.mockResolvedValueOnce({ id: "u1", email: "user@example.com" });
+        mockWriteClient.batch.mockImplementation(async (statements: Array<{ sql: string; params?: string[] }>) => {
+          const results = statements.map(({ sql, params }) => ({
+            results: db.prepare(sql).all(...(params ?? [])), meta: { changes: 0, duration: 0 },
+          }));
+          if (statements.some((s) => s.sql.startsWith("DELETE FROM users"))) {
+            throw new Error("FOREIGN KEY constraint failed");
+          }
+          return results;
+        });
+        const res = await DELETE(makeDeleteRequest({ confirm_email: "user@example.com" }));
+        expect(res.status).toBe(409);
+        return ((await res.json()) as { error: string }).error;
+      } finally { db.close(); }
+    }
+
+    it("points a team in a locked season at the admin season delete", async () => {
+      // Leaving the team is refused by the locked-season predicate, and the
+      // team cannot be deleted either. Deleting the season clears the
+      // registration and frees the team, so that is the only real exit.
+      const error = await diagnosisFor(`
+        INSERT INTO users VALUES ('u1'), ('u2');
+        INSERT INTO seasons VALUES ('s-locked', 'u2', 0, '2020-01-01T00:00:00Z', '2020-02-01T00:00:00Z');
+        INSERT INTO teams VALUES ('t1', 'u1');
+        INSERT INTO season_teams VALUES ('s-locked', 't1', 'u1');
+        INSERT INTO team_members VALUES ('t1', 'u1');`);
+
+      expect(error).toContain("team");
+      expect(error).toContain("DELETE /api/admin/seasons/{seasonId}");
+      // Not the plain team-delete advice, which the locked season refuses.
+      expect(error).not.toMatch(/team\(s\) you created \(delete first/);
+    });
+
+    it("tells a shared-team owner to remove the other members first", async () => {
+      // DELETE /api/teams/{teamId} answers 400 for an owner with other members
+      // ("Transfer ownership before leaving (not yet supported — remove other
+      // members first)"), so the advice has to lead with that removal.
+      const error = await diagnosisFor(`
+        INSERT INTO users VALUES ('u1'), ('u2');
+        INSERT INTO teams VALUES ('t1', 'u1');
+        INSERT INTO team_members VALUES ('t1', 'u1'), ('t1', 'u2');`);
+
+      expect(error).toContain("remove the other members first");
+      expect(error).toContain("DELETE /api/teams/{teamId}");
+    });
+
+    it("separates a withdrawable registration from one locked in a season", async () => {
+      // Withdrawal works only for upcoming seasons and for active seasons that
+      // allow late withdrawal; the same predicate the team route uses. A
+      // registration in an ended season is only clearable by deleting the
+      // season.
+      const error = await diagnosisFor(`
+        INSERT INTO users VALUES ('u1'), ('u2');
+        INSERT INTO seasons VALUES ('s-open', 'u2', 1, '2020-01-01T00:00:00Z', '2099-12-31T23:59:00Z');
+        INSERT INTO seasons VALUES ('s-locked', 'u2', 0, '2020-01-01T00:00:00Z', '2020-02-01T00:00:00Z');
+        INSERT INTO teams VALUES ('t-other', 'u2');
+        INSERT INTO season_teams VALUES ('s-open', 't-other', 'u1'), ('s-locked', 't-other', 'u1');`);
+
+      expect(error).toContain("DELETE /api/seasons/{seasonId}/register");
+      expect(error).toContain("DELETE /api/admin/seasons/{seasonId}");
     });
   });
 });

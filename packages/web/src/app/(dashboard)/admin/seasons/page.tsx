@@ -16,6 +16,7 @@ import {
   UserPlus,
   ArrowLeftRight,
   LogOut,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAdmin } from "@/hooks/use-admin";
@@ -27,7 +28,7 @@ import { StatusBadge as SharedStatusBadge } from "@/components/leaderboard/statu
 import { Checkbox } from "@nocoo/basalt/components/checkbox";
 import { Field } from "@nocoo/basalt/components/field";
 import { Input } from "@nocoo/basalt/components/input";
-import { rowIconClassName } from "@/components/ui/button";
+import { rowIconClassName, rowIconDangerClassName } from "@/components/ui/button";
 import { PageHeader } from "@nocoo/basalt/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RowListSkeleton } from "@/components/ui/row-list-skeleton";
@@ -520,6 +521,9 @@ export default function AdminSeasonsPage() {
 
   // Roster syncing
   const [syncing, setSyncing] = useState<string | null>(null);
+
+  // Deleting
+  const [deleting, setDeleting] = useState<string | null>(null);
   const { confirm, dialogProps } = useConfirm();
 
   // ---------------------------------------------------------------------------
@@ -660,6 +664,47 @@ export default function AdminSeasonsPage() {
   };
 
   // ---------------------------------------------------------------------------
+  // Delete season
+  // ---------------------------------------------------------------------------
+
+  const handleDelete = async (season: SeasonRow) => {
+    const confirmed = await confirm({
+      title: "Delete season?",
+      description: `This permanently deletes "${season.name}", its ${season.team_count} team registration(s), the frozen rosters and any final rankings. It cannot be undone, and the owner's account stays locked until it is deleted.`,
+      confirmLabel: "Delete",
+    });
+    if (!confirmed) return;
+
+    setDeleting(season.id);
+    setMessage(null);
+
+    try {
+      const res = await fetch(`/api/admin/seasons/${season.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      setMessage({ type: "success", text: `Season "${season.name}" deleted.` });
+      if (expandedId === season.id) {
+        setExpandedId(null);
+        setExpandedTeams([]);
+      }
+      fetchRows();
+    } catch (err) {
+      setMessage({
+        type: "error",
+        text: toErrorMessage(err, "Failed to delete season."),
+      });
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
   // Guard: loading or not admin
   // ---------------------------------------------------------------------------
 
@@ -774,6 +819,7 @@ export default function AdminSeasonsPage() {
                         expandedLoading={expandedLoading}
                         snapshotting={snapshotting}
                         syncing={syncing}
+                        deleting={deleting}
                         onEdit={() => {
                           setEditingId(row.id);
                           setShowCreate(false);
@@ -781,6 +827,7 @@ export default function AdminSeasonsPage() {
                         onToggleTeams={() => fetchTeams(row.id)}
                         onSnapshot={() => handleSnapshot(row)}
                         onSyncRosters={() => handleSyncRosters(row)}
+                        onDelete={() => handleDelete(row)}
                       />
                     )
                   ))}
@@ -807,10 +854,12 @@ function SeasonTableRow({
   expandedLoading,
   snapshotting,
   syncing,
+  deleting,
   onEdit,
   onToggleTeams,
   onSnapshot,
   onSyncRosters,
+  onDelete,
 }: {
   row: SeasonRow;
   expandedId: string | null;
@@ -818,10 +867,12 @@ function SeasonTableRow({
   expandedLoading: boolean;
   snapshotting: string | null;
   syncing: string | null;
+  deleting: string | null;
   onEdit: () => void;
   onToggleTeams: () => void;
   onSnapshot: () => void;
   onSyncRosters: () => void;
+  onDelete: () => void;
 }) {
   const isExpanded = expandedId === row.id;
 
@@ -915,6 +966,18 @@ function SeasonTableRow({
                 <Camera strokeWidth={1.5} />
               </Button>
             )}
+
+            {/* Delete */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className={rowIconDangerClassName}
+              onClick={onDelete}
+              disabled={deleting === row.id}
+              aria-label="Delete season"
+            >
+              <Trash2 strokeWidth={1.5} />
+            </Button>
           </div>
         </td>
       </tr>

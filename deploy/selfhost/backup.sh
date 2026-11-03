@@ -18,13 +18,14 @@
 #   rqlite process's argv. Inside the container that is visible to any process
 #   reading /proc (and to host users, since the PID namespace is shared with
 #   the host). It is accepted rather than fixed because the image has no
-#   argv-free alternative: `curl`/`wget`/`nc` are absent (verified on
-#   rqlite/rqlite:10.5.3) and rqlite's HTTP port 4001 is deliberately not
-#   published to the host (docker-compose.yml publishes only web), so the
-#   backup cannot be fetched over HTTP from the host. Anyone who can read that
-#   argv on the host can also read .env (0600, same operator uid), so the
-#   exposure adds no new secret to that actor. A password with spaces
-#   therefore needs no array quoting games.
+#   argv-free alternative: busybox provides `wget`/`nc`/`base64` (verified on
+#   rqlite/rqlite:10.5.3) but `wget --header 'Authorization: Basic ...'` puts
+#   the encoded secret in the same argv, and the HTTP port 4001 is deliberately
+#   not published to the host (docker-compose.yml publishes only web), so no
+#   host-side HTTP fetch is possible either. Anyone who can read that argv on
+#   the host can also read .env (0600, same operator uid), so the exposure adds
+#   no new secret to that actor. A password with spaces therefore needs no array
+#   quoting games.
 # - chmod 600 immediately after the copy: the archive contains every
 #   password_hash/api_key, and docker compose cp PRESERVES the container-side
 #   mode (644 in the rqlite image), ignoring this shell's umask.
