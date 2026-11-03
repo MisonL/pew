@@ -496,7 +496,21 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
       message: `Discovering ${driver.source} files...`,
     });
 
-    const files = await driver.discover(discoverOpts, ctx);
+    // Discovery failure is a source-local problem: a vanished directory, an
+    // unreadable SQLite file, a driver that hits an unexpected shape. Source
+    // isolation means it may only cost this source's run, never the others',
+    // and never the state of sources that already parsed.
+    let files: string[];
+    try {
+      files = await driver.discover(discoverOpts, ctx);
+    } catch (err) {
+      onProgress?.({
+        source: driver.source,
+        phase: "warn",
+        message: `Skipping ${driver.source}: discovery failed (${err instanceof Error ? err.message : String(err)})`,
+      });
+      continue;
+    }
     filesScanned[key] = files.length;
     for (const f of files) discoveredFiles.add(f);
 

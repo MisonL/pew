@@ -463,6 +463,82 @@ describe("executeSync", () => {
     expect(codexRecords[1].output_tokens).toBe(400);
   });
 
+  it("keeps syncing the other sources when a Codex rollout cannot be opened", async () => {
+    // discover resolves each new rollout's session_meta header. A rollout that
+    // disappears between the walk and the read (or is simply unreadable) used
+    // to throw out of `driver.discover`, and because that call sits outside any
+    // try/catch one bad file failed the whole sync — every other source stopped
+    // too. Source isolation means one unreadable rollout must not do that.
+    const codexDir = join(dataDir, ".codex", "sessions", "2026", "03", "07");
+    await mkdir(codexDir, { recursive: true });
+    const locked = join(codexDir, "rollout-locked.jsonl");
+    await writeFile(locked, `${codexLines("2026-03-07T10:15:00.000Z", 5000, 800)}\n`);
+    await writeFile(
+      join(codexDir, "rollout-2026-03-07T10-20-00-11111111-2222-3333-4444-555555555555.jsonl"),
+      `${codexLines("2026-03-07T10:20:00.000Z", 6000, 900)}\n`,
+    );
+
+    const claudeRoot = join(dataDir, ".claude");
+    const claudeDir = join(claudeRoot, "projects", "proj-a");
+    await mkdir(claudeDir, { recursive: true });
+    await writeFile(
+      join(claudeDir, "session.jsonl"),
+      `${claudeLine("2026-03-07T10:15:00.000Z", 5000, 800)}\n`,
+    );
+
+    await chmod(locked, 0o000);
+    try {
+      const result = await executeSync({
+        stateDir,
+        codexSessionsDir: join(dataDir, ".codex", "sessions"),
+        claudeDir: claudeRoot,
+      });
+
+      // One unreadable rollout is skipped; the readable Codex rollout and the
+      // unrelated Claude source both still land. Before the fix, the EACCES
+      // escaped `driver.discover` and threw out of executeSync entirely.
+      expect(result.sources.codex).toBe(1);
+      expect(result.sources.claude).toBe(1);
+    } finally {
+      await chmod(locked, 0o644);
+    }
+  });
+
+  it("does not abort the whole sync when a driver's discover throws", async () => {
+    // Defense in depth for the sources whose discover can still throw (the
+    // Codex rollout read has its own per-file guard). A discovery-level crash
+    // in one source must not stop the others.
+    const claudeRoot = join(dataDir, ".claude");
+    const claudeDir = join(claudeRoot, "projects", "proj-a");
+    await mkdir(claudeDir, { recursive: true });
+    await writeFile(
+      join(claudeDir, "session.jsonl"),
+      `${claudeLine("2026-03-07T10:15:00.000Z", 5000, 800)}\n`,
+    );
+
+    const discovery = await import("../discovery/sources.js");
+    const spy = vi
+      .spyOn(discovery, "discoverCodexFiles")
+      .mockRejectedValue(new Error("Simulated discover explosion"));
+
+    try {
+      const warnings: string[] = [];
+      const result = await executeSync({
+        stateDir,
+        codexSessionsDir: join(dataDir, ".codex", "sessions"),
+        claudeDir: claudeRoot,
+        onProgress: (e) => {
+          if (e.phase === "warn") warnings.push(e.message ?? "");
+        },
+      });
+
+      expect(result.sources.claude).toBe(1);
+      expect(warnings.some((w) => /codex/i.test(w) && /discover/i.test(w))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   // ===== OpenCode incremental sync + triple-check skip =====
 
   it("should be incremental for OpenCode (second sync with no file changes skips parsing)", async () => {

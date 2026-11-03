@@ -59,6 +59,17 @@ async function readScopeNode(filePath: string): Promise<CodexScopeNode> {
   };
   const stream = createReadStream(filePath, { encoding: "utf8" });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
+  // A rollout that vanished between the directory walk and this read, or one
+  // that is simply unreadable, must not fail the whole sync. This call sits
+  // inside `driver.discover`, which has no try/catch upstream, so an EACCES or
+  // ENOENT here used to abort every source. Fall back to the filename-derived
+  // identity and let the per-file parse guard skip the file on its own read.
+  const ignoreReadError = () => {
+    // Swallow: a read error is reported through the iterator rejection caught
+    // below and must not surface as an unhandled 'error' event on the stream.
+  };
+  stream.on("error", ignoreReadError);
+  rl.on("error", ignoreReadError);
   try {
     for await (const line of rl) {
       let obj: Record<string, unknown>;
@@ -79,6 +90,8 @@ async function readScopeNode(filePath: string): Promise<CodexScopeNode> {
         : null;
       break;
     }
+  } catch {
+    // Read failure: keep whatever the header yielded before it stopped.
   } finally {
     rl.close();
     stream.destroy();
