@@ -100,6 +100,11 @@ export interface UploadExecuteOptions {
   maxRetries?: number;
   /** Base retry delay in ms (default: 1000, doubled each retry) */
   retryDelayMs?: number;
+  /**
+   * Per-request timeout in ms (default 30000). Bounds a stalled connection so
+   * a hung fetch cannot hold the state lock forever. 0 disables the bound.
+   */
+  requestTimeoutMs?: number;
   /** Progress callback */
   onProgress?: (event: UploadProgressEvent) => void;
   /** CLI version string sent as X-Pew-Client-Version header for server-side version gate */
@@ -155,6 +160,11 @@ export interface UploadResult {
 const DEFAULT_BATCH_SIZE = 50;
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_RETRY_DELAY_MS = 1000;
+// A request that opens a connection but never answers (half-open TCP, dead
+// proxy, laptop sleep) would otherwise hang forever while `withStateLock` holds
+// the state lock, blocking every later sync/upload/reset. Node's undici default
+// is five minutes; make the bound explicit and configurable.
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 // ---------------------------------------------------------------------------
 // Engine factory
@@ -172,6 +182,7 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
       batchSize: requestedBatchSize = DEFAULT_BATCH_SIZE,
       maxRetries = DEFAULT_MAX_RETRIES,
       retryDelayMs = DEFAULT_RETRY_DELAY_MS,
+      requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
       onProgress,
       clientVersion,
     } = opts;
@@ -340,6 +351,7 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
         maxRetries,
         retryDelayMs,
         clientVersion,
+        requestTimeoutMs,
         validateResponse: config.validateResponse,
       });
 
@@ -436,10 +448,12 @@ async function sendBatchWithRetry<T>(opts: {
   fetchFn: typeof globalThis.fetch;
   maxRetries: number;
   retryDelayMs: number;
+  /** Per-request timeout; 0 or undefined disables the bound. */
+  requestTimeoutMs?: number;
   clientVersion?: string;
   validateResponse?: (body: unknown, batch: T[]) => string | RefusedRecords | null;
 }): Promise<SendResult> {
-  const { endpoint, token, batch, fetchFn, maxRetries, retryDelayMs, clientVersion } = opts;
+  const { endpoint, token, batch, fetchFn, maxRetries, retryDelayMs, clientVersion, requestTimeoutMs } = opts;
 
   let lastError = "";
   let sleptFor429 = false;
@@ -464,6 +478,11 @@ async function sendBatchWithRetry<T>(opts: {
         method: "POST",
         headers,
         body: JSON.stringify(batch),
+        // Fresh per attempt: a timeout signal is single-use, so a reused one
+        // would already be aborted on the retry.
+        ...(requestTimeoutMs && requestTimeoutMs > 0
+          ? { signal: AbortSignal.timeout(requestTimeoutMs) }
+          : {}),
       });
 
       if (resp.ok) {

@@ -1527,4 +1527,68 @@ describe("upload-engine record byte limit", () => {
     expect(await queue.loadDirtyKeys()).toEqual(["key-2"]);
     expect(result.warning).toContain("byte record limit");
   });
+
+  // ---- Request timeout ----
+
+  it("passes an abort signal to fetch so a stalled request cannot hold the state lock", async () => {
+    // Without a signal a fetch whose connection opens but never answers hangs
+    // forever; the engine holds the state lock for the whole call, so every
+    // later sync/upload/reset blocks behind it.
+    const { queue, config } = createTestEngine(dir);
+    await new ConfigManager(dir, false).save({ token: "pk_test" });
+    await queue.append(makeRecord(1));
+
+    let seen: unknown;
+    const fetchFn = async (
+      _url: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      seen = init?.signal;
+      return new Response(JSON.stringify({ ingested: 1 }), { status: 200 });
+    };
+
+    const result = await createUploadEngine(config).execute({
+      stateDir: dir,
+      apiUrl: DEFAULT_HOST,
+      fetch: fetchFn,
+      requestTimeoutMs: 50,
+    });
+
+    expect(result.success).toBe(true);
+    expect(seen).toBeInstanceOf(AbortSignal);
+  });
+
+  it("aborts a request that never responds and fails the stage instead of hanging", async () => {
+    const { queue, config } = createTestEngine(dir);
+    await new ConfigManager(dir, false).save({ token: "pk_test" });
+    await queue.append(makeRecord(1));
+
+    // Models a half-open connection: the promise never settles on its own, it
+    // only rejects when the engine's own timeout aborts it.
+    const fetchFn = (
+      _url: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal as AbortSignal | undefined;
+        // No signal at all means the old engine: never settle, so the test
+        // fails by timeout rather than by an accidental TypeError.
+        if (!signal) return;
+        signal.addEventListener("abort", () =>
+          reject(new DOMException("The operation was aborted.", "AbortError")),
+        );
+      });
+
+    const result = await createUploadEngine(config).execute({
+      stateDir: dir,
+      apiUrl: DEFAULT_HOST,
+      fetch: fetchFn,
+      requestTimeoutMs: 30,
+      maxRetries: 0,
+      retryDelayMs: 0,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.uploaded).toBe(0);
+  });
 });
