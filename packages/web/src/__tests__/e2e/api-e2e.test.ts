@@ -1134,6 +1134,17 @@ describe("GET /api/admin/seasons", () => {
   });
 });
 
+describe("DELETE /api/admin/seasons/[seasonId]", () => {
+  it("should return 403 for non-admin", async () => {
+    // Deleting a season is the only route that frees a season creator's
+    // NOT NULL `created_by` for account deletion, so it must stay admin-only.
+    const res = await fetch(`${BASE_URL}/api/admin/seasons/non-existent-season`, {
+      method: "DELETE",
+    });
+    expect(res.status).toBe(403);
+  });
+});
+
 describe("GET /api/admin/organizations", () => {
   it("should return 403 for non-admin", async () => {
     const res = await fetch(`${BASE_URL}/api/admin/organizations`);
