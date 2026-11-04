@@ -661,7 +661,7 @@ describe("Codex notifier installer", () => {
   it("inserts the top-level notify before the first table header", async () => {
     await writeFile(
       configPath,
-      ['model = "gpt-5"', "", "[model_providers.custom]", 'name = "custom"'].join("\n") + "\n",
+      `${['model = "gpt-5"', "", "[model_providers.custom]", 'name = "custom"'].join("\n")}\n`,
       "utf8",
     );
 

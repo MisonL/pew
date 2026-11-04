@@ -329,7 +329,7 @@ describe("applyMigrations", () => {
           first: async <T,>(): Promise<T | null> => null,
           run: async (): Promise<D1Result> => {
             if (sql.startsWith("INSERT INTO _migrations")) applied.push(params[0] as string);
-            else order.push("DML:" + sql);
+            else order.push(`DML:${sql}`);
             return { success: true, results: [], meta: { changes: 1, duration: 0 } };
           },
         };
@@ -340,7 +340,7 @@ describe("applyMigrations", () => {
     const ddl = vi.fn().mockImplementation(async (statements: string[]) => {
       // The ledger DDL runs before any file statement; keep it out of the log.
       if (statements.some((s) => s.includes("_migrations"))) return;
-      for (const s of statements) order.push("DDL:" + s);
+      for (const s of statements) order.push(`DDL:${s}`);
     });
     await applyMigrations({
       db,

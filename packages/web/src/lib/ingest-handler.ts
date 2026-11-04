@@ -84,6 +84,7 @@ export function createIngestHandler<T>(
 ): (request: Request) => Promise<Response> {
   const { validateRecord, getWorkerUrl, entityName } = config;
 
+  // biome-ignore lint/correctness/noComponentHookFactories: POST is a Next.js HTTP-method handler name, not a React component. This factory returns a route handler decorated with rate-limiting and auth — it never renders JSX or calls hooks.
   return async function POST(request: Request): Promise<Response> {
     // 1. Authenticate
     const authResult = await resolveUser(request);

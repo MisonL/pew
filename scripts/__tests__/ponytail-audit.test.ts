@@ -28,6 +28,7 @@ const hasError = (report: ReturnType<typeof run>, id: string) => report.findings
 // Cases parse the whole repository several times; shared CI CPUs need headroom,
 // and the first case also pays for the one-time repository walk. A hang
 // detector, not a performance budget.
+// biome-ignore lint/correctness/usePlaywrightValidDescribeCallback: vitest's describe() takes an options object as its second argument; this is a vitest suite, not a Playwright one.
 describe("Pew ponytail readonly audit", { timeout: 300_000 }, () => {
   let temporary: string | undefined;
   afterEach(() => { if (temporary) rmSync(temporary, { recursive: true, force: true }); });

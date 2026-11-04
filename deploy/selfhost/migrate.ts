@@ -178,7 +178,7 @@ export function splitStatements(sql: string): string[] {
         const body = line.slice(start, i);
         // A ";" inside a body is kept; one that closes the body (or is
         // outside one) is the statement terminator and is dropped.
-        current += inTrigger ? body + ";" : body;
+        current += inTrigger ? `${body};` : body;
         start = i + 1;
         if (!inTrigger) flush();
       }

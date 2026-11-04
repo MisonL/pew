@@ -3758,7 +3758,7 @@ describe("executeSync", () => {
     await mkdir(piDir, { recursive: true });
     await writeFile(
       join(piDir, "session.jsonl"),
-      [
+      `${[
         JSON.stringify({ type: "session", id: "sess-bad", timestamp: "2026-03-07T10:00:00.000Z" }),
         // A compaction event whose counter is not a safe integer: the evidence
         // projection rejects it, but the ordinary message below must survive.
@@ -3766,7 +3766,7 @@ describe("executeSync", () => {
           usage: { input: 1e21, output: 5 } }),
         JSON.stringify({ type: "message", timestamp: "2026-03-07T10:15:00.000Z",
           message: { role: "assistant", model: "pi-model", usage: { input: 2000, output: 200 } } }),
-      ].join("\n") + "\n",
+      ].join("\n")}\n`,
     );
 
     const warnings: string[] = [];
