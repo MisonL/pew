@@ -276,6 +276,10 @@ export const RESET_TOKEN_TTL_MINUTES = 60;
 export async function createPasswordReset(userId: string): Promise<string> {
   const dbWrite = await getDbWrite();
   const token = randomBytes(32).toString("base64url");
+  // Delete-then-insert together. Atomic on the self-hosted rqlite adapter, not
+  // documented for the hosted D1 REST batch (see lib/d1.ts); if it ever splits,
+  // the user simply has no valid token and requests another reset — no
+  // security-relevant state is left inconsistent.
   await dbWrite.batch([
     { sql: "DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL", params: [userId] },
     {
@@ -318,12 +322,16 @@ export async function consumePasswordReset(
   // failed derivation throws rather than returning null — see the docstring.
   const passwordHash = await hashPassword(newPassword);
   if (!passwordHash) throw new Error(DERIVATION_BUSY_ERROR);
-  // Claim and write in one transaction. A 0-row UPDATE is NOT an error, so
-  // "claim then write" alone would let a concurrent consumer still set the
-  // password; the password write is therefore gated on the claim with an
-  // EXISTS subquery inside the same statement — a lost claim makes it match
-  // 0 rows too. The batch's transaction (d1-adapter /db/request) keeps both
-  // statements all-or-nothing.
+  // Claim and write together. A 0-row UPDATE is NOT an error, so "claim then
+  // write" alone would let a concurrent consumer still set the password; the
+  // password write is therefore gated on the claim with an EXISTS subquery
+  // inside the same statement — a lost claim makes it match 0 rows too. The
+  // self-hosted rqlite adapter runs this batch in one transaction
+  // (`?transaction=true`); the hosted D1 REST batch is not documented as atomic
+  // (see lib/d1.ts), so a partial failure can leave the token claimed but the
+  // password unchanged. That is recoverable — the user requests a fresh reset
+  // token — and does not bypass the claim gate, which is what prevents a lost
+  // concurrent claimant from writing.
   //
   // The gate matches used_at = ? (the timestamp THIS transaction writes), not
   // a mere EXISTS: a concurrent loser's claim hits 0 rows but its EXISTS would
