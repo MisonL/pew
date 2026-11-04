@@ -12,8 +12,11 @@
  *   6. Set snapshot_ready = 1 (readers switch to frozen snapshot data)
  *   7. Return summary: team_count, member_count, created_at
  *
- * Upserts commit in one native D1 transaction. The readiness switch and stale-row
- * cleanup are separate operations; retrying a failed snapshot converges.
+ * Upserts go out as one batch. Atomicity is runtime-dependent — the self-hosted
+ * rqlite adapter runs a batch in one transaction, the hosted D1 REST endpoint
+ * does not document it (see lib/d1.ts) — so this step does not rely on it: the
+ * readiness switch (`snapshot_ready`) gates reads, and INSERT OR REPLACE makes a
+ * retry converge.
  */
 
 import { NextResponse } from "next/server";

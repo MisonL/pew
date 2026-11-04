@@ -120,9 +120,12 @@ export async function POST(request: Request) {
 
     // One batch: a team row whose owner membership insert failed would be
     // invisible to listTeamsForUser (INNER JOIN team_members) yet still hold a
-    // live invite_code, and no route could delete it. The slug uniqueness
-    // check above is a read, so a concurrent create can still win the race —
-    // that surfaces as UNIQUE constraint failed and is mapped to 409 below.
+    // live invite_code, and no route could delete it. This relies on the batch
+    // committing together — atomic on the self-hosted rqlite adapter, but NOT
+    // documented for the hosted D1 REST endpoint (see lib/d1.ts). The slug
+    // uniqueness check above is a read, so a concurrent create can still win
+    // the race — that surfaces as UNIQUE constraint failed and is mapped to
+    // 409 below.
     await dbWrite.batch([
       {
         sql: `INSERT INTO teams (id, name, slug, invite_code, created_by, created_at)

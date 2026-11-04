@@ -133,6 +133,23 @@ export class D1Client {
     return result.meta;
   }
 
+  /**
+   * Execute statements as one batch, returning one result per statement.
+   *
+   * Atomicity is runtime-dependent and must not be assumed:
+   * - self-hosted: the rqlite adapter issues the batch with
+   *   `?transaction=true`, so it is all-or-nothing (verified in
+   *   deploy/selfhost/d1-adapter.ts).
+   * - hosted: this method posts to the Cloudflare D1 REST `/query` endpoint.
+   *   Cloudflare documents "batched statements are SQL transactions" only for
+   *   the Workers binding `env.DB.batch()`; the REST batch's atomicity is NOT
+   *   stated, so a mid-batch failure may leave earlier statements committed.
+   *
+   * Routes that need all-or-nothing on every deployment therefore carry their
+   * own compensation (e.g. register deletes only the rows it created) or are
+   * designed to converge on retry (snapshot, season teardown). See each
+   * caller's comment before dropping such a guard.
+   */
   async batch(
     statements: D1BatchStatement[]
   ): Promise<D1QueryResult[]> {

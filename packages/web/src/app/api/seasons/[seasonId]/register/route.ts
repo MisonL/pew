@@ -102,11 +102,12 @@ export async function POST(
     }
 
     // Write registration + frozen roster in a single batch.
-    // D1 REST API batch() is NOT transactional — it executes statements
-    // sequentially. If one fails, earlier ones are already committed.
-    // On partial failure we compensate by deleting only the rows WE created
-    // (identified by their UUIDs), never by (season_id, team_id) which
-    // would also wipe data from a concurrent successful request.
+    // The batch is not guaranteed atomic here: it is atomic on the self-hosted
+    // rqlite adapter (`?transaction=true`), but the hosted D1 REST endpoint this
+    // uses does not document batch atomicity (see getDbWrite().batch() in
+    // lib/d1.ts). So on partial failure we compensate by deleting only the rows
+    // WE created (identified by their UUIDs), never by (season_id, team_id)
+    // which would also wipe data from a concurrent successful request.
     const id = crypto.randomUUID();
     const memberIds = members.map(() => crypto.randomUUID());
     const statements: Array<{ sql: string; params: unknown[] }> = [
@@ -263,7 +264,8 @@ export async function DELETE(
     // left the team registered with an empty roster, which the public
     // leaderboard renders as a real entry with 0 tokens until someone
     // retries. The registration delete alone is the visible-state switch, so
-    // both must commit together.
+    // they are sent together (and, as above, atomicity is runtime-dependent;
+    // a partial failure here is repaired by re-issuing the withdrawal).
     await dbWrite.batch([
       {
         sql: "DELETE FROM season_team_members WHERE season_id = ? AND team_id = ?",

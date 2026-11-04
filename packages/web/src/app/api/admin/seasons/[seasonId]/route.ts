@@ -243,9 +243,11 @@ export async function DELETE(
       return NextResponse.json({ error: "Season not found" }, { status: 404 });
     }
 
-    // One batch keeps the teardown atomic: a partial delete would leave orphan
-    // snapshots or rosters behind, and `season_teams` values are the only
-    // record of which teams competed.
+    // One batch keeps the teardown together: atomic on the self-hosted rqlite
+    // adapter, not documented for the hosted D1 REST endpoint (see lib/d1.ts).
+    // A partial delete would leave orphan snapshots or rosters behind, and
+    // `season_teams` values are the only record of which teams competed — an
+    // interrupted teardown is completed by re-issuing the delete.
     await dbWrite.batch([
       { sql: "DELETE FROM season_team_members WHERE season_id = ?", params: [seasonId] },
       { sql: "DELETE FROM season_member_snapshots WHERE season_id = ?", params: [seasonId] },

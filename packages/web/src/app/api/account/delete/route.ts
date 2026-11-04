@@ -68,6 +68,12 @@ export async function DELETE(request: Request) {
 
   try {
     const userId = authResult.userId;
+    // One batch, ordered so the row that makes the account disappear
+    // (`DELETE FROM users`) is last: atomic on the self-hosted rqlite adapter,
+    // not documented for the hosted D1 REST endpoint (see lib/d1.ts). A partial
+    // failure that stops before that row leaves the account intact and the
+    // whole delete is simply retried; a failure after it cannot occur, since it
+    // is the final statement.
     await dbWrite.batch([
       {
         sql: `UPDATE season_snapshots AS ss SET
