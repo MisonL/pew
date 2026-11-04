@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { buildSecurityHeaders } from "./src/lib/security-headers";
 
 const require = createRequire(import.meta.url);
 const rootPkg = require("../../package.json") as { version: string };
@@ -86,23 +87,11 @@ const nextConfig: NextConfig = {
       (process.env.NODE_ENV === "production" ||
         process.env.NEXTAUTH_URL?.startsWith("https://") === true ||
         process.env.USE_SECURE_COOKIES === "true");
-    const headers: Array<{ key: string; value: string }> = [
-      { key: "X-Content-Type-Options", value: "nosniff" },
-      { key: "X-Frame-Options", value: "DENY" },
-      { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-      ...(isHttpsDeployment
-        ? [{ key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" }]
-        : []),
-      {
-        key: "Permissions-Policy",
-        value: "camera=(), microphone=(), geolocation=()",
-      },
-      { key: "X-DNS-Prefetch-Control", value: "on" },
-    ];
+    const isDev = process.env.NODE_ENV === "development";
     return [
       {
         source: "/(.*)",
-        headers,
+        headers: buildSecurityHeaders({ isHttpsDeployment, isDev }),
       },
     ];
   },
