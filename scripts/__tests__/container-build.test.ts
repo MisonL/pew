@@ -20,7 +20,9 @@ describe("production container", () => {
     expect(dockerfile).not.toMatch(/^ENV\s+PEW_/m);
     expect(dockerfile).not.toMatch(/CF_|AUTH_|WORKER_|E2E_|TOKEN|SECRET|--mount=type=secret/);
     expect(dockerfile).toContain("RUN bun install --frozen-lockfile");
-    expect(dockerfile).toContain("COPY --from=oven/bun:1.4.3");
+    // The Bun pin must be a concrete patch version; the root-equals-selfhost
+    // check below pins the two images to each other.
+    expect(dockerfile.match(/^COPY --from=oven\/bun:(\S+)/m)?.[1]).toMatch(/^\d+\.\d+\.\d+$/);
     expect(dockerfile).toContain("node ./node_modules/.bin/next build");
   });
 
