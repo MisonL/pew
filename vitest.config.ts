@@ -47,7 +47,21 @@ export default defineConfig({
         "**/*.d.ts",
         "**/__tests__/**",
         "**/__test-helpers__/**",
-        "**/index.ts",
+        // Barrel-only entry points: pure `export * from` re-exports with no
+        // runtime logic.
+        "packages/core/src/index.ts",
+        "packages/cli/src/index.ts",
+        // ---------------------------------------------------------------------------
+        // Worker entry points. Each is a thin request router over the tested
+        // `rpc/*` handlers plus platform paths vitest cannot reach
+        // (`crypto.subtle.timingSafeEqual` exists only in the Workers runtime).
+        // The request/response wiring — including the domain dispatch switch and
+        // the 500 error paths — is covered by the L2 API E2E lane. Listed
+        // explicitly rather than as a blanket `**/index.ts` so a future
+        // `index.ts` that does hold logic is not silently excluded.
+        // ---------------------------------------------------------------------------
+        "packages/worker/src/index.ts",
+        "packages/worker-read/src/index.ts",
         "**/bin.ts",
         "**/cli.ts",
         "**/types.ts",
