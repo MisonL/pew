@@ -810,7 +810,12 @@ fi
 # .env 权限：升级不改变文件权限，但若从别处拷入过 .env，先确认它仍是 0600
 # （含明文密钥；宿主目录 755 时 644 的 .env 对同机其他用户可读）。
 [ "$(stat -c '%a' .env 2>/dev/null || stat -f '%Lp' .env)" = "600" ] || echo "WARNING: .env is not 0600 — chmod 600 .env"
-docker compose build                                 # 镜像本地构建，无远端可 pull
+# 两个镜像（web + pew-selfhost）都要重建，只 build web 会带着旧的 worker/deploy 代码。
+# PEW_REVISION/PEW_VERSION 写进 OCI label：缺了它们，镜像的 revision/version 为空，
+# `docker image inspect` 的 digest 无法反查 pew 代码版本（compose 已声明这两个 args，
+# 但不会自动把宿主环境转发给 Dockerfile）。
+PEW_REVISION=$(git rev-parse HEAD) PEW_VERSION=$(node -p "require('../../package.json').version") \
+  docker compose build                               # 镜像本地构建，无远端可 pull
 docker compose up -d
 ```
 
@@ -1035,7 +1040,7 @@ cd deploy/selfhost                              # compose 只读 ./.env，不向
 # 两个镜像（web + pew-selfhost）都要重建，只 build web 会带着旧的 worker/deploy 代码。
 # PEW_REVISION 写进 OCI label：没有它，镜像会继承基础镜像的 revision，
 # `docker image inspect` 报的是基础镜像的提交，digest 无法反查 pew 代码版本。
-PEW_REVISION=$(git rev-parse HEAD) PEW_VERSION=$(node -p "require('./package.json').version") \
+PEW_REVISION=$(git rev-parse HEAD) PEW_VERSION=$(node -p "require('../../package.json').version") \
   docker compose build && docker compose up -d
 curl -s http://127.0.0.1:7020/api/live
 # 认证回归：/setup 可达、登录成功、改密后旧会话失效
