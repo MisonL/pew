@@ -207,24 +207,36 @@ export async function parseHermesDatabase(
         row.cache_read_tokens - last.cacheRead, row.cache_write_tokens - last.cacheWrite, "hermes:sessions") } : {}),
     });
 
-    // Update cursor totals (only when non-zero delta)
+    // Advance the baseline to the high-water mark, never down. The sessions
+    // table is a cumulative ledger, so a lower reading is a transient anomaly
+    // (a partial write or a compacted-then-rebuilt row), not real "negative
+    // usage". Letting the baseline fall would re-count everything the session
+    // re-accumulates back up to the prior peak.
     cursor.sessionTotals[sessionId] = {
-      input: row.input_tokens,
-      output: row.output_tokens,
-      cacheRead: row.cache_read_tokens,
-      cacheWrite: row.cache_write_tokens,
-      reasoning: row.reasoning_tokens,
+      input: Math.max(last.input, row.input_tokens),
+      output: Math.max(last.output, row.output_tokens),
+      cacheRead: Math.max(last.cacheRead, row.cache_read_tokens),
+      cacheWrite: Math.max(last.cacheWrite, row.cache_write_tokens),
+      reasoning: Math.max(last.reasoning, row.reasoning_tokens),
     };
   }
 
-  // Update all sessions in cursor (even if no delta, to track current state)
+  // Update all sessions in cursor (even if no delta) to the high-water mark, so
+  // a session observed below its prior peak keeps that peak as its baseline.
   for (const row of rows) {
+    const last = cursor.sessionTotals[row.id] || {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      reasoning: 0,
+    };
     cursor.sessionTotals[row.id] = {
-      input: row.input_tokens,
-      output: row.output_tokens,
-      cacheRead: row.cache_read_tokens,
-      cacheWrite: row.cache_write_tokens,
-      reasoning: row.reasoning_tokens,
+      input: Math.max(last.input, row.input_tokens),
+      output: Math.max(last.output, row.output_tokens),
+      cacheRead: Math.max(last.cacheRead, row.cache_read_tokens),
+      cacheWrite: Math.max(last.cacheWrite, row.cache_write_tokens),
+      reasoning: Math.max(last.reasoning, row.reasoning_tokens),
     };
   }
 

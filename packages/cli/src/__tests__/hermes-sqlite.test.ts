@@ -324,9 +324,43 @@ describe("parseHermesDatabase", () => {
 
     // Should produce zero delta (Math.max protection)
     expect(result2.deltas).toHaveLength(0);
-    // Cursor should update to new (lower) values
-    expect(result2.cursor.sessionTotals["session-1"].input).toBe(800);
-    expect(result2.cursor.sessionTotals["session-1"].output).toBe(400);
+    // The baseline holds the high-water mark: the sessions table is a
+    // cumulative ledger, so a dip must not lower what we have already counted.
+    expect(result2.cursor.sessionTotals["session-1"].input).toBe(1000);
+    expect(result2.cursor.sessionTotals["session-1"].output).toBe(500);
+
+    await teardownDb();
+  });
+
+  it("does not double-count a decrease that later recovers", async () => {
+    // 1000 → 500 (anomaly) → 1000 (recovery). Lowering the baseline on the dip
+    // made the recovery look like 500 of fresh usage, so the session reported
+    // 1500 for 1000 tokens actually used.
+    await setupDb();
+
+    const row = (input: number, output: number): SessionRow => ({
+      id: "session-1",
+      model: "claude-opus-4",
+      input_tokens: input,
+      output_tokens: output,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      started_at: testStartedAt,
+    });
+
+    const r1 = await parseHermesDatabase(dbPath, mockSessions([row(1000, 500)]));
+    expect(r1.deltas.reduce((sum, d) => sum + d.tokens.inputTokens, 0)).toBe(1000);
+
+    const r2 = await parseHermesDatabase(dbPath, mockSessions([row(500, 400)]), r1.cursor);
+    expect(r2.deltas).toHaveLength(0);
+
+    const r3 = await parseHermesDatabase(dbPath, mockSessions([row(1000, 500)]), r2.cursor);
+    expect(r3.deltas).toHaveLength(0);
+
+    const totalInput = [...r1.deltas, ...r2.deltas, ...r3.deltas]
+      .reduce((sum, d) => sum + d.tokens.inputTokens, 0);
+    expect(totalInput).toBe(1000);
 
     await teardownDb();
   });
