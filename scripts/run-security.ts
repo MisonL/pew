@@ -28,7 +28,9 @@ const noCache = process.env.PEW_G2_NO_CACHE === "1";
 // and a stale entry forces a fresh scan.
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CACHE_DIR = resolve(REPO_ROOT, ".git/info");
-const CACHE_FILE = resolve(CACHE_DIR, "g2-cache.json");
+// PEW_G2_CACHE_FILE lets the gate's own test run against a scratch cache
+// instead of the developer's real one.
+const CACHE_FILE = process.env.PEW_G2_CACHE_FILE ?? resolve(CACHE_DIR, "g2-cache.json");
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 interface G2Cache {
@@ -242,8 +244,10 @@ for (let i = 0; i < jobs.length; i++) {
     failed = true;
   } else {
     console.log(job.successMsg);
-    // Persist cache for osv-scanner success (only path that benefits from caching).
-    if (job.label === "osv-scanner" && lockHash !== null) {
+    // Persist cache for osv-scanner success (only path that benefits from
+    // caching). PEW_G2_NO_CACHE=1 ("force a fresh scan") must not then write
+    // a fresh timestamp back — that would defeat the point of forcing.
+    if (job.label === "osv-scanner" && lockHash !== null && !noCache) {
       writeCache({
         ...cache,
         osvLockHash: lockHash,
