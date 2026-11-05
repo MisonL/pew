@@ -365,6 +365,40 @@ describe("parseHermesDatabase", () => {
     await teardownDb();
   });
 
+  it("keeps the high-water mark per counter when one rises and another dips", async () => {
+    // A single field's dip is covered above, but the delta loop's Math.max is
+    // load-bearing only for the rising field here: input grows (so the row is
+    // not skipped as a zero-delta dip) while output falls. If the loop wrote
+    // the raw row back to the baseline, output would drop to 400 and the next
+    // reading of 500 would be counted again.
+    await setupDb();
+
+    const row = (input: number, output: number): SessionRow => ({
+      id: "session-1",
+      model: "claude-opus-4",
+      input_tokens: input,
+      output_tokens: output,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      started_at: testStartedAt,
+    });
+
+    const r1 = await parseHermesDatabase(dbPath, mockSessions([row(1000, 500)]));
+    const r2 = await parseHermesDatabase(dbPath, mockSessions([row(1200, 400)]), r1.cursor);
+    expect(r2.deltas).toHaveLength(1);
+    expect(r2.deltas[0].tokens.inputTokens).toBe(200);
+    expect(r2.deltas[0].tokens.outputTokens).toBe(0);
+    expect(r2.cursor.sessionTotals["session-1"].input).toBe(1200);
+    expect(r2.cursor.sessionTotals["session-1"].output).toBe(500);
+
+    const r3 = await parseHermesDatabase(dbPath, mockSessions([row(1200, 500)]), r2.cursor);
+    expect(r3.deltas).toHaveLength(0);
+    expect(r3.cursor.sessionTotals["session-1"].output).toBe(500);
+
+    await teardownDb();
+  });
+
   it("should skip sessions with zero tokens", async () => {
     await setupDb();
 

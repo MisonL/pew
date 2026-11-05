@@ -8,14 +8,18 @@ import { dirname, join } from "node:path";
 const deployDir = dirname(fileURLToPath(import.meta.url));
 const readme = readFileSync(join(deployDir, "README.md"), "utf8");
 
-/** The first ```bash block after a heading, whose commands run from this dir. */
+/** The first ```bash block inside the section that starts at a heading. */
 function sectionBlock(heading: string): string {
   const start = readme.indexOf(heading);
   if (start === -1) throw new Error(`missing heading: ${heading}`);
-  const fence = readme.indexOf("```bash", start);
+  // Bound the search to this section so a new bash block elsewhere (or a
+  // reordered section) cannot satisfy — or break — the assertion.
+  const next = readme.indexOf("\n## ", start + heading.length);
+  const section = readme.slice(start, next === -1 ? undefined : next);
+  const fence = section.indexOf("```bash");
   if (fence === -1) throw new Error(`missing bash block: ${heading}`);
-  const end = readme.indexOf("```", fence + 7);
-  return readme.slice(fence + 7, end);
+  const end = section.indexOf("```", fence + 7);
+  return section.slice(fence + 7, end);
 }
 
 describe("selfhost upgrade instructions", () => {
@@ -39,5 +43,16 @@ describe("selfhost upgrade instructions", () => {
         true,
       );
     }
+  });
+
+  it("documents the same Bun version the images build with", () => {
+    // "Use the Bun version CI and the Dockerfile use" is only true while the
+    // prose tracks the pin; a forgotten bump sends operators to a version no
+    // gate tests.
+    const pin = readFileSync(join(deployDir, "Dockerfile"), "utf8")
+      .match(/^FROM oven\/bun:(\S+)/m)?.[1];
+    expect(pin).toMatch(/^\d+\.\d+\.\d+$/);
+    const mentioned = readme.match(/oven\/bun:(\d+\.\d+\.\d+)/);
+    expect(mentioned?.[1], "deploy/selfhost/README.md must document the Bun pin").toBe(pin);
   });
 });

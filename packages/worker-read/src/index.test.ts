@@ -277,6 +277,25 @@ describe("pew read Worker", () => {
       expect(body.error).toContain("Unknown RPC domain");
     });
 
+    // The handlers have their own unit tests, but those import them directly:
+    // they would all still pass if this switch routed a domain to the wrong
+    // handler or lost a case entirely. Each domain is probed with a method it
+    // does not implement, so reaching the handler is observable in the error
+    // text ("Unknown <domain> method") rather than in any real query.
+    it.each([
+      "users", "teams", "seasons", "usage", "devices", "organizations", "settings",
+      "auth", "sessions", "leaderboard", "pricing", "admin", "live", "cache",
+    ])("routes the %s domain to its handler", async (domain) => {
+      const res = await callWorker(
+        makeRequest("POST", "/api/rpc", { method: `${domain}.definitelyNotAMethod` }, SECRET),
+        env,
+      );
+      const body = await res.json() as { error?: string };
+      expect(body.error, `${domain} is not wired into the dispatch switch`).toContain(
+        `Unknown ${domain} method`,
+      );
+    });
+
     it("should route users domain to users handler", async () => {
       const mockUser = {
         id: "usr_123",
