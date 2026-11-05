@@ -73,3 +73,34 @@ export function sourceKey(source: Source): SessionSyncSourceKey | null {
     }
   }
 }
+
+/** The progress shape the session-sync orchestrator emits. */
+export interface DiscoverProgressEvent {
+  source: string;
+  phase: "warn";
+  message: string;
+}
+
+/**
+ * Discover one source's session files, isolating a discovery failure to that
+ * source. Returns null when discovery threw; the caller then skips this
+ * source's parse loop (no cursor writes, no queue changes) while the other
+ * sources keep running. Mirrors the token-sync loop's guard in sync.ts, where
+ * one unreadable directory used to abort the whole run.
+ */
+export async function discoverOrSkip(
+  source: string,
+  discover: () => Promise<string[]>,
+  onProgress?: (event: DiscoverProgressEvent) => void,
+): Promise<string[] | null> {
+  try {
+    return await discover();
+  } catch (err) {
+    onProgress?.({
+      source,
+      phase: "warn",
+      message: `Skipping ${source}: discovery failed (${err instanceof Error ? err.message : String(err)})`,
+    });
+    return null;
+  }
+}

@@ -29,7 +29,7 @@ import { pruneAliasCursors } from "../storage/prune-alias-cursors.js";
 import type { OnCorruptLine } from "../storage/base-queue.js";
 import { deduplicateSessionRecords } from "./session-upload.js";
 import { createSessionDrivers } from "../drivers/registry.js";
-import { toQueueRecord, sourceKey } from "./session-sync-helpers.js";
+import { toQueueRecord, sourceKey, discoverOrSkip } from "./session-sync-helpers.js";
 
 export { toQueueRecord, sourceKey } from "./session-sync-helpers.js";
 import type { FileFingerprint } from "../drivers/types.js";
@@ -215,7 +215,8 @@ async function sessionSyncLocked(
       message: `Discovering ${driver.source} session files...`,
     });
 
-    const files = await driver.discover(discoverOpts);
+    const files = await discoverOrSkip(driver.source, () => driver.discover(discoverOpts), onProgress);
+    if (files === null) continue; // this source only; the others keep running
     filesScanned[key] += files.length;
     for (const f of files) discoveredFiles.add(f);
 
