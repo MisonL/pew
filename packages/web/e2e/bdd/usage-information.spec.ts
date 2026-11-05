@@ -77,14 +77,19 @@ test.describe("Feature: Compact usage information", () => {
 
   test("public profiles offer a compact information control without billing diagnostics", async ({ page }) => {
     await mockDashboardApis(page, { usage: DASHBOARD_USAGE_FIXTURE, pricing: DASHBOARD_PRICING_FIXTURE });
-    await page.route("**/api/users/info-fixture?*", (route) => route.fulfill({ json: {
-      user: { name: "Profile Fixture", nickname: null, image: null, slug: "info-fixture", created_at: "2026-01-01", first_seen: "2026-01-01" },
+    // The page server component looks the user up before rendering (a missing
+    // profile is now a real 404), so this has to be the seeded public profile
+    // rather than an invented slug; only the API payload is mocked.
+    const slug = process.env.E2E_READINESS_PROFILE_SLUG;
+    if (!slug) throw new Error("Missing E2E_READINESS_PROFILE_SLUG: run the isolated, seeded UI runner");
+    await page.route(`**/api/users/${slug}?*`, (route) => route.fulfill({ json: {
+      user: { name: "Profile Fixture", nickname: null, image: null, slug, created_at: "2026-01-01", first_seen: "2026-01-01" },
       ...DASHBOARD_USAGE_FIXTURE,
       records: DASHBOARD_USAGE_FIXTURE.records.map((row) => ({ ...row, approximate_tokens: 1644 })),
     } }));
     const health = watchPageReadiness(page);
-    await page.goto("/u/info-fixture");
-    await health.ready(["/api/users/info-fixture", "/api/pricing"]);
+    await page.goto(`/u/${slug}`);
+    await health.ready([`/api/users/${slug}`, "/api/pricing"]);
     const trigger = page.getByRole("button", { name: "Usage information", exact: true });
     await expect(trigger).toBeVisible();
     await expect(page.getByText(/Usage, cache.*cost details|Public price snapshot|tokens have approximate timing/)).toHaveCount(0);
