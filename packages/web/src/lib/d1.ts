@@ -146,9 +146,12 @@ export class D1Client {
    *   stated, so a mid-batch failure may leave earlier statements committed.
    *
    * Routes that need all-or-nothing on every deployment therefore carry their
-   * own compensation (e.g. register deletes only the rows it created) or are
-   * designed to converge on retry (snapshot, season teardown). See each
-   * caller's comment before dropping such a guard.
+   * own compensation (register deletes only the rows it created) or are
+   * designed to converge on retry (snapshot, season teardown). One route
+   * deliberately relies on atomicity instead: teams POST has neither a
+   * compensation nor a converging retry (its own comment says so), so a
+   * partial failure there can leave an orphan team row. See each caller's
+   * comment before dropping such a guard.
    */
   async batch(
     statements: D1BatchStatement[]

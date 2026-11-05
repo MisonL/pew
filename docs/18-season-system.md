@@ -400,7 +400,7 @@ ORDER BY total_tokens DESC
 6. 幂等：使用 upsert（`INSERT OR REPLACE`）写入新数据，然后清理本次未涉及的旧行（`DELETE WHERE id NOT IN (...)`）
 7. 设置 `snapshot_ready = 1`（读端切换到冻结数据）
 8. 如果写入过程中失败，`snapshot_ready` 保持为 0，读端不会暴露不一致的中间状态。管理员重跑即可修正
-9. D1 REST batches now use a single native transaction. Snapshot readiness and stale-row cleanup remain separate operations; write-then-switch keeps partial results hidden.
+9. D1 batch atomicity is runtime-dependent: all-or-nothing on the self-hosted rqlite adapter, not stated for the hosted REST endpoint (see packages/web/src/lib/d1.ts). Snapshot readiness and stale-row cleanup remain separate operations; write-then-switch keeps partial results hidden either way.
 
 **Response (201):**
 ```json

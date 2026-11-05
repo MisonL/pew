@@ -71,9 +71,14 @@ export async function DELETE(request: Request) {
     // One batch, ordered so the row that makes the account disappear
     // (`DELETE FROM users`) is last: atomic on the self-hosted rqlite adapter,
     // not documented for the hosted D1 REST endpoint (see lib/d1.ts). A partial
-    // failure that stops before that row leaves the account intact and the
-    // whole delete is simply retried; a failure after it cannot occur, since it
-    // is the final statement.
+    // failure that stops before that row leaves the account intact, so the
+    // delete can be retried. Two retry caveats in that window: statement 1
+    // decrements the team snapshot by this user's member row (statement 8),
+    // which still exists — a retry after a partial apply subtracts a second
+    // time (MAX(0, …) only prevents going negative); and a failure after
+    // statement 8 but before the last one leaves the snapshot already
+    // decremented. Neither is recoverable by the retry itself; a re-run of the
+    // snapshot job recomputes the totals.
     await dbWrite.batch([
       {
         sql: `UPDATE season_snapshots AS ss SET
