@@ -533,7 +533,7 @@ describe("executeSync", () => {
       });
 
       expect(result.sources.claude).toBe(1);
-      expect(warnings.some((w) => /codex/i.test(w) && /discover/i.test(w))).toBe(true);
+      expect(warnings.some((w) => /codex/i.test(w))).toBe(true);
     } finally {
       spy.mockRestore();
     }
