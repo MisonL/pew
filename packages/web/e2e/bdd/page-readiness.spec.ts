@@ -240,14 +240,18 @@ test.describe("Seeded page and module readiness (real APIs)", () => {
       "/api/teams/readiness-missing": 403,
     });
     try {
-      for (const [path, api, status, text] of [
-        ["/u/readiness-missing", "/api/users/readiness-missing", 404, "This page could not be found."],
+      // A missing public profile is a real 404 now: the server component calls
+      // notFound() before any client mount, so no /api/users request is made
+      // and there is nothing to wait for beyond the page itself.
+      expect((await page.goto("/u/readiness-missing"))?.status()).toBe(404);
+      await health.ready([]);
+      await expect(page.getByText("This page could not be found.")).toBeVisible();
+
+      for (const [path, api, _status, text] of [
         ["/leaderboard/seasons/readiness-missing", "/api/seasons/readiness-missing/leaderboard", 404, "Season not found"],
         ["/teams/readiness-missing", "/api/teams/readiness-missing", 403, "Not a member"],
       ] as const) {
-        // A missing public profile is a real 404 now (the server component
-        // calls notFound()), not a 200 shell that apologises in the client.
-        expect((await page.goto(path))?.status()).toBe(status);
+        expect((await page.goto(path))?.status()).toBe(200);
         await health.ready([api]);
         await expect(page.getByText(text, { exact: false })).toBeVisible();
       }

@@ -1,7 +1,15 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 import { getDbRead } from "@/lib/db";
 import { PublicProfileView } from "./profile-view";
+
+// generateMetadata and the page both need the same row; cache() keeps it to one
+// query per request.
+const loadPublicUser = cache(async (slug: string) => {
+  const db = await getDbRead();
+  return db.getPublicUserBySlugOrId(slug);
+});
 
 // ---------------------------------------------------------------------------
 // Dynamic metadata for SEO / social sharing
@@ -19,10 +27,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { slug } = await params;
 
-  const db = await getDbRead();
-
-  // Look up user by slug or id
-  const user = await db.getPublicUserBySlugOrId(slug);
+  const user = await loadPublicUser(slug);
 
   // If user not found or not public, return generic metadata (don't leak name)
   if (!user?.is_public) {
@@ -55,9 +60,7 @@ export default async function PublicProfilePage({
   // The client view fetches the profile itself, so without this the page
   // answered 200 for anyone — a soft 404 that search engines index and that
   // hides the distinction between "no such user" and "private profile".
-  const db = await getDbRead();
-  const user = await db.getPublicUserBySlugOrId(slug);
-  if (!user) notFound();
+  if (!(await loadPublicUser(slug))) notFound();
 
   return <PublicProfileView slug={slug} />;
 }
