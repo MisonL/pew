@@ -1400,6 +1400,41 @@ describe("upload-engine", () => {
       expect(await queue.loadDirtyKeys()).toEqual(["key-1"]);
     });
 
+    it("retries when the response body read fails instead of burning the batch", async () => {
+      // A served header that stalls or truncates on the body was being
+      // reported as a permanent validation mismatch, dropping the batch out
+      // of the retry loop. It must behave like a transport failure.
+      const { queue, config } = createTestEngine(dir);
+      config.validateResponse = (body) =>
+        body ? null : "Server did not acknowledge test records";
+      await new ConfigManager(dir, false).save({ token: "pk_test" });
+      await queue.append(makeRecord(1));
+
+      let calls = 0;
+      const fetchFn = async (): Promise<Response> => {
+        calls++;
+        if (calls === 1) {
+          return new Response("", {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ ingested: 1 }), { status: 200 });
+      };
+
+      const result = await createUploadEngine(config).execute({
+        stateDir: dir,
+        apiUrl: DEFAULT_HOST,
+        fetch: fetchFn,
+      });
+
+      expect(calls).toBe(2);
+      expect(result.success).toBe(true);
+      // loadDirtyKeys is undefined until something was recorded dirty and then
+      // cleared; either state means nothing is pending.
+      expect(await queue.loadDirtyKeys()).toBeFalsy();
+    });
+
     it("treats an empty refusal list as a fully accepted batch", async () => {
       // The verdict carries "nothing was refused"; that must not turn into a
       // zero-count warning or a dirty key that was never in the batch.
@@ -1590,5 +1625,32 @@ describe("upload-engine record byte limit", () => {
 
     expect(result.success).toBe(false);
     expect(result.uploaded).toBe(0);
+  });
+
+  it("omits the signal entirely when the timeout is disabled", async () => {
+    // requestTimeoutMs: 0 is the documented "no bound" switch; it must not be
+    // read as "abort immediately", which would fail every upload.
+    const { queue, config } = createTestEngine(dir);
+    await new ConfigManager(dir, false).save({ token: "pk_test" });
+    await queue.append(makeRecord(1));
+
+    let sawSignal: unknown = "unset";
+    const fetchFn = async (
+      _url: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      sawSignal = init?.signal ?? null;
+      return new Response(JSON.stringify({ ingested: 1 }), { status: 200 });
+    };
+
+    const result = await createUploadEngine(config).execute({
+      stateDir: dir,
+      apiUrl: DEFAULT_HOST,
+      fetch: fetchFn,
+      requestTimeoutMs: 0,
+    });
+
+    expect(result.success).toBe(true);
+    expect(sawSignal).toBeNull();
   });
 });

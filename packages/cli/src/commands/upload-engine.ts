@@ -487,7 +487,18 @@ async function sendBatchWithRetry<T>(opts: {
 
       if (resp.ok) {
         if (opts.validateResponse) {
-          const verdict = opts.validateResponse(await resp.json().catch(() => null), batch);
+          // A timeout signal also covers the body read. If the server sent the
+          // header but never the body, treat that like a transport error and
+          // retry rather than reporting the batch as an unrecoverable
+          // validation mismatch (which drops it out of the retry path).
+          let body: unknown;
+          try {
+            body = await resp.json();
+          } catch {
+            lastError = "response body read failed";
+            continue; // retry: the batch stays queued for the next attempt
+          }
+          const verdict = opts.validateResponse(body, batch);
           if (typeof verdict === "string") return { ok: false, error: verdict };
           if (verdict && verdict.keys.length > 0) return { ok: true, refused: verdict };
         }
