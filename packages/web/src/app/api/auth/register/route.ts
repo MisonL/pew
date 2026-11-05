@@ -95,9 +95,12 @@ export async function POST(request: Request) {
     const message = err instanceof Error ? err.message : "Registration failed";
     // Two concurrent /setup requests can both pass the "instance is empty"
     // pre-check; the loser then hits the users.email UNIQUE index or the
-    // instance_setup PRIMARY KEY inside the batch and rolls back (no second
-    // admin is created). That is the same client-visible state as the
-    // pre-check's "already set up" — not a server fault. Scoped to the
+    // instance_setup PRIMARY KEY inside the batch. On the self-hosted adapter
+    // that batch is atomic, so nothing is written. On the hosted REST path
+    // atomicity is undocumented (see lib/d1.ts): the failure still surfaces
+    // here, but earlier statements of that batch may already be committed.
+    // Client-visible state is the same as
+    // the pre-check's "already set up" — not a server fault. Scoped to the
     // bootstrap branch: on the invite path a UNIQUE failure means a duplicate
     // email, which must not be reported as "instance already set up".
     if (bootstrapping && /UNIQUE constraint failed/i.test(message)) {

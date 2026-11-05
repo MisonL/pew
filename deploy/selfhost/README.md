@@ -538,6 +538,12 @@ true，导致 `__Secure-` cookie 被 http origin 拒收、登录全线失效。c
 | http | false（`.env.example` 默认） | ✓ 正常（**http 部署必须显式填 false**） |
 | http | 留空（默认）或 true | **登录坏**——`__Secure-` cookie 被 http origin 拒收（空值在 production 下的推导结果就是 true） |
 
+**改这个值必须重建镜像，不能只重启容器。** next.config 的 `headers()` 在**构建期**求值，
+HSTS 与 `upgrade-insecure-requests` 被烘进 `routes-manifest.json`；只改 `.env` 再 `docker
+compose up -d`（不带 `--build`）会让运行时 cookie 决策与镜像里的安全头不一致——http 部署
+从 true/空改成 false 时，镜像里残留的 `upgrade-insecure-requests` 会把同站 http 子资源
+请求改写成 https，页面资源全部加载失败。
+
 `TRUSTED_ORIGIN` 由 `NEXTAUTH_URL` 推导，无需单独配置。
 
 ## 安全注意事项

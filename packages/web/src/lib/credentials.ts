@@ -384,10 +384,11 @@ export async function passwordVersion(userId: string): Promise<string> {
  * person to hit /setup becomes the admin, and every later registration needs
  * an admin-issued invite.
  *
- * Concurrency-safe: the batch runs in a single rqlite transaction (the D1
- * batch path is `?transaction=true` under the self-hosted adapter), and it
- * claims the single-row `instance_setup` table via `INSERT OR IGNORE` guarded
- * by the "users is empty" precondition. Two simultaneous /setup requests
+ * Concurrency-safe: on the self-hosted adapter the batch runs in one rqlite
+ * transaction (`?transaction=true`); on the hosted REST path its atomicity is
+ * undocumented (see lib/d1.ts), but this guard does not depend on it — the
+ * single-row `instance_setup` claim via `INSERT OR IGNORE` plus the "users is
+ * empty" precondition stand on their own. Two simultaneous /setup requests
  * cannot both create an admin: the second sees a non-empty users table (or its
  * instance_setup insert collides on the PRIMARY KEY), and is rejected.
  */
