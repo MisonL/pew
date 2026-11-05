@@ -120,24 +120,37 @@ export async function POST(request: Request) {
 
     // One batch: a team row whose owner membership insert failed would be
     // invisible to listTeamsForUser (INNER JOIN team_members) yet still hold a
-    // live invite_code, and no route could delete it. This relies on the batch
-    // committing together — atomic on the self-hosted rqlite adapter, but NOT
-    // documented for the hosted D1 REST endpoint (see lib/d1.ts). The slug
-    // uniqueness check above is a read, so a concurrent create can still win
-    // the race — that surfaces as UNIQUE constraint failed and is mapped to
-    // 409 below.
-    await dbWrite.batch([
-      {
-        sql: `INSERT INTO teams (id, name, slug, invite_code, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, datetime('now'))`,
-        params: [teamId, name, finalSlug, inviteCode, authResult.userId],
-      },
-      {
-        sql: `INSERT INTO team_members (id, team_id, user_id, role, joined_at)
-         VALUES (?, ?, ?, 'owner', datetime('now'))`,
-        params: [crypto.randomUUID(), teamId, authResult.userId],
-      },
-    ]);
+    // live invite_code, and no route could delete it. Atomic on the self-hosted
+    // rqlite adapter, but NOT documented for the hosted D1 REST endpoint (see
+    // lib/d1.ts), so the catch below deletes the row if the batch failed after
+    // it committed. The slug uniqueness check above is a read, so a concurrent
+    // create can still win the race — that surfaces as UNIQUE constraint failed
+    // and is mapped to 409 below.
+    try {
+      await dbWrite.batch([
+        {
+          sql: `INSERT INTO teams (id, name, slug, invite_code, created_by, created_at)
+           VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+          params: [teamId, name, finalSlug, inviteCode, authResult.userId],
+        },
+        {
+          sql: `INSERT INTO team_members (id, team_id, user_id, role, joined_at)
+           VALUES (?, ?, ?, 'owner', datetime('now'))`,
+          params: [crypto.randomUUID(), teamId, authResult.userId],
+        },
+      ]);
+    } catch (batchErr) {
+      // Best-effort cleanup of the row this request created. When the batch
+      // failed atomically the id never existed and this is a no-op; when the
+      // runtime committed the first statement it removes the orphan that no
+      // route could otherwise delete.
+      await Promise.resolve(dbWrite.execute("DELETE FROM teams WHERE id = ?", [teamId])).catch(
+        (cleanupErr) => {
+          console.error("Failed to compensate a partially created team:", cleanupErr);
+        },
+      );
+      throw batchErr;
+    }
 
     return NextResponse.json({
       id: teamId,

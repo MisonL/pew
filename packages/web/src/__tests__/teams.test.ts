@@ -303,4 +303,32 @@ describe("POST /api/teams", () => {
 
     expect(res.status).toBe(500);
   });
+
+  it("removes the team row it created when the batch fails part-way", async () => {
+    // On a runtime whose batches are not atomic (see lib/d1.ts) the teams
+    // INSERT can commit while the membership INSERT fails. That orphan is
+    // invisible to listTeamsForUser (INNER JOIN) and no route can delete it,
+    // so the handler must clean up the row it just tried to create.
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
+    mockDbRead.checkTeamSlugExists.mockResolvedValueOnce(false);
+    mockDbWrite.batch.mockRejectedValueOnce(new Error("D1 down"));
+
+    await POST(makeJson("POST", { name: "Half Written" }));
+
+    expect(mockDbWrite.execute).toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM teams"),
+      ["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"],
+    );
+  });
+
+  it("does not let a failing compensation mask the original error", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
+    mockDbRead.checkTeamSlugExists.mockResolvedValueOnce(false);
+    mockDbWrite.batch.mockRejectedValueOnce(new Error("D1 down"));
+    mockDbWrite.execute.mockRejectedValueOnce(new Error("cleanup also failed"));
+
+    const res = await POST(makeJson("POST", { name: "Test" }));
+
+    expect(res.status).toBe(500);
+  });
 });
