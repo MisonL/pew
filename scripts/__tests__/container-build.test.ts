@@ -42,6 +42,32 @@ describe("production container", () => {
     expect(selfhost).toBe(rootBun);
   });
 
+  it("documents the same Bun patch the images build with", () => {
+    // "Use the Bun version CI and the Dockerfile use" is only true while the
+    // prose tracks the pin; a forgotten bump sends contributors to a version
+    // no gate tests.
+    const pin = dockerfile.match(/^COPY --from=oven\/bun:(\S+)/m)?.[1];
+    expect(pin).toMatch(/^\d+\.\d+\.\d+$/);
+    for (const file of ["README.md", "docs/README.en.md"]) {
+      const mentioned = source(file).match(/Bun (\d+\.\d+\.\d+)/);
+      expect(mentioned?.[1], `${file} must document Bun ${pin}`).toBe(pin);
+    }
+  });
+
+  it("runs CI on the same Bun patch the images build with", () => {
+    // The image pin and the CI runtime pin are independent literals. Bumping
+    // one leaves the tests running a different Bun than the shipped image.
+    const pin = dockerfile.match(/^COPY --from=oven\/bun:(\S+)/m)?.[1];
+    const ci = source(".github/workflows/ci.yml");
+    const versions = [...ci.matchAll(/runtime-version:\s*"([^"]+)"/g)].map((m) => m[1]);
+    expect(versions.length).toBeGreaterThan(0);
+    for (const version of versions) expect(version).toBe(pin);
+    const admission = source(".github/workflows/admission-primitive.yml").match(
+      /bun-version:\s*"([^"]+)"/,
+    )?.[1];
+    expect(admission).toBe(pin);
+  });
+
   it("preserves standalone assets and SWC helpers with writable non-root caches", () => {
     expect(dockerfile).toContain("scripts/fix-standalone-swc-helpers.ts --required");
     for (const [from, to] of [
