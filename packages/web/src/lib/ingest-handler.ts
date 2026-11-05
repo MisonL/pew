@@ -84,8 +84,10 @@ export function createIngestHandler<T>(
 ): (request: Request) => Promise<Response> {
   const { validateRecord, getWorkerUrl, entityName } = config;
 
-  // biome-ignore lint/correctness/noComponentHookFactories: POST is a Next.js HTTP-method handler name, not a React component. This factory returns a route handler decorated with rate-limiting and auth — it never renders JSX or calls hooks.
-  return async function POST(request: Request): Promise<Response> {
+  // Named `handlePost`, not `POST`: biome's noComponentHookFactories rule reads
+  // a capitalized inner function name as a React component factory. The
+  // exported route name is supplied by the caller (`export const POST = ...`).
+  return async function handlePost(request: Request): Promise<Response> {
     // 1. Authenticate
     const authResult = await resolveUser(request);
     if (!authResult) {

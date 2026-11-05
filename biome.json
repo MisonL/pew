@@ -139,6 +139,9 @@
 					"style": {
 						"useImportType": "off",
 						"noNonNullAssertion": "off"
+					},
+					"correctness": {
+						"usePlaywrightValidDescribeCallback": "off"
 					}
 				}
 			}
