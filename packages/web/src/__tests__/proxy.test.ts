@@ -190,3 +190,52 @@ describe("resolveProxyAction", () => {
     expect(resolveProxyAction("/login", false, false)).toBe("next");
   });
 });
+
+// ---------------------------------------------------------------------------
+// CSRF cookies vs shared caching
+// ---------------------------------------------------------------------------
+//
+// NextAuth writes a fresh authjs.csrf-token on every request that runs the
+// auth wrapper, while these pages are prerendered with Cache-Control:
+// s-maxage (a shared-cache directive). Behind a proxy_cache/CDN the pair would
+// be replayed to every visitor, so two invariants must hold:
+//   1. pages whose proxy action never depends on auth state do not run it
+//   2. any response that does carry Set-Cookie is not shared-cacheable
+
+describe("public pages and CSRF cookies", () => {
+  it("skips the auth wrapper for pages whose action never depends on auth state", async () => {
+    const proxy = await importProxy("https://pew.example.com");
+    const { auth } = await import("@/auth");
+    const authMock = auth as unknown as ReturnType<typeof vi.fn>;
+    authMock.mockClear();
+
+    for (const path of ["/", "/privacy", "/setup"]) {
+      const res = (await proxy.proxy(makeReq(path))) as Response;
+      expect(res.status, path).toBe(200);
+    }
+    expect(authMock).not.toHaveBeenCalled();
+  });
+
+  it("marks a response that sets cookies as uncacheable by shared caches", async () => {
+    const proxy = await importProxy("https://pew.example.com");
+    const { auth } = await import("@/auth");
+    (auth as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      async (handler: (req: unknown) => Response) => (req: unknown) => {
+        const res = handler(req) as Response;
+        res.headers.append("set-cookie", "authjs.csrf-token=token%7Chash; Path=/; HttpOnly");
+        return res;
+      },
+    );
+
+    const res = (await proxy.proxy(makeReq("/login"))) as Response;
+    expect(res.headers.get("set-cookie")).toContain("authjs.csrf-token");
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  it("leaves the caching headers of a cookie-free response alone", async () => {
+    const proxy = await importProxy("https://pew.example.com");
+    const res = (await proxy.proxy(makeReq("/dashboard"))) as Response;
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(res.headers.get("cache-control")).toBeNull();
+  });
+});

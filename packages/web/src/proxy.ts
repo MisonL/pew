@@ -82,6 +82,31 @@ export function resolveProxyAction(
   return "next";
 }
 
+/**
+ * Pages whose proxy action never depends on auth state: `resolveProxyAction`
+ * returns "next" for them no matter who is signed in. Running the auth wrapper
+ * for them would only make NextAuth attach a fresh CSRF cookie to a response
+ * that is prerendered with `Cache-Control: s-maxage` — a shared-cache directive.
+ * The day a proxy_cache or CDN sits in front of the app those cookies would be
+ * replayed to every visitor, sharing one CSRF token across users.
+ */
+export function isAuthFreeRoute(pathname: string): boolean {
+  return pathname === "/" || pathname === "/privacy" || pathname === "/setup";
+}
+
+/**
+ * A response that sets cookies must not be stored by a shared cache.
+ * `/login` needs the auth wrapper (to bounce signed-in users to the dashboard),
+ * so it keeps its CSRF cookie; this keeps that cookie out of any shared cache
+ * while leaving cookie-free responses' own caching headers untouched.
+ */
+export function withCookieSafeCaching<T>(response: T): T {
+  if (response instanceof Response && response.headers.has("set-cookie")) {
+    response.headers.set("Cache-Control", "private, no-store");
+  }
+  return response;
+}
+
 // Next.js 16 proxy convention (replaces middleware.ts)
 //
 // With NextAuth's lazy-init pattern (`NextAuth((req) => config)`), the
@@ -91,6 +116,10 @@ export function resolveProxyAction(
 // the actual return value is `Promise<Function>`, not `Function`.
 // We must `await` the result before calling it.
 export async function proxy(request: NextRequest) {
+  if (isAuthFreeRoute(request.nextUrl.pathname)) {
+    return NextResponse.next();
+  }
+
   const authHandler = await auth((req) => {
     const action = resolveProxyAction(
       req.nextUrl.pathname,
@@ -103,7 +132,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(buildRedirectUrl(req, target));
   });
 
-  return authHandler(request, {} as never);
+  return withCookieSafeCaching(await authHandler(request, {} as never));
 }
 
 export const config = {
