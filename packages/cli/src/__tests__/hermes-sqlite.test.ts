@@ -288,6 +288,44 @@ describe("parseHermesDatabase", () => {
     await teardownDb();
   });
 
+  it("counts a cache component's rise instead of netting it against the other's dip", async () => {
+    // The baseline holds cacheRead and cacheWrite as separate high-water marks.
+    // The delta must be per component too: computing it on the sum lets a dip
+    // in one cancel real growth in the other, and the cancelled amount is
+    // never recovered (the baseline already sits at the higher sum).
+    await setupDb();
+
+    const row = (read: number, write: number): SessionRow => ({
+      id: "session-1",
+      model: "claude-opus-4",
+      input_tokens: 100,
+      output_tokens: 0,
+      cache_read_tokens: read,
+      cache_write_tokens: write,
+      reasoning_tokens: 0,
+      started_at: testStartedAt,
+    });
+
+    const r1 = await parseHermesDatabase(dbPath, mockSessions([row(100, 50)]));
+    expect(r1.deltas[0].tokens.cachedInputTokens).toBe(150);
+
+    // cacheRead dips 100 -> 60 while cacheWrite grows 50 -> 120: 70 of real
+    // growth, not the 30 the sum-of-parts difference reports.
+    const r2 = await parseHermesDatabase(dbPath, mockSessions([row(60, 120)]), r1.cursor);
+    expect(r2.deltas).toHaveLength(1);
+    expect(r2.deltas[0].tokens.cachedInputTokens).toBe(70);
+
+    // cacheRead recovering to its prior peak adds nothing.
+    const r3 = await parseHermesDatabase(dbPath, mockSessions([row(100, 120)]), r2.cursor);
+    expect(r3.deltas).toHaveLength(0);
+
+    const total = [...r1.deltas, ...r2.deltas, ...r3.deltas]
+      .reduce((sum, d) => sum + d.tokens.cachedInputTokens, 0);
+    expect(total).toBe(220);
+
+    await teardownDb();
+  });
+
   it("should handle token decrease with Math.max (anomaly protection)", async () => {
     await setupDb();
 

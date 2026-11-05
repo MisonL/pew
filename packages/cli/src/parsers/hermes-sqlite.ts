@@ -173,13 +173,16 @@ export async function parseHermesDatabase(
       reasoning: 0,
     };
 
-    // Compute delta (with Math.max to handle anomalies)
+    // Compute delta (with Math.max to handle anomalies). Cache deltas are
+    // per component: the baseline holds cacheRead and cacheWrite as separate
+    // high-water marks, so computing the delta on their sum would let a dip
+    // in one cancel real growth in the other — and that amount never comes
+    // back, because the baseline has already advanced past it.
+    const cacheReadDelta = Math.max(0, row.cache_read_tokens - last.cacheRead);
+    const cacheWriteDelta = Math.max(0, row.cache_write_tokens - last.cacheWrite);
     const delta = {
       inputTokens: Math.max(0, row.input_tokens - last.input),
-      cachedInputTokens: Math.max(
-        0,
-        row.cache_read_tokens + row.cache_write_tokens - (last.cacheRead + last.cacheWrite),
-      ),
+      cachedInputTokens: cacheReadDelta + cacheWriteDelta,
       outputTokens: Math.max(0, row.output_tokens - last.output),
       reasoningOutputTokens: Math.max(0, row.reasoning_tokens - last.reasoning),
     };
@@ -204,7 +207,7 @@ export async function parseHermesDatabase(
       timestamp: sessionTimestamp,
       tokens: delta,
       ...(includeAccounting ? { accounting: hermesAccounting(delta, row,
-        row.cache_read_tokens - last.cacheRead, row.cache_write_tokens - last.cacheWrite, "hermes:sessions") } : {}),
+        cacheReadDelta, cacheWriteDelta, "hermes:sessions") } : {}),
     });
 
     // Advance the baseline to the high-water mark, never down. The sessions
