@@ -1,13 +1,16 @@
 import type { NextConfig } from "next";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { buildSecurityHeaders } from "./src/lib/security-headers";
+import { buildSecurityHeaders, resolveDeploymentSecurity } from "./src/lib/security-headers";
 
 const require = createRequire(import.meta.url);
 const rootPkg = require("../../package.json") as { version: string };
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Do not advertise the framework to clients; the version is not exposed, but
+  // the header still names the stack for fingerprinting.
+  poweredByHeader: false,
   transpilePackages: ["@nocoo/basalt"],
   turbopack: {
     root: path.join(__dirname, "../.."),
@@ -80,14 +83,12 @@ const nextConfig: NextConfig = {
   async headers() {
     // HSTS only means anything over HTTPS: browsers ignore it on plain http,
     // and carrying it on an intranet http deployment becomes wrong the day the
-    // hostname enters the preload list. Mirror shouldUseSecureCookies()
-    // (src/auth.ts) — the same decision that picks __Secure- cookies decides
-    // whether to claim HTTPS-only transport. Keep the two in sync.
-    const isHttpsDeployment = process.env.USE_SECURE_COOKIES !== "false" &&
-      (process.env.NODE_ENV === "production" ||
-        process.env.NEXTAUTH_URL?.startsWith("https://") === true ||
-        process.env.USE_SECURE_COOKIES === "true");
-    const isDev = process.env.NODE_ENV === "development";
+    // hostname enters the preload list. The decision is shared with
+    // shouldUseSecureCookies() (src/auth.ts) through resolveDeploymentSecurity
+    // so a build memo can never disagree with the runtime cookie choice.
+    // NOTE: this runs at BUILD time; changing USE_SECURE_COOKIES requires a
+    // rebuild, not just a compose restart.
+    const { isHttpsDeployment, isDev } = resolveDeploymentSecurity(process.env);
     return [
       {
         source: "/(.*)",

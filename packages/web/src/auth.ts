@@ -16,6 +16,7 @@ import type { Provider } from "next-auth/providers";
 import { D1AuthAdapter } from "@/lib/auth-adapter";
 import { getDbRead, getDbWrite } from "@/lib/db";
 import { handleInviteGate } from "@/lib/invite";
+import { resolveDeploymentSecurity } from "@/lib/security-headers";
 import { findCredentialUser, verifyPassword, verifyPasswordDummy, passwordVersion } from "@/lib/credentials";
 import {
   getClientIp,
@@ -56,15 +57,9 @@ export const LOGIN_IP_RATE_LIMIT: RateLimitConfig = {
 
 /** Determine whether to use __Secure- prefixed cookies. */
 export function shouldUseSecureCookies(): boolean {
-  // Explicit opt-out wins: intranet http deployments cannot use __Secure-
-  // prefixed cookies (the browser drops them), and the image always runs with
-  // NODE_ENV=production, so the opt-out must be checked before the prod branch.
-  if (process.env.USE_SECURE_COOKIES === "false") return false;
-  return (
-    process.env.NODE_ENV === "production" ||
-    process.env.NEXTAUTH_URL?.startsWith("https://") === true ||
-    process.env.USE_SECURE_COOKIES === "true"
-  );
+  // Shared with next.config.ts (which bakes HSTS into routes-manifest at build
+  // time) so the two can never drift; the rule lives in security-headers.ts.
+  return resolveDeploymentSecurity(process.env).isHttpsDeployment;
 }
 
 /**

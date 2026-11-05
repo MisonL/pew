@@ -20,6 +20,35 @@ export interface SecurityHeaderOptions {
   isDev: boolean;
 }
 
+/** The env vars that decide transport security. Passed in, not read, so both
+ * build-time (next.config) and runtime (auth.ts) callers share one rule. */
+export interface DeploymentEnv {
+  NODE_ENV?: string;
+  USE_SECURE_COOKIES?: string;
+  NEXTAUTH_URL?: string;
+}
+
+/**
+ * The single source of truth for "does this deployment claim HTTPS transport?".
+ *
+ * `shouldUseSecureCookies()` (src/auth.ts) evaluates this at runtime and
+ * `next.config.ts` evaluates it at build time (the result is baked into
+ * routes-manifest.json), so a divergence would ship HSTS to an http host or
+ * drop it from an https one. Both call this function with their own env.
+ */
+export function resolveDeploymentSecurity(env: DeploymentEnv): SecurityHeaderOptions {
+  // Explicit opt-out wins: intranet http deployments cannot use __Secure-
+  // prefixed cookies (the browser drops them), and the image always runs with
+  // NODE_ENV=production, so the opt-out must be consulted before the
+  // production branch.
+  const isHttpsDeployment =
+    env.USE_SECURE_COOKIES !== "false" &&
+    (env.NODE_ENV === "production" ||
+      env.NEXTAUTH_URL?.startsWith("https://") === true ||
+      env.USE_SECURE_COOKIES === "true");
+  return { isHttpsDeployment, isDev: env.NODE_ENV === "development" };
+}
+
 /**
  * Content-Security-Policy.
  *
@@ -38,12 +67,20 @@ export function buildContentSecurityPolicy(opts: SecurityHeaderOptions): string 
     "default-src 'self'",
     `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
     "style-src 'self' 'unsafe-inline'",
-    // Team logos are user-supplied external URLs (public leaderboard), and
-    // Google avatars plus the s.zhe.to image host are external too. Allow
-    // https: rather than any scheme; data:/blob: cover inline and object URLs.
-    "img-src 'self' blob: data: https:",
+    // Only the hosts the app actually renders from. Team/organization logos
+    // are upload-only — putTeamLogo/putOrgLogo build the URL from the R2 prefix
+    // and no route accepts a caller-supplied logo URL — and user avatars come
+    // from the Google provider alone (Credentials users have none). A blanket
+    // `https:` would leave an image-pixel exfiltration channel that
+    // connect-src cannot close.
+    "img-src 'self' data: blob: https://s.zhe.to https://lh3.googleusercontent.com",
     "font-src 'self'",
     `connect-src 'self'${isDev ? " ws: wss:" : ""}`,
+    // Nothing in the app embeds a frame, spawns a worker or plays media; pin
+    // that down so a future dependency cannot introduce one unnoticed.
+    "frame-src 'none'",
+    "worker-src 'none'",
+    "media-src 'none'",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
