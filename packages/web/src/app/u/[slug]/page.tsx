@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { getDbRead } from "@/lib/db";
 import { PublicProfileView } from "./profile-view";
 
@@ -50,5 +51,13 @@ export default async function PublicProfilePage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
+
+  // The client view fetches the profile itself, so without this the page
+  // answered 200 for anyone — a soft 404 that search engines index and that
+  // hides the distinction between "no such user" and "private profile".
+  const db = await getDbRead();
+  const user = await db.getPublicUserBySlugOrId(slug);
+  if (!user) notFound();
+
   return <PublicProfileView slug={slug} />;
 }
