@@ -34,6 +34,27 @@ describe("createWorkerDbRead", () => {
     expect(db).not.toHaveProperty("getLeaderboardSessionStats");
   });
 
+  it("reads the duplicate-alias answer from the key the worker actually sends", async () => {
+    // worker-read answers devices.checkDuplicateAlias with { duplicate }, not
+    // { exists } (devices.exists is the one that uses `exists`). Reading the
+    // wrong key made the /api/devices pre-check always falsy, so a duplicate
+    // alias was only caught by the UNIQUE index in the catch — and on a schema
+    // without that index the duplicate would be accepted silently.
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ result: { duplicate: true } }))
+      .mockResolvedValueOnce(Response.json({ result: { duplicate: false } }));
+    const db = createWorkerDbRead();
+    expect(await db.checkDuplicateDeviceAlias("u1", "laptop", "d2")).toBe(true);
+    expect(await db.checkDuplicateDeviceAlias("u1", "laptop", "d2")).toBe(false);
+    expect(JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string)).toEqual({
+      method: "devices.checkDuplicateAlias",
+      userId: "u1",
+      alias: "laptop",
+      excludeDeviceId: "d2",
+    });
+  });
+
   it("reads the authoritative leaderboard revision", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ result: "42" }));
     expect(await createWorkerDbRead().getLeaderboardRevision()).toBe("42");

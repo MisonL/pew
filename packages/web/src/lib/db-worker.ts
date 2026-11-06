@@ -703,13 +703,14 @@ export function createWorkerDbRead(): DbRead {
       alias: string,
       excludeDeviceId: string,
     ): Promise<boolean> {
-      const result = await rpc<{ exists: boolean }>({
+      // worker-read answers { duplicate }, unlike devices.exists's { exists }.
+      const result = await rpc<{ duplicate: boolean }>({
         method: "devices.checkDuplicateAlias",
         userId,
         alias,
         excludeDeviceId,
       });
-      return result.exists;
+      return result.duplicate;
     },
 
     async checkDeviceHasRecords(userId: string, deviceId: string): Promise<boolean> {
