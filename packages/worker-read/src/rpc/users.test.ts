@@ -585,6 +585,15 @@ describe("Users RPC handlers", () => {
       expect(db.bind).toHaveBeenCalledWith("%test%", "%test%", 0);
     });
 
+
+    it("truncates a fractional limit", async () => {
+      db.bind.mockReturnValue({ all: vi.fn().mockResolvedValue({ results: [] }) });
+
+      await handleUsersRpc({ method: "users.search", query: "test", limit: 2.9 }, db);
+
+      expect(db.bind).toHaveBeenCalledWith("%test%", "%test%", 2);
+    });
+
     it("should return 400 when query is missing", async () => {
       const request = { method: "users.search", query: "" } as SearchUsersRequest;
       const response = await handleUsersRpc(request, db);

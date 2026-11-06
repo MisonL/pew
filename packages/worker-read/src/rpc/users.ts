@@ -6,6 +6,7 @@
  */
 
 import type { D1Database } from "@cloudflare/workers-types";
+import { clampedLimit } from "./pagination";
 import type {
   CheckSharedSeasonRequest, CheckSharedTeamRequest, CheckSlugExistsRequest,
   GetPublicUserBySlugOrIdRequest, GetUserApiKeyRequest, GetUserByApiKeyRequest,
@@ -246,7 +247,7 @@ async function handleSearchUsers(
   }
 
   // Lower-clamp as well as upper: SQLite reads a negative LIMIT as "no limit".
-  const limit = Math.min(Math.max(req.limit ?? 20, 0), 100);
+  const limit = clampedLimit(req.limit, 20, 100);
   const pattern = `%${req.query}%`;
 
   const { results } = await db

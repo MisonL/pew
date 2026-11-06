@@ -5,6 +5,7 @@
  */
 
 import type { D1Database } from "@cloudflare/workers-types";
+import { clampedLimit } from "./pagination";
 
 // ---------------------------------------------------------------------------
 // Response Types
@@ -83,7 +84,7 @@ async function handleGetActiveSessions(
 ): Promise<Response> {
   // Lower-clamp as well as upper: SQLite reads a negative LIMIT (-1, any
   // negative) as "no limit", so an unclamped limit silently dropped the cap.
-  const limit = Math.min(Math.max(req.limit ?? 50, 0), 250);
+  const limit = clampedLimit(req.limit, 50, 250);
 
   // session_records has last_message_at instead of ended_at
   // "Active" sessions are those with recent activity (within 30 min)
@@ -112,7 +113,7 @@ async function handleGetRecentActivity(
   req: GetRecentActivityRequest,
   db: D1Database
 ): Promise<Response> {
-  const limit = Math.min(Math.max(req.limit ?? 50, 0), 250);
+  const limit = clampedLimit(req.limit, 50, 250);
   // julianday() rather than a string compare: pre-canonicalization rows may
   // carry offsets or extra precision, which sort wrong as text. This predicate
   // is not sargable (full scan), but the handler has no caller and the table

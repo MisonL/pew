@@ -164,6 +164,14 @@ describe("live RPC handlers", () => {
 
       expect(db.bind).toHaveBeenCalledWith(0);
     });
+
+
+    it("truncates a fractional limit", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      await handleLiveRpc({ method: "live.getRecentActivity", limit: 1.9 }, db);
+
+      expect(db.bind.mock.calls[0]![0]).toBe(1);
+    });
   });
 
   // -------------------------------------------------------------------------

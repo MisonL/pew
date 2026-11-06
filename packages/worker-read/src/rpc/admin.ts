@@ -5,6 +5,7 @@
  */
 
 import type { D1Database } from "@cloudflare/workers-types";
+import { clampedLimit, clampedOffset } from "./pagination";
 
 // ---------------------------------------------------------------------------
 // Response Types
@@ -169,8 +170,8 @@ async function handleListAdminUsers(
   db: D1Database
 ): Promise<Response> {
   // Lower-clamp as well as upper: SQLite reads a negative LIMIT as "no limit".
-  const limit = Math.min(Math.max(req.limit ?? 50, 0), 250);
-  const offset = req.offset ?? 0;
+  const limit = clampedLimit(req.limit, 50, 250);
+  const offset = clampedOffset(req.offset);
 
   const conditions: string[] = [];
   const params: unknown[] = [];

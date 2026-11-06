@@ -5,6 +5,7 @@
  */
 
 import type { D1Database } from "@cloudflare/workers-types";
+import { clampedLimit, clampedOffset } from "./pagination";
 
 /** Upper bound for an explicit `sessions.getRecords` limit. */
 const GET_SESSION_RECORDS_MAX_LIMIT = 5000;
@@ -109,9 +110,10 @@ async function handleListSessions(
     return Response.json({ error: "userId is required" }, { status: 400 });
   }
 
-  // Lower-clamp as well as upper: SQLite reads a negative LIMIT as "no limit".
-  const limit = Math.min(Math.max(req.limit ?? 50, 0), 250);
-  const offset = req.offset ?? 0;
+  // clampedLimit truncates and lower-clamps: SQLite reads a negative LIMIT as
+  // "no limit" and rejects a fractional one with "datatype mismatch".
+  const limit = clampedLimit(req.limit, 50, 250);
+  const offset = clampedOffset(req.offset);
 
   const conditions = ["user_id = ?"];
   const params: unknown[] = [req.userId];
@@ -246,12 +248,11 @@ async function handleGetSessionRecords(
   // the dashboard depends on for whole-month summaries. Anything supplied is
   // clamped: SQLite reads a negative LIMIT as "no limit", so the old `> 0`
   // guard turned a request for fewer rows into an unbounded response.
+  // A non-numeric value becomes 0 (no rows) rather than a NaN bound, which
+  // SQLite rejects with "datatype mismatch".
   const limit = req.limit === undefined
     ? undefined
-    : Math.min(
-        Math.max(Number.isFinite(req.limit) ? Math.trunc(req.limit) : 0, 0),
-        GET_SESSION_RECORDS_MAX_LIMIT,
-      );
+    : clampedLimit(req.limit, 0, GET_SESSION_RECORDS_MAX_LIMIT);
 
   const sql = `
     SELECT

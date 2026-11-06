@@ -240,6 +240,15 @@ describe("auth RPC handlers", () => {
 
       expect(db.bind.mock.calls[0]![0]).toBe(0);
     });
+
+
+    it("truncates a fractional limit and offset", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      await handleAuthRpc({ method: "auth.listInviteCodes", limit: 2.5, offset: 1.5 }, db);
+
+      expect(db.bind.mock.calls[0]![0]).toBe(2);
+      expect(db.bind.mock.calls[0]![1]).toBe(1);
+    });
   });
 
   // -------------------------------------------------------------------------

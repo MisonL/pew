@@ -136,6 +136,18 @@ describe("sessions RPC handlers", () => {
       expect(db.bind.mock.calls[0]![1]).toBe(0);
     });
 
+
+    it("truncates a fractional limit and offset instead of binding them to SQL", async () => {
+      // SQLite rejects a fractional LIMIT/OFFSET with "datatype mismatch",
+      // which surfaced as a 500 for a body the caller could send as plain JSON.
+      db.all.mockResolvedValue({ results: [] });
+      await handleSessionsRpc({ method: "sessions.list", userId: "u1", limit: 1.9, offset: 2.7 }, db);
+
+      // userId, limit, offset
+      expect(db.bind.mock.calls[0]![1]).toBe(1);
+      expect(db.bind.mock.calls[0]![2]).toBe(2);
+    });
+
     it("should return 400 when userId missing", async () => {
       const request = {
         method: "sessions.list",

@@ -164,6 +164,15 @@ describe("admin RPC handlers", () => {
       expect(db.bind.mock.calls[0]![0]).toBe(0);
     });
 
+
+    it("truncates a fractional limit and offset", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      await handleAdminRpc({ method: "admin.listUsers", limit: 3.7, offset: 1.2 }, db);
+
+      expect(db.bind.mock.calls[0]![0]).toBe(3);
+      expect(db.bind.mock.calls[0]![1]).toBe(1);
+    });
+
     it("should filter by query", async () => {
       db.all.mockResolvedValue({ results: [] });
 
