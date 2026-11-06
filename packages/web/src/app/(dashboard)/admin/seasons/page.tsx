@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useId } from "react";
+import { useState, useEffect, useCallback, useId, useRef } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { fetcher } from "@/lib/fetcher";
@@ -546,15 +546,22 @@ export default function AdminSeasonsPage() {
   // Fetch registered teams for a season
   // ---------------------------------------------------------------------------
 
+  // Identifies which season the in-flight (or last) teams fetch belongs to, so
+  // a response that arrives after the user expanded another season is dropped
+  // instead of rendering the wrong roster under the open row.
+  const expandedTeamsSeasonRef = useRef<string | null>(null);
+
   const fetchTeams = useCallback(
     async (seasonId: string) => {
       if (expandedId === seasonId) {
         setExpandedId(null);
         setExpandedTeams([]);
+        expandedTeamsSeasonRef.current = null;
         return;
       }
 
       setExpandedId(seasonId);
+      expandedTeamsSeasonRef.current = seasonId;
       setExpandedLoading(true);
       setExpandedTeams([]);
 
@@ -569,17 +576,21 @@ export default function AdminSeasonsPage() {
         const json = (await res.json()) as {
           entries: { team: { id: string; name: string }; total_tokens: number }[];
         };
-        setExpandedTeams(
-          json.entries.map((e) => ({
-            team_id: e.team.id,
-            team_name: e.team.name,
-            registered_at: "",
-          })),
-        );
+        // A response for a season the user has already navigated away from
+        // must not overwrite the row that is expanded now.
+        if (expandedTeamsSeasonRef.current === seasonId) {
+          setExpandedTeams(
+            json.entries.map((e) => ({
+              team_id: e.team.id,
+              team_name: e.team.name,
+              registered_at: "",
+            })),
+          );
+        }
       } catch {
-        setExpandedTeams([]);
+        if (expandedTeamsSeasonRef.current === seasonId) setExpandedTeams([]);
       } finally {
-        setExpandedLoading(false);
+        if (expandedTeamsSeasonRef.current === seasonId) setExpandedLoading(false);
       }
     },
     [expandedId],

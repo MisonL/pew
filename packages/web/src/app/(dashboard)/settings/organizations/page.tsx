@@ -140,24 +140,31 @@ export default function OrganizationsPage() {
   // Members modal
   // ---------------------------------------------------------------------------
 
+  // Guards against a stale in-flight response: user clicks org A, waits, then
+  // clicks org B — if A's response lands after B's modal opens, the member list
+  // would show A's data under B's title.
+  const membersOrgRef = useRef<string | null>(null);
+
   const openMembersModal = async (org: Organization) => {
     setMembersModalOrg(org);
     setMembers([]);
     setLoadingMembers(true);
+    membersOrgRef.current = org.id;
     try {
       const res = await fetch(`/api/organizations/${org.id}/members`);
-      if (res.ok) {
+      if (res.ok && membersOrgRef.current === org.id) {
         const data = await res.json();
         setMembers(data.members || []);
       }
     } finally {
-      setLoadingMembers(false);
+      if (membersOrgRef.current === org.id) setLoadingMembers(false);
     }
   };
 
   const closeMembersModal = () => {
     setMembersModalOrg(null);
     setMembers([]);
+    membersOrgRef.current = null;
   };
 
   // ---------------------------------------------------------------------------

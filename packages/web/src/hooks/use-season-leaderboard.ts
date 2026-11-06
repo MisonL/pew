@@ -90,9 +90,19 @@ export function useSeasonLeaderboard(
     void seasonIdOrSlug;
   }, [seasonIdOrSlug]);
 
+  // Guards against a stale response: user expands a team in season A, then
+  // switches to season B before A's members fetch lands. The reset effect
+  // clears membersByTeam on season change, but the stale A response writes
+  // back after the clear, corrupting B's roster for that team.
+  const requestedSeasonRef = useRef<string | null>(null);
+  useEffect(() => {
+    requestedSeasonRef.current = seasonIdOrSlug;
+  }, [seasonIdOrSlug]);
+
   const loadTeamMembers = useCallback(
     async (teamId: string) => {
       if (!seasonIdOrSlug) return;
+      const requestedSeason = seasonIdOrSlug;
       if (membersByTeam.has(teamId) || loadingTeamIdsRef.current.has(teamId)) {
         return;
       }
@@ -102,7 +112,7 @@ export function useSeasonLeaderboard(
 
       try {
         const res = await fetch(
-          `/api/seasons/${seasonIdOrSlug}/leaderboard?expand=members&team=${teamId}`,
+          `/api/seasons/${requestedSeason}/leaderboard?expand=members&team=${teamId}`,
         );
 
         if (!res.ok) {
@@ -110,11 +120,13 @@ export function useSeasonLeaderboard(
         }
 
         const json = (await res.json()) as SeasonLeaderboardData;
-        const teamWithMembers = json.entries.find((e) => e.team.id === teamId);
 
-        if (teamWithMembers?.members) {
-          const members = teamWithMembers.members;
-          setMembersByTeam((prev) => new Map(prev).set(teamId, members));
+        if (requestedSeasonRef.current === requestedSeason) {
+          const teamWithMembers = json.entries.find((e) => e.team.id === teamId);
+          if (teamWithMembers?.members) {
+            const members = teamWithMembers.members;
+            setMembersByTeam((prev) => new Map(prev).set(teamId, members));
+          }
         }
       } catch {
         // Silently fail — user can retry by collapsing/expanding again
