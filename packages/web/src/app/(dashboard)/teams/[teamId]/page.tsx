@@ -140,19 +140,18 @@ function SeasonRow({
 
 function AutoRegisterToggle({
   teamId,
-  initialValue,
+  enabled,
   onToggle,
 }: {
   teamId: string;
-  initialValue: boolean;
+  /** Controlled by the parent, which syncs it from the team SWR payload. */
+  enabled: boolean;
   onToggle?: (newValue: boolean) => void;
 }) {
-  const [enabled, setEnabled] = useState(initialValue);
   const [saving, setSaving] = useState(false);
   const toggleId = useId();
 
   const handleToggle = async (newValue: boolean) => {
-    setEnabled(newValue);
     onToggle?.(newValue);
     setSaving(true);
 
@@ -167,12 +166,10 @@ function AutoRegisterToggle({
         // Revert on failure
         const errorText = await res.text();
         console.error("Auto-register toggle failed:", res.status, errorText);
-        setEnabled(!newValue);
         onToggle?.(!newValue);
       }
     } catch (err) {
       console.error("Auto-register toggle error:", err);
-      setEnabled(!newValue);
       onToggle?.(!newValue);
     } finally {
       setSaving(false);
@@ -787,7 +784,7 @@ export default function TeamDetailPage() {
           <div className="space-y-3">
             <AutoRegisterToggle
               teamId={team.id}
-              initialValue={team.auto_register_season}
+              enabled={autoRegisterEnabled}
               onToggle={setAutoRegisterEnabled}
             />
             <SeasonRegistration
