@@ -52,6 +52,14 @@ describe("POST /api/auth/register", () => {
     expect((await res.json()).error).toMatch(/json/i);
   });
 
+  it("rejects a JSON literal null body with 400", async () => {
+    // JSON.parse("null") is valid JSON; the route read `body.email` off it and
+    // threw a TypeError, turning an input error into a 500.
+    const res = await post("null");
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/json/i);
+  });
+
   it("rejects a malformed email", async () => {
     const res = await post({ email: "not-an-email", password: "password123" });
     expect(res.status).toBe(400);

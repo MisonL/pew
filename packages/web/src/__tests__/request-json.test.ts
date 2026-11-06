@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { MAX_JSON_BODY_BYTES } from "@pew/core";
-import { readJsonBody } from "@/lib/request-json";
+import { isJsonObject, readJsonBody } from "@/lib/request-json";
 
 function jsonRequest(body: string): Request {
   return new Request("http://localhost:7020/api/test", {
@@ -9,6 +9,22 @@ function jsonRequest(body: string): Request {
     body,
   });
 }
+
+describe("isJsonObject", () => {
+  it.each([
+    [{}, true],
+    [{ a: 1 }, true],
+    [[], false],
+    [[1], false],
+    [null, false],
+    [undefined, false],
+    ["x", false],
+    [42, false],
+    [true, false],
+  ])("isJsonObject(%j) is %s", (value, expected) => {
+    expect(isJsonObject(value)).toBe(expected);
+  });
+});
 
 describe("readJsonBody", () => {
   it("parses an object body", async () => {

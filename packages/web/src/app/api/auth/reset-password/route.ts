@@ -8,6 +8,7 @@
 
 import { NextResponse } from "next/server";
 import { BodyTooLargeError, MAX_AUTH_BODY_BYTES, readBoundedJson } from "@pew/core";
+import { isJsonObject } from "@/lib/request-json";
 import { consumePasswordReset, DERIVATION_BUSY_ERROR } from "@/lib/credentials";
 import {
   AUTH_RESET_RATE_LIMIT,
@@ -27,15 +28,22 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    body = (await readBoundedJson(request, MAX_AUTH_BODY_BYTES)) as Record<string, unknown>;
+    parsed = await readBoundedJson(request, MAX_AUTH_BODY_BYTES);
   } catch (error) {
     if (error instanceof BodyTooLargeError) {
       return NextResponse.json({ error: error.message }, { status: 413 });
     }
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+
+  // `JSON.parse("null")` is valid JSON; reading `body.token` off it threw a
+  // TypeError, so plain bad input came back as a 500.
+  if (!isJsonObject(parsed)) {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const body = parsed;
 
   const token = typeof body.token === "string" ? body.token : "";
   const password = typeof body.password === "string" ? body.password : "";

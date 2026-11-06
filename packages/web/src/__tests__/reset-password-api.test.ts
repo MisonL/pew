@@ -47,6 +47,14 @@ describe("POST /api/auth/reset-password", () => {
     expect((await res.json()).error).toMatch(/json/i);
   });
 
+  it("rejects a JSON literal null body with 400", async () => {
+    // JSON.parse("null") is valid JSON; the route read `body.token` off it and
+    // threw a TypeError, turning an input error into a 500.
+    const res = await post("null");
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/json/i);
+  });
+
   it("rejects a missing token", async () => {
     const res = await post({ password: "newpassword" });
     expect(res.status).toBe(400);

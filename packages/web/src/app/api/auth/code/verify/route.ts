@@ -62,7 +62,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "code is required" }, { status: 400 });
   }
 
-  const code = body.code?.trim().toUpperCase();
+  // Optional chaining guards null/undefined only: a number or boolean code
+  // reached `.trim` and threw a TypeError — a 500 for plain bad input.
+  const code = typeof body.code === "string" ? body.code.trim().toUpperCase() : undefined;
   if (!code) {
     return NextResponse.json({ error: "code is required" }, { status: 400 });
   }

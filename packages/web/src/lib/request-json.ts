@@ -16,6 +16,18 @@ export type JsonBodyResult<T> =
   | { ok: true; body: T }
   | { ok: false; response: NextResponse };
 
+/**
+ * True for a parsed JSON object: not null, not an array.
+ *
+ * `JSON.parse("null")`, a bare number and `[]` are all valid JSON but not a
+ * request body — reading a field off them throws a TypeError, which surfaces
+ * as a 500 for plainly bad input. Routes that parse with `readBoundedJson`
+ * directly (the public auth routes) use this instead of re-deriving it.
+ */
+export function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 export async function readJsonBody<T = Record<string, unknown>>(
   request: Request,
   invalidMessage = "Invalid JSON",
@@ -38,7 +50,7 @@ export async function readJsonBody<T = Record<string, unknown>>(
 
   // `JSON.parse("null")`, a bare number or an array would otherwise reach
   // `body.name` and throw a TypeError — a 500 for what is plainly bad input.
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!isJsonObject(parsed)) {
     return {
       ok: false,
       response: NextResponse.json({ error: invalidMessage }, { status: 400 }),

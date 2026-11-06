@@ -476,8 +476,18 @@ describe("POST /api/auth/code/verify", () => {
     expect(body.api_key).toBe("pk_set_by_other_request");
   });
 
-  it("should normalize code format (accept without hyphen)", async () => {
-    const mockDbRead = createMockDbRead();
+  it("rejects a non-string code with 400 instead of throwing", async () => {
+    // `body.code?.trim()` guards null/undefined only: a number or boolean
+    // reached `.trim` and threw a TypeError — a 500 for plain bad input.
+    const response = await verifyPOST(new Request("http://localhost/api/auth/code/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: 123 }),
+    }));
+    expect(response.status).toBe(400);
+  });
+
+  it("should normalize code format (accept without hyphen)", async () => {    const mockDbRead = createMockDbRead();
     mockDbRead.getAuthCode.mockResolvedValue({
       code: "ABCD-1234",
       user_id: "user-123",

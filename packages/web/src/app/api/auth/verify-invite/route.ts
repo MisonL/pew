@@ -10,6 +10,7 @@
 
 import { NextResponse } from "next/server";
 import { BodyTooLargeError, MAX_AUTH_BODY_BYTES, readBoundedJson } from "@pew/core";
+import { isJsonObject } from "@/lib/request-json";
 import { getDbRead } from "@/lib/db";
 import { validateInviteCode } from "@/lib/invite";
 import {
@@ -35,9 +36,9 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    body = (await readBoundedJson(request, MAX_AUTH_BODY_BYTES)) as Record<string, unknown>;
+    parsed = await readBoundedJson(request, MAX_AUTH_BODY_BYTES);
   } catch (error) {
     if (error instanceof BodyTooLargeError) {
       return NextResponse.json(
@@ -50,6 +51,16 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+
+  // `JSON.parse("null")` is valid JSON. Destructuring it threw a TypeError,
+  // so plain bad input came back as a 500 with a stack trace.
+  if (!isJsonObject(parsed)) {
+    return NextResponse.json(
+      { valid: false, error: "Invalid JSON" },
+      { status: 400 }
+    );
+  }
+  const body = parsed;
 
   const { code } = body;
 

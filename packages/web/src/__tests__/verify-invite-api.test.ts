@@ -180,4 +180,13 @@ describe("POST /api/auth/verify-invite", () => {
     expect(json.valid).toBe(false);
     expect(json.error).toBe("Invalid invite code format");
   });
+
+  it("returns 400 for a JSON literal null body", async () => {
+    // JSON.parse("null") is valid JSON and readBoundedJson returns null; the
+    // route destructured it without a guard, so the input error surfaced as a
+    // 500 with a stack trace.
+    const res = await POST(makeRequest(null));
+    expect(res.status).toBe(400);
+    expect((await res.json()).valid).toBe(false);
+  });
 });
