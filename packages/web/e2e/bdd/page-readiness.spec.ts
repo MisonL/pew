@@ -181,10 +181,20 @@ const checks: Record<typeof READINESS_PAGES[number]["check"], (page: Page) => Pr
   },
   compare: async (page) => { await rows(page, ["E2E Test User", "Readiness Peer"]); },
   comparison: async (page) => {
+    // The date inputs are local calendar days and the page sends the exact UTC
+    // instants of that inclusive local range (a bare `to` would be widened a
+    // UTC day and put the window's edges on the wrong local day off UTC). The
+    // spec pins timezoneId=UTC, so filling the input starts the request with
+    // `from` at the local midnight and `to` at the start of the NEXT local day.
     const tomorrow = new Date();
     tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
     const to = tomorrow.toISOString().slice(0, 10);
-    const refreshed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/admin/usage/compare" && new URL(response.url()).searchParams.get("to") === to && response.ok());
+    const expectedTo = new Date(Date.parse(`${to}T00:00:00Z`) + 86_400_000).toISOString();
+    const refreshed = page.waitForResponse((response) => {
+      if (new URL(response.url()).pathname !== "/api/admin/usage/compare") return false;
+      const window = new URL(response.url()).searchParams.get("to");
+      return window !== null && Date.parse(window) === Date.parse(expectedTo) && response.ok();
+    });
     await page.getByLabel("To", { exact: true }).fill(to);
     await refreshed;
     await rows(page, ["E2E Test User", "Readiness Peer"]);
