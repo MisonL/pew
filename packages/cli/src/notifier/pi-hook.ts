@@ -60,8 +60,27 @@ export async function installPiHook(
   let existing: string | null = null;
   try {
     existing = await fs.readFile(opts.extensionPath, "utf8");
-  } catch {
-    // File doesn't exist — will install
+  } catch (err) {
+    // Only a missing file means "nothing to preserve". An unreadable one
+    // (EACCES, EISDIR, a symlink loop) must not be read as "write over it".
+    if ((err as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") throw err;
+  }
+
+  // The path is pew's own, but a user may have put their extension there. This
+  // file is "not managed by pew" for uninstall and status, so install must not
+  // destroy it either — overwriting would remove exactly what the other two
+  // refuse to touch.
+  if (existing !== null && !existing.includes(MARKER)) {
+    return {
+      source: SOURCE,
+      action: "skip",
+      changed: false,
+      detail:
+        "ownership_conflict: the Pi extension file exists but is not managed by pew; refusing to replace it",
+      warnings: [
+        `Move or remove ${opts.extensionPath} and re-run \`pew init --source=pi\` to install the hook.`,
+      ],
+    };
   }
 
   if (existing?.includes(MARKER)) {
@@ -116,8 +135,19 @@ export async function uninstallPiHook(
 
   try {
     await fs.unlink(opts.extensionPath);
-  } catch {
-    // Ignore removal errors
+  } catch (error) {
+    // Claiming success here is not cosmetic: `pew uninstall` deletes the
+    // shared notify.cjs only when every driver is warning-free, so a file
+    // left on disk would keep spawning a handler that no longer exists.
+    return {
+      source: SOURCE,
+      action: "skip",
+      changed: false,
+      detail: `Pi hook could not be removed: ${error instanceof Error ? error.message : String(error)}`,
+      warnings: [
+        `Remove ${opts.extensionPath} manually; until then it keeps invoking the shared notifier.`,
+      ],
+    };
   }
 
   return {

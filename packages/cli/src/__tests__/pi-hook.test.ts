@@ -48,6 +48,19 @@ describe("pi-hook", () => {
       const content = await readFile(extensionPath, "utf8");
       expect(content).toContain("session_shutdown");
     });
+
+    // install used to overwrite any file at that path. uninstall and status
+    // both treat "file without our marker" as not-pew's, so install destroyed
+    // exactly what the other two refused to touch.
+    it("refuses to replace an extension pew does not own", async () => {
+      const foreign = "// my own pi extension\nexport default function () {}\n";
+      await writeFile(extensionPath, foreign, "utf8");
+      const result = await installPiHook({ extensionPath, notifyPath });
+      expect(result.changed).toBe(false);
+      expect(result.detail).toContain("ownership_conflict");
+      expect(result.warnings?.length).toBeGreaterThan(0);
+      expect(await readFile(extensionPath, "utf8")).toBe(foreign);
+    });
   });
 
   describe("uninstallPiHook", () => {
@@ -70,6 +83,30 @@ describe("pi-hook", () => {
       const result = await uninstallPiHook({ extensionPath, notifyPath });
       expect(result.action).toBe("skip");
       expect(result.changed).toBe(false);
+    });
+
+    // Reporting success here was not cosmetic: `pew uninstall` removes the
+    // shared notify.cjs only when every driver is warning-free, so claiming
+    // "removed" while the file stayed on disk left an extension invoking a
+    // deleted handler.
+    it("reports a removal that failed instead of claiming the hook is gone", async () => {
+      await installPiHook({ extensionPath, notifyPath });
+      const result = await uninstallPiHook({
+        extensionPath,
+        notifyPath,
+        fs: {
+          readFile,
+          writeFile,
+          mkdir,
+          unlink: async () => {
+            throw Object.assign(new Error("EPERM: operation not permitted, unlink"), { code: "EPERM" });
+          },
+        },
+      });
+      expect(result.changed).toBe(false);
+      expect(result.action).not.toBe("uninstall");
+      expect(result.warnings?.length).toBeGreaterThan(0);
+      expect(await readFile(extensionPath, "utf8")).toContain("PEW_PI_HOOK");
     });
   });
 

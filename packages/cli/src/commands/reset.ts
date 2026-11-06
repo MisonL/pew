@@ -82,10 +82,17 @@ async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
       [r.duration_seconds, r.user_messages, r.assistant_messages, r.total_messages].every((n) => Number.isSafeInteger(n) && n >= 0));
     if (sessions.length) {
       const state = await readIdempotentQueueState(opts.stateDir, "session-queue.state.json");
+      const raw = await readFile(join(opts.stateDir, "session-queue.jsonl"), "utf8");
+      // An offset past the end of the file is not an acknowledged prefix: it is
+      // what a crash between compact()'s overwrite and saveOffset() leaves
+      // behind, or an older state restored beside a newer queue. readFromOffset
+      // already treats it as "start over", so reset must too — replaying the
+      // retained rows is idempotent, dropping them is not.
+      const acknowledged = state.offset > Buffer.byteLength(raw) ? 0 : state.offset;
       let offset = 0;
-      for (const line of (await readFile(join(opts.stateDir, "session-queue.jsonl"), "utf8")).split("\n")) {
+      for (const line of raw.split("\n")) {
         offset += Buffer.byteLength(line) + 1;
-        if (!line || offset > state.offset) continue;
+        if (!line || offset > acknowledged) continue;
         try {
           if (isRetiredSource((JSON.parse(line) as SessionQueueRecord).source)) {
             sessionOffset += Buffer.byteLength(`${JSON.stringify(JSON.parse(line))}\n`);

@@ -91,7 +91,10 @@ export async function coordinatedSync(
   const startTime = now();
   const maxFollowUps = opts.maxFollowUps ?? DEFAULT_MAX_FOLLOW_UPS;
   const lockTimeoutMs = opts.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
-  const runId = `${new Date(startTime).toISOString()}-${Math.random().toString(36).slice(2, 8)}`;
+  // The run id doubles as a file name under runs/. A colon is invalid on
+  // NTFS, and the swallowed write error used to take last-success.json — the
+  // only input to the cooldown — down with it.
+  const runId = `${new Date(startTime).toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
   const baseResult: CoordinatorRunResult = {
     runId,
     triggers: [trigger],
@@ -339,8 +342,9 @@ async function writeRunLog(
     const json = JSON.stringify(entry, null, 2);
     const runsDir = join(stateDir, "runs");
     await fs.mkdir(runsDir, { recursive: true });
-    await fs.writeFile(join(runsDir, `${result.runId}.json`), json);
-    await fs.writeFile(join(stateDir, "last-run.json"), json);
+    // Diagnostic only: a failed runs/ write must not skip the two files below.
+    await fs.writeFile(join(runsDir, `${result.runId}.json`), json).catch(() => { /* non-fatal */ });
+    await fs.writeFile(join(stateDir, "last-run.json"), json).catch(() => { /* non-fatal */ });
 
     // Write last-success.json only on success — used exclusively by cooldown.
     // Kept separate from last-run.json so skipped/error runs don't overwrite

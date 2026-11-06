@@ -261,6 +261,24 @@ describe("retired sources", () => {
     expect((await queue.readFromOffset(await queue.loadOffset())).records).toEqual([pending]);
   });
 
+  it("replays a retained backlog when the saved offset runs past the end of the file", async () => {
+    // compact() overwrites the file and only then saves the new offset, so a
+    // crash in between (or a restored older backup) leaves an offset past EOF.
+    // readFromOffset already treats that as "start over"; reset used to take it
+    // literally and mark the whole retained backlog as acknowledged, so the
+    // next upload sent nothing and the rows were never replayed again.
+    const queue = new SessionQueue(stateDir);
+    const session = (session_key: string) => ({ session_key, source: "omp" as const, kind: "human" as const,
+      started_at: "2026-01-01T00:00:00Z", last_message_at: "2026-01-01T00:01:00Z", snapshot_at: "2026-01-01T00:02:00Z",
+      duration_seconds: 60, user_messages: 1, assistant_messages: 1, total_messages: 2, project_ref: null, model: null });
+    const records = [session("omp:a"), session("omp:b")];
+    await queue.overwrite(records);
+    await writeFile(join(stateDir, "session-queue.state.json"), JSON.stringify({ offset: 1_000_000 }));
+    await executeReset({ stateDir });
+    expect(await queue.loadOffset()).toBe(0);
+    expect((await queue.readFromOffset(0)).records).toEqual(records);
+  });
+
   it("retains a safe replay offset when saving the rewritten session prefix fails", async () => {
     const queue = new SessionQueue(stateDir);
     const record = { session_key: "omp:synthetic", source: "omp" as const, kind: "human" as const,

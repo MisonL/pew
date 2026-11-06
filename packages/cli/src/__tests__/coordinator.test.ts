@@ -154,7 +154,7 @@ describe("coordinatedSync", () => {
     expect(executeSyncFn).toHaveBeenCalledTimes(1);
     expect(result.waitedForLock).toBe(false);
     expect(result.skippedSync).toBe(false);
-    expect(result.runId).toMatch(/^2026-03-09T10:00:00\.000Z-[a-z0-9]+$/);
+    expect(result.runId).toMatch(/^2026-03-09T10-00-00-000Z-[a-z0-9]+$/);
     expect(result.cycles).toHaveLength(1);
     expect(result.cycles[0]).toEqual({});
     expect(result.followUpCount).toBe(0);
@@ -636,6 +636,47 @@ describe("run log writing", () => {
     expect(lastRun!.cycles).toHaveLength(1);
     expect(lastRun!.status).toBe("success");
     expect(lastRun!.error).toBeUndefined();
+  });
+
+  it("uses a portable run-log filename that Windows allows", async () => {
+    const fake = createFakeFs({ lockContent: null, signalSize: 0 });
+    await coordinatedSync(createTrigger(), {
+      stateDir: "/tmp/pew",
+      executeSyncFn: vi.fn(async () => ({})),
+      version: "0.8.0",
+      fs: fake.fs,
+      process: createFakeProcess(),
+      now: () => Date.parse("2026-03-10T12:00:00.000Z"),
+    });
+    const runWrites = (fake.fs.writeFile as ReturnType<typeof vi.fn>).mock.calls
+      .map(([path]) => path as string)
+      .filter((path) => path.includes("/runs/"));
+    expect(runWrites).toHaveLength(1);
+    // A runId of `2026-03-10T12:00:00.000Z-xxxxxx` cannot be created on NTFS,
+    // which silently breaks every run-log write including last-success.json.
+    const basename = runWrites[0]!.split("/").pop()!;
+    expect(basename).not.toMatch(/:/);
+    expect(basename).toMatch(/^2026-03-10T12-00-00-000Z-[a-z0-9]+\.json$/);  });
+
+  it("still records the cooldown timestamp when the diagnostic run log cannot be written", async () => {
+    const fake = createFakeFs({ lockContent: null, signalSize: 0 });
+    const writeFile = vi.fn(async (path: string, data: string, options?: { flag?: string }) => {
+      if (path.includes("/runs/")) throw Object.assign(new Error("EINVAL"), { code: "EINVAL" });
+      return fake.fs.writeFile(path, data, options);
+    });
+    await coordinatedSync(createTrigger(), {
+      stateDir: "/tmp/pew",
+      executeSyncFn: vi.fn(async () => ({})),
+      version: "0.8.0",
+      fs: { ...fake.fs, writeFile },
+      process: createFakeProcess(),
+      now: () => Date.parse("2026-03-10T12:00:00.000Z"),
+    });
+    const paths = writeFile.mock.calls.map(([path]) => path);
+    // The cooldown reads last-success.json; a diagnostic write must never be
+    // able to skip it.
+    expect(paths.some((path) => path.endsWith("last-success.json"))).toBe(true);
+    expect(paths.some((path) => path.endsWith("last-run.json"))).toBe(true);
   });
 
   it("creates runs/ directory via fs.mkdir", async () => {
