@@ -242,12 +242,16 @@ async function handleGetSessionRecords(
     params.push(req.kind);
   }
 
-  // An explicit limit is honoured but bounded so one caller cannot ask for an
-  // unbounded response; omitting it keeps the previous "everything in the
-  // window" behavior the dashboard depends on for whole-month summaries.
-  const limit = Number.isInteger(req.limit) && (req.limit as number) > 0
-    ? Math.min(req.limit as number, GET_SESSION_RECORDS_MAX_LIMIT)
-    : undefined;
+  // Omitting the limit keeps the previous "everything in the window" behavior
+  // the dashboard depends on for whole-month summaries. Anything supplied is
+  // clamped: SQLite reads a negative LIMIT as "no limit", so the old `> 0`
+  // guard turned a request for fewer rows into an unbounded response.
+  const limit = req.limit === undefined
+    ? undefined
+    : Math.min(
+        Math.max(Number.isFinite(req.limit) ? Math.trunc(req.limit) : 0, 0),
+        GET_SESSION_RECORDS_MAX_LIMIT,
+      );
 
   const sql = `
     SELECT

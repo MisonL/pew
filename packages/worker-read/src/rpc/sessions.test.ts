@@ -359,6 +359,28 @@ describe("sessions RPC handlers", () => {
       expect(db.bind).toHaveBeenCalledWith("u1", "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z");
     });
 
+    it("clamps a non-positive or fractional limit instead of dropping to no limit", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      const base = {
+        method: "sessions.getRecords" as const,
+        userId: "u1",
+        fromDate: "2026-01-01T00:00:00Z",
+        toDate: "2026-02-01T00:00:00Z",
+      };
+
+      // SQLite reads LIMIT -1 as "no limit". The old `> 0` guard sent every
+      // negative value down the unbounded branch — a caller asking for fewer
+      // rows received the whole history, past the 5000 cap.
+      await handleSessionsRpc({ ...base, limit: -1 }, db);
+      expect(String(db.prepare.mock.calls[0]?.[0])).toContain("LIMIT ?");
+      expect(db.bind).toHaveBeenCalledWith("u1", base.fromDate, base.toDate, 0);
+
+      db.prepare.mockClear();
+      db.bind.mockClear();
+      await handleSessionsRpc({ ...base, limit: 2.5 }, db);
+      expect(db.bind).toHaveBeenCalledWith("u1", base.fromDate, base.toDate, 2);
+    });
+
     it("should return 400 when required params missing", async () => {
       const request = {
         method: "sessions.getRecords",
