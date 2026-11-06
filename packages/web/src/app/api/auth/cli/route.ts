@@ -117,12 +117,23 @@ export async function GET(request: Request) {
     let apiKey = await dbRead.getUserApiKey(userId);
 
     if (!apiKey) {
-      // Generate a new api_key
-      apiKey = generateApiKey();
-      await dbWrite.execute(
-        "UPDATE users SET api_key = ?, updated_at = datetime('now') WHERE id = ?",
-        [apiKey, userId]
+      // Conditional update, same contract as /api/auth/code/verify: two
+      // concurrent `pew login` redirects both read null, and an unconditional
+      // UPDATE let the loser overwrite the winner's key while still handing
+      // its now-nonexistent key to the CLI (every later call 401s).
+      const newKey = generateApiKey();
+      const updateResult = await dbWrite.execute(
+        "UPDATE users SET api_key = ?, updated_at = datetime('now') WHERE id = ? AND api_key IS NULL",
+        [newKey, userId]
       );
+      if (updateResult.changes === 1) {
+        apiKey = newKey;
+      } else {
+        apiKey = await dbRead.getUserApiKey(userId);
+        if (!apiKey) {
+          throw new Error("Failed to generate API key");
+        }
+      }
     }
 
     // 4. Redirect back to CLI with api_key + state

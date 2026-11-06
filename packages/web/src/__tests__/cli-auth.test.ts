@@ -307,7 +307,7 @@ describe("GET /api/auth/cli", () => {
 
     it("should generate new api_key if user has none", async () => {
       mockDbRead.getUserApiKey.mockResolvedValueOnce(null);
-      mockDbWrite.execute.mockResolvedValueOnce(undefined);
+      mockDbWrite.execute.mockResolvedValueOnce({ changes: 1 });
 
       const res = await GET(
         makeRequest("http://localhost:9999/callback")
@@ -321,6 +321,37 @@ describe("GET /api/auth/cli", () => {
       expect(mockDbWrite.execute.mock.calls[0]![0]).toContain(
         "UPDATE users SET api_key"
       );
+    });
+
+    it("hands out the key a concurrent login wrote instead of its own overwritten one", async () => {
+      // Two `pew login` redirects racing on the same account: the unconditional
+      // UPDATE let the loser overwrite the winner's key, and the loser still
+      // redirected to the CLI with a key that no longer exists in the database
+      // — every later API call 401s with nothing to point at.
+      mockDbRead.getUserApiKey
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce("pk_written_by_the_other_request");
+      mockDbWrite.execute.mockResolvedValueOnce({ changes: 0 });
+
+      const res = await GET(makeRequest("http://localhost:9999/callback"));
+
+      expect(res.status).toBe(307);
+      const location = res.headers.get("Location")!;
+      expect(location).toContain("api_key=pk_written_by_the_other_request");
+      expect(mockDbWrite.execute.mock.calls[0]![0]).toContain("AND api_key IS NULL");
+    });
+
+    it("fails instead of redirecting without a key when the re-read finds none", async () => {
+      // Losing the race and then reading null is a protocol violation (the
+      // winner's key must be visible) — redirecting here would hand the CLI an
+      // empty or stale credential.
+      mockDbRead.getUserApiKey.mockResolvedValue(null);
+      mockDbWrite.execute.mockResolvedValueOnce({ changes: 0 });
+
+      const res = await GET(makeRequest("http://localhost:9999/callback"));
+
+      expect(res.status).toBe(500);
+      expect(res.headers.get("Location")).toBeNull();
     });
 
     it("should include email in callback redirect", async () => {
