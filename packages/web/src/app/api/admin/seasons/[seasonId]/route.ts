@@ -172,7 +172,10 @@ export async function PATCH(
       }
     }
 
-    await dbRead.invalidateCacheKey("seasons:list");
+    // The update is committed; a failed invalidation only leaves the list
+    // stale for its TTL. Reporting 500 made the caller retry a change that
+    // already applied.
+    await dbRead.invalidateCacheKey("seasons:list").catch(() => undefined);
 
     // Return updated season
     const updated = await dbRead.getSeasonById(seasonId);

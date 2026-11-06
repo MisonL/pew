@@ -202,6 +202,27 @@ describe("POST /api/admin/seasons", () => {
     expect(json.auto_registered_teams).toBe(0);
   });
 
+  it("still returns the created season when the cache invalidation fails", async () => {
+    // The INSERT is committed; a failed invalidate only means the list shows
+    // stale data for its TTL. Returning 500 made the admin retry into the slug
+    // collision below and never learn the new season's id.
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getSeasonBySlug.mockResolvedValueOnce(null);
+    mockDbWrite.execute.mockResolvedValueOnce({ changes: 1, duration: 0.01 });
+    autoRegisterTeamsForSeason.mockResolvedValueOnce({ registered: 0, skipped: 0, seasonEligible: true });
+    mockDbRead.invalidateCacheKey.mockRejectedValueOnce(new Error("read worker down"));
+
+    const res = await POST(
+      makeJsonRequest("POST", "/api/admin/seasons", {
+        name: "Season 4",
+        slug: "s4",
+        start_date: "2099-07-01T00:00:00Z",
+        end_date: "2099-07-31T23:59:00Z",
+      })
+    );
+    expect(res.status).toBe(201);
+  });
+
   it("should reject duplicate slug", async () => {
     resolveAdmin.mockResolvedValueOnce(ADMIN);
     mockDbRead.getSeasonBySlug.mockResolvedValueOnce({ id: "existing-id" }); // slug exists

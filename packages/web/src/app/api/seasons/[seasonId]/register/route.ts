@@ -160,7 +160,7 @@ export async function POST(
       throw batchErr;
     }
 
-    await dbRead.invalidateCacheKey("seasons:list");
+    await dbRead.invalidateCacheKey("seasons:list").catch(() => undefined);
 
     return NextResponse.json(
       {
@@ -277,7 +277,10 @@ export async function DELETE(
       },
     ]);
 
-    await dbRead.invalidateCacheKey("seasons:list");
+    // The unregister write is committed; a failed cache invalidation only
+    // means the list shows stale membership for its TTL. Reporting 500 sent
+    // the caller into a retry that answers 404 "not registered".
+    await dbRead.invalidateCacheKey("seasons:list").catch(() => undefined);
 
     return NextResponse.json({ deleted: true });
   } catch (err) {

@@ -141,6 +141,23 @@ describe("POST /api/seasons/[seasonId]/register", () => {
     expect(res.status).toBe(201);
   });
 
+  it("still reports success when the cache invalidation fails after the commit", async () => {
+    // The batch is already committed; a failed invalidate is not a failed
+    // registration. Returning 500 made the caller retry into a 409 "already
+    // registered" for a registration that did succeed.
+    resolveUser.mockResolvedValueOnce(USER);
+    mockDbRead.getSeasonById.mockResolvedValueOnce(SEASON_UPCOMING);
+    deriveSeasonStatus.mockReturnValueOnce("upcoming");
+    mockDbRead.getTeamMembership.mockResolvedValueOnce("owner");
+    mockDbRead.getSeasonRegistration.mockResolvedValueOnce(null);
+    mockDbRead.getTeamMembers.mockResolvedValueOnce([]);
+    mockDbWrite.batch.mockResolvedValueOnce(undefined);
+    mockDbRead.invalidateCacheKey.mockRejectedValueOnce(new Error("read worker down"));
+
+    const res = await POST(postReq({ team_id: "t1" }), PARAMS);
+    expect(res.status).toBe(201);
+  });
+
   it("returns 403 when user is not team owner", async () => {
     resolveUser.mockResolvedValueOnce(USER);
     mockDbRead.getSeasonById.mockResolvedValueOnce(SEASON_UPCOMING);

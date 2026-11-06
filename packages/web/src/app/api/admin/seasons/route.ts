@@ -169,7 +169,10 @@ export async function POST(request: Request) {
       console.error("Auto-registration failed (non-fatal):", err);
     }
 
-    await dbRead.invalidateCacheKey("seasons:list");
+    // The season row is committed; a failed invalidation only leaves the list
+    // stale for its TTL. Returning 500 made the admin retry into the slug
+    // collision above and never learn the new season's id.
+    await dbRead.invalidateCacheKey("seasons:list").catch(() => undefined);
 
     return NextResponse.json(
       {
