@@ -63,6 +63,13 @@ import type { DynamicPricingEntry } from "./pricing";
 // accident, not a hang.
 const LEADERBOARD_RPC_TIMEOUT_MS = Number(process.env.LEADERBOARD_RPC_TIMEOUT_MS) || 15_000;
 
+// Every other RPC needs a deadline too: without one a stalled read Worker holds
+// the web request open until undici's own 300s body timeout, pinning the route
+// and every resource behind it. 60s is far above the slowest measured query
+// (full-history sessions, ~140ms) and the leaderboard snapshot keeps its own
+// tighter watchdog above. WORKER_RPC_TIMEOUT_MS raises it per deployment.
+const DEFAULT_RPC_TIMEOUT_MS = 60_000;
+
 export function createWorkerDbRead(): DbRead {
   const url = process.env.WORKER_READ_URL;
   const secret = process.env.WORKER_READ_SECRET;
@@ -71,6 +78,12 @@ export function createWorkerDbRead(): DbRead {
     throw new Error("WORKER_READ_URL and WORKER_READ_SECRET are required");
   }
 
+  const configuredTimeoutMs = Number(process.env.WORKER_RPC_TIMEOUT_MS);
+  const rpcTimeoutMs =
+    Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
+      ? configuredTimeoutMs
+      : DEFAULT_RPC_TIMEOUT_MS;
+
   /**
    * Call the RPC endpoint with a typed request.
    */
@@ -78,7 +91,7 @@ export function createWorkerDbRead(): DbRead {
     const res = await fetch(`${url}/api/rpc`, {
       method: "POST",
       cache: "no-store",
-      ...(signal && { signal }),
+      signal: signal ?? AbortSignal.timeout(rpcTimeoutMs),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${secret}`,

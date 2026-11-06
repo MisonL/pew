@@ -102,10 +102,36 @@ describe("createWorkerDbRead", () => {
     expect(fetchSpy).toHaveBeenCalledWith("https://pew.test.workers.dev/api/rpc", {
       method: "POST",
       cache: "no-store",
+      signal: deadline.mock.results[0]!.value,
       headers: { "Content-Type": "application/json", Authorization: "Bearer test-secret" },
       body: JSON.stringify({ method: "admin.getUsageComparison", userIds: ["u1", "u2"], fromDate: "2026-01-01", toDate: "2026-02-01", tzOffset: -480, source: "s", model: "m" }),
     });
-    expect(deadline).not.toHaveBeenCalled();
+  });
+
+  // A hung read Worker used to pin the route open until undici's own 300s
+  // body timeout: every RPC except the leaderboard snapshot had no deadline.
+  it("gives every RPC a transport deadline by default", async () => {
+    const deadline = vi.spyOn(AbortSignal, "timeout");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ result: null }));
+    await createWorkerDbRead().getUserById("u1");
+    expect(deadline).toHaveBeenCalledExactlyOnceWith(60_000);
+    expect(fetchSpy.mock.calls[0]![1]).toMatchObject({ signal: deadline.mock.results[0]!.value });
+  });
+
+  it("lets a deployment widen the default deadline", async () => {
+    process.env.WORKER_RPC_TIMEOUT_MS = "120000";
+    const deadline = vi.spyOn(AbortSignal, "timeout");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ result: null }));
+    await createWorkerDbRead().getUserById("u1");
+    expect(deadline).toHaveBeenCalledExactlyOnceWith(120_000);
+  });
+
+  it.each(["soon", "", "0", "-5"])("falls back to the default for an unusable override %j", async (value) => {
+    process.env.WORKER_RPC_TIMEOUT_MS = value;
+    const deadline = vi.spyOn(AbortSignal, "timeout");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ result: null }));
+    await createWorkerDbRead().getUserById("u1");
+    expect(deadline).toHaveBeenCalledExactlyOnceWith(60_000);
   });
 
   it.each([
