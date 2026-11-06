@@ -433,6 +433,27 @@ describe("PATCH /api/admin/seasons/[seasonId]", () => {
 
   const patchParams = Promise.resolve({ seasonId: "season-1" });
 
+  it("rejects a non-boolean toggle instead of coercing it", async () => {
+    // `"false"` is truthy in JS, so the coercion wrote 1 — turning on late
+    // withdrawal (which unfreezes withdrawal from a locked season) for a caller
+    // that asked to turn it off.
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getSeasonById.mockResolvedValueOnce({
+      id: "season-1",
+      name: "Old Name",
+      slug: "s1",
+      start_date: "2020-01-01T00:00:00Z",
+      end_date: "2099-12-31T23:59:00Z",
+    });
+
+    const res = await PATCH(
+      makeJsonRequest("PATCH", "/api/admin/seasons", { allow_late_withdrawal: "false" }),
+      { params: patchParams }
+    );
+    expect(res.status).toBe(400);
+    expect(mockDbWrite.execute).not.toHaveBeenCalled();
+  });
+
   it("should allow name change on active season", async () => {
     resolveAdmin.mockResolvedValueOnce(ADMIN);
 

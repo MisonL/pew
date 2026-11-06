@@ -127,18 +127,22 @@ export async function PATCH(
       );
     }
 
-    // Toggle flags — always allowed regardless of status
-    if (body.allow_late_registration !== undefined) {
-      updates.push("allow_late_registration = ?");
-      values.push(body.allow_late_registration ? 1 : 0);
-    }
-    if (body.allow_roster_changes !== undefined) {
-      updates.push("allow_roster_changes = ?");
-      values.push(body.allow_roster_changes ? 1 : 0);
-    }
-    if (body.allow_late_withdrawal !== undefined) {
-      updates.push("allow_late_withdrawal = ?");
-      values.push(body.allow_late_withdrawal ? 1 : 0);
+    // Toggle flags — always allowed regardless of status. Strict booleans, like
+    // the `auto_register_season` flag on teams: a JSON string "false" is
+    // truthy, and coercing it silently wrote 1 — turning ON late withdrawal
+    // (which unfreezes exits from a locked season) or triggering a roster
+    // backfill for a caller that asked to turn it off.
+    for (const flag of ["allow_late_registration", "allow_roster_changes", "allow_late_withdrawal"] as const) {
+      const value = body[flag];
+      if (value === undefined) continue;
+      if (typeof value !== "boolean") {
+        return NextResponse.json(
+          { error: `${flag} must be a boolean` },
+          { status: 400 }
+        );
+      }
+      updates.push(`${flag} = ?`);
+      values.push(value ? 1 : 0);
     }
 
     if (updates.length === 0) {
