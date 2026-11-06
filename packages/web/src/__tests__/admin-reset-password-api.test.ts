@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createMockDbWrite } from "./test-utils";
+import { createMockDbRead, createMockDbWrite } from "./test-utils";
 
 vi.mock("@/lib/db", () => ({
   getDbRead: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock("@/lib/d1", () => ({
 vi.mock("@/auth", () => ({ shouldUseSecureCookies: () => false }));
 
 import { POST } from "@/app/api/admin/users/[userId]/reset-password/route";
-import { getDbWrite } from "@/lib/db";
+import { getDbRead, getDbWrite } from "@/lib/db";
 import { resolveUser } from "@/lib/auth-helpers";
 
 const mockGetDbWrite = getDbWrite as unknown as ReturnType<typeof vi.fn>;
@@ -45,6 +45,10 @@ describe("POST /api/admin/users/[userId]/reset-password", () => {
     mockResolveUser.mockReset();
     dbWrite = createMockDbWrite();
     mockGetDbWrite.mockResolvedValue(dbWrite);
+    // The route verifies the target exists before inserting a reset token.
+    const dbRead = createMockDbRead();
+    dbRead.getUserById.mockResolvedValue({ id: "target-user", email: "target@example.com" } as never);
+    vi.mocked(getDbRead).mockResolvedValue(dbRead as never);
     // Real resolveAdmin runs: allowlist first, then is_admin in the database.
     process.env = { ...ORIGINAL_ENV, ADMIN_EMAILS: "admin@example.com" };
     delete process.env.RAILWAY_ENVIRONMENT;
@@ -68,6 +72,20 @@ describe("POST /api/admin/users/[userId]/reset-password", () => {
 
     const res = await post("");
     expect(res.status).toBe(400);
+  });
+
+  it("returns 404 when the target user does not exist", async () => {
+    // Without the check the INSERT fails its foreign key (500) on D1, and on a
+    // backend with foreign keys off it stores a token whose consumption burns
+    // itself and updates zero rows, answering 200 with the password unchanged.
+    mockResolveUser.mockResolvedValueOnce({ userId: "u1", email: "admin@example.com" });
+    const dbRead = createMockDbRead();
+    dbRead.getUserById.mockResolvedValueOnce(null);
+    vi.mocked(getDbRead).mockResolvedValue(dbRead as never);
+
+    const res = await post("missing-user");
+    expect(res.status).toBe(404);
+    expect(dbWrite.batch).not.toHaveBeenCalled();
   });
 
   it("issues a single-use token for an admin", async () => {

@@ -12,6 +12,7 @@
 import { NextResponse } from "next/server";
 import { resolveAdmin } from "@/lib/admin";
 import { createPasswordReset, RESET_TOKEN_TTL_MINUTES } from "@/lib/credentials";
+import { getDbRead } from "@/lib/db";
 
 export async function POST(
   request: Request,
@@ -28,6 +29,17 @@ export async function POST(
   }
 
   try {
+    // password_resets.user_id references users(id). Without this check a
+    // deleted or mistyped id fails the insert with a foreign-key error (500),
+    // and on a backend with foreign keys off it stores a token whose
+    // consumption burns itself and updates zero rows, answering 200 with the
+    // password unchanged.
+    const dbRead = await getDbRead();
+    const target = await dbRead.getUserById(userId);
+    if (!target) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
     const token = await createPasswordReset(userId);
     return NextResponse.json({ token, expiresInMinutes: RESET_TOKEN_TTL_MINUTES });
   } catch (err) {
