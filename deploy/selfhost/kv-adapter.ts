@@ -63,11 +63,15 @@ export function createKvAdapter(options: KvAdapterOptions): KvAdapter {
   return {
     async get(key: string, type: "text" | "json" = "text"): Promise<unknown> {
       const stamp = new Date(now()).toISOString();
-      // strong read: cache.invalidate()/clear() must be visible to the next
-      // get() even when a cluster follower lags (read-after-write contract
-      // the worker's cache layer assumes; the migration ledger documents the
-      // extra leader round-trip as accepted for exactly this path).
-      const result = await db.prepare(SELECT_SQL).bind(key, stamp).strong<{ value: string }>();
+      // Weak read (level=weak, the adapter's all()). Strong would send every
+      // cache hit through the Raft log — a replicated write on the leader plus
+      // an fsync per read, competing with real writes — and rqlite's own docs
+      // say "Don't use Strong in production code". The freshness the cache
+      // layer actually needs comes from its own invalidate()/clear() writes
+      // followed by the TTL: a stale entry is bounded, and a weak read only
+      // answers once the node has confirmed it is the leader, so it cannot
+      // serve data from a deposed leader for longer than the election window.
+      const result = await db.prepare(SELECT_SQL).bind(key, stamp).all<{ value: string }>();
       const row = result.results[0] ?? null;
       if (!row) return null;
       if (type === "json") {

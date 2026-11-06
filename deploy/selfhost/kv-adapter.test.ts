@@ -32,6 +32,13 @@ function makeFakeDb() {
           return stmt;
         },
         all: async <T,>(): Promise<D1Result<T>> => {
+          // get(): SELECT value, expires_at FROM kv_cache WHERE key = ? AND ...
+          if (sql.includes("SELECT value, expires_at FROM kv_cache")) {
+            const [key, stamp] = params as [string, string];
+            const row = rows.get(key);
+            if (!row || !live(row, stamp)) return { success: true, results: [], meta: { changes: 0, duration: 0 } };
+            return { success: true, results: [{ value: row.value } as unknown as T], meta: { changes: 0, duration: 0 } };
+          }
           if (sql.includes("SELECT key FROM kv_cache")) {
             // Prefix by substr equality: bind order is
             // (prefix, prefix, after, stamp, limit).
@@ -142,6 +149,38 @@ describe("kv-adapter", () => {
     clock += 10_000_000;
     expect(await kv.get("zero", "json")).toBe("v");
     expect(await kv.get("neg", "json")).toBe("v");
+  });
+
+  it("reads through level=weak, not level=strong", async () => {
+    // Every cached read in worker-read goes through kv.get. A strong read
+    // appends a Raft log entry on the leader per call (rqlite docs: "Don't
+    // use Strong in production code"), turning each cache hit into a
+    // replicated write competing with real writes, and it fails outright
+    // whenever no leader is elected. The read-after-write contract the cache
+    // layer needs comes from the caller's own invalidation, not from
+    // linearizability: a stale entry is bounded by its TTL.
+    const { db } = makeFakeDb();
+    let strongReads = 0;
+    // The fake's `bind()` returns the same statement object, so the wrapper
+    // has to be reapplied to every bound statement — wrapping only what
+    // prepare() returns would let the original strong() through unseen.
+    const wrap = (stmt: D1StatementLike): D1StatementLike => ({
+      sql: stmt.sql,
+      params: stmt.params,
+      bind: (...next: unknown[]) => wrap(stmt.bind(...next)),
+      all: <T,>() => stmt.all<T>(),
+      strong: <T,>() => {
+        strongReads += 1;
+        return stmt.strong<T>();
+      },
+      first: <T,>(column?: string) => stmt.first<T>(column),
+      run: () => stmt.run(),
+    } as D1StatementLike);
+    const spied: D1Like = { ...db, prepare: (sql: string) => wrap(db.prepare(sql)) };
+    const kv = createKvAdapter({ db: spied, now: () => NOW });
+    await kv.put("k", '"v"');
+    expect(await kv.get("k", "json")).toBe("v");
+    expect(strongReads).toBe(0);
   });
 
   it("delete removes the key", async () => {
