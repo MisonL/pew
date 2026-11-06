@@ -118,6 +118,39 @@ export function trailingLocalDays(
   };
 }
 
+/** A bare "YYYY-MM-DD" that names a real calendar day (Date.parse rolls 02-30 over). */
+function isRealBareDay(day: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+  const ms = Date.parse(`${day}T00:00:00Z`);
+  return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === day;
+}
+
+/**
+ * Exact UTC instants for the inclusive local calendar-day range
+ * [fromDay, toDay], half-open at the end.
+ *
+ * For a date picker whose values are local calendar days: a bare
+ * "YYYY-MM-DD" sent to the usage APIs is read as UTC midnight (and a bare `to`
+ * widened a further UTC day), so east of UTC the first local day started at
+ * 08:00 and the last one ended at 08:00 — a partial day at each edge. Returns
+ * null when either value is not a real bare day (e.g. a cleared input), so
+ * the caller can fall back to the server's default instead of sending a
+ * window derived from an Invalid Date.
+ */
+export function localDayRangeToUtc(
+  fromDay: string,
+  toDay: string,
+  tzOffset: number,
+): { from: string; to: string } | null {
+  if (!isRealBareDay(fromDay) || !isRealBareDay(toDay)) return null;
+  return {
+    from: new Date(Date.parse(`${fromDay}T00:00:00Z`) + tzOffset * 60_000).toISOString(),
+    to: new Date(
+      Date.parse(`${toDay}T00:00:00Z`) + 86_400_000 + tzOffset * 60_000,
+    ).toISOString(),
+  };
+}
+
 /** Human-readable label for a period. */
 export function periodLabel(period: Period): string {
   switch (period) {

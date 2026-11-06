@@ -9,6 +9,7 @@ import { ArrowLeft, ExternalLink } from "lucide-react";
 import { formatTokens, formatTokensFull } from "@/lib/utils";
 import { useAdmin } from "@/hooks/use-admin";
 import { useTzOffset } from "@/hooks/use-tz-offset";
+import { localDayRangeToUtc, trailingLocalDays } from "@/lib/date-helpers";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { Button } from "@nocoo/basalt/components/button";
 import { Empty } from "@nocoo/basalt/components/empty";
@@ -61,16 +62,6 @@ interface ChartDataPoint {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function defaultFrom(): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 30);
-  return d.toISOString().slice(0, 10);
-}
-
-function defaultTo(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 /** Format date string "2026-03-07" to "Mar 7" */
 function fmtDate(dateStr: string): string {
@@ -171,23 +162,31 @@ function CompareResultContent() {
     [userIdsParam]
   );
 
-  // Filters
-  const [dateFrom, setDateFrom] = useState(defaultFrom);
-  const [dateTo, setDateTo] = useState(defaultTo);
+  // Filters. The date inputs are local calendar days: a UTC-calendar default
+  // showed "yesterday" to a UTC+8 viewer during the first eight local hours,
+  // while the chart (bucketed by local day) already contained local today.
+  const tzOffset = useTzOffset();
+  const [dateFrom, setDateFrom] = useState(() => trailingLocalDays(30, tzOffset).startDay);
+  const [dateTo, setDateTo] = useState(() => trailingLocalDays(30, tzOffset).today);
   const [sourceFilter, setSourceFilter] = useState("");
   const [modelFilter, setModelFilter] = useState("");
   const uid = useId();
   const dateFromId = `${uid}-date-from`;
   const dateToId = `${uid}-date-to`;
-  const tzOffset = useTzOffset();
 
   // Data via SWR
   const swrKey = useMemo(() => {
     if (!isAdmin || userIds.length === 0) return null;
+    // Exact instants, not bare dates: the route reads a bare `from` as UTC
+    // midnight and widens a bare `to` by a UTC day, which put the window's
+    // head and tail on the wrong local day for anyone not on UTC. A cleared
+    // input ("" from <input type="date">) falls back to the bare value so the
+    // route applies its own default instead of rejecting an Invalid Date.
+    const range = localDayRangeToUtc(dateFrom, dateTo, tzOffset);
     const params = new URLSearchParams({
       userIds: userIds.join(","),
-      from: dateFrom,
-      to: dateTo,
+      from: range?.from ?? dateFrom,
+      to: range?.to ?? dateTo,
       tzOffset: String(tzOffset),
     });
     if (sourceFilter) params.set("source", sourceFilter);

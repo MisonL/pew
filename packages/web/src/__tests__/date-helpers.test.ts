@@ -12,6 +12,7 @@ import {
   detectPeakHours,
   getLocalToday,
   trailingLocalDays,
+  localDayRangeToUtc,
   formatDuration,
   fillDateRange,
   fillTimelineGaps,
@@ -95,6 +96,43 @@ describe("periodToUtcRange", () => {
     expect(periodToUtcRange("all", "2026-09-15", 0)).toEqual({
       start: null, end: "2026-09-15", from: "2020-01-01T00:00:00.000Z", to: "2026-09-16T00:00:00.000Z",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// localDayRangeToUtc
+// ---------------------------------------------------------------------------
+
+describe("localDayRangeToUtc", () => {
+  it("maps an inclusive local day range onto a half-open UTC window", () => {
+    // The admin compare page's <input type="date"> values are local calendar
+    // days. Sending them bare let the API read them as UTC days, so east of
+    // UTC the window's head and tail fell on the wrong local day (a partial
+    // first day plus the first hours of tomorrow).
+    expect(localDayRangeToUtc("2026-11-06", "2026-11-06", -480)).toEqual({
+      from: "2026-11-05T16:00:00.000Z", // Nov 6 00:00 in UTC+8
+      to: "2026-11-06T16:00:00.000Z", //   Nov 7 00:00 in UTC+8
+    });
+    expect(localDayRangeToUtc("2026-11-06", "2026-11-06", 300)).toEqual({
+      from: "2026-11-06T05:00:00.000Z", // Nov 6 00:00 in UTC-5
+      to: "2026-11-07T05:00:00.000Z",
+    });
+  });
+
+  it("keeps a multi-day range inclusive of the last local day", () => {
+    expect(localDayRangeToUtc("2026-10-07", "2026-11-06", 0)).toEqual({
+      from: "2026-10-07T00:00:00.000Z",
+      to: "2026-11-07T00:00:00.000Z",
+    });
+  });
+
+  it("returns null for a value the date input cannot have produced", () => {
+    // A cleared <input type="date"> is "", and Date.parse would roll
+    // "2026-02-30" over to March 2 — neither may reach the request.
+    expect(localDayRangeToUtc("", "2026-11-06", 0)).toBeNull();
+    expect(localDayRangeToUtc("2026-11-06", "", 0)).toBeNull();
+    expect(localDayRangeToUtc("2026-2-3", "2026-11-06", 0)).toBeNull();
+    expect(localDayRangeToUtc("2026-02-30", "2026-11-06", 0)).toBeNull();
   });
 });
 
