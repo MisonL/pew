@@ -314,6 +314,10 @@ services:
       # Read path: worker-read
       WORKER_READ_URL: ${WORKER_READ_URL:-http://read:8787}
       WORKER_READ_SECRET: ${WORKER_READ_SECRET}
+      # Read-RPC transport deadlines (lib/db-worker.ts). Empty means the
+      # built-in defaults: 60s for every RPC, 15s for the leaderboard snapshot.
+      WORKER_RPC_TIMEOUT_MS: ${WORKER_RPC_TIMEOUT_MS:-}
+      LEADERBOARD_RPC_TIMEOUT_MS: ${LEADERBOARD_RPC_TIMEOUT_MS:-}
       # Ingest path: worker
       WORKER_INGEST_URL: ${WORKER_INGEST_URL:-http://ingest:8786}
       WORKER_SECRET: ${WORKER_SECRET}

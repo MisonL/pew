@@ -85,6 +85,17 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
     expect(web).toContain("LOGIN_RATE_LIMIT_BACKEND: ${LOGIN_RATE_LIMIT_BACKEND:-}");
   });
 
+  it("forwards the read-RPC timeout knobs into web", () => {
+    // The web container's environment is an explicit allowlist, not an
+    // env_file: a knob that exists only in the host's process.env never reaches
+    // the app. Both are read by lib/db-worker.ts.
+    const web = compose.slice(compose.indexOf("  web:"), compose.indexOf("\nvolumes:"));
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: compose var-expansion literal, not interpolation
+    expect(web).toContain("LEADERBOARD_RPC_TIMEOUT_MS: ${LEADERBOARD_RPC_TIMEOUT_MS:-}");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: compose var-expansion literal, not interpolation
+    expect(web).toContain("WORKER_RPC_TIMEOUT_MS: ${WORKER_RPC_TIMEOUT_MS:-}");
+  });
+
   it("passes the cookie-security decision into the web image build", () => {
     // next.config's headers() runs at BUILD time and its output is baked into
     // routes-manifest.json; the standalone server never re-evaluates it. A
