@@ -15,7 +15,7 @@ import { sumCounts, VALID_SOURCES } from "@pew/core";
 import { resolveUser } from "@/lib/auth-helpers";
 import { jsonResponse } from "@/lib/json-response";
 import { getDbRead } from "@/lib/db";
-import { dateParamToIso, isBareDate, isDateParam } from "@/lib/date-params";
+import { dateParamToIso, isBareDate, isDateParam, isInvertedRange } from "@/lib/date-params";
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -91,6 +91,18 @@ export async function GET(request: Request) {
     toDate = toD.toISOString();
   } else {
     toDate = new Date().toISOString();
+  }
+
+  // An inverted explicit window matches no rows and reads as "no sessions" to
+  // the caller, the same shape a lost write has. The public profile route
+  // already answers 400; the authenticated routes did not. Only an explicit
+  // pair is judged: a lone `to` against the default `from` is a derived
+  // window, not a contradiction.
+  if (fromParam && toParam && isInvertedRange(fromDate, toDate)) {
+    return NextResponse.json(
+      { error: "from/to range is inverted" },
+      { status: 400 },
+    );
   }
 
   // 3. Execute query via RPC

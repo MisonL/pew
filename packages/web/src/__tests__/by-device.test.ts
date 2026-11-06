@@ -239,6 +239,12 @@ describe("GET /api/usage/by-device", () => {
       expect(body.error).toBe("Invalid date format");
     });
 
+    it("rejects a range that ends before it starts", async () => {
+      const res = await GET(makeGetRequest("/api/usage/by-device", { from: "2026-03-10", to: "2026-03-01" }));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe("from/to range is inverted");
+    });
+
     it("should return 400 for invalid tzOffset (NaN)", async () => {
       const res = await GET(makeGetRequest("/api/usage/by-device", { from: "2026-03-01", to: "2026-03-11", tzOffset: "abc" }));
       expect(res.status).toBe(400);

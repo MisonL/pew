@@ -53,3 +53,15 @@ export function dateParamToIso(value: string): string {
 export function isBareDate(value: string): boolean {
   return value.length === 10;
 }
+
+/**
+ * True when the resolved window ends before it starts.
+ *
+ * Every usage surface is a half-open `[from, to)` interval, so an inverted
+ * pair matches nothing and the caller sees "no usage" — indistinguishable
+ * from an empty account or a lost write. The public profile route has always
+ * rejected it; the authenticated usage routes now do too.
+ */
+export function isInvertedRange(from: Date | string, to: Date | string): boolean {
+  return new Date(from).getTime() > new Date(to).getTime();
+}

@@ -149,6 +149,17 @@ describe("GET /api/sessions", () => {
 
       expect(res.status).toBe(400);
     });
+
+    it("rejects a range that ends before it starts", async () => {
+      // Inverted windows match no rows and render as "no sessions", which is
+      // indistinguishable from data loss. The public profile route already
+      // answers 400; the authenticated routes did not.
+      const res = await GET(makeGetRequest("/api/sessions", { from: "2026-03-10", to: "2026-03-01" }));
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe("from/to range is inverted");
+      expect(mockDbRead.getSessionRecords).not.toHaveBeenCalled();
+    });
   });
 
   // -----------------------------------------------------------------------

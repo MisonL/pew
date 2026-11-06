@@ -13,7 +13,7 @@
 import { NextResponse } from "next/server";
 import { sumCounts } from "@pew/core";
 import { resolveAdmin } from "@/lib/admin";
-import { isBareDate, isDateParam } from "@/lib/date-params";
+import { isBareDate, isDateParam, isInvertedRange } from "@/lib/date-params";
 import { getDbRead } from "@/lib/db";
 
 const MAX_USERS = 10;
@@ -119,6 +119,17 @@ export async function GET(request: Request) {
   if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
     return NextResponse.json(
       { error: "Invalid date format" },
+      { status: 400 }
+    );
+  }
+
+  // An inverted explicit window matches no rows and renders as "no usage" —
+  // the same shape a lost write has — so reject it like the other usage
+  // routes. Only an explicit pair is judged: a lone `to` against the default
+  // `from` is a derived window, not a contradiction.
+  if (fromParam && toParam && isInvertedRange(fromDate, toDate)) {
+    return NextResponse.json(
+      { error: "from/to range is inverted" },
       { status: 400 }
     );
   }

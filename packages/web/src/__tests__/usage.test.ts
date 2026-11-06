@@ -106,6 +106,18 @@ describe("GET /api/usage", () => {
 
       expect(res.status).toBe(400);
     });
+
+    it("rejects a range that ends before it starts", async () => {
+      // An inverted pair queried as `hour_start >= from AND hour_start < to`
+      // returns nothing, which the client renders as "no usage" — the same
+      // shape a data-loss incident has. The public profile route already
+      // answers 400 here; the authenticated routes did not.
+      const res = await GET(makeGetRequest("/api/usage", { from: "2026-03-10", to: "2026-03-01" }));
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe("from/to range is inverted");
+      expect(mockDbRead.getUsageRecords).not.toHaveBeenCalled();
+    });
   });
 
   describe("response format", () => {
