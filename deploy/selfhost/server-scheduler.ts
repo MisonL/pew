@@ -14,16 +14,17 @@ import { createD1Adapter } from "./d1-adapter";
 import { createKvAdapter } from "./kv-adapter";
 import { registerShutdownSignals, runScheduled } from "./node-runtime";
 import { resolveReadBasicAuth } from "./basic-auth";
+import { createSingleFlight, resolveDailyIntervalMs } from "./scheduler-guard";
 
 const RQLITE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
 const D1_TOKEN = process.env.CF_D1_API_TOKEN ?? "";
-// Number("") is 0 and Number("abc") is NaN; setInterval treats both as a ~1ms
-// tick, which would hammer rqlite in a tight loop. Fall back to 24h instead.
-const RAW_INTERVAL = Number(process.env.DAILY_INTERVAL_MS ?? 24 * 60 * 60 * 1000);
-const INTERVAL_MS = Number.isFinite(RAW_INTERVAL) && RAW_INTERVAL > 0 ? RAW_INTERVAL : 24 * 60 * 60 * 1000;
-if (INTERVAL_MS !== RAW_INTERVAL) {
-  console.error(`invalid DAILY_INTERVAL_MS "${process.env.DAILY_INTERVAL_MS}", falling back to 24h`);
-}
+// A value outside [1, 2^31-1] ms is not merely weird: setInterval stores the
+// delay in a 32-bit signed integer and silently substitutes 1 ms for anything
+// larger (verified on Bun 1.4.4), so a "monthly" 2592000000 would turn the
+// daily pricing sync into a millisecond loop against rqlite and two upstream
+// APIs. Anything invalid falls back to 24h.
+const { intervalMs: INTERVAL_MS, error: intervalError } = resolveDailyIntervalMs(process.env.DAILY_INTERVAL_MS);
+if (intervalError) console.error(intervalError);
 // Read-only rqlite credentials (Plan 3 §3.1.2), same fallback as server-read.
 const BASIC_AUTH = resolveReadBasicAuth(
   process.env.RQLITE_READ_USERNAME,
@@ -51,18 +52,29 @@ const env = {
 console.log(`scheduler running every ${INTERVAL_MS}ms`);
 // The worker's `scheduled` may be undefined per its Cloudflare type; this
 // worker defines it, so assert the concrete shape node-runtime expects.
+//
+// Single-flight: the timer fires on its own schedule, so a run that outlasts
+// the interval would start a second pricing sync on top of the first. Both
+// read `pricing:dynamic`, merge independently and write it back, so whichever
+// finishes last can drop entries the other just fetched. A skipped tick is
+// logged once and resolves with the in-flight run, which is also what
+// shutdown draining waits for.
+const flight = createSingleFlight(() => console.warn("skipping a scheduled run: the previous one is still in flight"));
+
 const scheduled = runScheduled({
-  scheduled: async (event: unknown, scheduledEnv: Env) => {
-    // Cloudflare KV expires rows itself; rqlite keeps them forever, and
-    // leaderboard snapshot keys embed the revision — unswept, the table grows
-    // without bound. A sweep failure must not skip the pricing sync.
-    try {
-      const removed = await kv.sweepExpired();
-      if (removed > 0) console.log(`kv_cache sweep removed ${removed} expired rows`);
-    } catch (error) {
-      console.error("kv_cache sweep failed", error);
-    }
-    await worker.scheduled?.(event, scheduledEnv);
+  scheduled: async (event, scheduledEnv) => {
+    await flight.trigger(async () => {
+      // Cloudflare KV expires rows itself; rqlite keeps them forever, and
+      // leaderboard snapshot keys embed the revision — unswept, the table grows
+      // without bound. A sweep failure must not skip the pricing sync.
+      try {
+        const removed = await kv.sweepExpired();
+        if (removed > 0) console.log(`kv_cache sweep removed ${removed} expired rows`);
+      } catch (error) {
+        console.error("kv_cache sweep failed", error);
+      }
+      await worker.scheduled?.(event, scheduledEnv);
+    });
   },
 }, env, INTERVAL_MS);
 
