@@ -567,6 +567,35 @@ describe("waitForLock", () => {
     expect(JSON.parse(fs._content!).pid).toBe(1001);
   });
 
+  it("does not report a lock that was replaced immediately after acquisition", async () => {
+    // acquireLock creates the file with O_EXCL and only then writes the owner
+    // record, so a concurrent reclaimer can observe it empty, judge it a
+    // corpse and replace it. Reporting "acquired" without looking at the file
+    // again would let this process and the reclaimer both run believing they
+    // are the sole holder.
+    const fs = createFakeFs();
+    const proc = createFakeProcess({ pid: 2001 });
+    const write = fs.writeFile.bind(fs);
+    fs.writeFile = async (path: string, data: string, options?: { flag?: string }) => {
+      await write(path, data, options);
+      if (path === "/tmp/sync.lock" && JSON.parse(data).pid === 2001) {
+        await write(path, lockContent(9999));
+      }
+    };
+
+    let elapsed = 0;
+    const result = await waitForLock("/tmp/sync.lock", {
+      fs,
+      process: proc,
+      timeoutMs: 200,
+      sleep: async (ms) => { elapsed += ms; },
+      now: () => elapsed,
+    });
+
+    expect(result.acquired).toBe(false);
+    expect(JSON.parse(fs._content!).pid).toBe(9999);
+  });
+
   it("uses exponential backoff starting at 100ms, capped at 2000ms", async () => {
     const fs = createFakeFs({ lockContent: lockContent(7777) });
     const proc = createFakeProcess({ pid: 9999 });

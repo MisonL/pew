@@ -229,6 +229,25 @@ export async function reclaimLock(
 }
 
 // ---------------------------------------------------------------------------
+// Ownership confirmation
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether the lockfile currently names this process as its owner.
+ *
+ * `acquireLock` creates the file first and writes the owner record second, so
+ * "the create succeeded" does not prove the lock is still ours: a reclaimer
+ * that observed the empty file can delete and re-create it inside that window.
+ * Callers re-read before treating the lock as held.
+ */
+export async function ownsLock(
+  lockPath: string,
+  opts: { fs: Pick<LockFsOps, "readFile">; process: ProcessOps },
+): Promise<boolean> {
+  return (await readLockPid(lockPath, { fs: opts.fs })) === opts.process.pid;
+}
+
+// ---------------------------------------------------------------------------
 // waitForLock — poll with exponential backoff
 // ---------------------------------------------------------------------------
 
@@ -271,7 +290,12 @@ export async function waitForLock(
       fs: opts.fs,
       process: opts.process,
     });
-    if (acquired) return { acquired: true };
+    // Creating the file is not the same as holding it: the owner record is
+    // written after O_EXCL create, so a reclaimer that read it empty can
+    // replace it in that gap. Confirm the file still names us before claiming
+    // the lock — otherwise this caller and the reclaimer both proceed as the
+    // sole holder, and their interleaved state writes lose dirtyKeys.
+    if (acquired && await ownsLock(lockPath, opts)) return { acquired: true };
 
     const state = await readLockOwnerState(lockPath, opts);
     if (state === "dead") {
@@ -289,7 +313,8 @@ export async function waitForLock(
       // A reclaim may have freed the path; do not make the caller pay a
       // full backoff before trying again.
       if (
-        await acquireLock(lockPath, { fs: opts.fs, process: opts.process })
+        await acquireLock(lockPath, { fs: opts.fs, process: opts.process }) &&
+        await ownsLock(lockPath, opts)
       ) {
         return { acquired: true };
       }

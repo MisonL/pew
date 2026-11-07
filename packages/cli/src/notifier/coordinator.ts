@@ -15,6 +15,7 @@ import type {
 } from "@pew/core";
 import {
   acquireLock,
+  ownsLock,
   releaseLock,
   waitForLock,
   type LockFsOps,
@@ -165,7 +166,12 @@ async function runCoordinator(
   try {
     // --- Try immediate (non-blocking) lock acquisition ---
     try {
-      acquiredLock = await acquireLock(lockPath, { fs: lockFs, process: proc });
+      // Verifying ownership, not just the create: a reclaimer can replace the
+      // file between acquireLock's O_EXCL create and its owner write, and this
+      // sync must not then run beside the process that now holds the lock.
+      acquiredLock =
+        (await acquireLock(lockPath, { fs: lockFs, process: proc })) &&
+        (await ownsLock(lockPath, { fs: lockFs, process: proc }));
     } catch (err) {
       // Fail-closed: lock mechanism broken → skip sync, never run unlocked
       return {

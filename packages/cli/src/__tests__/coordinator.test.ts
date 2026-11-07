@@ -161,6 +161,36 @@ describe("coordinatedSync", () => {
     expect(result.degradedToUnlocked).toBe(false);
   });
 
+  it("fails closed when the lock it just created was replaced before use", async () => {
+    // acquireLock writes the owner record after its O_EXCL create, so a
+    // reclaimer can replace the file inside that window. Running the sync
+    // anyway would put two syncs on the same state, which is what the lock
+    // exists to prevent.
+    const fake = createFakeFs({ lockContent: null, signalSize: 0 });
+    const fs: FsOps = {
+      ...fake.fs,
+      writeFile: vi.fn(async (path: string, content: string, options?: { flag?: string }) => {
+        if (path.endsWith("sync.lock") && options?.flag === "wx") {
+          fake.state.lockContent = JSON.stringify({ pid: 4242, startedAt: "2026-03-09T10:00:00Z" });
+          return;
+        }
+        return fake.fs.writeFile(path, content, options);
+      }),
+    };
+    const executeSyncFn = vi.fn(async () => ({}));
+
+    const result = await coordinatedSync(createTrigger(), {
+      stateDir: "/tmp/pew",
+      executeSyncFn,
+      fs,
+      process: createFakeProcess(9999),
+      lockTimeoutMs: 300,
+    });
+
+    expect(executeSyncFn).not.toHaveBeenCalled();
+    expect(result.skippedSync).toBe(true);
+  });
+
   it("waits for the lock and runs sync after the holder releases", async () => {
     // Lock held by another process initially
     const fake = createFakeFs({
@@ -199,7 +229,11 @@ describe("coordinatedSync", () => {
             if (pollCount === 0) {
               return JSON.stringify({ pid: 7777, startedAt: "2026-03-09T10:00:00Z" });
             }
-            // After first poll the holder is gone
+            // After the takeover the file holds the new owner's record. It used
+            // to report ENOENT here, which describes a lock that was acquired
+            // and then vanished — a state a real acquire cannot produce, and
+            // one the ownership re-read introduced below must reject.
+            if (fake.state.lockContent) return fake.state.lockContent;
             const err = new Error("ENOENT") as NodeJS.ErrnoException;
             err.code = "ENOENT";
             throw err;
