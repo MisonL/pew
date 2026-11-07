@@ -150,8 +150,11 @@ async function handleListInviteCodes(
   req: ListInviteCodesRequest,
   db: D1Database
 ): Promise<Response> {
-  // Lower-clamp as well as upper: SQLite reads a negative LIMIT as "no limit".
-  const limit = clampedLimit(req.limit, 50, 250);
+  // The admin list is the only caller and asks for 1000 (its documented upper
+  // bound). A lower cap here — it used to be 250 — silently dropped the oldest
+  // codes while the screen showed the list as complete: there is no pagination
+  // and the response carries no truncation signal.
+  const limit = clampedLimit(req.limit, 50, 1000);
   const offset = clampedOffset(req.offset);
 
   // Join with users table to get creator and consumer emails

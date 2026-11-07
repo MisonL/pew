@@ -249,6 +249,18 @@ describe("auth RPC handlers", () => {
       expect(db.bind.mock.calls[0]![0]).toBe(2);
       expect(db.bind.mock.calls[0]![1]).toBe(1);
     });
+
+
+    it("honours the admin list's bound instead of silently cutting it at 250", async () => {
+      // /api/admin/invites asks for 1000 (its documented upper bound and the
+      // only caller). A 250 cap here dropped the oldest codes without any
+      // pagination or truncation signal, so the admin screen showed an
+      // incomplete list as if it were complete.
+      db.all.mockResolvedValue({ results: [] });
+      await handleAuthRpc({ method: "auth.listInviteCodes", limit: 1000 }, db);
+
+      expect(db.bind.mock.calls[0]![0]).toBe(1000);
+    });
   });
 
   // -------------------------------------------------------------------------
