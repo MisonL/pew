@@ -125,6 +125,13 @@ function run(
     child.on("close", (code) => {
       resolve({ code: code ?? 1, stdout, stderr });
     });
+    // A missing binary (gh or rg not installed) is reported only through
+    // 'error'; 'close' still follows. Without a listener here the event is
+    // uncaught and crashes the process, so every caller's graceful "tool
+    // absent" branch was unreachable.
+    child.on("error", (err) => {
+      resolve({ code: -1, stdout, stderr: `${stderr}${String(err)}` });
+    });
   });
 }
 
@@ -525,6 +532,20 @@ async function main(): Promise<void> {
     } else {
       console.log("   [dry-run] Would abort here in a real run");
     }
+  } else if (rgResult.code !== 1) {
+    // rg exits 0 on matches and 1 on none; anything else (missing binary is
+    // -1, a usage or I/O failure is 2) means the files were never searched.
+    // Reporting "no stale version strings" there passed the gate without
+    // running it.
+    console.error(
+      `❌ Phase 3 could not verify stale versions: rg exited with ${rgResult.code}.`,
+    );
+    if (rgResult.stderr.trim()) console.error(rgResult.stderr.trim());
+    if (!isDryRun) {
+      console.error("   Install ripgrep (rg) and retry, or run with --dry-run to preview.");
+      process.exit(1);
+    }
+    console.log("   [dry-run] Would abort here in a real run");
   } else {
     console.log("   ✅ No stale version strings found");
   }
