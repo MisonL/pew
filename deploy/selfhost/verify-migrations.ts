@@ -26,6 +26,14 @@ const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../scri
  * instance_setup, password_resets from Plan 2 / migration 032; rate_limit_hits
  * from Plan 3 / migration 033).
  *
+ * Migration 034-device-revocations.sql adds device_records and
+ * device_revocations — that is +2 upstream tables, +2 explicit indexes, and
+ * +2 sqlite_autoindexes (each table's composite TEXT PRIMARY KEY), plus nine
+ * triggers (one alias cascade, four device-registration, four revocation
+ * ignore guards). It is numbered 034 here, not 030 as upstream ships it:
+ * this fork already applied 030-deterministic-leaderboard-revision through
+ * 033 on deployed instances, and the ledger keys on the full filename.
+ *
  * `indexes` counts every sqlite_master entry of type 'index', which includes
  * the auto-indexes SQLite creates for PRIMARY KEY and UNIQUE constraints.
  * The explicit count is lower because 023/024/025 retire features and drop
@@ -33,7 +41,7 @@ const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../scri
  * their indexes with them.
  */
 const EXPECTED = {
-  upstreamTables: 22,
+  upstreamTables: 24,
   // _migrations, kv_cache, leaderboard_revision_seq (Plan 1) + instance_setup,
   // password_resets (Plan 2 / migration 032) + rate_limit_hits (Plan 3 / 033).
   planTables: 6,
@@ -41,9 +49,10 @@ const EXPECTED = {
   // the explicit idx_password_resets_user and the sqlite_autoindex for its
   // TEXT PRIMARY KEY. instance_setup's INTEGER PRIMARY KEY adds no autoindex.
   // rate_limit_hits (Plan 3 / 033) adds two explicit indexes and no UNIQUE or
-  // PRIMARY KEY constraints, so no autoindex.
-  indexes: 69,
-  triggers: 12,
+  // PRIMARY KEY constraints, so no autoindex. 034 adds four (two explicit,
+  // two autoindexes).
+  indexes: 72,
+  triggers: 21,
   views: 2,
 };
 

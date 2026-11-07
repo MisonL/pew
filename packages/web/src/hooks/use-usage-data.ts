@@ -84,6 +84,7 @@ export function useUsageData(
   const tzOffset = useTzOffset();
 
   const url = useMemo(() => {
+    if (!enabled) return null;
     // When explicit `from` is provided, use it directly; otherwise compute from `days`
     let fromStr: string;
     if (fromDate) {
@@ -109,7 +110,7 @@ export function useUsageData(
     if (summaryOnly) params.set("summaryOnly", "1");
 
     return `/api/usage?${params.toString()}`;
-  }, [days, fromDate, toDate, source, deviceId, granularity, tzOffset, includeAccounting, summaryOnly]);
+  }, [days, fromDate, toDate, source, deviceId, granularity, tzOffset, enabled, includeAccounting, summaryOnly]);
 
   const { data, loading, error, refetch } = useFetchData<UsageData>(url, { enabled });
 

@@ -118,8 +118,10 @@ describe("splitStatements", () => {
       }
       const tables = db.prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type = 'table'").get() as { c: number };
       const triggers = db.prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type = 'trigger'").get() as { c: number };
-      expect(tables.c).toBe(28);
-      expect(triggers.c).toBe(12);
+      // 28 previously + device_records and device_revocations (034). The
+      // trigger count gains the nine the same migration defines.
+      expect(tables.c).toBe(30);
+      expect(triggers.c).toBe(21);
     } finally {
       db.close();
     }

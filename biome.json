@@ -130,6 +130,9 @@
 			],
 			"linter": {
 				"rules": {
+					"correctness": {
+						"usePlaywrightValidDescribeCallback": "off"
+					},
 					"suspicious": {
 						"noExplicitAny": "off",
 						"noEmptyBlockStatements": "off",
@@ -139,9 +142,6 @@
 					"style": {
 						"useImportType": "off",
 						"noNonNullAssertion": "off"
-					},
-					"correctness": {
-						"usePlaywrightValidDescribeCallback": "off"
 					}
 				}
 			}

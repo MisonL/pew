@@ -152,7 +152,7 @@ describe("DELETE /api/account/delete", () => {
           CREATE TABLE instance_setup (id INTEGER PRIMARY KEY, admin_user_id TEXT, completed_at TEXT);
           INSERT INTO instance_setup VALUES (1, 'u1', '2026-01-01T00:00:00Z');`);
         const tables = ["usage_details", "usage_evidence", "usage_records", "session_records", "team_members",
-          "season_team_members", "device_aliases", "sessions", "accounts", "organization_members", "auth_codes"];
+          "season_team_members", "device_aliases", "device_records", "device_revocations", "sessions", "accounts", "organization_members", "auth_codes"];
         for (const table of tables) db.exec(`CREATE TABLE ${table} (user_id TEXT REFERENCES users(id)); INSERT INTO ${table} VALUES ('u1'), ('u2')`);
         if (fail) db.exec("CREATE TABLE owned_resource (created_by TEXT REFERENCES users(id)); INSERT INTO owned_resource VALUES ('u1')");
         vi.mocked(authModule.resolveUser).mockResolvedValueOnce({ userId: "u1" });
@@ -221,7 +221,8 @@ describe("DELETE /api/account/delete", () => {
           INSERT INTO season_teams VALUES ('s1', 't1', 'u1');
           CREATE TABLE team_members (team_id TEXT, user_id TEXT);`);
         const tables = ["usage_details", "usage_evidence", "usage_records", "session_records",
-          "season_team_members", "device_aliases", "organization_members", "auth_codes", "sessions", "accounts"];
+          "season_team_members", "device_aliases", "device_records", "device_revocations",
+          "organization_members", "auth_codes", "sessions", "accounts"];
         for (const table of tables) db.exec(`CREATE TABLE ${table} (user_id TEXT);`);
         db.exec(`CREATE TABLE invite_codes (code TEXT PRIMARY KEY, created_by TEXT, used_by TEXT, used_at TEXT);
           CREATE TABLE instance_setup (id INTEGER PRIMARY KEY, admin_user_id TEXT, completed_at TEXT);`);
@@ -320,6 +321,8 @@ describe("DELETE /api/account/delete", () => {
       CREATE TABLE session_records (user_id TEXT);
       CREATE TABLE season_team_members (user_id TEXT);
       CREATE TABLE device_aliases (user_id TEXT);
+      CREATE TABLE device_records (user_id TEXT);
+      CREATE TABLE device_revocations (user_id TEXT);
       CREATE TABLE organization_members (user_id TEXT);
       CREATE TABLE auth_codes (user_id TEXT);
       CREATE TABLE sessions (user_id TEXT);

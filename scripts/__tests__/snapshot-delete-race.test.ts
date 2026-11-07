@@ -40,7 +40,7 @@ describe("account deletion concurrent with snapshot generation", () => {
         -- The deleted user is the bootstrap admin: the delete batch must clear
         -- the instance_setup claim row (id=1) along with the account.
         INSERT INTO instance_setup(id,admin_user_id,completed_at) VALUES (1,'deleted',datetime('now'));`);
-      for (const name of ["usage_details", "usage_evidence", "session_records", "device_aliases", "organization_members", "auth_codes"]) {
+      for (const name of ["usage_details", "usage_evidence", "session_records", "device_aliases", "device_records", "device_revocations", "organization_members", "auth_codes"]) {
         sqlite.exec(`CREATE TABLE IF NOT EXISTS ${name}(user_id TEXT REFERENCES users(id))`);
       }
       const native = { prepare: (sql: string) => ({ bind: (...params: unknown[]) => ({

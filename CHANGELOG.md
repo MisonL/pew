@@ -230,6 +230,33 @@
   source arrived. The invalid-migration case also scans a private TMPDIR root
   instead of the shared one, where a concurrent lane's `pew-e2e-*` directory
   changed the before/after set.
+## v3.5.1
+
+### Changed
+- Bump minor/patch dependencies (@aws-sdk/client-s3, @biomejs/biome, @types/node, oxc-parser, wrangler).
+
+## v3.5.0
+
+### Added
+- Revoke or restore devices, inspect recent activity, and delete device metadata without deleting historical usage.
+- Ignore new device-tagged usage, accounting, and evidence uploads for revoked devices while preserving historical totals.
+
+### Limitations
+- Session uploads have no device ID and continue to be recorded at the account level after a device is revoked. Untagged token uploads also remain unaffected.
+
+### Operations
+- Apply `scripts/migrations/034-device-revocations.sql`, deploy the ingest and read Workers, then deploy Web. Coordinate the automatic Web deployment to preserve this order.
+- Web is 3.5.0; core and both Workers are 3.3.4. The CLI remains unchanged.
+
+## v3.4.3
+
+### Changed
+- Join Tailscale via workload identity federation before SSH during jp2 release deploy; pin shared base-ci to the Tailscale-enabled deploy workflow.
+
+## v3.4.2
+
+### Changed
+- Bump minor/patch dependencies (@aws-sdk/client-s3, @biomejs/biome, @cloudflare/workers-types, lucide-react, wrangler, @types/bun, next) and override undici to 7.30.1 for security advisories.
 
 ## v3.4.1
 
