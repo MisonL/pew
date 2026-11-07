@@ -486,6 +486,32 @@ describe("upload-engine", () => {
     expect(calls).toHaveLength(3);
   });
 
+  it("fails instead of sleeping through an unbounded Retry-After while holding the lock", async () => {
+    // The upload holds state.lock for its whole run; honoring Retry-After: 3600
+    // froze every other pew command for an hour.
+    const { queue, config } = createTestEngine(dir);
+    await new ConfigManager(dir).save({ token: "pk_test" });
+    await queue.append(makeRecord(1));
+    const { fetchFn, calls } = createMockFetch([
+      { status: 429, body: { error: "Too Many Requests" }, headers: { "Retry-After": "3600" } },
+    ]);
+
+    const started = Date.now();
+    const result = await createUploadEngine(config).execute({
+      stateDir: dir,
+      apiUrl: DEFAULT_HOST,
+      fetch: fetchFn,
+      retryDelayMs: 0,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("3600");
+    expect(calls).toHaveLength(1);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    // The record was not uploaded, so it must still be pending.
+    expect((await queue.readFromOffset(0)).records).toHaveLength(1);
+  });
+
   it("falls back to 'Too Many Requests' when 429 body omits error field", async () => {
     const { queue, config } = createTestEngine(dir);
     const cm = new ConfigManager(dir);

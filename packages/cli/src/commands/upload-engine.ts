@@ -165,6 +165,10 @@ const DEFAULT_RETRY_DELAY_MS = 1000;
 // the state lock, blocking every later sync/upload/reset. Node's undici default
 // is five minutes; make the bound explicit and configurable.
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+// The longest Retry-After the engine will sit on. It sleeps while holding the
+// state lock, so a server (or a proxy that inserts the header) could otherwise
+// freeze every other pew command for hours.
+const MAX_RETRY_AFTER_MS = 120_000;
 
 // ---------------------------------------------------------------------------
 // Engine factory
@@ -508,9 +512,24 @@ async function sendBatchWithRetry<T>(opts: {
       // 429 — rate limited, retry with Retry-After if available
       if (resp.status === 429) {
         const retryAfter = resp.headers.get("Retry-After");
-        const retryMs = retryAfter
-          ? Math.max(Number(retryAfter) * 1000, retryDelayMs)
+        const seconds = retryAfter === null ? Number.NaN : Number(retryAfter);
+        const retryMs = Number.isFinite(seconds) && seconds >= 0
+          ? Math.max(seconds * 1000, retryDelayMs)
           : retryDelayMs * 2 ** attempt;
+        // The whole upload runs inside withStateLock, so honoring an
+        // unbounded Retry-After blocks every other pew command (a concurrent
+        // sync/reset fails with BUSY) for however long the server — or a
+        // proxy that inserts the header — says. Above the cap the batch
+        // fails with the server's figure instead: the records stay queued
+        // and the operator sees why.
+        if (retryMs > MAX_RETRY_AFTER_MS) {
+          const body = await resp.json().catch(() => ({}));
+          const detail = (body as Record<string, string>).error ?? "Too Many Requests";
+          return {
+            ok: false,
+            error: `429: ${detail} (server asked to retry after ${retryAfter}s, above the ${MAX_RETRY_AFTER_MS / 1000}s an upload will wait while holding the state lock; records stay queued)`,
+          };
+        }
         if (attempt < maxRetries && retryMs > 0) {
           await sleep(retryMs);
           sleptFor429 = true; // Skip the top-of-loop backoff on next iteration
