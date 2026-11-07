@@ -826,6 +826,9 @@ docker compose up -d
 ```
 
 - 迁移在 `migrate` 服务启动时自动跑（`_migrations` 账本按文件名幂等，已跑过的不会重跑）。
+- 编号与上游并非一一对应：本分支的自托管线先占用了 030–033，所以上游的
+  `030-device-revocations.sql` 在这里是 `034-device-revocations.sql`。跨版本对照时按文件名里的
+  对象名找，不要按编号推；重命名会改变账本键、在一个已部署实例上重跑该迁移。
 - **migrate 失败的排障入口**：migrate 非零退出时 `read`/`ingest`/`scheduler`/`web` 都不会启动
   （`service_completed_successfully` 门），这是刻意的 fail-closed。修好原因后重跑
   `docker compose up -d --build migrate`，**成功后再补一次 `docker compose up -d`**
