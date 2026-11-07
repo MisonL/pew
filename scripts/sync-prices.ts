@@ -14,7 +14,7 @@
  *   bun run sync-prices --fixture <dir>
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 
@@ -67,16 +67,34 @@ function loadFixture(dir: string, name: string): unknown {
   return JSON.parse(readFileSync(file, "utf-8"));
 }
 
+/**
+ * The checked-in baseline is both the merge floor (models an upstream dropped
+ * this run keep their last known prices) and the regression signal compared
+ * against upstream IDs. Treating an unreadable file as [] disabled the
+ * `--allow-removals` exit-2 guard and let the merged output overwrite the file
+ * with only the models both upstreams happen to list right now — every other
+ * entry and its fallback pricing lost behind one stderr line.
+ */
 function loadPriorBaseline(path: string): DynamicPricingEntry[] {
-  if (!existsSync(path)) return [];
+  // Only a missing file means "first run". Any other read failure (EACCES, a
+  // corrupt checkout) must abort instead of silently reshaping the baseline.
+  let raw: string;
   try {
-    const raw = readFileSync(path, "utf-8");
-    const parsed = JSON.parse(raw) as DynamicPricingEntry[];
-    return Array.isArray(parsed) ? parsed : [];
+    raw = readFileSync(path, "utf-8");
   } catch (err) {
-    console.error(`failed to read prior baseline ${path}: ${(err as Error).message}`);
-    return [];
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new Error(`cannot read prior baseline ${path}: ${(err as Error).message}`);
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`prior baseline ${path} is not valid JSON: ${(err as Error).message}`);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error(`prior baseline ${path} is not a JSON array`);
+  }
+  return parsed as DynamicPricingEntry[];
 }
 
 export async function runSync(opts: SyncOptions): Promise<SyncResult> {
@@ -171,9 +189,14 @@ export function parseArgs(argv: string[]): CliArgs {
         out.fixtureDir = argv[++i] ?? null;
         if (!out.fixtureDir) throw new Error("--fixture requires a directory argument");
         break;
-      case "--output":
-        out.outputPath = argv[++i] ?? out.outputPath;
+      case "--output": {
+        // A trailing `--output` used to fall back to the checked-in baseline
+        // path, turning a typo into a rewrite of the repository's pricing data.
+        const value = argv[++i];
+        if (!value) throw new Error("--output requires a file path argument");
+        out.outputPath = value;
         break;
+      }
       default:
         if (a.startsWith("--")) throw new Error(`unknown flag: ${a}`);
     }
@@ -188,7 +211,7 @@ export async function main(argv: string[]): Promise<number> {
   try {
     result = await runSync({ ...args, now });
   } catch (err) {
-    console.error(`fetch/parse failed: ${(err as Error).message}`);
+    console.error(`sync failed: ${(err as Error).message}`);
     return 1;
   }
   if (result.entries.length === 0) {
@@ -218,11 +241,18 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   mkdirSync(dirname(args.outputPath), { recursive: true });
-  writeFileSync(
-    args.outputPath,
-    `${JSON.stringify(result.entries, null, 2)}\n`,
-    "utf-8"
-  );
+  // Write-then-rename: a crash or ENOSPC mid-write leaves the checked-in
+  // baseline untouched instead of truncated to a partial JSON document (which
+  // the next run would then refuse to read, correctly, but with no way
+  // forward except restoring from git).
+  const tmpPath = `${args.outputPath}.tmp`;
+  try {
+    writeFileSync(tmpPath, `${JSON.stringify(result.entries, null, 2)}\n`, "utf-8");
+    renameSync(tmpPath, args.outputPath);
+  } catch (err) {
+    try { unlinkSync(tmpPath); } catch { /* nothing to clean up */ }
+    throw err;
+  }
   console.log(`wrote ${args.outputPath}`);
   return 0;
 }

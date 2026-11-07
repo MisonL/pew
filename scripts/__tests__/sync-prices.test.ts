@@ -156,6 +156,35 @@ describe("parseArgs", () => {
   it("rejects unknown flags", () => {
     expect(() => parseArgs(["--bogus"])).toThrow(/unknown/);
   });
+
+  it("requires a value for --output", () => {
+    // Silently falling back to the checked-in baseline turned a typo into a
+    // rewrite of the repository's pricing data.
+    expect(() => parseArgs(["--output"])).toThrow(/requires/);
+  });
+});
+
+describe("prior baseline handling", () => {
+  it("refuses to run instead of treating an unparseable baseline as empty", async () => {
+    // The prior baseline is both the merge floor and the regression signal.
+    // Treating a corrupt file as [] disabled the --allow-removals guard and let
+    // the merged output overwrite the checked-in file, dropping every baseline
+    // entry (and its fallback pricing) with only one stderr line.
+    const out = tempFile();
+    writeFileSync(out, "{ not json");
+    const code = await main(["--fixture", FIXTURE_DIR, "--output", out]);
+    expect(code).toBe(1);
+    expect(readFileSync(out, "utf8")).toBe("{ not json");
+    rmSync(resolve(out, ".."), { recursive: true, force: true });
+  });
+
+  it("refuses a baseline that parses but is not an array", async () => {
+    const out = tempFile();
+    writeFileSync(out, '{"entries":[]}');
+    const code = await main(["--fixture", FIXTURE_DIR, "--output", out]);
+    expect(code).toBe(1);
+    rmSync(resolve(out, ".."), { recursive: true, force: true });
+  });
 });
 
 describe("main (dry-run path)", () => {
