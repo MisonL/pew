@@ -1,6 +1,6 @@
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { acquireLock, readLockOwnerState, reclaimLock, releaseLock } from "../notifier/lockfile.js";
+import { acquireLock, readLockOwnerState, readLockPid, reclaimLock, releaseLock } from "../notifier/lockfile.js";
 import { ensureSecureDir } from "./secure-mkdir.js";
 
 const FS = { writeFile, unlink, readFile: (p: string) => readFile(p, "utf8") };
@@ -21,6 +21,8 @@ const BUSY_MESSAGE =
 /** Test seam: the recheck delay is the only timing this module owns. */
 export interface StateLockDeps {
   sleep?: (ms: number) => Promise<void>;
+  /** Test seam for the filesystem the lock lives on. */
+  lockOps?: typeof LOCK_OPS;
 }
 
 /**
@@ -63,7 +65,7 @@ export async function withStateLock<T>(
 ): Promise<T> {
   await ensureSecureDir(stateDir, { recursive: true });
   const path = join(stateDir, "state.lock");
-  const opts = LOCK_OPS;
+  const opts = deps.lockOps ?? LOCK_OPS;
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   // A crashed run (Ctrl-C during `pew notify` is routine, SIGKILL and power
   // loss are not rare) leaves state.lock behind. Without reclamation every
@@ -72,6 +74,18 @@ export async function withStateLock<T>(
   if (!await acquireLock(path, opts) && !await reclaimAndAcquire(path, opts, sleep)) {
     throw new Error(BUSY_MESSAGE);
   }
-  try { return await action(); }
+  try {
+    // Confirm the lock is still ours before touching state. `acquireLock`
+    // creates the file before it writes the owner record, so a concurrent
+    // reclaimer can observe it empty, judge it a corpse, and replace it with
+    // its own lock. That process would then run alongside this one — the
+    // interleaved load-mutate-save that loses dirtyKeys. Refusing here turns
+    // the theft into a clean "busy" for the loser; releaseLock already leaves
+    // a lock it does not own in place.
+    if ((await readLockPid(path, { fs: opts.fs })) !== opts.process.pid) {
+      throw new Error(BUSY_MESSAGE);
+    }
+    return await action();
+  }
   finally { await releaseLock(path, opts); }
 }

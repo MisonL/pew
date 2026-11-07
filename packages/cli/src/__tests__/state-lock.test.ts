@@ -1,6 +1,6 @@
 import { existsSync as exists } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -54,6 +54,30 @@ describe("state mutation lock", () => {
       })).rejects.toThrow("Pew state is busy");
       expect(rechecks).toBe(1);
       expect(JSON.parse(await readFile(path, "utf8")).pid).toBe(process.pid);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it("refuses to run when a racing reclaimer replaced the lock it just created", async () => {
+    // acquireLock creates the file, then writes the owner record. A reclaimer
+    // that reads the file in that window sees it empty, may judge it a corpse
+    // and replace it with its own lock. Running the action anyway would put
+    // two processes in the load-mutate-save section at once, which is how a
+    // freshly written dirtyKeys snapshot gets overwritten by a stale one.
+    const dir = await mkdtemp(join(tmpdir(), "pew-state-lock-"));
+    try {
+      const path = join(dir, "state.lock");
+      const theft = async (lockPath: string, data: string, opts?: { flag?: string }) => {
+        await writeFile(lockPath, data, opts);
+        if (!lockPath.endsWith(".reclaim")) {
+          await writeFile(lockPath, JSON.stringify({ pid: process.pid + 1, startedAt: new Date().toISOString() }));
+        }
+      };
+      await expect(withStateLock(dir, async () => "must not run", {
+        lockOps: { fs: { writeFile: theft, readFile: (p) => readFile(p, "utf8"), unlink }, process },
+      })).rejects.toThrow("Pew state is busy");
+      // The other holder's lock must survive: releaseLock only unlinks a file
+      // whose PID is our own.
+      expect(exists(path)).toBe(true);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
