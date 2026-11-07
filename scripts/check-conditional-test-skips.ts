@@ -24,9 +24,10 @@
  */
 
 import { readFileSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { parseSync } from "oxc-parser";
+
+import { walkSourceFiles } from "./lib/source-walk";
 
 const REPO_ROOT = join(import.meta.dir, "..");
 
@@ -34,20 +35,6 @@ const REPO_ROOT = join(import.meta.dir, "..");
 // snapshot of the Git index (see .husky/pre-commit), so `import.meta.dir/..`
 // is that snapshot.
 const ROOTS = [REPO_ROOT];
-const SKIP_DIRS = new Set([
-  "node_modules",
-  "dist",
-  ".next",
-  ".next-e2e",
-  ".next-e2e-ui",
-  ".next-e2e-unit",
-  "coverage",
-  "__golden__",
-  ".git",
-  ".husky",
-  ".claude",
-  ".wrangler",
-]);
 
 // The test-defining roots whose conditional modifiers we care about.
 const TEST_ROOTS = new Set(["it", "test", "describe", "suite", "context"]);
@@ -179,36 +166,19 @@ async function main(): Promise<void> {
   const violations: Violation[] = [];
   let scannedCount = 0;
 
-  async function walk(dir: string): Promise<void> {
-    let entries: string[];
-    try {
-      entries = await readdir(dir);
-    } catch {
-      return;
-    }
-    for (const name of entries) {
-      const full = join(dir, name);
-      const s = await stat(full);
-      if (s.isDirectory()) {
-        if (SKIP_DIRS.has(name)) continue;
-        await walk(full);
-      } else if (/\.(tsx|ts|mts|cts)$/.test(name)) {
-        scannedCount++;
-        const src = readFileSync(full, "utf-8");
-        const repoRel = relative(REPO_ROOT, full);
-        const r = parseSync(full, src);
-        if (r.errors.length > 0) {
-          for (const err of r.errors) {
-            console.error(`✗ parse error ${repoRel}: ${err.message}`);
-          }
-          process.exit(1);
-        }
-        collect(r.program as unknown as OxcNode, repoRel, src, violations);
+  for await (const full of walkSourceFiles(REPO_ROOT, { match: /\.(tsx|ts|mts|cts)$/ })) {
+    scannedCount++;
+    const src = readFileSync(full, "utf-8");
+    const repoRel = relative(REPO_ROOT, full);
+    const r = parseSync(full, src);
+    if (r.errors.length > 0) {
+      for (const err of r.errors) {
+        console.error(`✗ parse error ${repoRel}: ${err.message}`);
       }
+      process.exit(1);
     }
+    collect(r.program as unknown as OxcNode, repoRel, src, violations);
   }
-
-  for (const root of ROOTS) await walk(root);
 
   if (scannedCount === 0) {
     console.error(
