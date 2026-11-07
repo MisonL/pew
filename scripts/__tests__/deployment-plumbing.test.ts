@@ -22,6 +22,19 @@ describe("Docker CD contract", () => {
     expect(ci).toContain('required-reusable-workflow: "nocoo/base-ci/.github/workflows/deploy-docker.yml"');
   });
 
+  it("runs both E2E lanes on a manual dispatch, not only on push and internal PRs", () => {
+    // The `head.repo.full_name` guard exists so a fork PR cannot reach the
+    // test-only CI resources. A manual dispatch is a maintainer running this
+    // branch's own gate (on this repo the only way a feature branch gets CI),
+    // and it matched neither side of the guard: quality and the container
+    // smoke ran while both E2E lanes were skipped without saying so.
+    for (const job of ["api-e2e", "browser-e2e"]) {
+      const block = new RegExp(`^  ${job}:\\n([\\s\\S]*?)(?=^  \\S)`, "m").exec(ci)?.[1];
+      expect(block).toBeTruthy();
+      expect(block).toContain("github.event_name == 'workflow_dispatch'");
+    }
+  });
+
   it("uses only the pinned existing release chain and exact CI provenance", () => {
     expect(release).toContain(`uses: nocoo/base-ci/.github/workflows/deploy-docker.yml@${revision}`);
     expect(release).toContain("workflow_run:");

@@ -202,41 +202,26 @@ function readCurrentVersion(): string {
   return pkg.version;
 }
 
-function updateVersionInFile(
+/**
+ * Compute the new file content, or null when the target does not contain the
+ * current version. Pure: no console output and no writes, so the caller can
+ * verify every target before touching any of them.
+ */
+function resolveVersionUpdate(
   target: VersionTarget,
   oldVersion: string,
   newVersion: string,
-): boolean {
-  const abs = pathResolve(PROJECT_ROOT, target.path);
-  const content = readFileSync(abs, "utf-8");
-  let updated: string;
-
+): string | null {
+  const content = readFileSync(pathResolve(PROJECT_ROOT, target.path), "utf-8");
   if (target.pattern === "json-version") {
     const pattern = `"version": "${oldVersion}"`;
-    const replacement = `"version": "${newVersion}"`;
-    if (!content.includes(pattern)) {
-      console.error(`  ✗ ${target.path} — pattern not found: ${pattern}`);
-      return false;
-    }
-    updated = content.replace(pattern, replacement);
-  } else {
-    // const-version: replace quoted version strings like "x.y.z"
-    const escaped = oldVersion.replace(/\./g, "\\.");
-    const re = new RegExp(`"${escaped}"`, "g");
-    if (!re.test(content)) {
-      console.error(
-        `  ✗ ${target.path} — version "${oldVersion}" not found`,
-      );
-      return false;
-    }
-    // Re-create regex since .test() consumes lastIndex
-    const re2 = new RegExp(`"${escaped}"`, "g");
-    updated = content.replace(re2, `"${newVersion}"`);
+    if (!content.includes(pattern)) return null;
+    return content.replace(pattern, `"version": "${newVersion}"`);
   }
-
-  writeFileSync(abs, updated, "utf-8");
-  console.log(`  ✓ ${target.path}`);
-  return true;
+  // const-version: replace quoted version strings like "x.y.z".
+  const escaped = oldVersion.replace(/\./g, "\\.");
+  if (!new RegExp(`"${escaped}"`).test(content)) return null;
+  return content.replace(new RegExp(`"${escaped}"`, "g"), `"${newVersion}"`);
 }
 
 // ---------------------------------------------------------------------------
@@ -443,18 +428,29 @@ async function main(): Promise<void> {
     }
     console.log("   [dry-run] Would run bun install to sync lockfile");
   } else {
-    let failures = 0;
-    for (const target of VERSION_TARGETS) {
-      const ok = updateVersionInFile(target, currentVersion, newVersion);
-      if (!ok) failures++;
-    }
-
-    if (failures > 0) {
+    // A partial bump used to leave the tree half-written: each target was
+    // rewritten as it went and failures were only counted afterwards, so a
+    // const-version that had moved (or a reformatted manifest) was discovered
+    // once earlier files were already bumped, with only `git checkout .` as
+    // the way back. Resolve every replacement first, then write in one pass.
+    const resolved = VERSION_TARGETS.map((target) => ({
+      target,
+      updated: resolveVersionUpdate(target, currentVersion, newVersion),
+    }));
+    const failures = resolved.filter(({ updated }) => updated === null);
+    if (failures.length > 0) {
       console.error(
-        `\n❌ Failed to update ${failures}/${VERSION_TARGETS.length} files. Aborting.`,
+        `\n❌ ${failures.length}/${VERSION_TARGETS.length} version targets are not in the expected shape; nothing was written.`,
       );
-      console.error("   Run `git checkout .` to revert partial changes.");
+      for (const { target } of failures) {
+        console.error(`   ✗ ${target.path} — version "${currentVersion}" not found`);
+      }
+      console.error("   Update the targets above before releasing.");
       process.exit(1);
+    }
+    for (const { target, updated } of resolved) {
+      writeFileSync(pathResolve(PROJECT_ROOT, target.path), updated as string, "utf-8");
+      console.log(`  ✓ ${target.path}`);
     }
 
     console.log(
@@ -649,16 +645,19 @@ async function main(): Promise<void> {
     ]);
 
     if (releaseResult.code !== 0) {
-      console.error("⚠️  GitHub release creation failed (tag is pushed)");
+      // The version-bump commit and the tag are already pushed, so this cannot
+      // be retried as a unit — but the release did not finish. Exiting 0 here
+      // reported success for a run whose GitHub release never existed.
+      console.error(`❌ GitHub release creation failed (tag v${newVersion} is pushed)`);
       console.error(
         `   Create manually: gh release create v${newVersion} --title "v${newVersion}"`,
       );
-    } else {
-      const releaseUrl = releaseResult.stdout.trim();
-      console.log("   ✅ GitHub release created");
-      if (releaseUrl) {
-        console.log(`   🔗 ${releaseUrl}`);
-      }
+      process.exit(1);
+    }
+    const releaseUrl = releaseResult.stdout.trim();
+    console.log("   ✅ GitHub release created");
+    if (releaseUrl) {
+      console.log(`   🔗 ${releaseUrl}`);
     }
   }
 

@@ -23,7 +23,7 @@ jobs:
 
   api-e2e:
     name: "L2 API E2E"
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     uses: nocoo/base-ci/.github/workflows/test-job.yml@ac635753a869cb85fad1f52aae4ccbd6119f3cae  # main 2026-10-22
     with:
       runtime-version: "1.4.4"
@@ -34,7 +34,7 @@ jobs:
 
   browser-e2e:
     name: "L3 Browser E2E"
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     uses: nocoo/base-ci/.github/workflows/test-job.yml@ac635753a869cb85fad1f52aae4ccbd6119f3cae  # main 2026-10-22
     with:
       runtime-version: "1.4.4"
