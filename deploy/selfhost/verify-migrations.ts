@@ -50,8 +50,10 @@ const EXPECTED = {
   // TEXT PRIMARY KEY. instance_setup's INTEGER PRIMARY KEY adds no autoindex.
   // rate_limit_hits (Plan 3 / 033) adds two explicit indexes and no UNIQUE or
   // PRIMARY KEY constraints, so no autoindex. 034 adds four (two explicit,
-  // two autoindexes).
-  indexes: 72,
+  // two autoindexes). The count also includes sqlite_autoindex__migrations_1:
+  // the ledger table is created by the runner, not by a migration file, so an
+  // in-memory replay of the .sql files alone reports one index fewer.
+  indexes: 73,
   triggers: 21,
   views: 2,
 };
