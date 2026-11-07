@@ -117,12 +117,14 @@ export class BaseQueue<T> {
    * Returns the byte length of the rewritten file so a compaction can keep
    * the cursor at the same end-of-file position it implies.
    */
+  /** Canonical JSONL bytes for a record set — shared by overwrite and compact. */
+  private serialize(records: T[]): string {
+    return records.length > 0 ? `${records.map((r) => JSON.stringify(r)).join("\n")}\n` : "";
+  }
+
   async overwrite(records: T[]): Promise<number> {
     await this.ensureDir();
-    const data =
-      records.length > 0
-        ? `${records.map((r) => JSON.stringify(r)).join("\n")}\n`
-        : "";
+    const data = this.serialize(records);
     const tmpPath = `${this.queuePath}.tmp`;
     await writeFile(tmpPath, data);
     await rename(tmpPath, this.queuePath);
@@ -141,9 +143,15 @@ export class BaseQueue<T> {
    * not re-uploaded; they stay in the ledger only for contracts that expect
    * them to remain locally (retired-source intent, reset retention).
    *
-   * Crash-safe because both writes are atomic and ordered file-first: a crash
-   * between them leaves the old large offset pointing past the shorter file,
-   * and `readFromOffset` restarts from 0 in that case (re-upload, idempotent).
+   * Crash-safe by ORDER, not by atomicity: the two writes cannot be made one,
+   * so the cursor is written first (to the exact length the retained set will
+   * have) and the file second. A crash between them leaves the cursor BEHIND
+   * the file, so the worst case is re-reading retained rows, which every
+   * upload stage deduplicates on upsert. The reverse order used to leave the
+   * cursor past a shorter file, and the next append reversed the "offset past
+   * EOF means re-read from 0" clamp below: the file grew back past the stale
+   * cursor, the slice started mid-record and the records appended in between
+   * were skipped as corrupt while the cursor jumped to the new EOF.
    */
   async compact(retain: (record: T) => boolean = () => false): Promise<boolean> {
     const raw = await readFile(this.queuePath).catch(() => null);
@@ -152,7 +160,8 @@ export class BaseQueue<T> {
     const { records } = await this.readFromOffset(0);
     const kept = records.filter(retain);
     if (kept.length === records.length) return false;
-    await this.saveOffset(await this.overwrite(kept));
+    await this.saveOffset(Buffer.byteLength(this.serialize(kept)));
+    await this.overwrite(kept);
     return true;
   }
 
@@ -173,8 +182,16 @@ export class BaseQueue<T> {
     let buf: Buffer;
     try {
       buf = await readFile(this.queuePath);
-    } catch {
-      return { records: [], newOffset: 0 };
+    } catch (error) {
+      // Only a missing file means "empty queue". EACCES/EIO/EMFILE (a backup
+      // tool holding the file, a transient permission change over a mount)
+      // used to be reported as an empty queue too, and the upload engine then
+      // persisted a clean dirtyKeys of [] — stranding the whole unread
+      // backlog with no warning. Let those surface as a failed run.
+      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+        return { records: [], newOffset: 0 };
+      }
+      throw error;
     }
 
     // An offset past the end means the file shrank under the cursor
@@ -230,8 +247,17 @@ export class BaseQueue<T> {
         lastUploadTarget:
           typeof state.lastUploadTarget === "string" ? state.lastUploadTarget : undefined,
       };
-    } catch {
-      return { offset: 0 };
+    } catch (error) {
+      // A missing file (ENOENT) is a fresh queue, and a torn tail can leave a
+      // state file that no longer parses. Any OTHER read failure — EACCES,
+      // EIO, EMFILE — must not be mistaken for either: saveOffset and
+      // saveDirtyKeys load the whole object first and write it back, so an
+      // empty default here would erase the offset, the dirty set and the
+      // recorded upload target in one hiccup of an unrelated process (a backup
+      // tool holding the file, a transient permission change over a mount).
+      const code = (error as NodeJS.ErrnoException | undefined)?.code;
+      if (code === "ENOENT" || error instanceof SyntaxError) return { offset: 0 };
+      throw error;
     }
   }
 

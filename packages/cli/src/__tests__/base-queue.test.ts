@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BaseQueue } from "../storage/base-queue.js";
@@ -96,6 +96,51 @@ describe("BaseQueue", () => {
     // The cursor sits at the new end so retained rows are not re-uploaded.
     expect(await queue.loadOffset()).toBe(Buffer.byteLength(raw));
     expect((await queue.readFromOffset(await queue.loadOffset())).records).toEqual([]);
+  });
+
+  it("shrinks the cursor before the file so a crash cannot strand later appends", async () => {
+    // Both writes are atomic but they cannot be one. If the file shrinks first
+    // and the process dies before the cursor does, the next append can push
+    // the file back past the stale cursor: the slice then starts mid-record,
+    // the appended records are skipped as corrupt, and the cursor jumps to the
+    // new EOF. Writing the cursor first makes the crash window harmless.
+    class CrashAfterRewrite extends BaseQueue<TestRecord> {
+      override async overwrite(records: TestRecord[]): Promise<number> {
+        await super.overwrite(records);
+        throw new Error("simulated crash after rename");
+      }
+    }
+    const queue = new CrashAfterRewrite(tempDir, "test.jsonl", "test.state.json");
+    await queue.append(makeRecord(1, "keep"));
+    await queue.append(makeRecord(2, "drop"));
+    await queue.saveOffset((await queue.readFromOffset(0)).newOffset);
+
+    await expect(queue.compact((r) => r.name === "keep")).rejects.toThrow("simulated crash after rename");
+
+    // The next sync appends a fresh snapshot before anything reads the queue.
+    await queue.append(makeRecord(3, "appended-after-the-crash"));
+    const { records } = await queue.readFromOffset(await queue.loadOffset());
+    expect(records.map((r) => r.id)).toContain(3);
+  });
+
+  it("treats only a missing queue file as an empty queue", async () => {
+    // EACCES/EIO/EMFILE used to read as "no records"; the upload engine then
+    // persisted dirtyKeys=[] and the backlog was stranded without a warning.
+    // A directory at the queue path produces a deterministic non-ENOENT
+    // failure on every platform (EISDIR/EPERM), unlike chmod under root.
+    await mkdir(join(tempDir, "test.jsonl"));
+    const queue = createQueue(tempDir);
+    await expect(queue.readFromOffset(0)).rejects.toThrow();
+  });
+
+  it("treats only a missing or torn state file as default state", async () => {
+    await mkdir(join(tempDir, "test.state.json"));
+    const queue = createQueue(tempDir);
+    await expect(queue.loadOffset()).rejects.toThrow();
+
+    await rm(join(tempDir, "test.state.json"), { recursive: true, force: true });
+    await writeFile(join(tempDir, "test.state.json"), '{"offset": 12');
+    expect(await queue.loadOffset()).toBe(0);
   });
 
   it("leaves a queue with a pending tail untouched", async () => {
