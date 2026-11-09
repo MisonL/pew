@@ -730,8 +730,10 @@ describe("E2E process isolation", () => {
     child.stdout.on("data", (data) => { output += data; });
     child.stderr.on("data", (data) => { output += data; });
     try {
-      // Poll budget is a hang detector, not a performance budget — `next dev`
-      // can take minutes to print "Local:" on a loaded machine.
+      // Poll budget is a hang detector, not a performance budget, and it must
+      // sit above the runner's own 900s readiness deadline: a slower inner
+      // deadline would make this report "Server did not start" instead of
+      // the runner's own diagnostic.
       const started = Date.now();
       while (!output.includes("Local:")) {
         if (child.exitCode !== null || Date.now() - started > 900_000) throw new Error(`Server did not start: ${output}`);

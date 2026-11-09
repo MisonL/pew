@@ -1,12 +1,13 @@
 /**
-/**
  * Largest epoch ms the ingest contract can represent: 9999-12-31T23:59:59.999Z.
  * `new Date(1e20).toISOString()` throws RangeError outright, and anything past
  * this bound serializes to a year the server's ISO validator rejects.
  *
  * ECMAScript Date itself tolerates far more (±8.64e15, which formats as
  * `+275760-…` rather than throwing), but that instant is rejected downstream,
- * so the server contract is the tighter and correct bound for a parser.
+ * so the server contract is the tighter and correct bound for a parser. Every
+ * caller would otherwise have to re-check the resulting string against the
+ * 4-digit-year rule.
  */
 export const MAX_EPOCH_MS = 253_402_300_799_999;
 
