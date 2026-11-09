@@ -28,14 +28,13 @@ async function settleWithin(promise: Promise<unknown>, milliseconds: number): Pr
 // far above any observed cold-start time: the deadline exists to catch a
 // wedged child, not to enforce a performance budget. Pre-push runs this lane in
 // parallel with the browser E2E's production build and the security scan on a
-// heavily loaded machine, where a healthy start has been measured at 99s;
-// timing is explicitly not part of the gate contract, so a slow start must
-// never fail the lane. PEW_E2E_BINDINGS_TIMEOUT_MS raises it further on a host
-// that needs more, without an edit per clone; a non-numeric or non-positive
-// value keeps the default rather than switching the deadline off. Disposal is
-// instead capped at 30s (see disposeTimeoutMs below) because a child that
-// ignores IPC will not start responding sooner just because startup was given
-// a long budget.
+// heavily loaded machine; timing is explicitly not part of the gate contract,
+// so a slow start must never fail the lane. PEW_E2E_BINDINGS_TIMEOUT_MS raises
+// it further on a host that needs more without an edit per clone; a
+// non-numeric or non-positive value keeps the default rather than switching
+// the deadline off. Disposal is instead capped at 30s (see disposeTimeoutMs
+// below) because a child that ignores IPC will not start responding sooner
+// just because startup was given a long budget.
 const DEFAULT_BINDINGS_TIMEOUT_MS = 900_000;
 const BINDINGS_TIMEOUT_ENV = "PEW_E2E_BINDINGS_TIMEOUT_MS";
 
