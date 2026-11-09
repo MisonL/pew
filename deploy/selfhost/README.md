@@ -798,27 +798,12 @@ docker compose exec rqlite rm -f /rqlite/file/restore.db
 
 ## 升级
 
+先同步代码（git 操作在仓库根）：
+
 ```bash
 cd /path/to/pew                                    # git 操作在仓库根
 git fetch upstream main && git merge upstream/main   # 或拉取自有 fork 的对应分支
 cd deploy/selfhost                                 # compose 只读 ./.env，不向下搜索；以下都在这里执行
-```
-
-然后一条命令完成备份、构建、重启和溯源校验：
-
-```bash
-bash upgrade.sh
-```
-
-`upgrade.sh` 会：备份 rqlite 到 `~/pew-backups/`、带上 `PEW_REVISION`/`PEW_VERSION` 构建、`up -d`、等待 web healthy，**最后校验运行中镜像的 `org.opencontainers.image.revision` 标签等于仓库 HEAD**——不等就非零退出。这一步是脚本存在的主要理由：漏掉构建参数时镜像照样能起、healthy 也能过，只有 label 是空的，事后无法把容器反查到提交。
-
-- `--skip-backup` 跳过备份；`--dry-run` 只打印将执行的命令。
-- `PEW_UPGRADE_NO_RESTART=1` 只构建不重启（用于提前预热镜像）。
-- 需要宿主上 git 与 node 可用（脚本用它们解析 revision 与 version）。
-
-手工逐条执行（等价，供排障时参考）：
-
-```bash
 # 鉴权部署下先确认 .rqlite-auth.json 在磁盘（升级不删卷，但若宿主目录被清理，
 # rqlite 容器 recreate 后 entrypoint 找不到 /auth/auth.json 会以无鉴权启动）。
 # 用 test -f 而不是 docker compose run 检测：bind-mount 源缺失时 compose 会创建同名
@@ -841,6 +826,12 @@ PEW_REVISION=$(git rev-parse HEAD) PEW_VERSION=$(node -p "require('../../package
   docker compose build                               # 镜像本地构建，无远端可 pull
 docker compose up -d
 ```
+
+以上步骤已封装成 `bash upgrade.sh`（推荐使用）：它会备份 rqlite 到 `~/pew-backups/`、带 provenance 参数构建、重启、等待 web healthy，**并校验运行中镜像的 `org.opencontainers.image.revision` 标签等于仓库 HEAD**，不等就非零退出。漏掉构建参数时镜像照样能起、healthy 也能过，只有 label 是空的——这是脚本存在的主要理由。它还拒绝在 `RQLITE_USERNAME` 已配而 `.rqlite-auth.json` 缺失时执行，并对非 0600 的 `.env` 告警。
+
+- `--skip-backup` 跳过备份；`--dry-run` 只打印将执行的命令。
+- `PEW_UPGRADE_NO_RESTART=1` 只构建不重启（用于提前预热镜像）。
+- 需要宿主上 git 与 node 可用（脚本用它们解析 revision 与 version）。
 
 - 迁移在 `migrate` 服务启动时自动跑（`_migrations` 账本按文件名幂等，已跑过的不会重跑）。
 - 编号与上游并非一一对应：本分支的自托管线先占用了 030–033，所以上游的
