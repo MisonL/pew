@@ -29,10 +29,27 @@ async function settleWithin(promise: Promise<unknown>, milliseconds: number): Pr
 // wedged child, not to enforce a performance budget. Pre-push runs this lane in
 // parallel with the browser E2E's production build and the security scan on a
 // heavily loaded machine; timing is explicitly not part of the gate contract,
-// so a slow start must never fail the lane. Disposal is instead capped at 30s
-// (see disposeTimeoutMs below) because a child that ignores IPC will not
-// start responding sooner just because startup was given a long budget.
-export async function startLocalBindings(signal: AbortSignal, timeoutMs = 900_000, readiness = false) {
+// so a slow start must never fail the lane. PEW_E2E_BINDINGS_TIMEOUT_MS raises
+// it further on a host that needs more without an edit per clone; a
+// non-numeric or non-positive value keeps the default rather than switching
+// the deadline off. Disposal is instead capped at 30s (see disposeTimeoutMs
+// below) because a child that ignores IPC will not start responding sooner
+// just because startup was given a long budget.
+const DEFAULT_BINDINGS_TIMEOUT_MS = 900_000;
+const BINDINGS_TIMEOUT_ENV = "PEW_E2E_BINDINGS_TIMEOUT_MS";
+
+function configuredBindingsTimeoutMs(): number {
+  const raw = process.env[BINDINGS_TIMEOUT_ENV];
+  if (raw === undefined || !/^\d+$/.test(raw)) return DEFAULT_BINDINGS_TIMEOUT_MS;
+  const value = Number(raw);
+  return value > 0 ? value : DEFAULT_BINDINGS_TIMEOUT_MS;
+}
+
+export async function startLocalBindings(
+  signal: AbortSignal,
+  timeoutMs = configuredBindingsTimeoutMs(),
+  readiness = false,
+) {
   signal.throwIfAborted();
   let receive: (value: { env: Record<string, string>; state: string }) => void;
   const ready = new Promise<{ env: Record<string, string>; state: string }>((done) => { receive = done; });
@@ -52,8 +69,7 @@ export async function startLocalBindings(signal: AbortSignal, timeoutMs = 900_00
   // because startup was given a long budget. The cap keeps the failure path
   // short while still honoring a caller that passes a smaller explicit budget
   // (the no-IPC regression passes 20ms and expects disposal bounded by it).
-  const disposeTimeoutMs = Math.min(timeoutMs, 30_000);
-  const dispose = async () => {
+  const disposeTimeoutMs = Math.min(timeoutMs, 30_000);  const dispose = async () => {
     let code: number;
     try {
       if (child.exitCode === null) child.send("dispose");
