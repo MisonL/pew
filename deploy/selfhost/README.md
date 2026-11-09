@@ -832,6 +832,9 @@ docker compose up -d
 - `--skip-backup` 跳过备份；`--dry-run` 只打印将执行的命令。
 - `PEW_UPGRADE_NO_RESTART=1` 只构建不重启（用于提前预热镜像）。
 - 需要宿主上 git 与 node 可用（脚本用它们解析 revision 与 version）。
+- E2E 相关（仅在跑本仓库质量门时有用）：`PEW_E2E_BINDINGS_TIMEOUT_MS` 可放宽
+  `pre-push` 里本地 D1/KV 绑定进程的启动上限（默认 900s）。超时是防挂死而不是性能指标，
+  负载很高的机器上可以调大；非整数或非正数会被忽略并回退默认值。
 
 - 迁移在 `migrate` 服务启动时自动跑（`_migrations` 账本按文件名幂等，已跑过的不会重跑）。
 - 编号与上游并非一一对应：本分支的自托管线先占用了 030–033，所以上游的
