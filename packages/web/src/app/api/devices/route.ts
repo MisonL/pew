@@ -170,8 +170,16 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "revoked must be a boolean" }, { status: 400 });
   }
 
+  const dbRead = await getDbRead();
   const dbWrite = await getDbWrite();
   try {
+    // Same existence gate as PUT: without it any authenticated user could
+    // park unbounded rows in device_revocations for ids they never used.
+    // Restoring stays unconditional — a revocation row for a device that has
+    // since been deleted must still be removable.
+    if (body.revoked && !(await dbRead.checkDeviceExists(userId, deviceId))) {
+      return NextResponse.json({ error: "device_id not found" }, { status: 400 });
+    }
     if (body.revoked) {
       await dbWrite.execute(
         `INSERT INTO device_revocations (user_id, device_id, revoked_at)

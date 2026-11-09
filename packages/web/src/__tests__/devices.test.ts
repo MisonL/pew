@@ -421,12 +421,28 @@ describe("PUT /api/devices", () => {
 });
 
 describe("PATCH /api/devices", () => {
+  let mockDbRead: ReturnType<typeof createMockDbRead>;
   let mockDbWrite: ReturnType<typeof createMockDbWrite>;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDbRead = createMockDbRead();
+    vi.mocked(dbModule.getDbRead).mockResolvedValue(
+      mockDbRead as unknown as dbModule.DbRead,
+    );
     mockDbWrite = createMockDbWrite();
     vi.mocked(dbModule.getDbWrite).mockResolvedValue(mockDbWrite as unknown as dbModule.DbWrite);
+    mockDbRead.checkDeviceExists.mockResolvedValue(true);
+  });
+
+  it("refuses to revoke a device the user has never used", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1", email: "test@example.com" });
+    mockDbRead.checkDeviceExists.mockReset().mockResolvedValueOnce(false);
+
+    const res = await PATCH(makePatchRequest({ device_id: "phantom-device", revoked: true }));
+
+    expect(res.status).toBe(400);
+    expect(mockDbWrite.execute).not.toHaveBeenCalled();
   });
 
   it("should revoke a device with an atomic upsert", async () => {
