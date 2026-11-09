@@ -802,6 +802,23 @@ docker compose exec rqlite rm -f /rqlite/file/restore.db
 cd /path/to/pew                                    # git 操作在仓库根
 git fetch upstream main && git merge upstream/main   # 或拉取自有 fork 的对应分支
 cd deploy/selfhost                                 # compose 只读 ./.env，不向下搜索；以下都在这里执行
+```
+
+然后一条命令完成备份、构建、重启和溯源校验：
+
+```bash
+bash upgrade.sh
+```
+
+`upgrade.sh` 会：备份 rqlite 到 `~/pew-backups/`、带上 `PEW_REVISION`/`PEW_VERSION` 构建、`up -d`、等待 web healthy，**最后校验运行中镜像的 `org.opencontainers.image.revision` 标签等于仓库 HEAD**——不等就非零退出。这一步是脚本存在的主要理由：漏掉构建参数时镜像照样能起、healthy 也能过，只有 label 是空的，事后无法把容器反查到提交。
+
+- `--skip-backup` 跳过备份；`--dry-run` 只打印将执行的命令。
+- `PEW_UPGRADE_NO_RESTART=1` 只构建不重启（用于提前预热镜像）。
+- 需要宿主上 git 与 node 可用（脚本用它们解析 revision 与 version）。
+
+手工逐条执行（等价，供排障时参考）：
+
+```bash
 # 鉴权部署下先确认 .rqlite-auth.json 在磁盘（升级不删卷，但若宿主目录被清理，
 # rqlite 容器 recreate 后 entrypoint 找不到 /auth/auth.json 会以无鉴权启动）。
 # 用 test -f 而不是 docker compose run 检测：bind-mount 源缺失时 compose 会创建同名
