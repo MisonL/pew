@@ -22,6 +22,10 @@ export type ClaudeIdsSnapshot = { existed: false } | { existed: true; size: numb
 export type JsonlSharedSnapshot = {
   codex: CodexSharedSnapshot;
   claudeIds: ClaudeIdsSnapshot;
+  // WorkBuddy takes the same size-marker shape as Claude: a discarded parse
+  // must undo only what it appended, without copying a ring that can hold
+  // thousands of ids once per file. See ClaudeIdsSnapshot for the reasoning.
+  workbuddyIds: ClaudeIdsSnapshot;
 };
 
 export function snapshotCodexSharedState(
@@ -67,10 +71,32 @@ export function snapshotJsonlSharedState(
   filePath: string,
 ): JsonlSharedSnapshot {
   const seen = ctx.seenClaudeMessageIds;
+  const workbuddy = ctx.seenWorkbuddyMessageIds;
   return {
     codex: snapshotCodexSharedState(ctx, filePath),
     claudeIds: seen ? { existed: true, size: seen.size } : { existed: false },
+    workbuddyIds: workbuddy ? { existed: true, size: workbuddy.size } : { existed: false },
   };
+}
+
+/**
+ * Drop every id a discarded parse appended after `snapshot`. Insertion order
+ * is stable and nothing deletes mid-parse, so the entries past the marker are
+ * exactly this parse's additions. A set that did not exist before the parse
+ * holds only discarded ids, so it is cleared outright.
+ */
+function dropIdsAppendedAfter(seen: Set<string>, snapshot: ClaudeIdsSnapshot): void {
+  if (!snapshot.existed) {
+    seen.clear();
+    return;
+  }
+  const appended: string[] = [];
+  let index = 0;
+  for (const id of seen) {
+    if (index >= snapshot.size) appended.push(id);
+    index += 1;
+  }
+  for (const id of appended) seen.delete(id);
 }
 
 export function restoreJsonlSharedState(
@@ -78,21 +104,11 @@ export function restoreJsonlSharedState(
   snapshot: JsonlSharedSnapshot,
 ): void {
   restoreCodexSharedState(ctx, snapshot.codex);
+  // A set that did not exist when the snapshot was taken may be created during
+  // the parse (workbuddy-token-driver's parse does so); it then holds only ids
+  // this parse appended, which the helper clears.
+  const workbuddy = ctx.seenWorkbuddyMessageIds;
+  if (workbuddy) dropIdsAppendedAfter(workbuddy, snapshot.workbuddyIds);
   const seen = ctx.seenClaudeMessageIds;
-  if (!snapshot.claudeIds.existed) {
-    // Nothing owned the set before this parse; a Set created during it holds
-    // only discarded ids.
-    ctx.seenClaudeMessageIds?.clear();
-    return;
-  }
-  if (!seen) return;
-  // Insertion order is stable and nothing deletes mid-parse, so the entries
-  // after the marker are exactly the ones this parse appended.
-  const appended: string[] = [];
-  let index = 0;
-  for (const id of seen) {
-    if (index >= snapshot.claudeIds.size) appended.push(id);
-    index += 1;
-  }
-  for (const id of appended) seen.delete(id);
+  if (seen) dropIdsAppendedAfter(seen, snapshot.claudeIds);
 }

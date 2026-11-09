@@ -62,6 +62,7 @@
 | 50 | [50-leaderboard-read-cache.md](50-leaderboard-read-cache.md) | Leaderboard read cache | done (v3.1.0; range-scan fix in v3.1.1) |
 | 51 | [51-antigravity-support.md](51-antigravity-support.md) | Antigravity CLI SQLite/Protobuf accounting and source safety | implemented |
 | 52 | [52-jp2-migration.md](52-jp2-migration.md) | Railway to jp2 staging, acceptance and approval boundaries | done (public cutover 2026-10-22) |
+| 52b | [52b-workbuddy-support.md](52b-workbuddy-support.md) | WorkBuddy token + session support — session JSONL under `~/.workbuddy/projects` and `~/.workbuddy-ai/projects` | done |
 | 57 | [57-self-hosted-deployment-design.md](57-self-hosted-deployment-design.md) | Self-hosted deployment design (rqlite + Node workers replace D1/KV/Workers) | done |
 | 58 | [58-self-hosted-storage-runtime.md](58-self-hosted-storage-runtime.md) | Self-hosted Plan 1: storage & runtime implementation plan | done |
 | 59 | [59-self-hosted-auth.md](59-self-hosted-auth.md) | Self-hosted Plan 2: auth subsystem implementation plan | done |

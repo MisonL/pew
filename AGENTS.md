@@ -8,7 +8,7 @@ Bun-workspaces monorepo tracking token usage from local AI coding tools. Human o
 - `packages/worker` — D1 ingest-write handler (`@pew/worker`, private): runs as a Cloudflare Worker in the hosted deployment, and as a Node service over rqlite via `deploy/selfhost/` (docs 57–61)
 - `packages/worker-read` — D1 read-query handler (`@pew/worker-read`, private): same dual runtime
 
-Supported tools (9): Antigravity CLI, Claude Code, Codex, GitHub Copilot CLI, Grok, Hermes, OpenCode, OpenClaw, Pi.
+Supported tools (10): Antigravity CLI, Claude Code, Codex, GitHub Copilot CLI, Grok, Hermes, OpenCode, OpenClaw, Pi, WorkBuddy.
 
 Retired sources stay readable and count toward historical rankings, but never accept new token, session, evidence or accounting writes. Core `SOURCES` lists active tools; `VALID_SOURCES` includes historical identities. Ingest acknowledges and ignores exact retired identities so old mixed-source batches do not block active uploads.
 
