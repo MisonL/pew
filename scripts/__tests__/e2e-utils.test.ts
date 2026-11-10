@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -772,4 +772,23 @@ describe("E2E process isolation", () => {
     // exit; keep the outer budget strictly above it so a wedged child surfaces
     // its own "startup timed out" diagnostic instead of a vitest timeout.
   }, 1_200_000);
+});
+
+describe("E2E runner exit", () => {
+  // Measured on the WorkBuddy lane with Bun 1.4.4: after a full ui run the
+  // entry script reached its last statement with no child processes, no pipes
+  // and no sockets left (lsof reported only empty KQUEUEs) and never returned
+  // from the event loop — only SIGTERM ended it, twice. The self-hosted branch
+  // shares this entry shape and runtime, and did not reproduce the hang in one
+  // measurement, so the exit below is applied as the same deterministic guard
+  // on both branches: cleanup has already finished at this point, and stdout is
+  // inherited throughout, so no buffered output is lost.
+  it.each(["run-e2e.ts", "run-e2e-ui.ts"])(
+    "exits %s deterministically once cleanup has finished",
+    (entry) => {
+      const source = readFileSync(join(import.meta.dirname, "..", entry), "utf8");
+      expect(source).toMatch(/process\.exit\(/);
+      expect(source).not.toMatch(/^\s*process\.exitCode\s*=/m);
+    },
+  );
 });
