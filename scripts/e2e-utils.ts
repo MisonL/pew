@@ -37,6 +37,11 @@ async function settleWithin(promise: Promise<unknown>, milliseconds: number): Pr
 // just because startup was given a long budget.
 const DEFAULT_BINDINGS_TIMEOUT_MS = 900_000;
 const BINDINGS_TIMEOUT_ENV = "PEW_E2E_BINDINGS_TIMEOUT_MS";
+// Disposal has its own ceiling so a long startup budget cannot turn a wedged
+// child into a 15-minute wait, but a caller may still pass a smaller explicit
+// budget (the no-IPC regression passes 20ms and expects disposal bounded by
+// it), and is never derived from the environment override.
+const DISPOSE_TIMEOUT_MS = 30_000;
 
 function configuredBindingsTimeoutMs(): number {
   const raw = process.env[BINDINGS_TIMEOUT_ENV];
@@ -47,10 +52,19 @@ function configuredBindingsTimeoutMs(): number {
 
 export async function startLocalBindings(
   signal: AbortSignal,
-  timeoutMs = configuredBindingsTimeoutMs(),
+  explicitTimeoutMs?: number,
   readiness = false,
 ) {
   signal.throwIfAborted();
+  // Disposal uses the caller's explicit budget when one is given (the no-IPC
+  // regression passes 20ms and expects disposal bounded by it), otherwise the
+  // 30s ceiling applies on its own. The env override deliberately does not
+  // reach it: an env setting meant to widen startup must not be able to
+  // compress cleanup, or a slow-exiting child is SIGKILLed mid-shutdown.
+  const startupTimeoutMs = explicitTimeoutMs ?? configuredBindingsTimeoutMs();
+  const disposeTimeoutMs = explicitTimeoutMs === undefined
+    ? DISPOSE_TIMEOUT_MS
+    : Math.min(explicitTimeoutMs, DISPOSE_TIMEOUT_MS);
   let receive: (value: { env: Record<string, string>; state: string }) => void;
   const ready = new Promise<{ env: Record<string, string>; state: string }>((done) => { receive = done; });
   const child = Bun.spawn([process.execPath, "--no-env-file", "scripts/serve-local-e2e.ts"], {
@@ -64,12 +78,7 @@ export async function startLocalBindings(
     stop = () => reject(signal.reason);
     signal.addEventListener("abort", stop, { once: true });
   });
-  // Dispose deadlines are capped independently of the (load-tolerant) startup
-  // budget: a child that ignores IPC will not start responding sooner just
-  // because startup was given a long budget. The cap keeps the failure path
-  // short while still honoring a caller that passes a smaller explicit budget
-  // (the no-IPC regression passes 20ms and expects disposal bounded by it).
-  const disposeTimeoutMs = Math.min(timeoutMs, 30_000);
+
   const dispose = async () => {
     let code: number;
     try {
@@ -94,7 +103,7 @@ export async function startLocalBindings(
     if (code) throw new Error(`Local bindings process failed (${code})`);
   };
   try {
-    const result = await deadline(Promise.race([ready, interrupted, child.exited.then((code) => { throw new Error(`Local bindings failed before ready (${code})`); })]), timeoutMs, "Local bindings startup");
+    const result = await deadline(Promise.race([ready, interrupted, child.exited.then((code) => { throw new Error(`Local bindings failed before ready (${code})`); })]), startupTimeoutMs, "Local bindings startup");
     signal.throwIfAborted();
     return { ...result, dispose };
   } catch (error) {
