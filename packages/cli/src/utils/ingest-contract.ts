@@ -13,7 +13,7 @@
 /** Active plus retired identities (core SOURCES ∪ RETIRED_SOURCES). */
 const VALID_SOURCES = new Set([
   "antigravity", "claude-code", "codex", "copilot-cli", "grok", "hermes",
-  "opencode", "openclaw", "pi",
+  "opencode", "openclaw", "pi", "workbuddy",
   "gemini-cli", "kosmos", "omp", "pmstudio", "vscode-copilot", "zcode",
 ]);
 
