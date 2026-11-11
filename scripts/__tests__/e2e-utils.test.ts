@@ -792,3 +792,17 @@ describe("E2E runner exit", () => {
     },
   );
 });
+
+describe("E2E abort-listener hygiene", () => {
+  // The build-interrupt promise registered an anonymous one-shot abort
+  // listener. On the happy path the run never aborts, so `{ once: true }`
+  // never fires and the listener stayed attached for the whole lane. It could
+  // not keep the event loop alive, but it also served no purpose after the
+  // run finished — the handler must be a named function that the finally
+  // removes, so nothing outlives the run.
+  it("removes the build-interrupt abort listener when the run finishes normally", () => {
+    const source = readFileSync(join(import.meta.dirname, "../e2e-utils.ts"), "utf8");
+    expect(source).toContain('removeEventListener("abort", onAbort)');
+    expect(source).not.toMatch(/addEventListener\("abort", \(\) => reject\(abort\.signal\.reason\)/);
+  });
+});

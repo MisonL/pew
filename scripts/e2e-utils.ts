@@ -267,12 +267,14 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
     });
   };
   abort.signal.addEventListener("abort", killChildren);
+  let onAbort: (() => void) | undefined;
   // Rejects when SIGINT/SIGTERM aborts the run, so deadline() races can lose
   // to interruption. Only the ui tier races it (the build deadline); without a
   // consumer here the rejection would surface as an unhandled rejection on
   // SIGINT/SIGTERM in the api tier and flip a clean exit code to 1.
   const interrupted = new Promise<never>((_, reject) => {
-    abort.signal.addEventListener("abort", () => reject(abort.signal.reason), { once: true });
+    onAbort = () => reject(abort.signal.reason);
+    abort.signal.addEventListener("abort", onAbort, { once: true });
   });
   void interrupted.catch(() => {
     // Consumed by the ui-tier build race when applicable; otherwise the abort
@@ -427,6 +429,9 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
     abort.signal.removeEventListener("abort", killChildren);
+    // The one-shot listener never fires on a normal run, so `{ once: true }`
+    // would leave it attached for the whole lane; remove it here instead.
+    if (onAbort) abort.signal.removeEventListener("abort", onAbort);
     if (cleanupErrors.length === 1) {
       cleanupFailure = cleanupErrors[0];
       cleanupFailed = true;
