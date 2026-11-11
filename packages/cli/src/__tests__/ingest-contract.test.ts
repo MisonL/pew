@@ -7,6 +7,8 @@ import {
 } from "../utils/ingest-contract.js";
 import { toEvidenceRecord } from "../utils/usage-evidence.js";
 import {
+  RETIRED_SOURCES,
+  SOURCES,
   validateEvidenceRecord,
   validateIngestRecord,
   validateSessionIngestRecord,
@@ -46,6 +48,27 @@ const SESSION = {
   model: "claude-sonnet-4",
   snapshot_at: "2026-03-07T11:00:00.000Z",
 };
+
+describe("the mirror's source set tracks @pew/core", () => {
+  // The mirror restates the source list by hand, and a source that core adds
+  // later is accepted by the server but rejected locally — upload-engine then
+  // filters those records out and still advances the offset, so the source
+  // silently never uploads. Enumerate core's own list instead of listing
+  // cases: a new identity in core has to reach the mirror or this fails.
+  const everySource = [...SOURCES, ...RETIRED_SOURCES];
+
+  it.each(everySource)("token records from %s pass the local filter", (source) => {
+    const record = { ...TOKEN, source };
+    expect(tokenRecordRejection(record)).toBeNull();
+    expect(validateIngestRecord(record, 0).valid).toBe(true);
+  });
+
+  it.each(everySource)("session records from %s pass the local filter", (source) => {
+    const record = { ...SESSION, source, session_key: `${source}:ses-1` };
+    expect(sessionRecordRejection(record)).toBeNull();
+    expect(validateSessionIngestRecord(record, 0).valid).toBe(true);
+  });
+});
 
 describe("tokenRecordRejection agrees with validateIngestRecord", () => {
   const cases: Array<[string, Record<string, unknown>]> = [

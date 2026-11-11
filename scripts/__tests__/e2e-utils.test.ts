@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -824,4 +824,37 @@ describe("E2E process isolation", () => {
     // exit; keep the outer budget strictly above it so a wedged child surfaces
     // its own "startup timed out" diagnostic instead of a vitest timeout.
   }, 1_200_000);
+});
+
+describe("E2E runner exit", () => {
+  // Measured on the WorkBuddy lane with Bun 1.4.4: after a full ui run the
+  // entry script reached its last statement with no child processes, no pipes
+  // and no sockets left (lsof reported only empty KQUEUEs) and never returned
+  // from the event loop — only SIGTERM ended it, twice. The self-hosted branch
+  // shares this entry shape and runtime, and did not reproduce the hang in one
+  // measurement, so the exit below is applied as the same deterministic guard
+  // on both branches: cleanup has already finished at this point, and stdout is
+  // inherited throughout, so no buffered output is lost.
+  it.each(["run-e2e.ts", "run-e2e-ui.ts"])(
+    "exits %s deterministically once cleanup has finished",
+    (entry) => {
+      const source = readFileSync(join(import.meta.dirname, "..", entry), "utf8");
+      expect(source).toMatch(/process\.exit\(/);
+      expect(source).not.toMatch(/^\s*process\.exitCode\s*=/m);
+    },
+  );
+});
+
+describe("E2E abort-listener hygiene", () => {
+  // The build-interrupt promise registered an anonymous one-shot abort
+  // listener. On the happy path the run never aborts, so `{ once: true }`
+  // never fires and the listener stayed attached for the whole lane. It could
+  // not keep the event loop alive, but it also served no purpose after the
+  // run finished — the handler must be a named function that the finally
+  // removes, so nothing outlives the run.
+  it("removes the build-interrupt abort listener when the run finishes normally", () => {
+    const source = readFileSync(join(import.meta.dirname, "../e2e-utils.ts"), "utf8");
+    expect(source).toContain('removeEventListener("abort", onAbort)');
+    expect(source).not.toMatch(/addEventListener\("abort", \(\) => reject\(abort\.signal\.reason\)/);
+  });
 });
