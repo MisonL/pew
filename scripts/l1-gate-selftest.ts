@@ -203,11 +203,14 @@ function runProbes(wt: string, baseline: { source: string; test: string }): Prob
 	push("skipped-test", true, runHook(wt), true, "noSkippedTests");
 	resetProbe(wt, baseline);
 
+	// The static gate must judge the INDEX, not the worktree: a type error is
+	// staged while the worktree keeps the good copy. A wrong test expectation
+	// would no longer do here — the hook does not run the suite.
 	stageIndexOnlyGoodWorktree(
 		wt,
-		PROBE_REL_TEST,
-		baseline.test.replace("expect(l1ProbeOk()).toBe(true)", "expect(l1ProbeOk()).toBe(false)"),
-		baseline.test,
+		PROBE_REL_SOURCE,
+		`${baseline.source}\nexport const l1IndexOnly: number = "x";\n`,
+		baseline.source,
 	);
 	push("index-bad-worktree-good", true, runHook(wt), true, "checkout-index");
 	resetProbe(wt, baseline);
