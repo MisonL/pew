@@ -1,8 +1,9 @@
-# Pin patch, not major: floating node:22-slim resolves to whatever digest the
-# local cache holds, and a build beside a pre-security-release cache (verified:
-# 22.23.3 built a runtime with CVE-2026-111497, fixed in 22.23.4) ships the
-# vulnerable decoder into an exposed container.
-ARG NODE_VERSION=22.23.4
+# Node 26 LTS, pinned to the patch CI uses. Pin patch, not major: a floating
+# tag resolves to whatever digest the local cache holds, and a build beside a
+# pre-security-release cache (verified once on 22.23.3: it shipped a runtime
+# with CVE-2026-111497, fixed in 22.23.4) ships the vulnerable decoder into an
+# exposed container.
+ARG NODE_VERSION=26.12.1
 FROM node:${NODE_VERSION}-slim AS base
 
 # Keep Bun for workspace installs/build scripts while pinning every Node.js
@@ -32,7 +33,7 @@ WORKDIR /app
 # resolver cannot load sharp's @img/sharp-linux-x64 native binding from inside
 # Next.js's Turbopack page-data collection workers under bun's isolated install
 # layout. The base image pins Node.js to the same supported major as the runner.
-RUN node --version | grep -Eq '^v22\.'
+RUN node --version | grep -Eq '^v26\.'
 
 COPY --from=deps /app ./
 COPY . .

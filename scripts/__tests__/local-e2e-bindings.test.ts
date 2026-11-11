@@ -128,16 +128,20 @@ describe("real D1 lifecycle", () => {
     // set comparison across the whole tmpdir failed whenever a sibling lane
     // started or finished during this spawn (the child reuses TMPDIR from
     // this process, so the redirected root still exercises the cleanup).
+    // The child budget is a hang detector, not a performance budget: under the
+    // full suite's parallel load this spawn has been killed at 120s, which
+    // leaves an empty stderr and fails the assertion for a reason unrelated to
+    // the migration. The sibling case above uses the same order of magnitude.
     const root = mkdtempSync(join(tmpdir(), "pew-invalid-root-"));
     const migrations = mkdtempSync(join(root, "pew-invalid-migration-"));
     const before = new Set(readdirSync(root).filter((name) => name.startsWith("pew-e2e-")));
     try {
       writeFileSync(join(migrations, "0001.sql"), sql);
-      const result = spawnSync("bun", ["--no-env-file", "-e", 'import {localIsolatedEnv} from "./scripts/local-e2e-bindings.ts"; await localIsolatedEnv(process.argv[1]);', migrations], { encoding: "utf8", timeout: 120_000, env: { ...process.env, TMPDIR: root } });
+      const result = spawnSync("bun", ["--no-env-file", "-e", 'import {localIsolatedEnv} from "./scripts/local-e2e-bindings.ts"; await localIsolatedEnv(process.argv[1]);', migrations], { encoding: "utf8", timeout: 600_000, env: { ...process.env, TMPDIR: root } });
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("migrations failed");
       expect(new Set(readdirSync(root).filter((name) => name.startsWith("pew-e2e-")))).toEqual(before);
       expect(existsSync(migrations)).toBe(true);
     } finally { rmSync(root, { recursive: true, force: true }); }
-  }, 300_000);
+  }, 900_000);
 });
