@@ -15,19 +15,23 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveGitInfoDir } from "./git-admin-dir";
 
 const softMode = process.env.PEW_G2_SOFT === "1";
 const noCache = process.env.PEW_G2_NO_CACHE === "1";
 
 // Cache successful osv-scanner runs keyed by bun.lock hash + tool version.
-// Stored under .git/info (gitignored by default). Skips network on no-op pushes.
+// Stored under the git admin dir's `info` (gitignored by default). Skips
+// network on no-op pushes. Resolved through the worktree pointer: in a linked
+// worktree `.git` is a file, and `<repo>/.git/info` cannot be created, which
+// silently lost the cache (writeCache is best-effort).
 //
 // The lock hash alone is not a safe key: advisories get disclosed against
 // versions that are already locked, so an unchanged bun.lock can turn from
 // clean to vulnerable without the hash moving. Entries therefore also expire,
 // and a stale entry forces a fresh scan.
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const CACHE_DIR = resolve(REPO_ROOT, ".git/info");
+const CACHE_DIR = resolveGitInfoDir(REPO_ROOT);
 // PEW_G2_CACHE_FILE lets the gate's own test run against a scratch cache
 // instead of the developer's real one.
 const CACHE_FILE = process.env.PEW_G2_CACHE_FILE ?? resolve(CACHE_DIR, "g2-cache.json");

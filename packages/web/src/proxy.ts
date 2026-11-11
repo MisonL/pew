@@ -1,7 +1,7 @@
 import { auth } from "@/auth";
+import { isE2EMode } from "@/lib/e2e-mode";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { isE2EMode } from "@/lib/e2e-mode";
 
 // Skip auth in the E2E runner's isolated environment. Shares the single gate
 // definition (lib/e2e-mode.ts) with the API routes, so a stray

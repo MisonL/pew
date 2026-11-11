@@ -116,10 +116,9 @@ describe("real D1 lifecycle", () => {
   });
 
   it("preserves full fresh schema, native Worker RPC and failure cleanup", () => {
-    // The deadline is a hang detector: spawning wrangler, applying the whole
-    // migration set and exercising the RPC round trip has been measured at
-    // 2m30s on a loaded host, and well past 100s beneath the coverage suite,
-    // which the old 120s ceiling killed.
+    // Beneath the coverage suite this spawn can take well over 100s; the
+    // timeout budget is deliberately generous (the old 120s ceiling failed
+    // for reasons unrelated to the migration itself).
     const result = spawnSync("bun", ["--no-env-file", "scripts/test-local-e2e.ts"], { encoding: "utf8", timeout: 900_000, env: { ...process.env, CI: "true", PEW_SYNTHETIC_PARENT_SECRET: "must-not-forward" } });
     expect(result.status, result.stdout + result.stderr).toBe(0);
   }, 900_000);
@@ -134,9 +133,6 @@ describe("real D1 lifecycle", () => {
     const before = new Set(readdirSync(root).filter((name) => name.startsWith("pew-e2e-")));
     try {
       writeFileSync(join(migrations, "0001.sql"), sql);
-      // A failing migration still pays wrangler's full startup: measured at
-      // 31.5s for the unparseable file, which the old 30s deadline killed
-      // before it could report "migrations failed".
       const result = spawnSync("bun", ["--no-env-file", "-e", 'import {localIsolatedEnv} from "./scripts/local-e2e-bindings.ts"; await localIsolatedEnv(process.argv[1]);', migrations], { encoding: "utf8", timeout: 120_000, env: { ...process.env, TMPDIR: root } });
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("migrations failed");
