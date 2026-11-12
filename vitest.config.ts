@@ -51,21 +51,6 @@ export default defineConfig({
         // runtime logic.
         "packages/core/src/index.ts",
         "packages/cli/src/index.ts",
-        // ===========================================================================
-        // Worker entry points. Each is a request router that DOES hold logic —
-        // request validation (`validateRequest`), shared-secret auth
-        // (`secureCompare`), the domain dispatch switch for worker-read's 14
-        // RPC domains, and the 500/503 error paths. It is excluded because the
-        // auth path uses `crypto.subtle.timingSafeEqual`, which exists only in
-        // the Workers runtime and cannot be exercised here, and the request/
-        // response wiring is covered by the L2 API E2E lane. Keeping the code
-        // here unmeasured is a known gap: a mistyped route binding or a dropped
-        // dispatch case passes L1 silently. Listed explicitly rather than as a
-        // blanket `**/index.ts` so a future `index.ts` that holds logic is not
-        // silently excluded.
-        // ===========================================================================
-        "packages/worker/src/index.ts",
-        "packages/worker-read/src/index.ts",
         "**/bin.ts",
         "**/cli.ts",
         "**/types.ts",

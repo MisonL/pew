@@ -215,7 +215,9 @@ async function secureCompare(a: string, b: string): Promise<boolean> {
   // Fallback constant-time comparison (XOR every byte, accumulate diff bits).
   let diff = bufA.byteLength ^ bufB.byteLength;
   for (let i = 0; i < len; i++) {
-    diff |= (paddedA[i] ?? 0) ^ (paddedB[i] ?? 0);
+    // Both padded arrays are Uint8Array(len), so every index is defined;
+    // the nullish branches would be unreachable.
+    diff |= (paddedA[i] as number) ^ (paddedB[i] as number);
   }
   return diff === 0;
 }
