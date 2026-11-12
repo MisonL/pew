@@ -99,13 +99,16 @@ export async function PATCH(request: Request) {
   const params: unknown[] = [];
 
   if ("nickname" in body) {
-    const nickname = body.nickname;
-    if (nickname !== null && typeof nickname !== "string") {
+    const raw = body.nickname;
+    if (raw !== null && typeof raw !== "string") {
       return NextResponse.json(
         { error: "nickname must be a string or null" },
         { status: 400 },
       );
     }
+    // Trim before the length check: "   " used to pass and rendered as an
+    // empty name on the public leaderboard (`nickname ?? name`).
+    const nickname = typeof raw === "string" ? raw.trim() : raw;
     if (typeof nickname === "string" && (nickname.length < 1 || nickname.length > 32)) {
       return NextResponse.json(
         { error: "nickname must be 1-32 characters" },

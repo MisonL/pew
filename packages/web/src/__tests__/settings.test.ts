@@ -245,6 +245,28 @@ describe("PATCH /api/settings", () => {
     expect(params).toContain(null);
   });
 
+  it("rejects a whitespace-only nickname instead of blanking the leaderboard", async () => {
+    // The length check ran on the raw value, so "   " passed and rendered as
+    // an empty name on the public leaderboard (`nickname ?? name`).
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
+
+    const res = await PATCH(makeJsonRequest("PATCH", "/api/settings", { nickname: "   " }));
+
+    expect(res.status).toBe(400);
+    expect(mockDbWrite.execute).not.toHaveBeenCalled();
+  });
+
+  it("stores the trimmed nickname", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
+    mockDbWrite.execute.mockResolvedValueOnce({ changes: 1 });
+    mockDbRead.getUserSettings.mockResolvedValueOnce({ nickname: "Alice", slug: "alice", is_public: 0 });
+
+    await PATCH(makeJsonRequest("PATCH", "/api/settings", { nickname: "  Alice  " }));
+
+    const [, params] = mockDbWrite.execute.mock.calls[0]!;
+    expect(params).toContain("Alice");
+  });
+
   // -- slug validation --
 
   it("should reject non-string slug", async () => {

@@ -225,6 +225,17 @@ describe("POST /api/teams", () => {
     expect(res.status).toBe(400);
   });
 
+  it("rejects a whitespace-only name instead of creating a blank team", async () => {
+    // PATCH trims before checking; POST only counted characters, so "   "
+    // created a team that renders as an empty label everywhere.
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
+
+    const res = await POST(makeJson("POST", { name: "   " }));
+
+    expect(res.status).toBe(400);
+    expect(mockDbWrite.batch).not.toHaveBeenCalled();
+  });
+
   it("should create a team with auto-generated slug (201)", async () => {
     vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
     mockDbRead.checkTeamSlugExists.mockResolvedValueOnce(false); // slug not taken
