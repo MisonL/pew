@@ -302,7 +302,11 @@ async function sessionSyncLocked(
   let activeDbDrivers = dbDrivers;
   if (opts.openCodeDbPath) {
     const dbStat = await stat(opts.openCodeDbPath).catch(() => null);
-    if (dbStat) {
+    if (!dbStat) {
+      // Missing DB: the driver would return an empty cursor and still count as
+      // one scanned database, which the summary would report as "1 db".
+      activeDbDrivers = activeDbDrivers.filter((d) => d.source !== "opencode");
+    } else {
       if (!opts.openSessionDb) {
         // Case 1: DB file exists but SQLite adapter is missing (native module not available)
         onProgress?.({

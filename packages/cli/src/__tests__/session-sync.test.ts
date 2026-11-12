@@ -816,6 +816,7 @@ describe("executeSessionSync", () => {
 
     expect(result.totalSnapshots).toBe(0);
     expect(result.sources.opencode).toBe(0);
+    expect(result.dbsScanned.opencode).toBe(0);
   });
 
   it("should sync both JSON and SQLite OpenCode sessions together", async () => {
