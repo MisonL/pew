@@ -901,7 +901,12 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   // OpenCode pre-check
   if (opts.openCodeDbPath) {
     const dbStat = await stat(opts.openCodeDbPath).catch(() => null);
-    if (dbStat) {
+    if (!dbStat) {
+      // Nothing on disk: running the driver would return an empty cursor and
+      // still be counted as one scanned DB in the summary. The Hermes
+      // pre-check below already drops its missing databases this way.
+      activeDbDrivers = activeDbDrivers.filter((d) => d.source !== "opencode");
+    } else {
       if (!opts.openMessageDb) {
         // Case 1: DB file exists but SQLite adapter is missing (native module not available)
         onProgress?.({

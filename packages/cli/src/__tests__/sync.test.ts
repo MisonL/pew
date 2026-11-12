@@ -1298,6 +1298,10 @@ describe("executeSync", () => {
 
     expect(result.totalDeltas).toBe(0);
     expect(result.sources.opencode).toBe(0);
+    // A DB that is not on disk was not scanned. Counting the driver run would
+    // print "OpenCode: 1 db" on machines that never installed OpenCode, which
+    // is the same lie the Hermes pre-check already avoids.
+    expect(result.dbsScanned.opencode).toBe(0);
   });
 
   it("should gracefully handle when openMessageDb returns null", async () => {

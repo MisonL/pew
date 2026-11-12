@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GET } from "@/app/api/users/[slug]/route";
-import { generateMetadata } from "@/app/u/[slug]/page";
+import PublicProfilePage, { generateMetadata } from "@/app/u/[slug]/page";
 import * as dbModule from "@/lib/db";
 import * as authHelpersModule from "@/lib/auth-helpers";
 import * as adminModule from "@/lib/admin";
@@ -17,6 +17,7 @@ vi.mock("@/lib/db", () => ({
 // Mock auth helpers (resolveUser is called for non-public profile bypass check)
 vi.mock("@/lib/auth-helpers", () => ({
   resolveUser: vi.fn(),
+  resolveSessionUser: vi.fn(),
 }));
 
 // Mock admin helpers
@@ -659,5 +660,62 @@ describe("generateMetadata for /u/[slug]", () => {
     });
 
     expect(meta.title).toBe("Profile — pew");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Page /u/[slug] — visibility must match GET /api/users/[slug]
+// ---------------------------------------------------------------------------
+
+describe("PublicProfilePage /u/[slug]", () => {
+  let mockDbRead: ReturnType<typeof createMockDbRead>;
+
+  const params = (slug: string) => ({ params: Promise.resolve({ slug }) });
+  const privateUser = {
+    id: "u1",
+    name: "Secret Person",
+    nickname: null,
+    image: null,
+    slug: "secret",
+    is_public: 0,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead = createMockDbRead();
+    vi.mocked(dbModule.getDbRead).mockResolvedValue(mockDbRead as never);
+    vi.mocked(authHelpersModule.resolveSessionUser).mockResolvedValue(null);
+    vi.mocked(adminModule.isAdmin).mockReturnValue(false);
+  });
+
+  it("404s when the slug does not exist", async () => {
+    mockDbRead.getPublicUserBySlugOrId.mockResolvedValueOnce(null);
+    await expect(PublicProfilePage(params("nobody"))).rejects.toThrow();
+  });
+
+  it("404s for a private profile seen by an anonymous visitor", async () => {
+    mockDbRead.getPublicUserBySlugOrId.mockResolvedValueOnce(privateUser);
+    await expect(PublicProfilePage(params("secret"))).rejects.toThrow();
+  });
+
+  it("serves a private profile to a teammate, matching the API bypass", async () => {
+    mockDbRead.getPublicUserBySlugOrId.mockResolvedValueOnce(privateUser);
+    vi.mocked(authHelpersModule.resolveSessionUser).mockResolvedValueOnce({
+      userId: "u2",
+      email: "mate@example.com",
+      via: "session",
+    });
+    mockDbRead.checkSharedTeam.mockResolvedValueOnce(true);
+    await expect(PublicProfilePage(params("secret"))).resolves.toBeTruthy();
+  });
+
+  it("serves a public profile to an anonymous visitor", async () => {
+    mockDbRead.getPublicUserBySlugOrId.mockResolvedValueOnce({
+      ...privateUser,
+      slug: "public",
+      is_public: 1,
+    });
+    await expect(PublicProfilePage(params("public"))).resolves.toBeTruthy();
   });
 });

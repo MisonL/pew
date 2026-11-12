@@ -436,6 +436,32 @@ describe("executeLogin", () => {
   // ---- Code-based login (headless) ----
 
   describe("code-based login", () => {
+    it("bounds the verify request instead of hanging on a silent server", async () => {
+      // The browser flow takes a timeoutMs; the headless path passed none, so a
+      // server that accepted the connection and never answered hung `pew login`
+      // until undici's 300s default. Assertions cannot live inside the injected
+      // fetch: a throw there is caught by executeCodeLogin and reported as a
+      // login error, which would make this test pass without testing anything.
+      let init: RequestInit | undefined;
+      const mockFetch = async (_url: string, i?: RequestInit) => {
+        init = i;
+        return new Response(JSON.stringify({ error: "bad code" }), { status: 401 });
+      };
+
+      await executeLogin({
+        configDir: tempDir,
+        apiUrl: "http://localhost:7020",
+        code: "ABCD-1234",
+        force: true,
+        fetch: mockFetch as typeof globalThis.fetch,
+        openBrowser: async () => {
+          throw new Error("Should not open browser");
+        },
+      });
+      expect(init).toBeDefined();
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+    });
+
     it("should authenticate successfully with valid code", async () => {
       const mockFetch = async (url: string, init?: RequestInit) => {
         expect(url).toBe("http://localhost:7020/api/auth/code/verify");

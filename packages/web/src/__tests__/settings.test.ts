@@ -56,6 +56,8 @@ describe("GET /api/settings", () => {
 
     expect(res.status).toBe(200);
     expect(body).toEqual({ nickname: "Alice", slug: "alice", is_public: false });
+    // Per-user data: name the cache policy like every sibling route does.
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
   });
 
   it("should return 404 when user not found", async () => {
@@ -241,6 +243,28 @@ describe("PATCH /api/settings", () => {
     const [sql, params] = mockDbWrite.execute.mock.calls[0]!;
     expect(sql).toContain("nickname = ?");
     expect(params).toContain(null);
+  });
+
+  it("rejects a whitespace-only nickname instead of blanking the leaderboard", async () => {
+    // The length check ran on the raw value, so "   " passed and rendered as
+    // an empty name on the public leaderboard (`nickname ?? name`).
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
+
+    const res = await PATCH(makeJsonRequest("PATCH", "/api/settings", { nickname: "   " }));
+
+    expect(res.status).toBe(400);
+    expect(mockDbWrite.execute).not.toHaveBeenCalled();
+  });
+
+  it("stores the trimmed nickname", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
+    mockDbWrite.execute.mockResolvedValueOnce({ changes: 1 });
+    mockDbRead.getUserSettings.mockResolvedValueOnce({ nickname: "Alice", slug: "alice", is_public: 0 });
+
+    await PATCH(makeJsonRequest("PATCH", "/api/settings", { nickname: "  Alice  " }));
+
+    const [, params] = mockDbWrite.execute.mock.calls[0]!;
+    expect(params).toContain("Alice");
   });
 
   // -- slug validation --

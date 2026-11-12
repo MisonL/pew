@@ -107,6 +107,7 @@ describe("D1Client", () => {
         sql: "SELECT * FROM users WHERE id = ?",
         params: [1],
       });
+      expect(opts.signal).toBeInstanceOf(AbortSignal);
     });
 
     it("should return typed results", async () => {
@@ -170,6 +171,21 @@ describe("D1Client", () => {
       await expect(
         client.query("SELECT * FROM users")
       ).rejects.toThrow(D1Error);
+    });
+
+    it("aborts a stalled request at the configured deadline", async () => {
+      // Without a deadline a dead D1 endpoint pins the Node request until
+      // undici's 300s default — the Worker RPC client already bounds itself
+      // this way for the same reason.
+      const stalled = new D1Client({ ...TEST_CONFIG, timeoutMs: 10 });
+      mockFetch.mockImplementationOnce(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+          }),
+      );
+
+      await expect(stalled.query("SELECT 1")).rejects.toThrow(/timeout/i);
     });
 
     it("should include message when fetch rejects with non-Error value", async () => {

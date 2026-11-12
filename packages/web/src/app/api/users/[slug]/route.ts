@@ -18,11 +18,11 @@
 
 import { NextResponse } from "next/server";
 import { sumCounts, VALID_SOURCES } from "@pew/core";
-import { getDbRead, type DbRead } from "@/lib/db";
+import { getDbRead } from "@/lib/db";
 import { resolveUser } from "@/lib/auth-helpers";
+import { canBypassPublic } from "@/lib/profile-access";
 import { jsonResponse } from "@/lib/json-response";
 import { isDateParam } from "@/lib/date-params";
-import { isAdmin, isAdminInDb } from "@/lib/admin";
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -30,53 +30,6 @@ import { isAdmin, isAdminInDb } from "@/lib/admin";
 
 const MAX_DAYS = 365;
 const DEFAULT_DAYS = 30;
-
-// ---------------------------------------------------------------------------
-// Authorization: bypass is_public
-// ---------------------------------------------------------------------------
-
-/**
- * Check whether the authenticated caller may view a non-public profile.
- *
- * Returns true if the caller is:
- *   1. an admin, OR
- *   2. on the same team as the target user, OR
- *   3. in the same season as the target user (both via registered teams)
- */
-async function canBypassPublic(
-  request: Request,
-  db: DbRead,
-  targetUserId: string,
-): Promise<boolean> {
-  const auth = await resolveUser(request);
-  if (!auth) return false;
-
-  // 1. Admin bypass — interactive session only. A Bearer api_key is a
-  // long-lived CLI credential that a password reset does not rotate, so a
-  // leaked admin key must not read private profiles (same rule as
-  // resolveAdmin/isAdminUser).
-  if (auth.via !== "bearer" && (isAdmin(auth.email) || (await isAdminInDb(auth.userId)))) {
-    return true;
-  }
-
-  // 2. Teammate check — caller and target share at least one team
-  try {
-    const shared = await db.checkSharedTeam(auth.userId, targetUserId);
-    if (shared) return true;
-  } catch {
-    // team_members table may not exist — graceful fallthrough
-  }
-
-  // 3. Same-season check — both users belong to teams registered in the same season
-  try {
-    const shared = await db.checkSharedSeason(auth.userId, targetUserId);
-    if (shared) return true;
-  } catch {
-    // season_teams table may not exist — graceful fallthrough
-  }
-
-  return false;
-}
 
 // ---------------------------------------------------------------------------
 // Route handler
@@ -109,7 +62,8 @@ export async function GET(
 
   // Return 404 if user is not public — unless caller has access
   if (!user.is_public) {
-    const allowed = await canBypassPublic(request, db, user.id);
+    const viewer = await resolveUser(request);
+    const allowed = viewer ? await canBypassPublic(viewer, db, user.id) : false;
     if (!allowed) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }

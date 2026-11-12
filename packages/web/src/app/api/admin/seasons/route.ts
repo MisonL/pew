@@ -19,6 +19,7 @@ import { autoRegisterTeamsForSeason } from "@/lib/auto-register";
 
 const SLUG_RE = /^[a-z0-9-]{1,32}$/;
 const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?Z$/;
+const TOGGLE_FLAGS = ["allow_late_registration", "allow_roster_changes", "allow_late_withdrawal"] as const;
 
 function isValidDatetime(s: string): boolean {
   if (!DATETIME_RE.test(s)) return false;
@@ -98,10 +99,21 @@ export async function POST(request: Request) {
     end_date?: string;
   };
 
-  // Extract toggle flags (default false)
-  const allow_late_registration = !!body.allow_late_registration;
-  const allow_roster_changes = !!body.allow_roster_changes;
-  const allow_late_withdrawal = !!body.allow_late_withdrawal;
+  // Toggle flags default to false, but only an actual `false` may turn one off:
+  // `!!body.allow_late_withdrawal` reads the string "false" as true and would
+  // create the season with the flag ON, the coercion PATCH already rejects.
+  for (const flag of TOGGLE_FLAGS) {
+    const value = body[flag];
+    if (value !== undefined && typeof value !== "boolean") {
+      return NextResponse.json(
+        { error: `${flag} must be a boolean` },
+        { status: 400 }
+      );
+    }
+  }
+  const allow_late_registration = body.allow_late_registration === true;
+  const allow_roster_changes = body.allow_roster_changes === true;
+  const allow_late_withdrawal = body.allow_late_withdrawal === true;
 
   // Validate name
   if (!name || typeof name !== "string" || name.length < 1 || name.length > 64) {

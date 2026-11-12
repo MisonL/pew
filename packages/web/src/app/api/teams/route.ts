@@ -85,7 +85,9 @@ export async function POST(request: Request) {
   if (!parsed.ok) return parsed.response;
   const body = parsed.body;
 
-  const name = body.name;
+  // Trim first, like PATCH: counting characters alone let "   " through and
+  // created a team with a blank label.
+  const name = typeof body.name === "string" ? body.name.trim() : body.name;
   if (typeof name !== "string" || name.length < 1 || name.length > 64) {
     return NextResponse.json(
       { error: "name must be 1-64 characters" },

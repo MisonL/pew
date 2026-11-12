@@ -7,6 +7,9 @@ import { resolveUser } from "@/lib/auth-helpers";
 import { getDbRead, getDbWrite } from "@/lib/db";
 import { readJsonBody } from "@/lib/request-json";
 
+/** Settings rows are per-user: never let a shared cache hold them. */
+const NO_STORE = { "Cache-Control": "private, no-store" };
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -41,7 +44,7 @@ export async function GET(request: Request) {
       nickname: row.nickname,
       slug: row.slug,
       is_public: row.is_public === 1,
-    } satisfies UserSettings);
+    } satisfies UserSettings, { headers: NO_STORE });
   } catch (err) {
     // Layered fallback: strip missing columns one at a time so we preserve
     // as much data as possible.
@@ -57,7 +60,7 @@ export async function GET(request: Request) {
       if (!row) {
         return NextResponse.json({ error: "User not found" }, { status: 404 });
       }
-      return NextResponse.json({ nickname: row.nickname, slug: row.slug, is_public: false });
+      return NextResponse.json({ nickname: row.nickname, slug: row.slug, is_public: false }, { headers: NO_STORE });
     } catch (err2) {
       const msg2 = err2 instanceof Error ? err2.message : "";
       if (!msg2.includes("no such column")) {
@@ -71,7 +74,7 @@ export async function GET(request: Request) {
     if (!row) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
-    return NextResponse.json({ nickname: null, slug: row.slug, is_public: false });
+    return NextResponse.json({ nickname: null, slug: row.slug, is_public: false }, { headers: NO_STORE });
   }
 }
 
@@ -96,13 +99,16 @@ export async function PATCH(request: Request) {
   const params: unknown[] = [];
 
   if ("nickname" in body) {
-    const nickname = body.nickname;
-    if (nickname !== null && typeof nickname !== "string") {
+    const raw = body.nickname;
+    if (raw !== null && typeof raw !== "string") {
       return NextResponse.json(
         { error: "nickname must be a string or null" },
         { status: 400 },
       );
     }
+    // Trim before the length check: "   " used to pass and rendered as an
+    // empty name on the public leaderboard (`nickname ?? name`).
+    const nickname = typeof raw === "string" ? raw.trim() : raw;
     if (typeof nickname === "string" && (nickname.length < 1 || nickname.length > 32)) {
       return NextResponse.json(
         { error: "nickname must be 1-32 characters" },
@@ -180,6 +186,7 @@ export async function PATCH(request: Request) {
       row
         ? { nickname: row.nickname, slug: row.slug, is_public: row.is_public === 1 } satisfies UserSettings
         : null,
+      { headers: NO_STORE },
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

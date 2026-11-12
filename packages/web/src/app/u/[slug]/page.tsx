@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 import { getDbRead } from "@/lib/db";
+import { resolveSessionUser } from "@/lib/auth-helpers";
+import { canBypassPublic } from "@/lib/profile-access";
 import { PublicProfileView } from "./profile-view";
 
 // generateMetadata and the page both need the same row; cache() keeps it to one
@@ -57,10 +59,17 @@ export default async function PublicProfilePage({
 }) {
   const { slug } = await params;
 
-  // The client view fetches the profile itself, so without this the page
-  // answered 200 for anyone — a soft 404 that search engines index and that
-  // hides the distinction between "no such user" and "private profile".
-  if (!(await loadPublicUser(slug))) notFound();
+  // Same visibility rule as GET /api/users/[slug]. Checking only for a missing
+  // row answered 200 for private profiles — a soft 404 that search engines
+  // index and that tells anyone whether an account exists.
+  const user = await loadPublicUser(slug);
+  if (!user) notFound();
+  if (!user.is_public) {
+    const viewer = await resolveSessionUser();
+    if (!viewer) notFound();
+    const db = await getDbRead();
+    if (!(await canBypassPublic(viewer, db, user.id))) notFound();
+  }
 
   return <PublicProfileView slug={slug} />;
 }
