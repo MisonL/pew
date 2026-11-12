@@ -7,6 +7,9 @@ import { resolveUser } from "@/lib/auth-helpers";
 import { getDbRead, getDbWrite } from "@/lib/db";
 import { readJsonBody } from "@/lib/request-json";
 
+/** Settings rows are per-user: never let a shared cache hold them. */
+const NO_STORE = { "Cache-Control": "private, no-store" };
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -41,7 +44,7 @@ export async function GET(request: Request) {
       nickname: row.nickname,
       slug: row.slug,
       is_public: row.is_public === 1,
-    } satisfies UserSettings);
+    } satisfies UserSettings, { headers: NO_STORE });
   } catch (err) {
     // Layered fallback: strip missing columns one at a time so we preserve
     // as much data as possible.
@@ -57,7 +60,7 @@ export async function GET(request: Request) {
       if (!row) {
         return NextResponse.json({ error: "User not found" }, { status: 404 });
       }
-      return NextResponse.json({ nickname: row.nickname, slug: row.slug, is_public: false });
+      return NextResponse.json({ nickname: row.nickname, slug: row.slug, is_public: false }, { headers: NO_STORE });
     } catch (err2) {
       const msg2 = err2 instanceof Error ? err2.message : "";
       if (!msg2.includes("no such column")) {
@@ -71,7 +74,7 @@ export async function GET(request: Request) {
     if (!row) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
-    return NextResponse.json({ nickname: null, slug: row.slug, is_public: false });
+    return NextResponse.json({ nickname: null, slug: row.slug, is_public: false }, { headers: NO_STORE });
   }
 }
 
@@ -180,6 +183,7 @@ export async function PATCH(request: Request) {
       row
         ? { nickname: row.nickname, slug: row.slug, is_public: row.is_public === 1 } satisfies UserSettings
         : null,
+      { headers: NO_STORE },
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

@@ -56,6 +56,8 @@ describe("GET /api/settings", () => {
 
     expect(res.status).toBe(200);
     expect(body).toEqual({ nickname: "Alice", slug: "alice", is_public: false });
+    // Per-user data: name the cache policy like every sibling route does.
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
   });
 
   it("should return 404 when user not found", async () => {

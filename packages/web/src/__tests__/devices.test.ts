@@ -116,6 +116,8 @@ describe("GET /api/devices", () => {
     expect(body.devices[1].alias).toBeNull();
     expect(body.devices[0].revoked).toBe(false);
     expect(body.devices[1].revoked).toBe(true);
+    // Per-user data: name the cache policy like every sibling route does.
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
   });
 
   it("defaults nullable columns when row fields are null", async () => {

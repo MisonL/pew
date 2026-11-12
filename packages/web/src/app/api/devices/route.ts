@@ -12,6 +12,9 @@ import { unauthorizedResponse } from "@/lib/api-responses";
 import { getDbRead, getDbWrite } from "@/lib/db";
 import { readJsonBody } from "@/lib/request-json";
 
+/** Device rows are per-user: never let a shared cache hold them. */
+const NO_STORE = { "Cache-Control": "private, no-store" };
+
 // ---------------------------------------------------------------------------
 // GET /api/devices
 // ---------------------------------------------------------------------------
@@ -39,7 +42,7 @@ export async function GET(request: Request) {
       revoked: row.revoked === 1,
     }));
 
-    return NextResponse.json({ devices });
+    return NextResponse.json({ devices }, { headers: NO_STORE });
   } catch (err) {
     console.error("Failed to query devices:", err);
     return NextResponse.json(
@@ -121,7 +124,7 @@ export async function PUT(request: Request) {
       [userId, deviceId, alias]
     );
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true }, { headers: NO_STORE });
   } catch (err) {
     // The duplicate check above is a read; two concurrent requests can both
     // pass it and the loser then trips the LOWER(TRIM(alias)) unique index.
@@ -194,7 +197,7 @@ export async function PATCH(request: Request) {
         [userId, deviceId],
       );
     }
-    return NextResponse.json({ success: true, revoked: body.revoked });
+    return NextResponse.json({ success: true, revoked: body.revoked }, { headers: NO_STORE });
   } catch (err) {
     console.error("Failed to update device revocation:", err);
     return NextResponse.json({ error: "Failed to update device revocation" }, { status: 500 });
@@ -231,7 +234,7 @@ export async function DELETE(request: Request) {
       { sql: `DELETE FROM device_records WHERE user_id = ? AND device_id = ?`, params: [userId, deviceId] },
     ]);
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true }, { headers: NO_STORE });
   } catch (err) {
     console.error("Failed to delete device:", err);
     return NextResponse.json(
