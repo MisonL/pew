@@ -241,6 +241,9 @@ describe("POST /api/ingest", () => {
       expect(fetchInit.method).toBe("POST");
       expect(fetchInit.headers["Content-Type"]).toBe("application/json");
       expect(fetchInit.headers.Authorization).toContain("Bearer ");
+      // A stalled ingest Worker must not pin the Node request until undici's
+      // 300s default; the forward carries its own deadline.
+      expect(fetchInit.signal).toBeInstanceOf(AbortSignal);
 
       const sentBody = JSON.parse(fetchInit.body as string);
       expect(sentBody.userId).toBe("u1");

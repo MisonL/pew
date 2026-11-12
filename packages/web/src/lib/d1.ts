@@ -15,6 +15,25 @@ export interface D1Config {
   accountId: string;
   databaseId: string;
   apiToken: string;
+  /** Per-request deadline. Defaults to D1_TIMEOUT_MS or 60s. */
+  timeoutMs?: number;
+}
+
+/**
+ * Per-request deadline for the D1 REST endpoint.
+ *
+ * Every worker-read RPC already bounds itself (db-worker.ts); this client did
+ * not, so a wedged D1 endpoint pinned the Node request until undici's 300s
+ * default. 60s matches WORKER_RPC_TIMEOUT_MS: long enough for a large batch,
+ * short enough that a dead dependency fails the request, not the process.
+ */
+export const DEFAULT_D1_TIMEOUT_MS = 60_000;
+
+export function configuredD1TimeoutMs(
+  env: Record<string, string | undefined>
+): number {
+  const raw = Number(env.D1_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_D1_TIMEOUT_MS;
 }
 
 export function localD1BaseUrl(config: D1Config, env: Record<string, string | undefined>): string | undefined {
@@ -93,6 +112,7 @@ export class D1Error extends Error {
 export class D1Client {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
+  private readonly timeoutMs: number;
 
   constructor(config: D1Config) {
     if (!config.accountId) throw new Error("accountId is required");
@@ -106,6 +126,7 @@ export class D1Client {
       Authorization: `Bearer ${config.apiToken}`,
       "Content-Type": "application/json",
     };
+    this.timeoutMs = config.timeoutMs ?? configuredD1TimeoutMs(process.env);
   }
 
   /**
@@ -195,6 +216,9 @@ export class D1Client {
         method: "POST",
         headers: this.headers,
         body,
+        // Covers the body read too: aborting after the headers arrive makes
+        // response.json() reject instead of hanging.
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (err) {
       throw new D1Error(

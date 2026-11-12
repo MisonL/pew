@@ -43,6 +43,27 @@ export function resolveIngestUrl(kind: "tokens" | "sessions" | "evidence" | "det
 }
 
 // ---------------------------------------------------------------------------
+// Worker forward deadline
+// ---------------------------------------------------------------------------
+
+/**
+ * Deadline for the forward to the ingest Worker.
+ *
+ * Without it a stalled Worker pins the Node request until undici's 300s
+ * default; 60s matches the bound db-worker.ts already puts on worker-read
+ * RPCs. Read lazily like the other env vars in this module, so tests can
+ * lower it per case.
+ */
+export const DEFAULT_INGEST_FORWARD_TIMEOUT_MS = 60_000;
+
+export function ingestForwardTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = Number(env.INGEST_FORWARD_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_INGEST_FORWARD_TIMEOUT_MS;
+}
+
+// ---------------------------------------------------------------------------
 // Factory config
 // ---------------------------------------------------------------------------
 
@@ -200,6 +221,9 @@ export function createIngestHandler<T>(
           Authorization: `Bearer ${workerSecret}`,
         },
         body: JSON.stringify({ userId, records: validated }),
+        // Covers the body read too: aborting after the headers arrive makes
+        // res.json() reject instead of hanging.
+        signal: AbortSignal.timeout(ingestForwardTimeoutMs()),
       });
 
       if (!res.ok) {
