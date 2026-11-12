@@ -131,12 +131,6 @@ export default defineConfig({
         // All business logic is in the Worker handlers (tested in workers/).
         // ---------------------------------------------------------------------------
         "**/lib/db-worker.ts",
-        // ---------------------------------------------------------------------------
-        // Worker-read RPC handlers — schema fallback branches require real D1
-        // databases with old schema versions and are covered by L2 API E2E tests.
-        // The handler entry points themselves have matching unit tests under
-        // worker-read/src/rpc/*.test.ts and are now included in coverage.
-        // ---------------------------------------------------------------------------
       ],
       thresholds: {
         statements: 95,
