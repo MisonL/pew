@@ -34,6 +34,46 @@ export interface AuthResult {
 }
 
 /**
+ * Session lookup that also reports whether a session existed at all.
+ *
+ * `resolveUser` needs that distinction: a session whose user row is gone must
+ * not fall through to the Bearer path, while no session at all may.
+ */
+async function sessionUser(): Promise<{
+  present: boolean;
+  user: AuthResult | null;
+}> {
+  // E2E bypass: deterministic test user
+  if (isE2EMode()) {
+    return {
+      present: true,
+      user: { userId: E2E_TEST_USER_ID, email: E2E_TEST_USER_EMAIL },
+    };
+  }
+
+  const session = await auth();
+  if (!session?.user?.id) return { present: false, user: null };
+
+  const db = await getDbRead();
+  const user = await db.getUserById(session.user.id);
+  return {
+    present: true,
+    user: user ? { userId: user.id, email: user.email, via: "session" } : null,
+  };
+}
+
+/**
+ * Resolve the interactive session only — never a Bearer api_key.
+ *
+ * Server Components use this: there is no request header to read a CLI
+ * credential from, and a page must not treat one as a browser session.
+ * `resolveUser` composes it with the Bearer path for API routes.
+ */
+export async function resolveSessionUser(): Promise<AuthResult | null> {
+  return (await sessionUser()).user;
+}
+
+/**
  * Resolve the authenticated user for an API request.
  *
  * Priority:
@@ -46,18 +86,8 @@ export interface AuthResult {
 export async function resolveUser(
   request: Request,
 ): Promise<AuthResult | null> {
-  // E2E bypass: deterministic test user
-  if (isE2EMode()) {
-    return { userId: E2E_TEST_USER_ID, email: E2E_TEST_USER_EMAIL };
-  }
-
-  // Session auth
-  const session = await auth();
-  if (session?.user?.id) {
-    const db = await getDbRead();
-    const user = await db.getUserById(session.user.id);
-    return user ? { userId: user.id, email: user.email, via: "session" } : null;
-  }
+  const session = await sessionUser();
+  if (session.present) return session.user;
 
   // Bearer api_key auth
   const authHeader = request.headers.get("Authorization");
