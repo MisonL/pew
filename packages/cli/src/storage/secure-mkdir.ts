@@ -8,7 +8,6 @@
  * ConfigManager. This module ensures directory permissions are also hardened.
  */
 import { mkdir, chmod } from "node:fs/promises";
-import { mkdirSync as mkdirSyncFs } from "node:fs";
 
 /** Restrictive mode for sensitive directories (owner rwx only) */
 export const SECURE_DIR_MODE = 0o700;
@@ -29,26 +28,4 @@ export async function ensureSecureDir(path: string, options?: { recursive?: bool
     // Ownership or read-only mount: keep going, the files themselves are
     // still written with their own modes.
   });
-}
-
-/**
- * Async mkdir with secure permissions for sensitive directories.
- * Always creates with mode 0o700 regardless of umask.
- */
-export async function mkdirSecure(
-  path: string,
-  options?: { recursive?: boolean },
-): Promise<void> {
-  await mkdir(path, { ...options, mode: SECURE_DIR_MODE });
-}
-
-/**
- * Sync mkdir with secure permissions for sensitive directories.
- * Used in notify-handler where async is not possible.
- */
-export function mkdirSecureSync(
-  path: string,
-  options?: { recursive?: boolean },
-): void {
-  mkdirSyncFs(path, { ...options, mode: SECURE_DIR_MODE });
 }
