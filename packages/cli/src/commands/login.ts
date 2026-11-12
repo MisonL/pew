@@ -200,6 +200,9 @@ interface CodeVerifyResponse {
   error?: string;
 }
 
+/** One round trip; 30s matches the upload engine's per-request bound. */
+const CODE_LOGIN_TIMEOUT_MS = 30_000;
+
 async function executeCodeLogin(
   configManager: ConfigManager,
   apiUrl: string,
@@ -211,6 +214,9 @@ async function executeCodeLogin(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code }),
+      // Without a deadline a server that accepts the connection and never
+      // answers hangs `pew login` until undici's 300s default.
+      signal: AbortSignal.timeout(CODE_LOGIN_TIMEOUT_MS),
     });
 
     const data = (await response.json()) as CodeVerifyResponse;
