@@ -152,8 +152,8 @@ export const WARMUP_TIMEOUT_MS = 600_000;
 // clock growth under load, not a hang, is what the old value punished.
 // PEW_E2E_TEST_TIMEOUT_MS widens it further without an edit per clone; a
 // non-numeric or non-positive value keeps the default rather than disabling it.
-const DEFAULT_API_TEST_TIMEOUT_MS = 600_000;
 const API_TEST_TIMEOUT_ENV = "PEW_E2E_TEST_TIMEOUT_MS";
+export const DEFAULT_API_TEST_TIMEOUT_MS = 600_000;
 
 function configuredApiTestTimeoutMs(): number {
   const raw = process.env[API_TEST_TIMEOUT_ENV];

@@ -116,12 +116,12 @@ describe("real D1 lifecycle", () => {
   });
 
   it("preserves full fresh schema, native Worker RPC and failure cleanup", () => {
-    // Beneath the coverage suite this spawn can take well over 100s; the
-    // timeout budget is deliberately generous (the old 120s ceiling failed
-    // for reasons unrelated to the migration itself).
-    const result = spawnSync("bun", ["--no-env-file", "scripts/test-local-e2e.ts"], { encoding: "utf8", timeout: 900_000, env: { ...process.env, CI: "true", PEW_SYNTHETIC_PARENT_SECRET: "must-not-forward" } });
+    // Beneath the coverage suite this spawn measured 332s at load ~65 on 16
+    // cores, so the timeout budget matches the harness's other 30-minute
+    // hang detectors rather than the old 900s: a slow spawn is not a hang.
+    const result = spawnSync("bun", ["--no-env-file", "scripts/test-local-e2e.ts"], { encoding: "utf8", timeout: 1_800_000, env: { ...process.env, CI: "true", PEW_SYNTHETIC_PARENT_SECRET: "must-not-forward" } });
     expect(result.status, result.stdout + result.stderr).toBe(0);
-  }, 900_000);
+  }, 1_800_000);
   it.each(["THIS IS NOT SQL;", "CREATE TABLE duplicate(id TEXT); CREATE TABLE duplicate(id TEXT);"])("fails invalid or duplicate SQL and cleans only fresh state: %s", (sql) => {
     // Scan a private root, not the shared tmpdir: real lanes and concurrent
     // gate runs create their own `pew-e2e-*` siblings there, so a before/after

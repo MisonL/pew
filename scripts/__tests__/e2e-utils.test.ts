@@ -4,7 +4,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
-import { apiRouteWarmupPaths, ensurePortFree, resolveE2eDistDir, runLocalE2e, startLocalBindings, warmApiRoutes, WARMUP_TIMEOUT_MS } from "../e2e-utils";
+import { apiRouteWarmupPaths, DEFAULT_API_TEST_TIMEOUT_MS, ensurePortFree, resolveE2eDistDir, runLocalE2e, startLocalBindings, warmApiRoutes, WARMUP_TIMEOUT_MS } from "../e2e-utils";
 
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
@@ -625,11 +625,13 @@ describe("E2E process isolation", () => {
     }
   });
 
-  it("hands the api tier the documented 120s per-test budget", async () => {
+  it("hands the api tier the documented per-test budget", async () => {
     // Under load a single `next dev` route compile has been measured past a
     // minute on this lane, and the 30s budget turned that into a false
     // failure (24 timed-out cases on a warmed server at load ~100 that passed
-    // at load ~40). The per-test budget is a hang detector, not a speed gate.
+    // at load ~40). The per-test budget is a hang detector, not a speed gate,
+    // so the assertion reads the exported constant instead of pinning a
+    // number that a later widening would silently invalidate.
     const root = mkdtempSync(join(tmpdir(), "pew-l2-budget-"));
     mkdirSync(join(root, "packages", "web"), { recursive: true });
     const commands: string[][] = [];
@@ -665,7 +667,7 @@ describe("E2E process isolation", () => {
       await expect(runLocalE2e("api")).resolves.toBe(0);
       const testCommand = commands.find((args) => args.includes("packages/web/src/__tests__/e2e"));
       expect(testCommand).toBeDefined();
-      expect(testCommand![testCommand!.indexOf("--timeout") + 1]).toBe("120000");
+      expect(testCommand![testCommand!.indexOf("--timeout") + 1]).toBe(String(DEFAULT_API_TEST_TIMEOUT_MS));
     } finally {
       for (const [event, original] of listeners) {
         for (const listener of process.listeners(event)) if (!original.has(listener)) process.removeListener(event, listener);
