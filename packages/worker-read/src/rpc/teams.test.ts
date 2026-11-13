@@ -131,6 +131,14 @@ describe("teams RPC handlers", () => {
 
       expect(response.status).toBe(400);
     });
+
+    it("breaks creation-time ties by team id", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      await handleTeamsRpc({ method: "teams.listForUser", userId: "u1" }, db);
+
+      const sql = String(db.prepare.mock.calls[0]![0]);
+      expect(sql).toContain("ORDER BY t.created_at DESC, t.id");
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -259,6 +267,23 @@ describe("teams RPC handlers", () => {
       await expect(handleTeamsRpc(request, db)).rejects.toBe(
         "unrelated DB failure (non-Error)",
       );
+    });
+
+    it("breaks joined_at ties by user id, in the primary and fallback queries", async () => {
+      let call = 0;
+      db.all.mockImplementation(async () => {
+        call++;
+        if (call === 1) throw new Error("no such column: u.nickname");
+        return { results: [] };
+      });
+      await handleTeamsRpc({ method: "teams.getMembers", teamId: "t1" }, db);
+
+      expect(call).toBe(2);
+      for (const index of [0, 1]) {
+        expect(String(db.prepare.mock.calls[index]![0])).toContain(
+          "ORDER BY tm.joined_at ASC, tm.user_id",
+        );
+      }
     });
   });
 
@@ -557,7 +582,7 @@ describe("teams RPC handlers", () => {
       expect(await res.json()).toEqual({ result: rows });
       // No bind args required
       const sql = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string;
-      expect(sql).toContain("ORDER BY t.created_at DESC");
+      expect(sql).toContain("ORDER BY t.created_at DESC, t.id");
       expect(sql).toContain("member_count");
     });
 

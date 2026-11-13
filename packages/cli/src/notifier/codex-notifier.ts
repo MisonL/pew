@@ -388,75 +388,91 @@ function normalizeTomlText(lines: string[]): string {
  *   `\"` `\\` `\n` `\t` `\r` `\b` `\f` `\uXXXX` `\UXXXXXXXX`
  *
  * Single-quoted strings are literal (no escape processing), per the TOML spec.
+ *
+ * Returns `null` for anything that is not a well-formed string array:
+ * unquoted elements and missing separators included. Skipping unknown text
+ * (the previous behaviour) turned `["a" "b"]` — invalid TOML — into a
+ * two-element command, and that fabricated command was then backed up and
+ * restored over a config the real parser would never accept.
  */
 function parseTomlStringArray(text: string): string[] | null {
   if (!text.startsWith("[") || !text.endsWith("]")) return null;
-  const inner = text.slice(1, -1).trim();
-  if (!inner) return [];
-
+  const inner = text.slice(1, -1);
   const parts: string[] = [];
-  let current = "";
-  let inString = false;
-  let quote: '"' | "'" | null = null;
+  let i = 0;
+  const skipSpace = () => {
+    while (i < inner.length && /\s/.test(inner[i] ?? "")) i++;
+  };
+  skipSpace();
+  if (i >= inner.length) return [];
 
-  for (let i = 0; i < inner.length; i++) {
-    const char = inner[i];
-    if (!inString) {
-      if (char === '"' || char === "'") {
-        inString = true;
-        quote = char;
-        current = "";
-      }
-      continue;
-    }
+  while (i < inner.length) {
+    const opener = inner[i];
+    if (opener !== '"' && opener !== "'") return null;
+    const quote = opener;
+    i++;
+    let current = "";
+    let closed = false;
+    while (i < inner.length) {
+      const char = inner[i] ?? "";
 
-    // Handle backslash escapes in double-quoted strings only
-    if (quote === '"' && char === "\\") {
-      const next = inner[i + 1];
-      if (next === '"') { current += '"'; i++; continue; }
-      if (next === "\\") { current += "\\"; i++; continue; }
-      if (next === "n") { current += "\n"; i++; continue; }
-      if (next === "t") { current += "\t"; i++; continue; }
-      if (next === "r") { current += "\r"; i++; continue; }
-      if (next === "b") { current += "\b"; i++; continue; }
-      if (next === "f") { current += "\f"; i++; continue; }
+      // Handle backslash escapes in double-quoted strings only
+      if (quote === '"' && char === "\\") {
+        const next = inner[i + 1];
+        if (next === '"') { current += '"'; i += 2; continue; }
+        if (next === "\\") { current += "\\"; i += 2; continue; }
+        if (next === "n") { current += "\n"; i += 2; continue; }
+        if (next === "t") { current += "\t"; i += 2; continue; }
+        if (next === "r") { current += "\r"; i += 2; continue; }
+        if (next === "b") { current += "\b"; i += 2; continue; }
+        if (next === "f") { current += "\f"; i += 2; continue; }
 
-      // \uXXXX — 4-digit Unicode escape
-      if (next === "u") {
-        const hex = inner.slice(i + 2, i + 6);
-        if (/^[0-9a-fA-F]{4}$/.test(hex)) {
-          current += String.fromCodePoint(parseInt(hex, 16));
-          i += 5; // skip \uXXXX
-          continue;
-        }
-      }
-
-      // \UXXXXXXXX — 8-digit Unicode escape
-      if (next === "U") {
-        const hex = inner.slice(i + 2, i + 10);
-        if (/^[0-9a-fA-F]{8}$/.test(hex)) {
-          const codePoint = parseInt(hex, 16);
-          if (codePoint <= 0x10FFFF) {
-            current += String.fromCodePoint(codePoint);
-            i += 9; // skip \UXXXXXXXX
+        // \uXXXX — 4-digit Unicode escape
+        if (next === "u") {
+          const hex = inner.slice(i + 2, i + 6);
+          if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+            current += String.fromCodePoint(parseInt(hex, 16));
+            i += 6;
             continue;
           }
         }
+
+        // \UXXXXXXXX — 8-digit Unicode escape
+        if (next === "U") {
+          const hex = inner.slice(i + 2, i + 10);
+          if (/^[0-9a-fA-F]{8}$/.test(hex)) {
+            const codePoint = parseInt(hex, 16);
+            if (codePoint <= 0x10FFFF) {
+              current += String.fromCodePoint(codePoint);
+              i += 10;
+              continue;
+            }
+          }
+        }
+
+        // Unknown escape: preserve the backslash as-is (defensive)
+        current += char;
+        i++;
+        continue;
       }
 
-      // Unknown escape: preserve the backslash as-is (defensive)
+      if (char === quote) {
+        closed = true;
+        i++;
+        break;
+      }
+
       current += char;
-      continue;
+      i++;
     }
+    if (!closed) return null;
+    parts.push(current);
 
-    if (char === quote) {
-      parts.push(current);
-      inString = false;
-      quote = null;
-      continue;
-    }
-
-    current += char;
+    skipSpace();
+    if (i >= inner.length) return parts;
+    if (inner[i] !== ",") return null;
+    i++;
+    skipSpace();
   }
 
   return parts.length > 0 ? parts : null;

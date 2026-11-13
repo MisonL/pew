@@ -194,6 +194,31 @@ describe("Codex notifier installer", () => {
     expect(backup.notify).toEqual(["/bin/bash", "-c", "echo #not-a-comment"]);
   });
 
+  // TOML requires a comma between elements. The parser used to skip any
+  // non-string text, so `["a" "b"]` — invalid TOML that codex itself would
+  // reject — parsed as two elements and was captured as a restorable
+  // original. A value that cannot be valid TOML is not a command worth
+  // restoring, so it must not be backed up as one.
+  it("does not back up a comma-less malformed array as a restorable original", async () => {
+    await writeFile(configPath, 'model = "gpt-5"\nnotify = ["/bin/sh" "-c"]\n', "utf8");
+
+    const result = await installCodexNotifier({
+      configPath,
+      notifyPath,
+      originalBackupPath,
+      runtimePath: "/usr/local/bin/node",
+    });
+    const updated = await readFile(configPath, "utf8");
+
+    expect(result.changed).toBe(true);
+    expect(updated).toContain(
+      'notify = ["/usr/local/bin/node", "/tmp/pew/bin/notify.cjs", "--source=codex"]',
+    );
+    await expect(readFile(originalBackupPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("restores the original notify from backup on uninstall", async () => {
     await writeFile(
       configPath,

@@ -120,7 +120,7 @@ async function handleListOrganizations(db: D1Database): Promise<Response> {
     .prepare(
       `SELECT id, name, slug, logo_url, created_by, created_at, updated_at
        FROM organizations
-       ORDER BY name ASC`
+       ORDER BY name ASC, id`
     )
     .all<OrgRow>();
 
@@ -138,7 +138,7 @@ async function handleListOrganizationsWithCount(
        FROM organizations o
        LEFT JOIN organization_members om ON om.org_id = o.id
        GROUP BY o.id
-       ORDER BY o.name ASC`
+       ORDER BY o.name ASC, o.id`
     )
     .all<OrgWithCountRow>();
 
@@ -159,7 +159,7 @@ async function handleListUserOrganizations(
        FROM organizations o
        JOIN organization_members om ON om.org_id = o.id
        WHERE om.user_id = ?
-       ORDER BY o.name ASC`
+       ORDER BY o.name ASC, o.id`
     )
     .bind(req.userId)
     .all<OrgRow>();
@@ -239,7 +239,7 @@ async function handleListOrgMembers(
        FROM organization_members om
        JOIN users u ON u.id = om.user_id
        WHERE om.org_id = ?
-       ORDER BY om.joined_at DESC`
+       ORDER BY om.joined_at DESC, om.id DESC`
     )
     .bind(req.orgId)
     .all<OrgMemberRow>();
@@ -261,7 +261,7 @@ async function handleListOrgMembersAdmin(
        FROM organization_members om
        JOIN users u ON u.id = om.user_id
        WHERE om.org_id = ?
-       ORDER BY om.joined_at DESC`
+       ORDER BY om.joined_at DESC, om.id DESC`
     )
     .bind(req.orgId)
     .all<OrgMemberAdminRow>();

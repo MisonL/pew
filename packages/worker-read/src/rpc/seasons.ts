@@ -315,7 +315,7 @@ async function handleListSeasons(
            FROM seasons s
            LEFT JOIN season_teams st ON st.season_id = s.id
            GROUP BY s.id
-           ORDER BY datetime(s.start_date) DESC`
+           ORDER BY datetime(s.start_date) DESC, s.id DESC`
         )
         .all<SeasonRow>();
       return results.results;
@@ -437,7 +437,7 @@ async function handleGetSeasonSnapshots(
         FROM season_snapshots ss
         JOIN teams t ON t.id = ss.team_id
         WHERE ss.season_id = ?
-        ORDER BY ss.rank ASC`
+        ORDER BY ss.rank ASC, ss.team_id`
       )
       .bind(req.seasonId)
       .all<SeasonSnapshotRow>();

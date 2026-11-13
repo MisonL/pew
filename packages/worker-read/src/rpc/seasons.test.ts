@@ -121,6 +121,15 @@ describe("seasons RPC handlers", () => {
       expect(body).toEqual({ result: cachedSeasons, _cached: true });
       expect(db.all).not.toHaveBeenCalled();
     });
+
+    it("breaks start_date ties by id so the seasons list order is stable", async () => {
+      kv.get.mockResolvedValue(null);
+      db.all.mockResolvedValue({ results: [] });
+      await handleSeasonsRpc({ method: "seasons.list" }, db, kv);
+
+      const sql = String(db.prepare.mock.calls[0]![0]);
+      expect(sql).toContain("ORDER BY datetime(s.start_date) DESC, s.id DESC");
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -353,6 +362,15 @@ describe("seasons RPC handlers", () => {
       // Should NOT check cache or write to cache when not frozen
       expect(kv.get).not.toHaveBeenCalled();
       expect(kv.put).not.toHaveBeenCalled();
+    });
+
+    it("breaks rank ties by team id so the standings order is stable", async () => {
+      db.first.mockResolvedValue({ snapshot_ready: 0 });
+      db.all.mockResolvedValue({ results: [] });
+      await handleSeasonsRpc({ method: "seasons.getSnapshots", seasonId: "s1" }, db, kv);
+
+      const sql = String(db.prepare.mock.calls.at(-1)?.[0]);
+      expect(sql).toContain("ORDER BY ss.rank ASC, ss.team_id");
     });
 
     it("reads frozen snapshots from D1 without caching", async () => {
