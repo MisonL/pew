@@ -23,7 +23,13 @@ function timestampFromSpan(span: Record<string, unknown>): string | null {
     const seconds = Number(value[0]);
     const nanos = Number(value[1] ?? 0);
     if (Number.isFinite(seconds) && Number.isFinite(nanos)) {
-      return new Date(seconds * 1000 + Math.floor(nanos / 1_000_000)).toISOString();
+      const ms = seconds * 1000 + Math.floor(nanos / 1_000_000);
+      // The span comes from another process's JSONL; a corrupt or hostile
+      // value must not reach `toISOString()`, which throws RangeError outside
+      // ±8.64e15 ms — and one throw aborts the whole source's sync.
+      if (Number.isFinite(ms) && Math.abs(ms) <= 8_640_000_000_000_000) {
+        return new Date(ms).toISOString();
+      }
     }
   }
   if (typeof value === "string" && !Number.isNaN(Date.parse(value))) {

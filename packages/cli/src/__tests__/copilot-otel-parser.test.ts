@@ -216,8 +216,27 @@ describe("parseCopilotOtelFile", () => {
     expect((await parseCopilotOtelFile({ filePath: noTime, startOffset: 0 })).deltas).toEqual([]);
   });
 
-  it("ignores non-span records and zero-usage spans", async () => {
+  // `startTime` comes from a JSONL written by another process. A corrupt or
+  // out-of-range value used to reach `new Date(ms).toISOString()`, which
+  // throws RangeError — and one throw aborts the whole source's sync. A
+  // timestamp that cannot be represented is no timestamp: the span is
+  // skipped like any other span without one.
+  it("skips a span whose numeric startTime is out of the Date range instead of throwing", async () => {
     const filePath = join(tempDir, "otel.jsonl");
+    await writeFile(filePath, [
+      otelSpan({ traceId: "t9", spanId: "s9", startTime: [8_640_000_000_000_001, 0] }),
+      otelSpan({ traceId: "t10", spanId: "s10", startTime: [-1e300, 0] }),
+      otelSpan({ traceId: "t11", spanId: "s11", startTime: [1e300, 0] }),
+      otelSpan({ traceId: "t12", spanId: "s12", startTime: [1_773_657_600, 959_000_000] }),
+      "",
+    ].join("\n"));
+
+    const result = await parseCopilotOtelFile({ filePath, startOffset: 0 });
+    expect(result.deltas).toHaveLength(1);
+    expect(result.deltas[0].timestamp).toBe("2026-03-16T10:40:00.959Z");
+  });
+
+  it("ignores non-span records and zero-usage spans", async () => {    const filePath = join(tempDir, "otel.jsonl");
     await writeFile(filePath, [
       JSON.stringify({ type: "log", traceId: "t6", spanId: "s6" }),
       otelSpan({ traceId: "t7", spanId: "s7", attributes: { "gen_ai.provider.name": "github" } }),
