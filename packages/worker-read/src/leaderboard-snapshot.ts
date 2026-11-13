@@ -20,7 +20,23 @@ export async function getLeaderboardRevision(db: D1Database): Promise<string> {
 }
 
 export async function invalidateLeaderboard(db: D1Database): Promise<void> {
-  await db.prepare("UPDATE leaderboard_revision SET revision = lower(hex(randomblob(16))) WHERE id = 1").run();
+  // Advance the same counter migration 030's triggers use. `randomblob()`
+  // here was the construct 030 removed: rqlite replays statements per replica
+  // and re-evaluates the random value, so replicas disagreed and most of them
+  // stopped hitting `lb:v1:{revision}:{key}`.
+  //
+  // Both statements go in one batch so they commit together or not at all —
+  // a seq row that moved without the revision (or the reverse) would make the
+  // next trigger emit a value lower than a cache key already in use. SQLite
+  // has no data-modifying CTE, so this cannot be a single statement.
+  await db.batch([
+    db.prepare("UPDATE leaderboard_revision_seq SET n = n + 1 WHERE id = 1"),
+    db.prepare(
+      `UPDATE leaderboard_revision
+       SET revision = printf('%032x', (SELECT n FROM leaderboard_revision_seq WHERE id = 1))
+       WHERE id = 1`,
+    ),
+  ]);
 }
 
 function valid(value: unknown, key: string, revision: string, ttl: number): value is LeaderboardSnapshot {
