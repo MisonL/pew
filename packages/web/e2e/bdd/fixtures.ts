@@ -27,7 +27,14 @@ export function watchPageReadiness(page: Page, expectedErrors: Partial<Record<st
         if (expected === 200 && json?.error) errors.push(`${path}: ${JSON.stringify(json.error)}`);
         if (response.status() === expected) completed.add(response.url());
       } catch (error) {
-        if (response.request().failure()?.errorText !== "net::ERR_ABORTED") errors.push(`${path}: ${String(error)}`);
+        // A response whose body is collected by CDP after the page moved on can
+        // be reported as "Network.getResponseBody: No resource with given
+        // identifier found". That is the harness losing a race, not the app
+        // failing: the URL stays unmarked as completed and the readiness poll
+        // re-requires it. Only a real failure/abort counts as an error.
+        const protocolRace = /No resource with given identifier found/.test(String(error));
+        const aborted = response.request().failure()?.errorText === "net::ERR_ABORTED";
+        if (!protocolRace && !aborted) errors.push(`${path}: ${String(error)}`);
       }
     })();
     bodies.add(body);
