@@ -29,11 +29,16 @@ function createMockKv() {
 describe("cache RPC handlers", () => {
   let kv: ReturnType<typeof createMockKv>;
   const run = vi.fn().mockResolvedValue({ success: true });
-  const db = { prepare: vi.fn(() => ({ run })) } as unknown as D1Database;
+  // invalidateLeaderboard commits its two counter statements as one batch, so
+  // the mock must expose batch() and surface a failure from it the same way a
+  // real adapter does — the assertions below track `run` for call order.
+  const batch = vi.fn(async () => { await run(); return []; });
+  const db = { prepare: vi.fn(() => ({ run })), batch } as unknown as D1Database;
 
   beforeEach(() => {
     kv = createMockKv();
     run.mockClear();
+    batch.mockClear();
   });
 
   it.each([undefined, "l", "lb:", "lb:v1:"])("fences leaderboard fills before clearing prefix %s", async (prefix) => {

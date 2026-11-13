@@ -3964,4 +3964,95 @@ describe("executeSync", () => {
     expect(second.totalDeltas).toBe(0);
   });
 
+  it("commits an incremental sync whose queue state file carries no dirtyKeys (legacy offset mode)", async () => {
+    // A queue state written before dirtyKeys existed is `{ offset }` only.
+    // sync.ts read `await queue.loadOffset()` without awaiting it and spread
+    // the promise over the legacy fallback branch, after the cursors had
+    // already advanced in memory, so every such sync threw before the commit.
+    const claudeRoot = join(dataDir, ".claude");
+    const projDir = join(claudeRoot, "projects", "p1");
+    await mkdir(projDir, { recursive: true });
+    const sessionPath = join(projDir, "A.jsonl");
+    await writeFile(sessionPath, `${claudeLine("2026-03-07T10:15:00.000Z", 100, 10)}\n`);
+    const opts = { stateDir, deviceId: "dev-legacy", claudeDir: claudeRoot };
+    await executeSync(opts);
+
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, "queue.state.json"), `${JSON.stringify({ offset: 0 })}\n`);
+    await writeFile(
+      sessionPath,
+      `${claudeLine("2026-03-07T10:15:00.000Z", 100, 10)}\n${claudeLine("2026-03-07T10:45:00.000Z", 7, 3)}\n`,
+    );
+
+    const second = await executeSync(opts);
+    expect(second.sources.claude).toBe(1);
+    const records = (await readFile(join(stateDir, "queue.jsonl"), "utf-8"))
+      .trim().split("\n").map((line) => JSON.parse(line) as QueueRecord);
+    const secondBucket = records.find((r) => r.hour_start === "2026-03-07T10:30:00.000Z");
+    expect(secondBucket?.input_tokens).toBe(7);
+    expect(secondBucket?.output_tokens).toBe(3);
+    const dirty = JSON.parse(await readFile(join(stateDir, "queue.state.json"), "utf-8"));
+    expect(dirty.dirtyKeys).toContain("claude-code|glm-5|2026-03-07T10:30:00.000Z|dev-legacy");
+  });
+
+  it("advances the cursors of files whose data was read when the queue write fails", async () => {
+    // A non-ENOENT read error on queue.jsonl (EACCES, EIO, EMFILE) aborts the
+    // run at the end of the scan. The parsed deltas only live in memory until
+    // the commit, so a cursor that did not advance makes the next run read
+    // the same bytes again — and those bytes are gone for good.
+    const claudeRoot = join(dataDir, ".claude");
+    const projDir = join(claudeRoot, "projects", "p1");
+    await mkdir(projDir, { recursive: true });
+    const sessionPath = join(projDir, "A.jsonl");
+    await writeFile(sessionPath, `${claudeLine("2026-03-07T10:15:00.000Z", 100, 10)}\n`);
+    await executeSync({ stateDir, deviceId: "dev-fail", claudeDir: claudeRoot });
+    const before = JSON.parse(await readFile(join(stateDir, "cursors.json"), "utf-8"));
+    const beforeOffset = before.files[sessionPath].offset;
+    const sizeBefore = Buffer.byteLength(`${claudeLine("2026-03-07T10:15:00.000Z", 100, 10)}\n`);
+
+    await writeFile(
+      sessionPath,
+      `${claudeLine("2026-03-07T10:15:00.000Z", 100, 10)}\n${claudeLine("2026-03-07T10:45:00.000Z", 7, 3)}\n`,
+    );
+    // A read-only queue.jsonl: reading it succeeds, the commit rewrite fails
+    // with EACCES after the parse loop. Run as root nothing fails, so the
+    // assertions below hold on their own for the ungated sync it then is.
+    await writeFile(join(stateDir, "queue.jsonl"), `${JSON.stringify({ stale: true })}\n`);
+    await chmod(join(stateDir, "queue.jsonl"), 0o444);
+
+    // Fails whether or not the running user can write a read-only file. The
+    // recovery path merges the journal and advances the cursors; the old
+    // path advanced nothing and left the new bytes for the next run to
+    // re-read, after which a later success would have passed over them.
+    await executeSync({ stateDir, deviceId: "dev-fail", claudeDir: claudeRoot });
+    const after = JSON.parse(await readFile(join(stateDir, "cursors.json"), "utf-8"));
+    expect(beforeOffset).toBe(sizeBefore);
+    expect(after.files[sessionPath].offset).toBeGreaterThan(beforeOffset);
+  });
+
+  it("does not advance cursors when the run fails after the journal was staged", async () => {
+    // With the journal staged the queue write has begun (or is about to);
+    // its extent is the replay boundary. Advancing the cursors here would let
+    // a later successful run start past records the queue never took.
+    const claudeRoot = join(dataDir, ".claude");
+    const projDir = join(claudeRoot, "projects", "p1");
+    await mkdir(projDir, { recursive: true });
+    const sessionPath = join(projDir, "A.jsonl");
+    await writeFile(sessionPath, `${claudeLine("2026-03-07T10:15:00.000Z", 100, 10)}\n`);
+    await executeSync({ stateDir, deviceId: "dev-staged", claudeDir: claudeRoot });
+    const before = JSON.parse(await readFile(join(stateDir, "cursors.json"), "utf-8"));
+    const beforeOffset = before.files[sessionPath].offset;
+
+    await writeFile(
+      sessionPath,
+      `${claudeLine("2026-03-07T10:15:00.000Z", 100, 10)}\n${claudeLine("2026-03-07T10:45:00.000Z", 7, 3)}\n`,
+    );
+    // A directory at the staging path: the journal write fails after it began,
+    // so the run fails past the point where cursors may advance.
+    await mkdir(join(stateDir, "sync-commit.json.tmp"));
+    await expect(executeSync({ stateDir, deviceId: "dev-staged", claudeDir: claudeRoot })).rejects.toThrow();
+    await rm(join(stateDir, "sync-commit.json.tmp"), { recursive: true, force: true });
+    const after = JSON.parse(await readFile(join(stateDir, "cursors.json"), "utf-8"));
+    expect(after.files[sessionPath].offset).toBe(beforeOffset);
+  });
 });

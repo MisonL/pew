@@ -23,7 +23,7 @@ import { CursorStore } from "../storage/cursor-store.js";
 import { LocalQueue } from "../storage/local-queue.js";
 import { EvidenceQueue } from "../storage/evidence-queue.js";
 import { AccountingQueue, accountingJson, accountingKey, planAccountingUpdates } from "../storage/accounting-queue.js";
-import { commitSync, recoverSyncCommit } from "../storage/sync-commit.js";
+import { commitSync, recoverSyncCommit, syncCommitPending } from "../storage/sync-commit.js";
 import { withStateLock } from "../storage/state-lock.js";
 import { toEvidenceRecord } from "../utils/usage-evidence.js";
 import { appendAll } from "../utils/append.js";
@@ -288,6 +288,50 @@ export async function executeSync(opts: SyncOptions): Promise<SyncResult> {
 }
 
 async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResult> {
+  let collected: { cursors: CursorState; paths: Set<string>; deltas: readonly ParsedDelta[] } | undefined;
+  try {
+    return await executeSyncScan({ ...opts,
+      onCollected: (cursors, paths, deltas) => { collected = { cursors, paths, deltas }; } });
+  } catch (error) {
+    // The scan got past discovery and at least one file was committed to the
+    // in-memory batch, so its parsed deltas are gone with this failure. Advance
+    // those files' cursors past the bytes already read — otherwise the next run
+    // re-reads them and the same batches are lost again, silently.
+    //
+    // Skipped once the commit is in flight: there the queue (and its journal)
+    // is the replay boundary, and a cursor ahead of it would skip records the
+    // queue never took. Only the scanned files move; every other cursor, the
+    // evidence queue and the token queue are left exactly as they were.
+    if (collected && !(await syncCommitPending(opts.stateDir).catch(() => true))) {
+      const snapshot: CursorState = { ...collected.cursors, files: {} };
+      for (const path of collected.paths) {
+        const cursor = collected.cursors.files[path];
+        if (cursor) snapshot.files[path] = cursor;
+      }
+      // Evidence is derived here, once, from the deltas that were read: the
+      // same rows the successful path would have queued, so a later upload
+      // cannot count them twice (the queue merge is keyed by evidence id).
+      const evidence: EvidenceRecord[] = [];
+      for (const delta of collected.deltas) {
+        if (!delta.evidence) continue;
+        try { evidence.push(toEvidenceRecord(delta, opts.deviceId)); } catch { /* reported at the end of the scan */ }
+      }
+      if (evidence.length) {
+        await new EvidenceQueue(opts.stateDir).merge(evidence, false)
+          .catch(() => { /* the original error is the one to report */ });
+      }
+      await new CursorStore(opts.stateDir).save(snapshot)
+        .catch(() => { /* the original error is the one to report */ });
+      opts.onProgress?.({ source: "all", phase: "warn",
+        message: "Sync failed after reading file data; those files' cursors were advanced. Uploaded data for this run was not queued." });
+    }
+    throw error;
+  }
+}
+
+async function executeSyncScan(opts: InternalSyncOptions & {
+  onCollected: (cursors: CursorState, paths: Set<string>, deltas: readonly ParsedDelta[]) => void;
+}): Promise<SyncResult> {
   const { stateDir, onProgress } = opts;
 
   const cursorStore = new CursorStore(stateDir);
@@ -513,6 +557,10 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   // dev:ino observed by this run's stat pass, so the prune below does not
   // stat every discovered file a second time.
   const liveIdentities = new Map<string, string>();
+  // Paths whose advanced cursor has been handed over below. The scan reports
+  // the set (with ctx state) to its caller after every file so a mid-scan
+  // failure can persist it; see executeSyncInternal.
+  const collectedPaths = new Set<string>();
   for (const driver of fileDrivers) {
     const key = sourceKey(driver.source);
 
@@ -850,6 +898,11 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
         built = driver.buildCursor(fingerprint, result, cursor) as FileCursor;
       }
       cursors.files[filePath] = built;
+      collectedPaths.add(filePath);
+      // Hand the live cursor object and the path set over, not a copy: a copy
+      // per file is O(files²) on a large state directory, and the caller only
+      // needs a snapshot once, if the run fails.
+      opts.onCollected(cursors, collectedPaths, allDeltas);
 
       // Collect deltas
       appendAll(allDeltas, result.deltas);
@@ -1430,7 +1483,14 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
   }
   if (finalRecords) {
     const savedDirty = await queue.loadDirtyKeys();
-    const previousDirty = savedDirty ?? (await queue.readFromOffset(await queue.loadOffset())).records.map(tokenRecordKey);
+    // A state file without dirtyKeys is in legacy offset mode: loadDirtyKeys()
+    // is undefined, not []; reading `await queue.loadOffset()` on an undefined
+    // value threw "value is not iterable" here, AFTER the cursors were already
+    // advanced in memory, so the commit never happened and every later sync
+    // re-read the same bytes. Recovered by falling back to the records past
+    // the persisted offset.
+    const legacyOffset = savedDirty === undefined ? await queue.loadOffset() : 0;
+    const previousDirty = savedDirty ?? (await queue.readFromOffset(legacyOffset)).records.map(tokenRecordKey);
     const antigravityKeys = new Set([...previousAntigravity, ...retiredRecords].map(tokenRecordKey));
     const retainedDirty = previousDirty.filter((key) => antigravityKeys.has(key));
     const finalKeys = new Set(finalRecords.map(tokenRecordKey));

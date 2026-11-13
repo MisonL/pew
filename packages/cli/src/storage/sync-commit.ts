@@ -1,4 +1,4 @@
-import { readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { access, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AccountingRecord, CursorState, EvidenceRecord, QueueRecord, Source } from "@pew/core";
 import { AccountingQueue } from "./accounting-queue.js";
@@ -39,6 +39,23 @@ export async function recoverSyncCommit(stateDir: string, onWarning?: (message: 
   }
   await new CursorStore(stateDir).save(commit.cursors);
   await unlink(path);
+}
+
+/**
+ * Whether a commit is in flight: its staged temp file or its journal. The
+ * journal is DELETED by a successful commit, so "no journal" alone is
+ * ambiguous; a staged temp means the queue write it guards is under way.
+ */
+export async function syncCommitPending(stateDir: string): Promise<boolean> {
+  for (const name of ["sync-commit.json.tmp", "sync-commit.json"]) {
+    try {
+      await access(join(stateDir, name));
+      return true;
+    } catch {
+      // keep looking
+    }
+  }
+  return false;
 }
 
 /** The single journal makes queue/detail/cursor replacement retryable after any partial write. */
