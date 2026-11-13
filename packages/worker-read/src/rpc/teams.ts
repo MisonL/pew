@@ -53,7 +53,7 @@ async function handleListUserTeams(
        FROM teams t
        JOIN team_members tm ON tm.team_id = t.id
        WHERE tm.user_id = ?
-       ORDER BY t.created_at DESC`
+       ORDER BY t.created_at DESC, t.id`
     )
     .bind(req.userId)
     .all<TeamRow>();
@@ -69,7 +69,7 @@ async function handleListAllTeams(
       `SELECT t.id, t.name, t.slug, t.invite_code, t.created_by, t.created_at, t.logo_url,
               (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) AS member_count
        FROM teams t
-       ORDER BY t.created_at DESC`
+       ORDER BY t.created_at DESC, t.id`
     )
     .all<TeamRow>();
 
@@ -147,7 +147,7 @@ async function handleGetTeamMembers(
          FROM team_members tm
          JOIN users u ON u.id = tm.user_id
          WHERE tm.team_id = ?
-         ORDER BY tm.joined_at ASC`
+         ORDER BY tm.joined_at ASC, tm.user_id`
       )
       .bind(req.teamId)
       .all<TeamMemberRow>();
@@ -162,7 +162,7 @@ async function handleGetTeamMembers(
            FROM team_members tm
            JOIN users u ON u.id = tm.user_id
            WHERE tm.team_id = ?
-           ORDER BY tm.joined_at ASC`
+           ORDER BY tm.joined_at ASC, tm.user_id`
         )
         .bind(req.teamId)
         .all<Omit<TeamMemberRow, "nickname" | "slug">>();

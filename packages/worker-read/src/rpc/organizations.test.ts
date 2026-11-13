@@ -57,6 +57,14 @@ describe("organizations RPC handlers", () => {
       expect(response.status).toBe(200);
       expect(body).toEqual({ result: mockOrgs });
     });
+
+    it("breaks name ties by id so the list order is stable", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      await handleOrganizationsRpc({ method: "organizations.list" }, db);
+
+      const sql = String(db.prepare.mock.calls[0]![0]);
+      expect(sql).toContain("ORDER BY name ASC, id");
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -79,6 +87,14 @@ describe("organizations RPC handlers", () => {
 
       expect(response.status).toBe(200);
       expect(body).toEqual({ result: mockOrgs });
+    });
+
+    it("breaks name ties by id so the user's org list is stable", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      await handleOrganizationsRpc({ method: "organizations.listForUser", userId: "u1" }, db);
+
+      const sql = String(db.prepare.mock.calls[0]![0]);
+      expect(sql).toContain("ORDER BY o.name ASC, o.id");
     });
 
     it("should return 400 when userId missing", async () => {
@@ -260,6 +276,14 @@ describe("organizations RPC handlers", () => {
       expect(body).toEqual({ result: mockMembers });
     });
 
+    it("breaks joined_at ties by member row id so the roster order is stable", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      await handleOrganizationsRpc({ method: "organizations.listMembers", orgId: "o1" }, db);
+
+      const sql = String(db.prepare.mock.calls[0]![0]);
+      expect(sql).toContain("ORDER BY om.joined_at DESC, om.id DESC");
+    });
+
     it("should return 400 when orgId missing", async () => {
       const request = {
         method: "organizations.listMembers",
@@ -289,6 +313,7 @@ describe("organizations RPC handlers", () => {
       const sql = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string;
       expect(sql).toContain("COUNT(om.id)");
       expect(sql).toContain("LEFT JOIN organization_members");
+      expect(sql).toContain("ORDER BY o.name ASC, o.id");
     });
 
     it("should return [] when no orgs", async () => {
@@ -406,6 +431,7 @@ describe("organizations RPC handlers", () => {
       expect(await res.json()).toEqual({ result: rows });
       const sql = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string;
       expect(sql).toContain("u.email");
+      expect(sql).toContain("ORDER BY om.joined_at DESC, om.id DESC");
     });
 
     it("400 when orgId missing", async () => {
