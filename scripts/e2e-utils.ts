@@ -35,7 +35,7 @@ async function settleWithin(promise: Promise<unknown>, milliseconds: number): Pr
 // the deadline off. Disposal is instead capped at 30s (see disposeTimeoutMs
 // below) because a child that ignores IPC will not start responding sooner
 // just because startup was given a long budget.
-const DEFAULT_BINDINGS_TIMEOUT_MS = 1_800_000;
+export const DEFAULT_BINDINGS_TIMEOUT_MS = 1_800_000;
 const BINDINGS_TIMEOUT_ENV = "PEW_E2E_BINDINGS_TIMEOUT_MS";
 // Disposal has its own ceiling so a long startup budget cannot turn a wedged
 // child into a 15-minute wait, but a caller may still pass a smaller explicit

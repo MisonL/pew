@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { startLocalBindings } from "../e2e-utils";
+import { DEFAULT_BINDINGS_TIMEOUT_MS, startLocalBindings } from "../e2e-utils";
 
 function stubChild(pid: number, signalCode: string | null = null) {
   let exit: (code: number) => void;
@@ -68,8 +68,8 @@ describe("Local bindings startup budget", () => {
 
   it("keeps the default startup budget when the override is malformed", async () => {
     // A malformed value must not switch the deadline off — the child here
-    // never reports ready, so only the default (900s) can settle it. If the
-    // bad value were used the call would reject far sooner.
+    // never reports ready, so only the default can settle it. If the bad value
+    // were used the call would reject far sooner.
     vi.useFakeTimers();
     for (const value of ["0", "-1", "abc", ""]) {
       // Re-apply the stub each round: the loop restores in the finally.
@@ -82,8 +82,8 @@ describe("Local bindings startup budget", () => {
         .catch((error: unknown) => { settled(error); return error; });
       await vi.advanceTimersByTimeAsync(5_000);
       expect(settled).not.toHaveBeenCalled();
-      // The 900s startup fires, then dispose (30s) + forced exit (30s).
-      await vi.advanceTimersByTimeAsync(965_000);
+      // The default startup budget fires, then dispose (30s) + forced exit (30s).
+      await vi.advanceTimersByTimeAsync(DEFAULT_BINDINGS_TIMEOUT_MS + 65_000);
       expect(settled).toHaveBeenCalled();
       vi.unstubAllGlobals();
       vi.unstubAllEnvs();
@@ -93,8 +93,8 @@ describe("Local bindings startup budget", () => {
 
   it("caps the disposal deadline below a long startup budget", async () => {
     // A child that ignores IPC will not start responding sooner because
-    // startup was given a long budget, and the 900s default would make every
-    // failure path wait 15 minutes per disposal step.
+    // startup was given a long budget, and the default would make every
+    // failure path wait for the full startup budget per disposal step.
     vi.useFakeTimers();
     const child = stubChild(123460);
     stubBun(child);
