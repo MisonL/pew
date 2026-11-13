@@ -254,7 +254,7 @@ async function handleSearchUsers(
     .prepare(
       `SELECT id, name, email, image FROM users
        WHERE name LIKE ? OR email LIKE ?
-       ORDER BY name ASC
+       ORDER BY name ASC, id ASC
        LIMIT ?`,
     )
     .bind(pattern, pattern, limit)

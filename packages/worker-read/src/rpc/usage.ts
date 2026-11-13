@@ -262,7 +262,7 @@ async function handleGetUsage(
     FROM (${ACCOUNTED_USAGE_SQL})
     ${where}
     GROUP BY ${groupBy}, accounting_json
-    ORDER BY hour_start ASC, source, model
+    ORDER BY hour_start ASC, source, model, accounting_json
   `;
 
   const stmt = db.prepare(sql);
@@ -353,7 +353,7 @@ async function handleGetDeviceSummary(
       LEFT JOIN device_aliases da
         ON da.user_id = ur.user_id AND da.device_id = ur.device_id
       GROUP BY ur.device_id, ur.accounting_json
-      ORDER BY total_tokens DESC`
+      ORDER BY total_tokens DESC, ur.device_id, ur.accounting_json`
     )
     .bind(req.userId, req.fromDate, req.toDate)
     .all<DeviceSummaryRow>();
@@ -443,7 +443,7 @@ async function handleGetDeviceTimeline(
       ur.accounting_json, COUNT(*) AS accounting_count
     FROM (${ACCOUNTED_USAGE_SQL}) ur
     GROUP BY ${groupBy}, ur.accounting_json
-    ORDER BY date ASC
+    ORDER BY date ASC, ur.device_id, ur.accounting_json
   `;
 
   const results = await db

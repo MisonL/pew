@@ -160,6 +160,9 @@ describe("usage RPC handlers", () => {
       const sqlCall = db.prepare.mock.calls.at(-1)?.[0] as string;
       expect(sqlCall).toContain("accounting_json, COUNT(*) AS accounting_count");
       expect(sqlCall).toContain("GROUP BY hour_start, source, model, accounting_json");
+      expect(sqlCall).toContain(
+        "ORDER BY hour_start ASC, source, model, accounting_json",
+      );
     });
 
     it("projects the counters and drops the annotations when projectAccounting is set", async () => {
@@ -290,6 +293,19 @@ describe("usage RPC handlers", () => {
 
       expect(response.status).toBe(200);
       expect(body).toEqual({ result: mockSummary });
+    });
+
+    it("orders by the group key so a device ranking cannot wobble between calls", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      await handleUsageRpc({
+        method: "usage.getDeviceSummary", userId: "u1",
+        fromDate: "2026-04-01T00:00:00.000Z", toDate: "2026-04-02T00:00:00.000Z",
+      }, db);
+
+      const sql = String(db.prepare.mock.calls.at(-1)?.[0]);
+      expect(sql).toContain(
+        "ORDER BY total_tokens DESC, ur.device_id, ur.accounting_json",
+      );
     });
 
     it("projects the device counters when projectAccounting is set", async () => {
@@ -450,6 +466,22 @@ describe("usage RPC handlers", () => {
       const bindArgs = db.bind.mock.calls.at(-1) as unknown[];
       expect(bindArgs[0]).toBe("480");
       expect(bindArgs[1]).toBe("u1");
+    });
+
+    it("orders by date and the group key so same-day devices keep their order", async () => {
+      // The post-merge sort is by date only and stable, so devices on the
+      // same day hold whatever order the SQL returned. Without a tie-break
+      // that order is the query planner's, and it can change.
+      db.all.mockResolvedValue({ results: [] });
+      await handleUsageRpc({
+        method: "usage.getDeviceTimeline", userId: "u1",
+        fromDate: "2026-04-01T00:00:00.000Z", toDate: "2026-04-02T00:00:00.000Z",
+      }, db);
+
+      const sql = String(db.prepare.mock.calls.at(-1)?.[0]);
+      expect(sql).toContain(
+        "ORDER BY date ASC, ur.device_id, ur.accounting_json",
+      );
     });
 
     it("clamps invalid tzOffset (NaN) to 0", async () => {

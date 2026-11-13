@@ -100,7 +100,7 @@ async function handleGetActiveSessions(
     FROM session_records sr
     JOIN users u ON u.id = sr.user_id
     WHERE julianday(sr.last_message_at) >= julianday('now', '-30 minutes')
-    ORDER BY sr.last_message_at DESC
+    ORDER BY sr.last_message_at DESC, sr.id DESC
     LIMIT ?
   `;
 
@@ -152,7 +152,7 @@ async function handleGetRecentActivity(
       ur.hour_start AS created_at
     FROM recent ur
     JOIN users u ON u.id = ur.user_id
-    ORDER BY ur.hour_start DESC
+    ORDER BY ur.hour_start DESC, ur.user_id, ur.device_id, ur.source, ur.model
     LIMIT ?
   `;
 

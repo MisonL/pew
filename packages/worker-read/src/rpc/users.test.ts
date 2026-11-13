@@ -29,6 +29,7 @@ function createMockDB() {
   const bind = vi.fn().mockReturnValue({ first, all });
   const prepare = vi.fn().mockReturnValue({ bind, first, all });
   return { prepare, bind, first, all } as unknown as D1Database & {
+    prepare: ReturnType<typeof vi.fn>;
     bind: ReturnType<typeof vi.fn>;
     first: ReturnType<typeof vi.fn>;
     all: ReturnType<typeof vi.fn>;
@@ -592,6 +593,19 @@ describe("Users RPC handlers", () => {
       await handleUsersRpc({ method: "users.search", query: "test", limit: 2.9 }, db);
 
       expect(db.bind).toHaveBeenCalledWith("%test%", "%test%", 2);
+    });
+
+    it("orders by a unique key, not only by display name", async () => {
+      // Names repeat ("Alex", demo accounts), and `LIMIT` keeps whichever rows
+      // the sort placed first among ties. Without a tie-break the same query
+      // could return different people between calls.
+      db.prepare.mockClear();
+      db.bind.mockReturnValue({ all: vi.fn().mockResolvedValue({ results: [] }) });
+
+      await handleUsersRpc({ method: "users.search", query: "test" }, db);
+
+      const sql = String(db.prepare.mock.calls[0]![0]);
+      expect(sql).toContain("ORDER BY name ASC, id ASC");
     });
 
     it("should return 400 when query is missing", async () => {
