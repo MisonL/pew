@@ -335,6 +335,14 @@ describe("admin RPC handlers", () => {
       expect(response.status).toBe(200);
       expect(body).toEqual({ result: [] });
     });
+
+    it("breaks token ties by user id so the ranking is stable", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      await handleAdminRpc({ method: "admin.getStorageStats" }, db);
+
+      const sql = String(db.prepare.mock.calls.at(-1)?.[0]);
+      expect(sql).toContain("ORDER BY total_tokens DESC, u.id");
+    });
   });
 
   // -------------------------------------------------------------------------

@@ -307,7 +307,7 @@ async function handleGetStorageStats(db: D1Database): Promise<Response> {
       GROUP BY user_id
     ) sess ON sess.user_id = u.id
     WHERE tok.user_id IS NOT NULL OR sess.user_id IS NOT NULL
-    ORDER BY total_tokens DESC
+    ORDER BY total_tokens DESC, u.id
   `;
 
   const results = await db.prepare(sql).all<StorageUserRow>();

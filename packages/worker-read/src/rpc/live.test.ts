@@ -73,6 +73,18 @@ describe("live RPC handlers", () => {
 
       expect(db.prepare).toHaveBeenCalled();
     });
+
+    it("orders by a unique key, not only by activity time", async () => {
+      // `LIMIT` keeps whichever rows the sort happened to place first among
+      // ties. Two sessions touched in the same second used to swap in and out
+      // of the feed between requests simply because the tie order was up to
+      // the query planner.
+      db.all.mockResolvedValue({ results: [] });
+      await handleLiveRpc({ method: "live.getActiveSessions" }, db);
+
+      const sql = String(db.prepare.mock.calls[0]![0]);
+      expect(sql).toContain("ORDER BY sr.last_message_at DESC, sr.id DESC");
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -144,16 +156,17 @@ describe("live RPC handlers", () => {
       expect(db.prepare).toHaveBeenCalled();
     });
 
-    it("should respect limit", async () => {
+    it("orders by every grouping column, not only by the hour bucket", async () => {
+      // Buckets are hour-sized, so almost every row in a busy deployment ties
+      // on `hour_start`. `LIMIT` used to keep an arbitrary subset of those
+      // rows; sorting by the full GROUP BY key makes the truncation stable.
       db.all.mockResolvedValue({ results: [] });
+      await handleLiveRpc({ method: "live.getRecentActivity" }, db);
 
-      const request: GetRecentActivityRequest = {
-        method: "live.getRecentActivity",
-        limit: 10,
-      };
-      await handleLiveRpc(request, db);
-
-      expect(db.prepare).toHaveBeenCalled();
+      const sql = String(db.prepare.mock.calls[0]![0]);
+      expect(sql).toContain(
+        "ORDER BY ur.hour_start DESC, ur.user_id, ur.device_id, ur.source, ur.model",
+      );
     });
 
     it("clamps a negative limit instead of returning everything", async () => {
