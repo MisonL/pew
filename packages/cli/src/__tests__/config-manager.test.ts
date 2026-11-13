@@ -1,5 +1,28 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type * as FsPromises from "node:fs/promises";
+import * as fsPromises from "node:fs/promises";
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+
+/**
+ * Lets a test observe or fail a specific `writeFile` call without patching
+ * the ESM namespace (not configurable). Fires on every call, then the test
+ * clears it.
+ */
+const writeGate = vi.hoisted(() => ({
+  hook: null as null | ((path: string) => Promise<void>),
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof FsPromises>();
+  return {
+    ...actual,
+    writeFile: async (...args: Parameters<typeof actual.writeFile>) => {
+      const hook = writeGate.hook;
+      if (hook) await hook(String(args[0]));
+      return actual.writeFile(...args);
+    },
+  };
+});
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigManager, hostConfigStem } from "../config/manager.js";
@@ -201,6 +224,86 @@ describe("ConfigManager", () => {
     const manager = new ConfigManager(tempDir);
     const config = await manager.load();
     expect(config).toEqual({});
+  });
+
+  // The credentials file holds the only copy of the API key. The base class
+  // truncates the file in place, so a crash (or ENOSPC) mid-write leaves a
+  // half-written file; `readAsync` turns an unparseable file into `{}`, which
+  // makes the token vanish silently and the next login overwrite it. Write to
+  // a sibling temp file and rename, so the destination is always either the
+  // old content or the new content.
+  it("writes the config through a temp file and rename, never truncating in place", async () => {
+    const manager = new ConfigManager(tempDir);
+    await manager.save({ token: "first-token" });
+
+    const before = await readFile(join(tempDir, "config.json"), "utf-8");
+    const seenDuringWrite: string[] = [];
+    writeGate.hook = async (path) => {
+      seenDuringWrite.push(path);
+    };
+
+    try {
+      await manager.save({ token: "second-token" });
+    } finally {
+      writeGate.hook = null;
+    }
+
+    // Every write targeted a temp sibling, not the live config file.
+    expect(seenDuringWrite.length).toBeGreaterThan(0);
+    expect(seenDuringWrite.every((p) => p !== join(tempDir, "config.json"))).toBe(true);
+    // The file survived the transition intact.
+    expect(JSON.parse(before)).toEqual({ token: "first-token" });
+    expect((await manager.load()).token).toBe("second-token");
+    // The temp file is gone (renamed away), and no stray temp files remain.
+    const leftovers = (await fsPromises.readdir(tempDir)).filter((f) => f.includes(".tmp"));
+    expect(leftovers).toEqual([]);
+  });
+
+  it("keeps the previous credentials when the write fails", async () => {
+    const manager = new ConfigManager(tempDir);
+    await manager.save({ token: "kept-token" });
+
+    writeGate.hook = async () => {
+      throw Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+    };
+
+    try {
+      await expect(manager.save({ token: "lost-token" })).rejects.toThrow("no space left");
+    } finally {
+      writeGate.hook = null;
+    }
+
+    // The destination was never touched, so the old credentials still load.
+    expect((await manager.load()).token).toBe("kept-token");
+    const leftovers = (await fsPromises.readdir(tempDir)).filter((f) => f.includes(".tmp"));
+    expect(leftovers).toEqual([]);
+  });
+
+  it("writes device.json atomically and leaves config.json alone", async () => {
+    const manager = new ConfigManager(tempDir);
+    await manager.save({ token: "stable-token" });
+
+    const seenDuringWrite: string[] = [];
+    writeGate.hook = async (path) => {
+      seenDuringWrite.push(path);
+    };
+    try {
+      await manager.ensureDeviceId();
+    } finally {
+      writeGate.hook = null;
+    }
+
+    // A torn device.json reads back as "no id" and the next run mints a new
+    // UUID, so one machine starts counting as several devices and its history
+    // splits. Write through a temp file like the credentials file.
+    expect(seenDuringWrite).toContain(join(tempDir, "device.json.tmp"));
+    expect(seenDuringWrite).not.toContain(join(tempDir, "device.json"));
+    // The base implementation removes the legacy `deviceId` key by rewriting
+    // config.json with every other key dropped. Nothing was migrated here.
+    expect(seenDuringWrite).not.toContain(join(tempDir, "config.json"));
+    expect((await manager.load()).token).toBe("stable-token");
+    expect(JSON.parse(await readFile(join(tempDir, "device.json"), "utf-8")).deviceId)
+      .toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 
   // ---------------------------------------------------------------------------
