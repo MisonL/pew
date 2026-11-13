@@ -279,6 +279,33 @@ describe("ConfigManager", () => {
     expect(leftovers).toEqual([]);
   });
 
+  it("writes device.json atomically and leaves config.json alone", async () => {
+    const manager = new ConfigManager(tempDir);
+    await manager.save({ token: "stable-token" });
+
+    const seenDuringWrite: string[] = [];
+    writeGate.hook = async (path) => {
+      seenDuringWrite.push(path);
+    };
+    try {
+      await manager.ensureDeviceId();
+    } finally {
+      writeGate.hook = null;
+    }
+
+    // A torn device.json reads back as "no id" and the next run mints a new
+    // UUID, so one machine starts counting as several devices and its history
+    // splits. Write through a temp file like the credentials file.
+    expect(seenDuringWrite).toContain(join(tempDir, "device.json.tmp"));
+    expect(seenDuringWrite).not.toContain(join(tempDir, "device.json"));
+    // The base implementation removes the legacy `deviceId` key by rewriting
+    // config.json with every other key dropped. Nothing was migrated here.
+    expect(seenDuringWrite).not.toContain(join(tempDir, "config.json"));
+    expect((await manager.load()).token).toBe("stable-token");
+    expect(JSON.parse(await readFile(join(tempDir, "device.json"), "utf-8")).deviceId)
+      .toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
   // ---------------------------------------------------------------------------
   // Shared device.json tests
   // ---------------------------------------------------------------------------

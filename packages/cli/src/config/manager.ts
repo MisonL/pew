@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { ConfigManager as BaseConfigManager } from "@nocoo/base-cli";
 import type { PewConfig } from "@pew/core";
 
@@ -183,6 +183,49 @@ export class ConfigManager extends BaseConfigManager<PewConfig> {
 
   override async writeAsync(partial: PewConfig): Promise<void> {
     await this.writeAtomic(partial);
+  }
+
+  /**
+   * Return the shared device id, creating device.json on first use.
+   *
+   * The base implementation writes device.json in place and, when it finds a
+   * legacy `deviceId` key in the config, rewrites config.json with a bare
+   * `{ ...rest }` — dropping every other credential. A torn device.json also
+   * reads back as "no id" and mints a new UUID, splitting one machine's
+   * history across several device rows. Keep the sync path (which reads state
+   * the base cannot see) but write through a temp file, and retire the legacy
+   * key through the atomic save so the rest of the config survives.
+   */
+  override async ensureDeviceId(): Promise<string> {
+    const devicePath = join(this.configDir, "device.json");
+    try {
+      const data = JSON.parse(await readFile(devicePath, "utf-8")) as { deviceId?: unknown };
+      if (typeof data.deviceId === "string" && data.deviceId) return data.deviceId;
+    } catch {
+      // Missing or unparseable file — mint a new id below.
+    }
+
+    const config = await this.readAsync();
+    const legacyDeviceId = typeof config.deviceId === "string" ? config.deviceId : undefined;
+    const deviceId = legacyDeviceId ?? randomUUID();
+
+    await mkdir(this.configDir, { recursive: true });
+    const tmpPath = `${devicePath}.tmp`;
+    try {
+      await writeFile(tmpPath, `${JSON.stringify({ deviceId }, null, 2)}\n`, { mode: 0o600 });
+      await rename(tmpPath, devicePath);
+    } catch (error) {
+      await rm(tmpPath, { force: true }).catch(() => {
+        // Best-effort cleanup — the destination was never touched.
+      });
+      throw error;
+    }
+
+    if (legacyDeviceId) {
+      // Remove the legacy key without dropping the rest of the config.
+      await this.writeAtomic({ deviceId: undefined } as PewConfig);
+    }
+    return deviceId;
   }
 
   private async writeAtomic(partial: PewConfig): Promise<void> {
