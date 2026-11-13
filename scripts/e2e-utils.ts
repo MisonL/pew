@@ -35,7 +35,7 @@ async function settleWithin(promise: Promise<unknown>, milliseconds: number): Pr
 // the deadline off. Disposal is instead capped at 30s (see disposeTimeoutMs
 // below) because a child that ignores IPC will not start responding sooner
 // just because startup was given a long budget.
-const DEFAULT_BINDINGS_TIMEOUT_MS = 900_000;
+export const DEFAULT_BINDINGS_TIMEOUT_MS = 1_800_000;
 const BINDINGS_TIMEOUT_ENV = "PEW_E2E_BINDINGS_TIMEOUT_MS";
 // Disposal has its own ceiling so a long startup budget cannot turn a wedged
 // child into a 15-minute wait, but a caller may still pass a smaller explicit
@@ -143,6 +143,24 @@ const WARMUP_SEGMENT = "e2e-warmup";
 // not-found boundary has been observed past 120s. Only a server that never
 // answers trips it.
 export const WARMUP_TIMEOUT_MS = 600_000;
+// Per-test budget for the API tier. Same reasoning as WARMUP_TIMEOUT_MS and the
+// other gate deadlines: it exists to catch a wedged test, not to bound normal
+// runtime. Measured 2026-11-13: a heavily loaded host (load average 65 on 16
+// cores, beside other sessions' `go build` and a VM) timed two `/api/ingest`
+// cases out at the old 120s even though every request they issued was logged
+// as answering in under four seconds — the suite's own wall clock is ~580s, so
+// clock growth under load, not a hang, is what the old value punished.
+// PEW_E2E_TEST_TIMEOUT_MS widens it further without an edit per clone; a
+// non-numeric or non-positive value keeps the default rather than disabling it.
+const DEFAULT_API_TEST_TIMEOUT_MS = 600_000;
+const API_TEST_TIMEOUT_ENV = "PEW_E2E_TEST_TIMEOUT_MS";
+
+function configuredApiTestTimeoutMs(): number {
+  const raw = process.env[API_TEST_TIMEOUT_ENV];
+  if (raw === undefined || !/^\d+$/.test(raw)) return DEFAULT_API_TEST_TIMEOUT_MS;
+  const value = Number(raw);
+  return value > 0 ? value : DEFAULT_API_TEST_TIMEOUT_MS;
+}
 // Concurrent warmup requests: `next dev` compiles each route in its own
 // worker, so a few in flight at once overlap the compiles instead of paying
 // them end to end. Kept small — the lane runs beside the ui tier's production
@@ -360,8 +378,9 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
       // Same rationale as startLocalBindings' timeout: this guards against a
       // wedged server, not slow load. The api tier boots `next dev`, whose
       // first compile can exceed a minute when the gate runs beside the
-      // browser lane's production build.
-      if (Date.now() - started > 900_000) throw new Error("E2E server readiness timed out");
+      // browser lane's production build. 30 minutes matches the build
+      // deadline above.
+      if (Date.now() - started > 1_800_000) throw new Error("E2E server readiness timed out");
       await Bun.sleep(200);
     }
     await verifyLocalMarker(env);
@@ -375,14 +394,14 @@ export async function runLocalE2e(tier: "api" | "ui", args: string[] = []): Prom
       // compile takes 25-35s under machine load and blew past the lane's
       // per-test timeout (the recurring single-test timeout flakes on
       // /api/auth/cli, /api/users and the retired 404s: always the first hit,
-      // always followed by fast responses; the per-test budget is 120s, raised
-      // from 30s for the same reason). Warm every route before the test clock
-      // starts — the same reasoning that has the ui tier pre-build — so the
-      // per-test timeout stays a hang detector.
+      // always followed by fast responses; the per-test budget is 600s, raised
+      // from 120s — see DEFAULT_API_TEST_TIMEOUT_MS). Warm every route before
+      // the test clock starts — the same reasoning that has the ui tier
+      // pre-build — so the per-test timeout stays a hang detector.
       await warmApiRoutes(port, abort.signal);
     }
     tests = Bun.spawn(tier === "api"
-      ? [process.execPath, "--no-env-file", "test", "packages/web/src/__tests__/e2e", "--timeout", "120000"]
+      ? [process.execPath, "--no-env-file", "test", "packages/web/src/__tests__/e2e", "--timeout", String(configuredApiTestTimeoutMs())]
       : ["node", resolve("node_modules/@playwright/test/cli.js"), "test", "--config", "packages/web/e2e/playwright.config.ts", ...args],
     { env, stdout: "inherit", stderr: "inherit" });
     exitCode = await tests.exited;

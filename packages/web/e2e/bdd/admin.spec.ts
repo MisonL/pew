@@ -64,7 +64,7 @@ test.describe("Feature: Admin", () => {
 
       // Then: new season name and slug both render
       await expect(page.getByText(seasonName, { exact: true })).toBeVisible({
-        timeout: 10_000,
+        timeout: 60_000,
       });
       await expect(page.getByText(seasonSlug)).toBeVisible();
     });
@@ -95,7 +95,7 @@ test.describe("Feature: Admin", () => {
 
       // When: open /admin/seasons, enter edit mode on the row, change name, save
       await page.goto("/admin/seasons");
-      await expect(page.getByText(seasonName)).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(seasonName)).toBeVisible({ timeout: 60_000 });
       const row = page.locator("tr", { hasText: seasonName });
       await row.getByRole("button", { name: "Edit season" }).click();
       const editRow = page.locator("tr", {
@@ -110,7 +110,7 @@ test.describe("Feature: Admin", () => {
 
       // Then: the updated name renders
       await expect(page.getByText(updatedName, { exact: true })).toBeVisible({
-        timeout: 10_000,
+        timeout: 60_000,
       });
     });
 
@@ -139,7 +139,7 @@ test.describe("Feature: Admin", () => {
       // When: open /admin/seasons, click the row's delete control, confirm
       await page.goto("/admin/seasons");
       await expect(page.getByText(updatedName, { exact: true })).toBeVisible({
-        timeout: 10_000,
+        timeout: 60_000,
       });
       const row = page.locator("tr", { hasText: updatedName });
       await row.getByRole("button", { name: "Delete season" }).click();
@@ -148,7 +148,7 @@ test.describe("Feature: Admin", () => {
 
       // Then: the row is gone and the success banner confirms the delete
       await expect(page.getByText(updatedName, { exact: true })).toHaveCount(0, {
-        timeout: 10_000,
+        timeout: 60_000,
       });
       await expect(page.getByText(`Season "${updatedName}" deleted.`)).toBeVisible();
     });
