@@ -677,6 +677,10 @@ bash deploy/selfhost/backup.sh /var/backups/pew/pew.db
   `/rqlite/file/backup.db`，与宿主输出路径无关，所以并发运行必然互相覆盖，且先结束者的
   EXIT trap 会 `rm -f` 掉另一个正在使用的归档。**指向不同输出路径并不能避免冲突**——必须
   错开时间，或用 `flock`（如 `flock -n /var/lock/pew-backup.lock bash backup.sh ...`）串行化。
+- **备份会按天累积，保留策略由 cron 承担**：单个归档约等于数据库大小（实测 34 MB），
+  每日备份不清理会缓慢吃满磁盘。在备份命令旁挂一条保留规则，例如只保留 14 天：
+  `find /var/backups/pew -maxdepth 1 -name 'backup-*.db' -mtime +14 -delete`。
+  凭据备份（`.env`/`.rqlite-auth.json`）有各自独立的目录与保留期，不要用同一条 `find` 混删。
 - **凭据经环境变量传入容器**（`docker exec -e RQLITE_USERNAME -e RQLITE_PASSWORD`）：宿主
   `docker compose exec` 的 argv 里只有变量名，值走环境，所以宿主 `ps` 与 shell history 都看不到，
   密码含空格也无需引号技巧。**但容器内不是**：rqlite CLI 只接受 `-u user:password` 这一种
