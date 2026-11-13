@@ -117,7 +117,7 @@ test.describe("Feature: Overview", () => {
           expect(boxes[1].y).toBeGreaterThan(boxes[0].y);
           expect(boxes[2].y).toBeGreaterThan(boxes[1].y);
         }
-      }).toPass({ timeout: 15_000 });
+      }).toPass({ timeout: 60_000 });
       for (const region of regions.slice(0, 2)) {
         const box = (await region.boundingBox())!;
         const dates = region.getByRole("img", { name: /^2026-/ });

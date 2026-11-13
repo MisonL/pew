@@ -6,8 +6,10 @@ export default defineConfig({
   testDir: "./bdd",
   // Hang detectors, not performance budgets: the lane runs beside the API
   // lane on a shared machine and timing is explicitly not part of the gate
-  // contract. A wedged page still fails.
-  timeout: 180_000,
+  // contract. A wedged page still fails. Raised from 180s because the same
+  // loaded host that timed L2 cases out at 120s stretched whole cases past
+  // three minutes without a stuck page.
+  timeout: 600_000,
   // Chart hydration can exceed the default 5 seconds (page load itself is
   // milliseconds: the L3 lane serves a production build, see scripts/e2e-utils.ts).
   expect: { timeout: 30_000 },
@@ -19,7 +21,7 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${E2E_UI_PORT}`,
     headless: true,
-    navigationTimeout: 120_000,
+    navigationTimeout: 600_000,
   },
   // No webServer — scripts/e2e-utils.ts (runLocalE2e) builds and serves the
   // production bundle, then invokes this config.
