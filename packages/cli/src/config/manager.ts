@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { ConfigManager as BaseConfigManager } from "@nocoo/base-cli";
 import type { PewConfig } from "@pew/core";
 
@@ -147,9 +150,56 @@ export class ConfigManager extends BaseConfigManager<PewConfig> {
     return this.readAsync();
   }
 
-  /** Save config to disk. Note: this merges with existing config. */
-  save(config: PewConfig): Promise<void> {
-    return this.writeAsync(config);
+  /**
+   * Save config to disk. Note: this merges with existing config.
+   *
+   * The base class truncates the file in place. This file is the only copy of
+   * the API key: a crash or ENOSPC mid-write leaves unparseable JSON, and
+   * `readAsync` reports a broken file as `{}`, so the token vanishes silently
+   * and the next login overwrites it. Write a sibling temp file and rename, so
+   * the destination is always either the old statement or the new one.
+   */
+  async save(config: PewConfig): Promise<void> {
+    await this.writeAtomic(config);
+  }
+
+  /** Synchronous counterpart of {@link save}. */
+  override write(partial: PewConfig): void {
+    const merged = { ...this.read(), ...partial };
+    const tmpPath = `${this.configPath}.tmp`;
+    mkdirSync(dirname(this.configPath), { recursive: true });
+    try {
+      writeFileSync(tmpPath, `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });
+      renameSync(tmpPath, this.configPath);
+    } catch (error) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // Nothing to clean up — the write itself failed.
+      }
+      throw error;
+    }
+  }
+
+  override async writeAsync(partial: PewConfig): Promise<void> {
+    await this.writeAtomic(partial);
+  }
+
+  private async writeAtomic(partial: PewConfig): Promise<void> {
+    const existing = await this.readAsync();
+    const merged = { ...existing, ...partial };
+    const tmpPath = `${this.configPath}.tmp`;
+    await mkdir(dirname(this.configPath), { recursive: true });
+    try {
+      await writeFile(tmpPath, `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });
+      await rename(tmpPath, this.configPath);
+    } catch (error) {
+      await rm(tmpPath, { force: true }).catch(() => {
+        // Best-effort cleanup: the write failed, and a stray temp file is
+        // benign — the destination was never touched.
+      });
+      throw error;
+    }
   }
 
   /** Get the authentication token. */
