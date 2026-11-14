@@ -3,6 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { GET } from "@/app/api/leaderboard/route";
 import * as dbModule from "@/lib/db";
 import { isAdminUser } from "@/lib/admin";
+import { inMemoryRateLimiter } from "@/lib/rate-limit";
+import { LEADERBOARD_RATE_LIMIT } from "@/lib/rate-limit";
 import { createMockDbRead, loadMockedAuthHelpers, makeGetRequest } from "./test-utils";
 
 vi.mock("@/lib/db", () => ({ getDbRead: vi.fn() }));
@@ -183,13 +185,40 @@ describe("GET /api/leaderboard", () => {
     expect((await GET(makeGetRequest("/api/leaderboard", { period: "all", snapshot: first.snapshotId }))).status).toBe(409);
   });
 
-  it("continues pagination if a refreshed snapshot has the same content ID", async () => {
-    const first = await (await GET(makeGetRequest("/api/leaderboard", { period: "all" }))).json();
+  it("continues pagination if a refreshed snapshot has the same content ID", async () => {    const first = await (await GET(makeGetRequest("/api/leaderboard", { period: "all" }))).json();
     vi.advanceTimersByTime(600_000);
     const res = await GET(makeGetRequest("/api/leaderboard", { period: "all", snapshot: first.snapshotId }));
     expect(res.status).toBe(200);
     expect((await res.json()).snapshotId).toBe(first.snapshotId);
     expect(mockDb.getLeaderboardSnapshot).toHaveBeenCalledTimes(2);
+  });
+
+  // Every distinct filter combination mints a separate cache key (and up to
+  // 256 KiB of KV row) after a full leaderboard scan, and this endpoint is
+  // public. An anonymous caller could loop over random `model` values and
+  // grow the KV table while forcing a scan per request. Bound the rate.
+  it("rate-limits the public endpoint per client IP", async () => {
+    inMemoryRateLimiter.reset();
+    const makeWithIp = () => new Request("http://localhost/api/leaderboard", {
+      headers: { "x-forwarded-for": "203.0.113.9" },
+    });
+    try {
+      let status = 0;
+      for (let i = 0; i < LEADERBOARD_RATE_LIMIT.maxRequests; i++) {
+        status = (await GET(makeWithIp())).status;
+        expect(status).toBe(200);
+      }
+      const limited = await GET(makeWithIp());
+      expect(limited.status).toBe(429);
+      expect(limited.headers.get("Retry-After")).not.toBeNull();
+
+      // A different client keeps its own bucket.
+      expect((await GET(new Request("http://localhost/api/leaderboard", {
+        headers: { "x-forwarded-for": "198.51.100.7" },
+      }))).status).toBe(200);
+    } finally {
+      inMemoryRateLimiter.reset();
+    }
   });
 
   it.each(["team", "org"] as const)("checks live %s membership before every shared cache read", async (scope) => {

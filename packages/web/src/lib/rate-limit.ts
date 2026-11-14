@@ -172,6 +172,19 @@ export const AUTH_CLI_RATE_LIMIT: RateLimitConfig = {
 };
 
 /** Rate limit for ingest endpoint: 300 per minute per user (or per IP if unauthenticated) */
+/**
+ * Public leaderboard reads. Every distinct filter combination mints its own
+ * cache key after a full scan, and the endpoint is reachable without auth, so
+ * an unauthenticated loop over random filters grows the shared KV table and
+ * forces a scan per request. 60/min is well above a human page-browsing rate
+ * (the L3 suite makes ~24 calls for a whole run) and far below what makes
+ * cache-key churn cheap.
+ */
+export const LEADERBOARD_RATE_LIMIT: RateLimitConfig = {
+  maxRequests: 60,
+  windowSeconds: 60,
+};
+
 export const INGEST_RATE_LIMIT: RateLimitConfig = {
   maxRequests: 300,
   windowSeconds: 60,

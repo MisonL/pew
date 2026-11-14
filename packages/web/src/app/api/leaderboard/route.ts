@@ -24,6 +24,7 @@ import { getDbRead } from "@/lib/db";
 import { resolveUser } from "@/lib/auth-helpers";
 import { isAdminUser } from "@/lib/admin";
 import { getCachedLeaderboard } from "@/lib/leaderboard-cache";
+import { clientIpKey, inMemoryRateLimiter, LEADERBOARD_RATE_LIMIT } from "@/lib/rate-limit";
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -53,6 +54,19 @@ function periodStartDate(period: string): string | undefined {
 // ---------------------------------------------------------------------------
 
 export async function GET(request: Request) {
+  // Public endpoint: every distinct filter set mints a cache key after a full
+  // scan, so bound how fast one client can trigger that work.
+  const rateLimited = inMemoryRateLimiter.check(
+    `leaderboard:${clientIpKey(request)}`,
+    LEADERBOARD_RATE_LIMIT,
+  );
+  if (!rateLimited.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again later." },
+      { status: 429, headers: { "Retry-After": String(rateLimited.retryAfter) } },
+    );
+  }
+
   const url = new URL(request.url);
   const period = url.searchParams.get("period") ?? "week";
   const limitParam = url.searchParams.get("limit");
