@@ -12,6 +12,39 @@
 import type { DbRead, DbWrite } from "@/lib/db";
 
 /**
+ * Re-offer a freed season seat to the user's other registered team.
+ *
+ * UNIQUE(season_id, user_id) lets one roster hold a user, so a join into a
+ * second registered team is silently ignored while the first team holds their
+ * seat. When that team releases it, nothing revisited the other team and the
+ * user ended up on no roster at all — their season usage stopped counting
+ * until an unrelated membership change happened to re-sync it. This puts the
+ * seat back on exactly one eligible team, only when the user currently holds
+ * no seat in that season.
+ *
+ * Params: [new row id, user_id, season_id, team being left].
+ */
+export function seasonSeatReassignmentSql(): string {
+  return `INSERT OR IGNORE INTO season_team_members (id, season_id, team_id, user_id)
+           SELECT ?, st.season_id, st.team_id, ?
+           FROM season_teams st
+           JOIN teams t ON t.id = st.team_id
+           JOIN team_members tm ON tm.team_id = st.team_id AND tm.user_id = ?
+           JOIN seasons s ON s.id = st.season_id
+           WHERE st.season_id = ?
+             AND st.team_id != ?
+             AND s.allow_roster_changes = 1
+             AND datetime(s.start_date) <= datetime('now')
+             AND datetime(s.end_date, '+1 minute') > datetime('now')
+             AND NOT EXISTS (
+               SELECT 1 FROM season_team_members ex
+               WHERE ex.season_id = st.season_id AND ex.user_id = ?
+             )
+           ORDER BY st.team_id
+           LIMIT 1`;
+}
+
+/**
  * Sync season rosters for a given team.
  *
  * For each active season where the team is registered AND
@@ -58,6 +91,12 @@ export async function syncSeasonRosters(
         await dbWrite.execute(
           "DELETE FROM season_team_members WHERE season_id = ? AND team_id = ? AND user_id = ?",
           [season_id, teamId, userId],
+        );
+        // The freed seat goes back to another of this user's registered
+        // teams (see seasonSeatReassignmentSql).
+        await dbWrite.execute(
+          seasonSeatReassignmentSql(),
+          [crypto.randomUUID(), userId, userId, season_id, teamId, userId],
         );
       }
     }

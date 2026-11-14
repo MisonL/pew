@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
 
 import { getDbRead, getDbWrite } from "@/lib/db";
+import { seasonSeatReassignmentSql } from "@/lib/season-roster";
 import { readJsonBody } from "@/lib/request-json";
 import { deleteTeamLogoByUrl } from "@/lib/r2";
 
@@ -261,7 +262,8 @@ export async function DELETE(
           (${emptyTeam} AND NOT EXISTS (${lockedSeason})) OR
           (user_id = ? AND NOT EXISTS (SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ?)
             AND season_id IN (SELECT id FROM seasons WHERE allow_roster_changes = 1
-              AND julianday(start_date) <= julianday('now') AND julianday(end_date, '+1 minute') > julianday('now'))))`,
+              AND julianday(start_date) <= julianday('now') AND julianday(end_date, '+1 minute') > julianday('now'))))
+          RETURNING season_id`,
         params: [teamId, teamId, teamId, authResult.userId, teamId, authResult.userId],
       },
       {
@@ -278,6 +280,19 @@ export async function DELETE(
         { error: "Team membership changed or season rules prevent deleting this team" },
         { status: 409 },
       );
+    }
+    // Statement 2 releases this user's season seats (it only touches rows for
+    // a member who is no longer in team_members). Offer the freed seat to
+    // their other registered team in the same transaction, so a leave cannot
+    // end with the user on no roster while the team remains registered.
+    const releasedSeasonIds = (results[1]?.results ?? [])
+      .map((row) => row.season_id)
+      .filter((id): id is string => typeof id === "string" && id !== "");
+    if (releasedSeasonIds.length > 0) {
+      await dbWrite.batch(releasedSeasonIds.map((seasonId) => ({
+        sql: seasonSeatReassignmentSql(),
+        params: [crypto.randomUUID(), authResult.userId, authResult.userId, seasonId, teamId, authResult.userId],
+      })));
     }
     const logoUrl = results[3]?.results[0]?.logo_url;
     if (typeof logoUrl === "string" && logoUrl) {

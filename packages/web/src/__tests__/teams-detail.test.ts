@@ -19,7 +19,10 @@ vi.mock("@/lib/r2", () => ({
   deleteTeamLogoByUrl: vi.fn(),
 }));
 
-vi.mock("@/lib/season-roster", () => ({
+vi.mock("@/lib/season-roster", async (importOriginal) => ({
+  // Keep the real SQL builder so the sqlite-backed tests below execute the
+  // statement the route actually emits; only the sync helper is stubbed.
+  ...(await importOriginal<typeof import("@/lib/season-roster")>()),
   syncSeasonRosters: vi.fn(),
 }));
 
@@ -488,14 +491,14 @@ describe("DELETE /api/teams/[teamId]", () => {
       CREATE TABLE team_members (team_id TEXT REFERENCES teams(id), user_id TEXT, role TEXT);
       CREATE TABLE seasons (id TEXT PRIMARY KEY, start_date TEXT, end_date TEXT, allow_late_withdrawal INTEGER, allow_roster_changes INTEGER);
       CREATE TABLE season_teams (team_id TEXT REFERENCES teams(id), season_id TEXT REFERENCES seasons(id));
-      CREATE TABLE season_team_members (team_id TEXT REFERENCES teams(id), season_id TEXT REFERENCES seasons(id), user_id TEXT);
+      CREATE TABLE season_team_members (id TEXT PRIMARY KEY, team_id TEXT REFERENCES teams(id), season_id TEXT REFERENCES seasons(id), user_id TEXT, UNIQUE(season_id, user_id));
       INSERT INTO teams VALUES ('t1', NULL);
       INSERT INTO team_members VALUES ('t1', 'u1', 'owner');
     `);
     const start = status === "upcoming" ? "2999-01-01T00:00:00Z" : "2000-01-01T00:00:00Z";
     const end = status === "closing-minute" ? new Date(Date.now() - 30_000).toISOString() : status === "ended" ? "2001-01-01T00:00:00Z" : "2999-12-31T00:00:00Z";
     sqlite.prepare("INSERT INTO seasons VALUES ('s1', ?, ?, ?, 0)").run(start, end, withdrawal);
-    sqlite.exec("INSERT INTO season_teams VALUES ('t1', 's1'); INSERT INTO season_team_members VALUES ('t1', 's1', 'u1');");
+    sqlite.exec("INSERT INTO season_teams VALUES ('t1', 's1'); INSERT INTO season_team_members VALUES ('stm1', 't1', 's1', 'u1');");
     if (status === "concurrent-member") sqlite.exec("INSERT INTO team_members VALUES ('t1', 'u2', 'member')");
     if (status === "late-failure") sqlite.exec("CREATE TABLE retained (team_id TEXT REFERENCES teams(id)); INSERT INTO retained VALUES ('t1')");
     vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
@@ -521,6 +524,43 @@ describe("DELETE /api/teams/[teamId]", () => {
       for (const table of ["teams", "team_members", "season_teams", "season_team_members"]) {
         expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()!.n).toBe(expected === 200 ? 0 : table === "team_members" && status === "concurrent-member" ? 2 : 1);
       }
+    } finally { sqlite.close(); }
+  });
+
+  it("hands a leaver's season seat to another registered team they belong to", async () => {
+    // UNIQUE(season_id, user_id) lets one roster hold u2; joining t2 while u2
+    // sat on t1 was silently ignored. Leaving t1 must not strand u2 on no
+    // roster — the seat goes to t2 in the same transaction.
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE teams (id TEXT PRIMARY KEY, logo_url TEXT);
+      CREATE TABLE team_members (team_id TEXT REFERENCES teams(id), user_id TEXT, role TEXT);
+      CREATE TABLE seasons (id TEXT PRIMARY KEY, start_date TEXT, end_date TEXT, allow_late_withdrawal INTEGER, allow_roster_changes INTEGER);
+      CREATE TABLE season_teams (team_id TEXT REFERENCES teams(id), season_id TEXT REFERENCES seasons(id));
+      CREATE TABLE season_team_members (id TEXT PRIMARY KEY, team_id TEXT REFERENCES teams(id), season_id TEXT REFERENCES seasons(id), user_id TEXT, UNIQUE(season_id, user_id));
+      INSERT INTO teams VALUES ('t1', NULL), ('t2', NULL);
+      INSERT INTO team_members VALUES ('t1', 'u1', 'owner'), ('t1', 'u2', 'member'), ('t1', 'u3', 'member');
+      INSERT INTO team_members VALUES ('t2', 'u2', 'member');
+      INSERT INTO seasons VALUES ('s1', '2000-01-01T00:00:00Z', '2999-12-31T00:00:00Z', 1, 1);
+      INSERT INTO season_teams VALUES ('t1', 's1'), ('t2', 's1');
+      INSERT INTO season_team_members VALUES ('stm1', 't1', 's1', 'u2');
+    `);
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u2" });
+    mockDbRead.getTeamMembership.mockResolvedValueOnce("member");
+    mockDbRead.countTeamMembers.mockResolvedValueOnce(3);
+    mockDbWrite.batch.mockImplementation(async (statements: Array<{ sql: string; params?: unknown[] }>) => {
+      const results = statements.map(({ sql, params }) => ({
+        results: sqlite.prepare(sql).all(...(params ?? []) as Array<string | number | null>),
+        meta: { changes: 0, duration: 0 },
+      }));
+      return results;
+    });
+    try {
+      const res = await DELETE(makeRequest("DELETE"), makeParams());
+      expect(res.status).toBe(200);
+      expect(sqlite.prepare("SELECT team_id, user_id FROM season_team_members").all())
+        .toEqual([{ team_id: "t2", user_id: "u2" }]);
     } finally { sqlite.close(); }
   });
 
