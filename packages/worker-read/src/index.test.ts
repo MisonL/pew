@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import worker from "./index";
 import type { Env } from "./index";
 import { WORKER_VERSION } from "./index";
+import { MAX_JSON_BODY_BYTES } from "@pew/core";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -424,6 +425,49 @@ describe("pew read Worker", () => {
       expect(res.status).toBe(400);
       const body = await res.json() as Record<string, unknown>;
       expect(body.error).toContain("JSON");
+    });
+
+    it("rejects a body over the cap with 413 before parsing it", async () => {
+      // Every RPC body is a method name plus a handful of scalars. An
+      // unbounded `request.json()` let any caller holding the service secret
+      // — including a leaked one — make the worker buffer an arbitrary
+      // payload before any handler ran. The cap applies before the parse so
+      // an oversized body is never decoded.
+      const oversized = JSON.stringify({
+        method: "users.getById",
+        id: "u1",
+        padding: "x".repeat(MAX_JSON_BODY_BYTES),
+      });
+      const req = new Request("https://pew.test.workers.dev/api/rpc", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${SECRET}`,
+        },
+        body: oversized,
+      });
+      const res = await callWorker(req, env);
+      expect(res.status).toBe(413);
+      expect((await res.json() as Record<string, unknown>).error).toContain("too large");
+      expect(env.DB.prepare).not.toHaveBeenCalled();
+    });
+
+    it("still accepts a body just under the cap", async () => {
+      const envelope = {
+        method: "users.getById",
+        id: "u1",
+        padding: "x".repeat(MAX_JSON_BODY_BYTES - 128),
+      };
+      const req = new Request("https://pew.test.workers.dev/api/rpc", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${SECRET}`,
+        },
+        body: JSON.stringify(envelope),
+      });
+      const res = await callWorker(req, env);
+      expect(res.status).toBe(200);
     });
   });
 
