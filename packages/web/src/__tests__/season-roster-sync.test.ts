@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { DatabaseSync } from "node:sqlite";
 import { createMockDbRead, createMockDbWrite } from "./test-utils";
 
 // ---------------------------------------------------------------------------
@@ -103,8 +104,76 @@ describe("syncSeasonRosters", () => {
     expect(insertCalls).toHaveLength(2);
   });
 
-  it("should process multiple active seasons", async () => {
-    mockDbRead.listRosterSyncSeasons.mockResolvedValueOnce(["season-1", "season-2"]);
+  // A user can belong to two teams registered for the same season. The
+  // roster UNIQUE(season_id, user_id) lets only one of them hold the user, so
+  // joining whichever team loses the race is silently ignored. Nothing
+  // revisited that team when the user later left the winning one, so the user
+  // ended up on no roster at all and their season usage stopped counting.
+  it("adds a user to the roster when they leave the team that held their seat", async () => {
+    // team-2 is the team the user just left; team-2's own roster goes down.
+    mockDbRead.listRosterSyncSeasons.mockResolvedValueOnce(["season-1"]);
+    mockDbRead.getTeamMemberUserIds.mockResolvedValueOnce([]);
+    mockDbRead.getRosterUserIds.mockResolvedValueOnce(["user-1"]);
+
+    await syncSeasonRosters(mockDbRead as never, mockDbWrite as never, "team-2");
+
+    // The freed seat must be offered to the other registered teams whose
+    // rosters were denied the user by UNIQUE(season_id, user_id).
+    const reassign = mockDbWrite.execute.mock.calls.filter(
+      (c: unknown[]) => String(c[0]).includes("INSERT OR IGNORE INTO season_team_members") &&
+        String(c[0]).includes("NOT EXISTS"),
+    );
+    expect(reassign.length).toBe(1);
+    const [sql, params] = reassign[0] as [string, unknown[]];
+    // The re-offer must be scoped to this season, exclude the team that just
+    // released the seat, and only apply to rosters that allow changes.
+    expect(sql).toContain("st.team_id != ?");
+    expect(sql).toContain("allow_roster_changes = 1");
+    expect(params[0]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(params.slice(1)).toEqual([
+      "user-1", // user_id to insert
+      "user-1", // team_members join
+      "season-1", // season_teams filter
+      "team-2", // the team that just released the seat
+      "user-1", // ex.* NOT EXISTS guard
+    ]);
+  });
+
+  it("the re-offer statement runs on real SQLite and moves the seat", async () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE seasons (id TEXT PRIMARY KEY, start_date TEXT, end_date TEXT, allow_roster_changes INTEGER DEFAULT 0);
+      CREATE TABLE teams (id TEXT PRIMARY KEY);
+      CREATE TABLE season_teams (id TEXT PRIMARY KEY, season_id TEXT, team_id TEXT);
+      CREATE TABLE team_members (team_id TEXT, user_id TEXT, PRIMARY KEY (team_id, user_id));
+      CREATE TABLE season_team_members (id TEXT PRIMARY KEY, season_id TEXT, team_id TEXT, user_id TEXT,
+        UNIQUE (season_id, user_id));
+    `);
+    db.exec(`
+      INSERT INTO seasons VALUES ('season-1', '2000-01-01T00:00:00Z', '2999-12-31T00:00:00Z', 1);
+      INSERT INTO teams VALUES ('team-2'), ('team-3');
+      INSERT INTO season_teams VALUES ('st2','season-1','team-2'), ('st3','season-1','team-3');
+      INSERT INTO team_members VALUES ('team-2','user-1'), ('team-3','user-1');
+      INSERT INTO season_team_members VALUES ('r0','season-1','team-2','user-1');
+    `);
+
+    // user-1 leaves team-2: the code deletes their roster row, then re-offers
+    // the seat to their other registered team (team-3).
+    mockDbRead.listRosterSyncSeasons.mockResolvedValueOnce(["season-1"]);
+    mockDbRead.getTeamMemberUserIds.mockResolvedValueOnce([]);
+    mockDbRead.getRosterUserIds.mockResolvedValueOnce(["user-1"]);
+    await syncSeasonRosters(mockDbRead as never, mockDbWrite as never, "team-2");
+
+    const calls = mockDbWrite.execute.mock.calls as Array<[string, unknown[]]>;
+    for (const [sql, params] of calls) {
+      db.prepare(sql).run(...(params as Array<string | number | null>));
+    }
+
+    expect(db.prepare("SELECT team_id, user_id FROM season_team_members").all())
+      .toEqual([{ team_id: "team-3", user_id: "user-1" }]);
+  });
+
+  it("should process multiple active seasons", async () => {    mockDbRead.listRosterSyncSeasons.mockResolvedValueOnce(["season-1", "season-2"]);
     mockDbRead.getTeamMemberUserIds.mockResolvedValueOnce(["user-1"]);
     mockDbRead.getRosterUserIds.mockResolvedValueOnce([]);
     mockDbRead.getRosterUserIds.mockResolvedValueOnce([]);
