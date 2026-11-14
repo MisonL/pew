@@ -15,6 +15,7 @@
  * SQL is owned by the Worker; RPC clients supply method parameters only.
  */
 
+import { BodyTooLargeError, MAX_JSON_BODY_BYTES, readBoundedJson } from "@pew/core";
 import { checkedCountDatabase, checkedCountResponse } from "./count-response";
 import { handleUsersRpc, type UsersRpcRequest } from "./rpc/users";
 import { handleTeamsRpc, type TeamsRpcRequest } from "./rpc/teams";
@@ -245,8 +246,11 @@ const worker: ExportedHandler<Env> = {
 
       let body: unknown;
       try {
-        body = await request.json();
-      } catch {
+        body = await readBoundedJson(request, MAX_JSON_BODY_BYTES);
+      } catch (error) {
+        if (error instanceof BodyTooLargeError) {
+          return Response.json({ error: "Request body too large" }, { status: 413 });
+        }
         return Response.json(
           { error: "Invalid JSON body" },
           { status: 400 },
