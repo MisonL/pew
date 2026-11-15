@@ -134,10 +134,9 @@ describe("syncSeasonRosters", () => {
     expect(sql).toContain("hex(randomblob(16))");
     expect(sql).not.toContain("LIMIT 1");
     expect(params).toEqual([
-      "user-1", // user_id to insert
-      "user-1", // team_members join
+      "user-1", // user scope
+      "season-1", // season scope (the sync already knows the season)
       "team-2", // the team that just released the seat
-      "user-1", // ex.* NOT EXISTS guard
     ]);
   });
 

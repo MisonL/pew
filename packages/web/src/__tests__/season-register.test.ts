@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { DatabaseSync } from "node:sqlite";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -303,6 +304,47 @@ describe("POST /api/seasons/[seasonId]/register", () => {
 
     // Even when compensation fails, we still tried (same logic as above)
     expect(mockDbWrite.execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-offers the withdrawn roster's seats to their other registered teams", async () => {
+    // Withdrawing deletes every seat this team held in the season. A member
+    // who also belongs to another registered team had their seat here only
+    // because UNIQUE(season_id, user_id) let one roster hold them; without a
+    // re-offer they end up on no roster at all and their usage stops counting
+    // for the season until an unrelated membership change re-syncs it.
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec(`
+      CREATE TABLE teams (id TEXT PRIMARY KEY, logo_url TEXT);
+      CREATE TABLE team_members (team_id TEXT, user_id TEXT, role TEXT);
+      CREATE TABLE seasons (id TEXT PRIMARY KEY, start_date TEXT, end_date TEXT, allow_late_withdrawal INTEGER, allow_roster_changes INTEGER);
+      CREATE TABLE season_teams (team_id TEXT, season_id TEXT, registered_by TEXT);
+      CREATE TABLE season_team_members (id TEXT PRIMARY KEY, team_id TEXT, season_id TEXT, user_id TEXT, UNIQUE(season_id, user_id));
+      INSERT INTO teams VALUES ('tA', NULL), ('tB', NULL);
+      INSERT INTO team_members VALUES ('tA', 'u1', 'owner'), ('tA', 'u2', 'member'), ('tB', 'u1', 'member');
+      INSERT INTO seasons VALUES ('season-1', '2000-01-01T00:00:00Z', '2999-12-31T00:00:00Z', 1, 1);
+      INSERT INTO season_teams VALUES ('tA', 'season-1', 'u1'), ('tB', 'season-1', 'u1');
+      INSERT INTO season_team_members VALUES ('seat-1', 'tA', 'season-1', 'u1');
+    `);
+    resolveUser.mockResolvedValueOnce(USER);
+    mockDbRead.getSeasonById.mockResolvedValueOnce({ ...SEASON_UPCOMING, allow_late_withdrawal: 1 });
+    deriveSeasonStatus.mockReturnValueOnce("active");
+    mockDbRead.getTeamMembership.mockResolvedValueOnce("owner");
+    mockDbRead.getSeasonRegistration.mockResolvedValueOnce({ id: "reg-1" });
+    mockDbRead.getRosterUserIds.mockResolvedValueOnce(["u1", "u2"]);
+    mockDbWrite.batch.mockImplementation(async (statements: Array<{ sql: string; params?: unknown[] }>) =>
+      statements.map(({ sql, params }) => ({
+        results: sqlite.prepare(sql).all(...(params ?? []) as Array<string | number | null>),
+        meta: { changes: 0, duration: 0 },
+      })));
+    try {
+      const res = await DELETE(deleteReq({ team_id: "tA" }), PARAMS);
+      expect(res.status).toBe(200);
+      expect(sqlite.prepare("SELECT team_id FROM season_teams").all()).toEqual([{ team_id: "tB" }]);
+      // u1 keeps a seat in the season, now on their other registered team.
+      // u2 belongs to no other registered team, so they simply leave the roster.
+      expect(sqlite.prepare("SELECT team_id, user_id FROM season_team_members ORDER BY user_id").all())
+        .toEqual([{ team_id: "tB", user_id: "u1" }]);
+    } finally { sqlite.close(); }
   });
 
   it("returns 503 on 'no such table' error", async () => {
