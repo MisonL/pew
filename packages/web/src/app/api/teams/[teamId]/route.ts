@@ -273,7 +273,7 @@ export async function DELETE(
         // gone — a retry then answered 403 and the seat stayed missing for
         // good. The statement itself is shared with syncSeasonRosters.
         sql: seasonSeatReassignmentSql(),
-        params: [authResult.userId, authResult.userId, teamId, authResult.userId],
+        params: [authResult.userId, null, teamId],
       },
       {
         sql: `DELETE FROM season_teams WHERE team_id = ? AND ${emptyTeam} AND NOT EXISTS (${lockedSeason})`,

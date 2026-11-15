@@ -134,10 +134,9 @@ describe("syncSeasonRosters", () => {
     expect(sql).toContain("hex(randomblob(16))");
     expect(sql).not.toContain("LIMIT 1");
     expect(params).toEqual([
-      "user-1", // user_id to insert
-      "user-1", // team_members join
+      "user-1", // user scope
+      "season-1", // season scope (the sync already knows the season)
       "team-2", // the team that just released the seat
-      "user-1", // ex.* NOT EXISTS guard
     ]);
   });
 
@@ -254,6 +253,48 @@ describe("syncAllRostersForSeason", () => {
     );
     expect(deleteCalls).toHaveLength(1);
     expect(deleteCalls[0]![1]).toContain("user-2");
+  });
+
+  it("bulk sync does not strand a user on the team processed first", async () => {
+    // The bulk sync walks every registered team. A user whose stale seat sits
+    // on a team they have left gets it deleted when that team is visited; if
+    // their other team was visited earlier, that team had already tried and
+    // been refused by UNIQUE(season_id, user_id). The result depended on the
+    // team order, so run the re-offer after the delete like the event-driven
+    // sync does.
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE seasons (id TEXT PRIMARY KEY, start_date TEXT, end_date TEXT, allow_roster_changes INTEGER DEFAULT 0);
+      CREATE TABLE teams (id TEXT PRIMARY KEY);
+      CREATE TABLE season_teams (id TEXT PRIMARY KEY, season_id TEXT, team_id TEXT);
+      CREATE TABLE team_members (team_id TEXT, user_id TEXT, PRIMARY KEY (team_id, user_id));
+      CREATE TABLE season_team_members (id TEXT PRIMARY KEY, season_id TEXT, team_id TEXT, user_id TEXT,
+        UNIQUE (season_id, user_id));
+    `);
+    db.exec(`
+      INSERT INTO seasons VALUES ('season-1', '2000-01-01T00:00:00Z', '2999-12-31T00:00:00Z', 1);
+      INSERT INTO teams VALUES ('team-1'), ('team-2');
+      INSERT INTO season_teams VALUES ('st1','season-1','team-1'), ('st2','season-1','team-2');
+      INSERT INTO team_members VALUES ('team-2','user-1');
+      INSERT INTO season_team_members VALUES ('r0','season-1','team-1','user-1');
+    `);
+
+    // team-2 is visited first and refused; team-1 then deletes the stale seat.
+    mockDbRead.getRegisteredTeamIds.mockResolvedValueOnce(["team-2", "team-1"]);
+    mockDbRead.getTeamMemberUserIds.mockResolvedValueOnce(["user-1"]);
+    mockDbRead.getRosterUserIds.mockResolvedValueOnce([]);
+    mockDbRead.getTeamMemberUserIds.mockResolvedValueOnce([]);
+    mockDbRead.getRosterUserIds.mockResolvedValueOnce(["user-1"]);
+
+    await syncAllRostersForSeason(mockDbRead as never, mockDbWrite as never, "season-1");
+
+    const calls = mockDbWrite.execute.mock.calls as Array<[string, unknown[]]>;
+    for (const [sql, params] of calls) {
+      db.prepare(sql).run(...(params as Array<string | number | null>));
+    }
+
+    expect(db.prepare("SELECT team_id, user_id FROM season_team_members").all())
+      .toEqual([{ team_id: "team-2", user_id: "user-1" }]);
   });
 
   it("should handle multiple teams", async () => {

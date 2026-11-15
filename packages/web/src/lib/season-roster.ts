@@ -16,39 +16,48 @@ import type { DbRead, DbWrite } from "@/lib/db";
  *
  * UNIQUE(season_id, user_id) lets one roster hold a user, so a join into a
  * second registered team is silently ignored while the first team holds their
- * seat. When that team releases it, nothing revisited the other team and the
- * user ended up on no roster at all — their season usage stopped counting
+ * seat. When that team releases it — a member leaves, is kicked, or the owner
+ * withdraws the team from the season — nothing revisited the other teams, and
+ * the user ended up on no roster at all: their season usage stopped counting
  * until an unrelated membership change happened to re-sync it. This puts the
  * seat back on exactly one eligible team, only when the user currently holds
  * no seat in that season.
  *
- * Not scoped to one season: the leave route runs this straight after the
- * release statement, inside the same batch, and does not know which seasons
- * that release touched until it has run. UNIQUE(season_id, user_id) keeps it
- * to one row per season, so `ORDER BY st.team_id` decides which team wins
- * when several qualify.
+ * One statement serves all three call sites; the two optional scopes are
+ * `COALESCE(?, column) = column` (a NULL scope matches every row):
+ *
+ *   - user scope: NULL for the leave route, which re-offers for one user but
+ *     does not know which seasons its release statement touched, and a single
+ *     id when syncing one team or withdrawing one team's roster.
+ *   - season scope: NULL where the seasons are discovered by the statement
+ *     itself, and the season id when the caller already knows it.
+ *
+ * UNIQUE(season_id, user_id) keeps it to one row per season, so
+ * `ORDER BY st.team_id` decides which team wins when several qualify.
  *
  * The row id comes from `hex(randomblob(16))` rather than a bound argument:
  * a single argument would give every row the same id, and OR IGNORE would
  * then drop all but the first on the primary key.
  *
- * Params: [user_id to insert, user_id for the membership join, the team that
- * just released the seat, user_id for the "holds no seat" guard].
+ * Params: [user_id or null, season_id or null, the team that released the
+ * seat].
  */
 export function seasonSeatReassignmentSql(): string {
   return `INSERT OR IGNORE INTO season_team_members (id, season_id, team_id, user_id)
-           SELECT hex(randomblob(16)), st.season_id, st.team_id, ?
+           SELECT hex(randomblob(16)), st.season_id, st.team_id, tm.user_id
            FROM season_teams st
            JOIN teams t ON t.id = st.team_id
-           JOIN team_members tm ON tm.team_id = st.team_id AND tm.user_id = ?
+           JOIN team_members tm ON tm.team_id = st.team_id
            JOIN seasons s ON s.id = st.season_id
-           WHERE st.team_id != ?
+           WHERE COALESCE(?, tm.user_id) = tm.user_id
+             AND COALESCE(?, st.season_id) = st.season_id
+             AND st.team_id != ?
              AND s.allow_roster_changes = 1
              AND datetime(s.start_date) <= datetime('now')
              AND datetime(s.end_date, '+1 minute') > datetime('now')
              AND NOT EXISTS (
                SELECT 1 FROM season_team_members ex
-               WHERE ex.season_id = st.season_id AND ex.user_id = ?
+               WHERE ex.season_id = st.season_id AND ex.user_id = tm.user_id
              )
            ORDER BY st.season_id, st.team_id`;
 }
@@ -105,7 +114,7 @@ export async function syncSeasonRosters(
         // teams (see seasonSeatReassignmentSql).
         await dbWrite.execute(
           seasonSeatReassignmentSql(),
-          [userId, userId, teamId, userId],
+          [userId, season_id, teamId],
         );
       }
     }
@@ -162,6 +171,14 @@ export async function syncAllRostersForSeason(
         await dbWrite.execute(
           "DELETE FROM season_team_members WHERE season_id = ? AND team_id = ? AND user_id = ?",
           [seasonId, team_id, userId],
+        );
+        // Re-offer for the same reason the event-driven sync does, and to make
+        // the result independent of the order the teams are visited in: a team
+        // visited earlier was already refused by UNIQUE(season_id, user_id)
+        // while this stale seat existed.
+        await dbWrite.execute(
+          seasonSeatReassignmentSql(),
+          [userId, seasonId, team_id],
         );
       }
     }

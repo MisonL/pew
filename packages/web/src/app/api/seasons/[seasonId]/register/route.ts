@@ -10,6 +10,7 @@ import { resolveUser } from "@/lib/auth-helpers";
 import { getDbRead, getDbWrite } from "@/lib/db";
 import { readJsonBody } from "@/lib/request-json";
 import { deriveSeasonStatus } from "@/lib/seasons";
+import { seasonSeatReassignmentSql } from "@/lib/season-roster";
 
 // ---------------------------------------------------------------------------
 // POST — register team for season
@@ -260,6 +261,21 @@ export async function DELETE(
       );
     }
 
+    // The roster this withdrawal is about to delete, read first so the
+    // re-offer covers exactly those users. A member who also belongs to
+    // another registered team had their seat here only because
+    // UNIQUE(season_id, user_id) lets one roster hold them; without the
+    // re-offer they would end up on no roster at all and their usage would
+    // stop counting for the season.
+    // Best effort: a failed read costs the re-offer (the roster re-syncs on the
+    // next membership change), not the withdrawal the owner asked for.
+    let rosterUserIds: string[] = [];
+    try {
+      rosterUserIds = (await dbRead.getRosterUserIds(seasonId, team_id)) ?? [];
+    } catch {
+      // Fall through with no re-offers.
+    }
+
     // One batch: as separate statements, a failure after the roster delete
     // left the team registered with an empty roster, which the public
     // leaderboard renders as a real entry with 0 tokens until someone
@@ -275,6 +291,10 @@ export async function DELETE(
         sql: "DELETE FROM season_teams WHERE season_id = ? AND team_id = ?",
         params: [seasonId, team_id],
       },
+      ...rosterUserIds.map((userId) => ({
+        sql: seasonSeatReassignmentSql(),
+        params: [userId, seasonId, team_id],
+      })),
     ]);
 
     // The unregister write is committed; a failed cache invalidation only

@@ -15,6 +15,7 @@
 
 import { NextResponse } from "next/server";
 import { getDbRead } from "@/lib/db";
+import { clientIpKey, inMemoryRateLimiter, LEADERBOARD_RATE_LIMIT } from "@/lib/rate-limit";
 import { deriveSeasonStatus } from "@/lib/seasons";
 import type {
   SeasonSnapshotRow,
@@ -63,6 +64,21 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ seasonId: string }> }
 ) {
+  // Public and shareable: no auth, and every call runs a whole-season
+  // aggregate over usage_records (plus session stats and, with
+  // expand=members, a per-member aggregate) with no cache in front of it.
+  // Same bound the public /api/leaderboard uses; separate bucket.
+  const rateLimited = inMemoryRateLimiter.check(
+    `season-leaderboard:${clientIpKey(request)}`,
+    LEADERBOARD_RATE_LIMIT,
+  );
+  if (!rateLimited.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again later." },
+      { status: 429, headers: { "Retry-After": String(rateLimited.retryAfter) } },
+    );
+  }
+
   const { seasonId } = await params;
   const url = new URL(request.url);
   const expandMembers = url.searchParams.get("expand") === "members";
