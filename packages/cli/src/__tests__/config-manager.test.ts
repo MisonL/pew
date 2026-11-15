@@ -10,6 +10,7 @@ import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
  */
 const writeGate = vi.hoisted(() => ({
   hook: null as null | ((path: string) => Promise<void>),
+  linkHook: null as null | (() => void),
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -20,6 +21,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const hook = writeGate.hook;
       if (hook) await hook(String(args[0]));
       return actual.writeFile(...args);
+    },
+    link: async (...args: Parameters<typeof actual.link>) => {
+      writeGate.linkHook?.();
+      return actual.link(...args);
     },
   };
 });
@@ -297,6 +302,37 @@ describe("ConfigManager", () => {
     const after = await readFile(join(tempDir, "config.json"), "utf-8");
     expect(() => JSON.parse(after)).not.toThrow();
     expect((await fsPromises.readdir(tempDir)).filter((f) => f.includes(".tmp"))).toEqual([]);
+  });
+
+  it("mints one device id when two callers first-use the file at once", async () => {
+    // Two CLI processes on a machine that has no device.json yet — a `sync`
+    // and a hook-triggered command, say — both see "no id" and both mint one.
+    // Only one write can land, so the other process uploads under an id the
+    // file never held and the machine's history splits across two devices.
+    const first = new ConfigManager(tempDir);
+    const second = new ConfigManager(tempDir);
+
+    const [idA, idB] = await Promise.all([first.ensureDeviceId(), second.ensureDeviceId()]);
+
+    expect(idA).toBe(idB);
+    expect(JSON.parse(await readFile(join(tempDir, "device.json"), "utf-8")).deviceId).toBe(idA);
+    expect((await fsPromises.readdir(tempDir)).filter((f) => f.includes(".tmp"))).toEqual([]);
+  });
+
+  it("still writes device.json where the filesystem has no hard links", async () => {
+    // FAT, exFAT and some network mounts refuse `link` outright. Failing the
+    // command there would be worse than losing the inter-process guard.
+    const manager = new ConfigManager(tempDir);
+    writeGate.linkHook = () => {
+      throw Object.assign(new Error("operation not supported"), { code: "ENOTSUP" });
+    };
+    try {
+      const id = await manager.ensureDeviceId();
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+      expect(JSON.parse(await readFile(join(tempDir, "device.json"), "utf-8")).deviceId).toBe(id);
+    } finally {
+      writeGate.linkHook = null;
+    }
   });
 
   it("writes device.json atomically and leaves config.json alone", async () => {
