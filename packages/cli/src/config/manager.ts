@@ -1,6 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+
+/**
+ * Temp path beside `destination`, unique per write.
+ *
+ * A fixed `<destination>.tmp` name is shared by every writer of the file, and
+ * this file is written by `login`, `logout` and a background `sync` alike: two
+ * concurrent saves overwrote each other's temp file and the loser's rename
+ * failed with ENOENT, aborting a credential write instead of landing it.
+ */
+function tempPathBeside(destination: string): string {
+  return `${destination}.${randomUUID()}.tmp`;
+}
 import { dirname, join } from "node:path";
 import { ConfigManager as BaseConfigManager } from "@nocoo/base-cli";
 import type { PewConfig } from "@pew/core";
@@ -166,7 +178,7 @@ export class ConfigManager extends BaseConfigManager<PewConfig> {
   /** Synchronous counterpart of {@link save}. */
   override write(partial: PewConfig): void {
     const merged = { ...this.read(), ...partial };
-    const tmpPath = `${this.configPath}.tmp`;
+    const tmpPath = tempPathBeside(this.configPath);
     mkdirSync(dirname(this.configPath), { recursive: true });
     try {
       writeFileSync(tmpPath, `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });
@@ -210,7 +222,7 @@ export class ConfigManager extends BaseConfigManager<PewConfig> {
     const deviceId = legacyDeviceId ?? randomUUID();
 
     await mkdir(this.configDir, { recursive: true });
-    const tmpPath = `${devicePath}.tmp`;
+    const tmpPath = tempPathBeside(devicePath);
     try {
       await writeFile(tmpPath, `${JSON.stringify({ deviceId }, null, 2)}\n`, { mode: 0o600 });
       await rename(tmpPath, devicePath);
@@ -231,7 +243,7 @@ export class ConfigManager extends BaseConfigManager<PewConfig> {
   private async writeAtomic(partial: PewConfig): Promise<void> {
     const existing = await this.readAsync();
     const merged = { ...existing, ...partial };
-    const tmpPath = `${this.configPath}.tmp`;
+    const tmpPath = tempPathBeside(this.configPath);
     await mkdir(dirname(this.configPath), { recursive: true });
     try {
       await writeFile(tmpPath, `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });

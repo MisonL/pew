@@ -279,6 +279,26 @@ describe("ConfigManager", () => {
     expect(leftovers).toEqual([]);
   });
 
+  it("survives two saves racing for the same file", async () => {
+    // `login`, `logout` and a background `sync` can all save this file at the
+    // same time. A temp path derived only from the destination let one writer
+    // rename the other's temp file away, and the loser then failed with
+    // ENOENT — a credential write that aborts instead of landing.
+    const manager = new ConfigManager(tempDir);
+    await manager.save({ token: "seed" });
+
+    const results = await Promise.allSettled(
+      Array.from({ length: 16 }, (_, i) => manager.save({ [`field${i}`]: i })),
+    );
+
+    expect(results.filter((r) => r.status === "rejected").map((r) => (r as PromiseRejectedResult).reason)).toEqual([]);
+    // Whatever the merge order, the destination stays parseable and no temp
+    // file is left behind.
+    const after = await readFile(join(tempDir, "config.json"), "utf-8");
+    expect(() => JSON.parse(after)).not.toThrow();
+    expect((await fsPromises.readdir(tempDir)).filter((f) => f.includes(".tmp"))).toEqual([]);
+  });
+
   it("writes device.json atomically and leaves config.json alone", async () => {
     const manager = new ConfigManager(tempDir);
     await manager.save({ token: "stable-token" });
@@ -296,7 +316,8 @@ describe("ConfigManager", () => {
     // A torn device.json reads back as "no id" and the next run mints a new
     // UUID, so one machine starts counting as several devices and its history
     // splits. Write through a temp file like the credentials file.
-    expect(seenDuringWrite).toContain(join(tempDir, "device.json.tmp"));
+    // The temp name carries a per-write unique suffix, so match the stem.
+    expect(seenDuringWrite.some((written) => written.startsWith(join(tempDir, "device.json.")) && written.endsWith(".tmp"))).toBe(true);
     expect(seenDuringWrite).not.toContain(join(tempDir, "device.json"));
     // The base implementation removes the legacy `deviceId` key by rewriting
     // config.json with every other key dropped. Nothing was migrated here.
