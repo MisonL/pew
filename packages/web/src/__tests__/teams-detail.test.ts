@@ -396,7 +396,7 @@ describe("DELETE /api/teams/[teamId]", () => {
     mockDbRead.countTeamMembers.mockResolvedValueOnce(1); // last member
     mockDbRead.getTeamLogoUrl.mockResolvedValueOnce(null);
     mockDbWrite.execute.mockResolvedValue({ changes: 1 });
-    mockDbWrite.batch.mockResolvedValue([{ results: [{ user_id: "u1" }], meta: { changes: 1, duration: 0 } }, { results: [], meta: { changes: 0, duration: 0 } }, { results: [], meta: { changes: 0, duration: 0 } }, { results: [{ logo_url: "https://r2.example.com/logo.png" }], meta: { changes: 1, duration: 0 } }]);
+    mockDbWrite.batch.mockResolvedValue([{ results: [{ user_id: "u1" }], meta: { changes: 1, duration: 0 } }, { results: [], meta: { changes: 0, duration: 0 } }, { results: [], meta: { changes: 0, duration: 0 } }, { results: [], meta: { changes: 1, duration: 0 } }, { results: [{ logo_url: "https://r2.example.com/logo.png" }], meta: { changes: 1, duration: 0 } }]);
 
     const res = await DELETE(makeRequest("DELETE"), makeParams());
 
@@ -420,7 +420,7 @@ describe("DELETE /api/teams/[teamId]", () => {
     mockDbRead.countTeamMembers.mockResolvedValueOnce(1);
     mockDbRead.getTeamLogoUrl.mockResolvedValueOnce("https://r2.example.com/logo.png");
     mockDbWrite.execute.mockResolvedValue({ changes: 1 });
-    mockDbWrite.batch.mockResolvedValue([{ results: [{ user_id: "u1" }], meta: { changes: 1, duration: 0 } }, { results: [], meta: { changes: 0, duration: 0 } }, { results: [], meta: { changes: 0, duration: 0 } }, { results: [{ logo_url: "https://r2.example.com/logo.png" }], meta: { changes: 1, duration: 0 } }]);
+    mockDbWrite.batch.mockResolvedValue([{ results: [{ user_id: "u1" }], meta: { changes: 1, duration: 0 } }, { results: [], meta: { changes: 0, duration: 0 } }, { results: [], meta: { changes: 0, duration: 0 } }, { results: [], meta: { changes: 1, duration: 0 } }, { results: [{ logo_url: "https://r2.example.com/logo.png" }], meta: { changes: 1, duration: 0 } }]);
     deleteTeamLogoByUrl.mockResolvedValueOnce(undefined);
 
     const res = await DELETE(makeRequest("DELETE"), makeParams());
@@ -438,7 +438,7 @@ describe("DELETE /api/teams/[teamId]", () => {
     mockDbRead.countTeamMembers.mockResolvedValueOnce(1);
     mockDbRead.getTeamLogoUrl.mockResolvedValueOnce("https://r2.example.com/logo.png");
     mockDbWrite.execute.mockResolvedValue({ changes: 1 });
-    mockDbWrite.batch.mockResolvedValue([{ results: [{ user_id: "u1" }], meta: { changes: 1, duration: 0 } }, { results: [], meta: { changes: 0, duration: 0 } }, { results: [], meta: { changes: 0, duration: 0 } }, { results: [{ logo_url: "https://r2.example.com/logo.png" }], meta: { changes: 1, duration: 0 } }]);
+    mockDbWrite.batch.mockResolvedValue([{ results: [{ user_id: "u1" }], meta: { changes: 1, duration: 0 } }, { results: [], meta: { changes: 0, duration: 0 } }, { results: [], meta: { changes: 0, duration: 0 } }, { results: [], meta: { changes: 1, duration: 0 } }, { results: [{ logo_url: "https://r2.example.com/logo.png" }], meta: { changes: 1, duration: 0 } }]);
     deleteTeamLogoByUrl.mockRejectedValueOnce(new Error("R2 unavailable"));
 
     const res = await DELETE(makeRequest("DELETE"), makeParams());
@@ -527,6 +527,74 @@ describe("DELETE /api/teams/[teamId]", () => {
     } finally { sqlite.close(); }
   });
 
+  // The seat release (statement 2 of the leave batch) and the re-offer used
+  // to be two separate batches. If the second failed, the member and their
+  // seat were already gone and a retry answered 403 — the seat stayed missing
+  // for good. They must commit together.
+  it("commits the seat re-offer inside the leave batch", async () => {
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u2" });
+    mockDbRead.getTeamMembership.mockResolvedValueOnce("member");
+    mockDbRead.countTeamMembers.mockResolvedValueOnce(3);
+    mockDbWrite.batch.mockResolvedValue([
+      { results: [{ user_id: "u2" }], meta: { changes: 1, duration: 0 } },
+      { results: [{ season_id: "s1" }], meta: { changes: 1, duration: 0 } },
+      { results: [], meta: { changes: 0, duration: 0 } },
+      { results: [], meta: { changes: 0, duration: 0 } },
+      { results: [], meta: { changes: 1, duration: 0 } },
+    ]);
+
+    const res = await DELETE(makeRequest("DELETE"), makeParams());
+    expect(res.status).toBe(200);
+    expect(mockDbWrite.batch).toHaveBeenCalledTimes(1);
+    const statements = mockDbWrite.batch.mock.calls[0]![0] as Array<{ sql: string }>;
+    const reassignIndex = statements.findIndex((s) => s.sql.includes("INSERT OR IGNORE INTO season_team_members"));
+    const releaseIndex = statements.findIndex((s) => s.sql.includes("DELETE FROM season_team_members") && s.sql.includes("RETURNING season_id"));
+    expect(releaseIndex).toBeGreaterThanOrEqual(0);
+    // The reassignment must come after the release in the same batch.
+    // The release's season list is not known until it runs, so the batch
+    // covers every registered season of the team other than this one; the
+    // NOT EXISTS guard keeps that from moving a seat the user still holds.
+    expect(reassignIndex).toBeGreaterThan(releaseIndex);
+  });
+
+  it("leaves the roster alone when the leave itself did not apply", async () => {
+    // A concurrent membership change can make the leave match no rows. The
+    // re-offer shares that transaction, so it must stay a no-op rather than
+    // move a seat the user in fact still holds.
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec(`
+      CREATE TABLE teams (id TEXT PRIMARY KEY, logo_url TEXT);
+      CREATE TABLE team_members (team_id TEXT, user_id TEXT, role TEXT);
+      CREATE TABLE seasons (id TEXT PRIMARY KEY, start_date TEXT, end_date TEXT, allow_late_withdrawal INTEGER, allow_roster_changes INTEGER);
+      CREATE TABLE season_teams (team_id TEXT, season_id TEXT);
+      CREATE TABLE season_team_members (id TEXT PRIMARY KEY, team_id TEXT, season_id TEXT, user_id TEXT, UNIQUE(season_id, user_id));
+      INSERT INTO teams VALUES ('t1', NULL), ('t2', NULL);
+      -- u1 is no longer the only member: the stale count let the request
+      -- through, the guarded DELETE sees u3 and refuses.
+      INSERT INTO team_members VALUES ('t1', 'u1', 'owner'), ('t1', 'u3', 'member'), ('t2', 'u1', 'member');
+      INSERT INTO seasons VALUES ('s1', '2000-01-01T00:00:00Z', '2999-12-31T00:00:00Z', 1, 1);
+      INSERT INTO season_teams VALUES ('t1', 's1'), ('t2', 's1');
+      INSERT INTO season_team_members VALUES ('a1', 't1', 's1', 'u1');
+    `);
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u1" });
+    mockDbRead.getTeamMembership.mockResolvedValueOnce("owner");
+    mockDbRead.countTeamMembers.mockResolvedValueOnce(1);
+    mockDbWrite.batch.mockImplementation(async (statements: Array<{ sql: string; params?: unknown[] }>) =>
+      statements.map(({ sql, params }) => ({
+        results: sqlite.prepare(sql).all(...(params ?? []) as Array<string | number | null>),
+        meta: { changes: 0, duration: 0 },
+      })));
+    try {
+      const res = await DELETE(makeRequest("DELETE"), makeParams());
+      expect(res.status).toBe(409);
+      expect(mockDbWrite.batch).toHaveBeenCalledTimes(1);
+      expect(sqlite.prepare("SELECT team_id, user_id FROM season_team_members WHERE user_id = 'u1'").all())
+        .toEqual([{ team_id: "t1", user_id: "u1" }]);
+      expect(sqlite.prepare("SELECT team_id FROM team_members WHERE user_id = 'u1' ORDER BY team_id").all())
+        .toEqual([{ team_id: "t1" }, { team_id: "t2" }]);
+    } finally { sqlite.close(); }
+  });
+
   it("hands a leaver's season seat to another registered team they belong to", async () => {
     // UNIQUE(season_id, user_id) lets one roster hold u2; joining t2 while u2
     // sat on t1 was silently ignored. Leaving t1 must not strand u2 on no
@@ -561,6 +629,40 @@ describe("DELETE /api/teams/[teamId]", () => {
       expect(res.status).toBe(200);
       expect(sqlite.prepare("SELECT team_id, user_id FROM season_team_members").all())
         .toEqual([{ team_id: "t2", user_id: "u2" }]);
+    } finally { sqlite.close(); }
+  });
+
+  it("re-offers one seat per season when several seasons are in flight", async () => {
+    // The seat release names every season it touched, and a user can hold a
+    // seat in more than one concurrently running season. A re-offer that
+    // stopped after the first row would strand the remaining seasons.
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec(`
+      CREATE TABLE teams (id TEXT PRIMARY KEY, logo_url TEXT);
+      CREATE TABLE team_members (team_id TEXT, user_id TEXT, role TEXT);
+      CREATE TABLE seasons (id TEXT PRIMARY KEY, start_date TEXT, end_date TEXT, allow_late_withdrawal INTEGER, allow_roster_changes INTEGER);
+      CREATE TABLE season_teams (team_id TEXT, season_id TEXT);
+      CREATE TABLE season_team_members (id TEXT PRIMARY KEY, team_id TEXT, season_id TEXT, user_id TEXT, UNIQUE(season_id, user_id));
+      INSERT INTO teams VALUES ('t1', NULL), ('t2', NULL);
+      INSERT INTO team_members VALUES ('t1', 'u1', 'owner'), ('t1', 'u2', 'member'), ('t2', 'u2', 'member');
+      INSERT INTO seasons VALUES ('s1', '2000-01-01T00:00:00Z', '2999-12-31T00:00:00Z', 1, 1),
+                                 ('s2', '2000-01-01T00:00:00Z', '2999-12-31T00:00:00Z', 1, 1);
+      INSERT INTO season_teams VALUES ('t1', 's1'), ('t2', 's1'), ('t1', 's2'), ('t2', 's2');
+      INSERT INTO season_team_members VALUES ('a1', 't1', 's1', 'u2'), ('a2', 't1', 's2', 'u2');
+    `);
+    vi.mocked(resolveUser).mockResolvedValueOnce({ userId: "u2" });
+    mockDbRead.getTeamMembership.mockResolvedValueOnce("member");
+    mockDbRead.countTeamMembers.mockResolvedValueOnce(2);
+    mockDbWrite.batch.mockImplementation(async (statements: Array<{ sql: string; params?: unknown[] }>) =>
+      statements.map(({ sql, params }) => ({
+        results: sqlite.prepare(sql).all(...(params ?? []) as Array<string | number | null>),
+        meta: { changes: 0, duration: 0 },
+      })));
+    try {
+      const res = await DELETE(makeRequest("DELETE"), makeParams());
+      expect(res.status).toBe(200);
+      expect(sqlite.prepare("SELECT season_id, team_id FROM season_team_members WHERE user_id = 'u2' ORDER BY season_id").all())
+        .toEqual([{ season_id: "s1", team_id: "t2" }, { season_id: "s2", team_id: "t2" }]);
     } finally { sqlite.close(); }
   });
 

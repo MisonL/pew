@@ -125,15 +125,17 @@ describe("syncSeasonRosters", () => {
     );
     expect(reassign.length).toBe(1);
     const [sql, params] = reassign[0] as [string, unknown[]];
-    // The re-offer must be scoped to this season, exclude the team that just
-    // released the seat, and only apply to rosters that allow changes.
+    // The re-offer must exclude the team that just released the seat and only
+    // apply to rosters that allow changes. It is not scoped to one season (the
+    // leave route shares it and cannot know the released seasons), and the row
+    // id is generated per row in SQL.
     expect(sql).toContain("st.team_id != ?");
     expect(sql).toContain("allow_roster_changes = 1");
-    expect(params[0]).toMatch(/^[0-9a-f-]{36}$/);
-    expect(params.slice(1)).toEqual([
+    expect(sql).toContain("hex(randomblob(16))");
+    expect(sql).not.toContain("LIMIT 1");
+    expect(params).toEqual([
       "user-1", // user_id to insert
       "user-1", // team_members join
-      "season-1", // season_teams filter
       "team-2", // the team that just released the seat
       "user-1", // ex.* NOT EXISTS guard
     ]);
