@@ -172,6 +172,14 @@ export async function syncAllRostersForSeason(
           "DELETE FROM season_team_members WHERE season_id = ? AND team_id = ? AND user_id = ?",
           [seasonId, team_id, userId],
         );
+        // Re-offer for the same reason the event-driven sync does, and to make
+        // the result independent of the order the teams are visited in: a team
+        // visited earlier was already refused by UNIQUE(season_id, user_id)
+        // while this stale seat existed.
+        await dbWrite.execute(
+          seasonSeatReassignmentSql(),
+          [userId, seasonId, team_id],
+        );
       }
     }
   }
