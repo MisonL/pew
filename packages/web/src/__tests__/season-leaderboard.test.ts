@@ -16,6 +16,7 @@ vi.mock("@/auth", () => ({
 
 import { GET } from "@/app/api/seasons/[seasonId]/leaderboard/route";
 import * as dbModule from "@/lib/db";
+import { inMemoryRateLimiter, LEADERBOARD_RATE_LIMIT } from "@/lib/rate-limit";
 import { createMockDbRead } from "./test-utils";
 
 function makeRequest(
@@ -67,6 +68,37 @@ describe("GET /api/seasons/[seasonId]/leaderboard", () => {
     vi.clearAllMocks();
     mockDbRead = createMockDbRead();
     vi.mocked(dbModule.getDbRead).mockResolvedValue(mockDbRead as any);
+  });
+
+  // A season page is public and shareable, so this endpoint answers without
+  // auth — and every call runs a whole-season aggregate over usage_records
+  // (plus session stats and, with expand=members, a per-member aggregate)
+  // with no cache in front of it. Same rule the public /api/leaderboard
+  // already follows: bound how fast one client can trigger that work.
+  it("rate-limits the public endpoint per client IP", async () => {
+    inMemoryRateLimiter.reset();
+    mockDbRead.getSeasonBySlug.mockResolvedValue(ACTIVE_SEASON);
+    mockDbRead.getSeasonTeamTokens.mockResolvedValue([]);
+    mockDbRead.getSeasonTeamSessionStats.mockResolvedValue([]);
+    const makeWithIp = () => new Request("http://localhost:7020/api/seasons/season-1/leaderboard", {
+      headers: { "x-forwarded-for": "203.0.113.9" },
+    });
+    try {
+      let status = 0;
+      for (let i = 0; i < LEADERBOARD_RATE_LIMIT.maxRequests; i++) {
+        status = (await GET(makeWithIp(), { params: routeParams })).status;
+        expect(status).toBe(200);
+      }
+      const limited = await GET(makeWithIp(), { params: routeParams });
+      expect(limited.status).toBe(429);
+      expect(limited.headers.get("Retry-After")).not.toBeNull();
+
+      expect((await GET(new Request("http://localhost:7020/api/seasons/season-1/leaderboard", {
+        headers: { "x-forwarded-for": "198.51.100.7" },
+      }), { params: routeParams })).status).toBe(200);
+    } finally {
+      inMemoryRateLimiter.reset();
+    }
   });
 
   it("should return teams ranked by total_tokens", async () => {
