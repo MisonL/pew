@@ -22,17 +22,27 @@ import type { DbRead, DbWrite } from "@/lib/db";
  * seat back on exactly one eligible team, only when the user currently holds
  * no seat in that season.
  *
- * Params: [new row id, user_id, season_id, team being left].
+ * Not scoped to one season: the leave route runs this straight after the
+ * release statement, inside the same batch, and does not know which seasons
+ * that release touched until it has run. UNIQUE(season_id, user_id) keeps it
+ * to one row per season, so `ORDER BY st.team_id` decides which team wins
+ * when several qualify.
+ *
+ * The row id comes from `hex(randomblob(16))` rather than a bound argument:
+ * a single argument would give every row the same id, and OR IGNORE would
+ * then drop all but the first on the primary key.
+ *
+ * Params: [user_id to insert, user_id for the membership join, the team that
+ * just released the seat, user_id for the "holds no seat" guard].
  */
 export function seasonSeatReassignmentSql(): string {
   return `INSERT OR IGNORE INTO season_team_members (id, season_id, team_id, user_id)
-           SELECT ?, st.season_id, st.team_id, ?
+           SELECT hex(randomblob(16)), st.season_id, st.team_id, ?
            FROM season_teams st
            JOIN teams t ON t.id = st.team_id
            JOIN team_members tm ON tm.team_id = st.team_id AND tm.user_id = ?
            JOIN seasons s ON s.id = st.season_id
-           WHERE st.season_id = ?
-             AND st.team_id != ?
+           WHERE st.team_id != ?
              AND s.allow_roster_changes = 1
              AND datetime(s.start_date) <= datetime('now')
              AND datetime(s.end_date, '+1 minute') > datetime('now')
@@ -40,8 +50,7 @@ export function seasonSeatReassignmentSql(): string {
                SELECT 1 FROM season_team_members ex
                WHERE ex.season_id = st.season_id AND ex.user_id = ?
              )
-           ORDER BY st.team_id
-           LIMIT 1`;
+           ORDER BY st.season_id, st.team_id`;
 }
 
 /**
@@ -96,7 +105,7 @@ export async function syncSeasonRosters(
         // teams (see seasonSeatReassignmentSql).
         await dbWrite.execute(
           seasonSeatReassignmentSql(),
-          [crypto.randomUUID(), userId, userId, season_id, teamId, userId],
+          [userId, userId, teamId, userId],
         );
       }
     }

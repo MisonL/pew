@@ -1,9 +1,36 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+
 import { dirname, join } from "node:path";
 import { ConfigManager as BaseConfigManager } from "@nocoo/base-cli";
 import type { PewConfig } from "@pew/core";
+
+/**
+ * Temp path beside `destination`, unique per write.
+ *
+ * A fixed `<destination>.tmp` name is shared by every writer of the file, and
+ * this file is written by `login`, `logout` and a background `sync` alike: two
+ * concurrent saves overwrote each other's temp file and the loser's rename
+ * failed with ENOENT, aborting a credential write instead of landing it.
+ */
+function tempPathBeside(destination: string): string {
+  return `${destination}.${randomUUID()}.tmp`;
+}
+
+/** Errors a filesystem raises when it cannot create a hard link. */
+const HARDLINK_UNSUPPORTED = new Set(["ENOTSUP", "EOPNOTSUPP", "EPERM", "EACCES", "ENOSYS", "EXDEV"]);
+
+/** The device id already on disk, or undefined when it is missing or torn. */
+async function readDeviceId(devicePath: string): Promise<string | undefined> {
+  try {
+    const data = JSON.parse(await readFile(devicePath, "utf-8")) as { deviceId?: unknown };
+    return typeof data.deviceId === "string" && data.deviceId ? data.deviceId : undefined;
+  } catch {
+    // Missing or unparseable file: the caller mints a new id.
+    return undefined;
+  }
+}
 
 // The SaaS host URLs live here rather than in commands/login.ts so every
 // credential reader (CLI commands, upload engine) can apply one rule without
@@ -166,7 +193,7 @@ export class ConfigManager extends BaseConfigManager<PewConfig> {
   /** Synchronous counterpart of {@link save}. */
   override write(partial: PewConfig): void {
     const merged = { ...this.read(), ...partial };
-    const tmpPath = `${this.configPath}.tmp`;
+    const tmpPath = tempPathBeside(this.configPath);
     mkdirSync(dirname(this.configPath), { recursive: true });
     try {
       writeFileSync(tmpPath, `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });
@@ -198,40 +225,60 @@ export class ConfigManager extends BaseConfigManager<PewConfig> {
    */
   override async ensureDeviceId(): Promise<string> {
     const devicePath = join(this.configDir, "device.json");
-    try {
-      const data = JSON.parse(await readFile(devicePath, "utf-8")) as { deviceId?: unknown };
-      if (typeof data.deviceId === "string" && data.deviceId) return data.deviceId;
-    } catch {
-      // Missing or unparseable file — mint a new id below.
-    }
+    const existingId = await readDeviceId(devicePath);
+    if (existingId) return existingId;
 
     const config = await this.readAsync();
     const legacyDeviceId = typeof config.deviceId === "string" ? config.deviceId : undefined;
     const deviceId = legacyDeviceId ?? randomUUID();
 
     await mkdir(this.configDir, { recursive: true });
-    const tmpPath = `${devicePath}.tmp`;
+    const tmpPath = tempPathBeside(devicePath);
+    let kept = deviceId;
     try {
       await writeFile(tmpPath, `${JSON.stringify({ deviceId }, null, 2)}\n`, { mode: 0o600 });
-      await rename(tmpPath, devicePath);
+      // `link` fails with EEXIST when the destination already exists, so the
+      // first writer wins even across processes. A plain rename would let two
+      // first-use callers each mint an id and each believe theirs landed.
+      try {
+        await link(tmpPath, devicePath);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "EEXIST") {
+          // Another process created it first. Its id is the one on disk now.
+          const winner = await readDeviceId(devicePath);
+          if (winner) kept = winner;
+        } else if (!HARDLINK_UNSUPPORTED.has(code ?? "")) {
+          throw error;
+        } else {
+          // FAT, exFAT and some network mounts have no hard links. Fall back
+          // to the plain rename: no inter-process guard, but the file still
+          // appears whole instead of failing the command outright.
+          await rename(tmpPath, devicePath);
+        }
+      }
     } catch (error) {
       await rm(tmpPath, { force: true }).catch(() => {
         // Best-effort cleanup — the destination was never touched.
       });
       throw error;
     }
+    await rm(tmpPath, { force: true }).catch(() => {
+      // The link is in place; the temp name is ours alone, so this only ever
+      // removes our own leftover.
+    });
 
-    if (legacyDeviceId) {
+    if (legacyDeviceId && kept === legacyDeviceId) {
       // Remove the legacy key without dropping the rest of the config.
       await this.writeAtomic({ deviceId: undefined } as PewConfig);
     }
-    return deviceId;
+    return kept;
   }
 
   private async writeAtomic(partial: PewConfig): Promise<void> {
     const existing = await this.readAsync();
     const merged = { ...existing, ...partial };
-    const tmpPath = `${this.configPath}.tmp`;
+    const tmpPath = tempPathBeside(this.configPath);
     await mkdir(dirname(this.configPath), { recursive: true });
     try {
       await writeFile(tmpPath, `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });

@@ -267,6 +267,15 @@ export async function DELETE(
         params: [teamId, teamId, teamId, authResult.userId, teamId, authResult.userId],
       },
       {
+        // The statement above releases this user's seats in the seasons it
+        // names. The re-offer runs in the same batch, right after that release,
+        // because a second batch could fail after the membership and seat were
+        // gone — a retry then answered 403 and the seat stayed missing for
+        // good. The statement itself is shared with syncSeasonRosters.
+        sql: seasonSeatReassignmentSql(),
+        params: [authResult.userId, authResult.userId, teamId, authResult.userId],
+      },
+      {
         sql: `DELETE FROM season_teams WHERE team_id = ? AND ${emptyTeam} AND NOT EXISTS (${lockedSeason})`,
         params: [teamId, teamId, teamId],
       },
@@ -281,20 +290,7 @@ export async function DELETE(
         { status: 409 },
       );
     }
-    // Statement 2 releases this user's season seats (it only touches rows for
-    // a member who is no longer in team_members). Offer the freed seat to
-    // their other registered team in the same transaction, so a leave cannot
-    // end with the user on no roster while the team remains registered.
-    const releasedSeasonIds = (results[1]?.results ?? [])
-      .map((row) => row.season_id)
-      .filter((id): id is string => typeof id === "string" && id !== "");
-    if (releasedSeasonIds.length > 0) {
-      await dbWrite.batch(releasedSeasonIds.map((seasonId) => ({
-        sql: seasonSeatReassignmentSql(),
-        params: [crypto.randomUUID(), authResult.userId, authResult.userId, seasonId, teamId, authResult.userId],
-      })));
-    }
-    const logoUrl = results[3]?.results[0]?.logo_url;
+    const logoUrl = results[4]?.results[0]?.logo_url;
     if (typeof logoUrl === "string" && logoUrl) {
       try {
         await deleteTeamLogoByUrl(logoUrl);
