@@ -691,11 +691,16 @@ bash deploy/selfhost/backup.sh /var/backups/pew/pew.db
   方法；rqlite 的 4001 端口**不发布到宿主**（compose 只发布 web），也无法在宿主用 HTTP 取
   备份。能在宿主读到该 argv 的身份同样能读 `.env`（0600、同一操作员 uid），该暴露不向其
   新增任何秘密。
-- **校验是白名单式的**：不仅非空，还要求 REPL 打出成功行 `backup file written successfully`
-  且前 16 字节是 `SQLite format 3\0` 魔数。成功行是必需的一道：磁盘写满时 `.backup` 打出
-  `ERR! write ... no space left on device`（stdout，退出码仍是 0）并留下一个**截断**文件，
-  它同时通过非空与魔数检查（10.5.3 实测）。**这仍不是完整性门**：恢复演练时建议在可信宿主
-  上补 `sqlite3 <archive> 'PRAGMA integrity_check'`。
+- **校验是白名单式的，共四道**：① 产物非空；② REPL 打出成功行
+  `backup file written successfully`；③ 前 16 字节是 `SQLite format 3\0` 魔数；④ 用宿主
+  `sqlite3` 跑 `PRAGMA integrity_check`，结果必须恰好是 `ok`。成功行是必需的一道：磁盘写满时
+  `.backup` 打出 `ERR! write ... no space left on device`（stdout，退出码仍是 0）并留下一个
+  **截断**文件，它同时通过非空与魔数检查（10.5.3 实测）。第 ④ 道挡的是前两道都不管的情况：
+  一个「魔数正确但打不开」的产物（错误页补零、零填充 stub、页级损坏）只有真正打开才能发现，
+  而这种坏档恰好会在「备份是唯一一份」时暴露。
+  **宿主未安装 `sqlite3` 时第 ④ 道会跳过并在日志里明确写一行**
+  （`sqlite3 not installed — skipped PRAGMA integrity_check`），此时只剩格式检查——生产部署
+  请装上 `sqlite3`（Debian/Ubuntu：`apt install sqlite3`）。
 - **`.backup` 本身的退出状态不可信**：REPL 打出 `ERR!`（如凭据错误、磁盘写满）后仍以 0
   退出（rqlite 10.5.3 实测），所以脚本不依赖 REPL 的退出码——`.backup` 前先清掉容器内可能
   残留的旧归档（SIGKILL 会跳过清理 trap），完成后要求 REPL 打出成功行、再用 `test -s`

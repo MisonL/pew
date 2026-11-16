@@ -242,13 +242,33 @@ if [ ! -s "$TMP" ]; then
   exit 1
 fi
 # Second check: a non-empty but corrupt artifact (error page, zero-filled
-# stub) has no SQLite header. This is a FORMAT gate, not an integrity check —
-# a truncated or header-only file still passes it; full verification is
-# `sqlite3 <archive> 'PRAGMA integrity_check'` on a trusted host, recommended
-# after any restore drill.
+# stub) has no SQLite header. This is a FORMAT gate only — a header-only file
+# passes it.
 if ! printf 'SQLite format 3\000' | cmp -s -n 16 - "$TMP"; then
   echo "backup.sh: backup is not a SQLite database — refusing to keep it" >&2
   exit 1
+fi
+
+# Third check: the archive must actually open and pass `PRAGMA integrity_check`.
+# The gates above prove the file is non-empty and starts with the SQLite header
+# — a pad-after-header stub, a zero-filled stub or a page-level corruption all
+# pass both while restoring would fail. That failure would surface only when the
+# backup IS the only copy, so it is checked here instead.
+#
+# It needs the sqlite3 CLI, which the rqlite image does not ship; this runs on
+# the host that runs the backup. Where sqlite3 is missing the check is skipped
+# LOUDLY (cron log) rather than silently — the caller still gets a backup, but
+# knows it is format-gated only.
+if command -v sqlite3 >/dev/null 2>&1; then
+  INTEGRITY=$(sqlite3 "$TMP" 'PRAGMA integrity_check;' 2>&1) \
+    || INTEGRITY="sqlite3 exited non-zero: $INTEGRITY"
+  if [ "$INTEGRITY" != "ok" ]; then
+    echo "backup.sh: integrity check failed — refusing to keep this archive" >&2
+    printf '%s\n' "$INTEGRITY" | head -20 >&2
+    exit 1
+  fi
+else
+  echo "backup.sh: sqlite3 not installed — skipped PRAGMA integrity_check (format gates only)" >&2
 fi
 
 # Atomic replace: only a validated archive ever reaches the final path. The

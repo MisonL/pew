@@ -1,6 +1,6 @@
 import { describe, expect, it, afterAll } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync, statSync, chmodSync, mkdirSync, copyFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -87,10 +87,10 @@ function run(opts: {
     writeFileSync(containerFile, opts.containerStale);
   }
   const archive = join(dir, "archive.db");
-  writeFileSync(
-    archive,
-    opts.archiveContents ?? (opts.archiveBytes === 0 ? "" : `SQLite format 3\0${"x".repeat(Math.max(0, (opts.archiveBytes ?? 64) - 16))}`)
-  );
+  if (opts.archiveContents !== undefined) writeFileSync(archive, opts.archiveContents);
+  else if (opts.archiveBytes === 0) writeFileSync(archive, "");
+  else if (opts.archiveBytes !== undefined) writeFileSync(archive, `SQLite format 3\0${"x".repeat(Math.max(0, opts.archiveBytes - 16))}`);
+  else sqliteFile(dir);
 
   const fakeDocker = `#!/bin/sh
 # Log argv one per line so argument boundaries are observable.
@@ -253,6 +253,20 @@ exit 0
       out,
     }));
   });
+}
+
+/**
+ * A real (openable) SQLite database written by the host `sqlite3` CLI.
+ *
+ * The size and magic gates accept a 64-byte stub that is NOT a database, so a
+ * success-line-only check would keep one. The integrity gate opens the archive
+ * and must reject that stub while still accepting a genuine backup.
+ */
+function sqliteFile(dir: string, name = "archive.db"): string {
+  const path = join(dir, name);
+  const res = spawnSync("sqlite3", [path, "CREATE TABLE probe(id INTEGER PRIMARY KEY, v TEXT); INSERT INTO probe(v) VALUES ('ok');"], { encoding: "utf8" });
+  if (res.status !== 0) throw new Error(`sqlite3 CLI unavailable: ${res.stderr}`);
+  return path;
 }
 
 describe("backup.sh", () => {
@@ -445,6 +459,29 @@ describe("backup.sh", () => {
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("not a SQLite database");
     expect(existsSync(r.out)).toBe(false);
+  });
+
+  it("rejects an archive that passes size and magic but is not a database", async () => {
+    // The size and magic gates are FORMAT checks: a stub that starts with the
+    // SQLite header (an error page padded, a zero-filled stub, a header-only
+    // file) passes both, and the backend still printed its success line, so
+    // nothing else in the script would notice. Restoring such a file fails —
+    // exactly when the backup is the only copy. The archive must open.
+    const r = await run({ archiveContents: `SQLite format 3\0${"x".repeat(48)}` });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("integrity check failed");
+    expect(existsSync(r.out)).toBe(false);
+  });
+
+  it("rejects a corrupt archive instead of replacing a good one", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bk-corrupt-")); dirs.push(dir);
+    chmodSync(dir, 0o755);
+    const existing = sqliteFile(dir, "backup.db");
+    const before = readFileSync(existing);
+    const r = await run({ archiveContents: `SQLite format 3\0${"y".repeat(4000)}`, args: [existing] });
+    expect(r.code).toBe(1);
+    expect(readFileSync(existing)).toEqual(before);
+    expect(readdirSync(dir).filter((n) => n.startsWith(".pew-backup."))).toEqual([]);
   });
 
   it("leaves an existing archive intact when the new run fails", async () => {
