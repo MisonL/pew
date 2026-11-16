@@ -81,7 +81,10 @@ describe("POST /api/auth/register", () => {
   it("bootstraps the first admin when the instance is empty", async () => {
     // Both the route's mode check and bootstrapAdmin's own guard count users.
     mockQuery.mockResolvedValue({ results: [{ n: 0 }] });
-    dbWrite.batch.mockResolvedValueOnce([{ success: true }, { success: true }]);
+    dbWrite.batch.mockResolvedValueOnce([
+      { results: [], meta: { changes: 1, duration: 0 } },
+      { results: [], meta: { changes: 1, duration: 0 } },
+    ]);
 
     const res = await post({ email: "a@b.c", name: "A", password: "password123" });
     expect(res.status).toBe(200);
