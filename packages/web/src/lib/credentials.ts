@@ -384,13 +384,13 @@ export async function passwordVersion(userId: string): Promise<string> {
  * person to hit /setup becomes the admin, and every later registration needs
  * an admin-issued invite.
  *
- * Concurrency-safe: on the self-hosted adapter the batch runs in one rqlite
- * transaction (`?transaction=true`); on the hosted REST path its atomicity is
- * undocumented (see lib/d1.ts), but this guard does not depend on it — the
- * single-row `instance_setup` claim via `INSERT OR IGNORE` plus the "users is
- * empty" precondition stand on their own. Two simultaneous /setup requests
- * cannot both create an admin: the second sees a non-empty users table (or its
- * instance_setup insert collides on the PRIMARY KEY), and is rejected.
+ * Concurrency-safe on every adapter: the hosted D1 REST batch is not
+ * documented as atomic (see lib/d1.ts), so no guard here relies on a rollback.
+ * The "users is empty" read is only a fast path; both statements in the batch
+ * decide on their own — the admin row is inserted only while no user exists,
+ * and the setup claim only while that admin row does. Two simultaneous /setup
+ * requests therefore cannot both create an admin, whichever statement order
+ * the runtime uses.
  */
 export async function bootstrapAdmin(input: {
   email: string;
@@ -412,18 +412,33 @@ export async function bootstrapAdmin(input: {
   const userId = crypto.randomUUID();
   const passwordHash = await hashPassword(password);
   if (!passwordHash) throw new Error(DERIVATION_BUSY_ERROR);
-  await dbWrite.batch([
+  // The "users is empty" read above is only a fast path: two racing callers
+  // both see it. On the self-hosted adapter the batch is one transaction, so
+  // the loser's `instance_setup` collision rolls its `users` row back — but the
+  // hosted D1 REST batch is not documented as atomic (lib/d1.ts), and there the
+  // loser's `users` insert would commit before the collision, minting a second
+  // admin no invite authorized. Both statements therefore decide on their own,
+  // like the invite claim does: the admin row is inserted only while no user
+  // exists, and the setup claim only while that admin row does. A lost race
+  // writes nothing in either order; the winner is whoever the claim names.
+  const applied = await dbWrite.batch([
     {
       sql: `INSERT INTO users (id, email, name, password_hash, is_admin, is_public, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 1, 1, datetime('now'), datetime('now'))`,
+            SELECT ?, ?, ?, ?, 1, 1, datetime('now'), datetime('now')
+            WHERE NOT EXISTS (SELECT 1 FROM users)`,
       params: [userId, email, name ?? null, passwordHash],
     },
     {
       sql: `INSERT INTO instance_setup (id, admin_user_id, completed_at)
-            VALUES (1, ?, datetime('now'))`,
-      params: [userId],
+            SELECT 1, ?, datetime('now')
+            WHERE EXISTS (SELECT 1 FROM users WHERE id = ?)`,
+      params: [userId, userId],
     },
   ]);
+  const changes = (applied ?? []).map((r) => r?.meta?.changes ?? 0);
+  if (changes.length === 2 && changes[0] === 0) {
+    throw new Error("Instance is already set up");
+  }
 
   return { userId };
 }
