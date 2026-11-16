@@ -5,7 +5,7 @@
  * mutual exclusion and dirty-key signal semantics work end-to-end.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm, readFile, stat, writeFile as fsWriteFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile as fsWriteFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { SyncCycleResult, SyncTrigger } from "@pew/core";
@@ -164,6 +164,27 @@ describe("concurrent coordinatedSync serialization", () => {
     expect(executeSyncFn).toHaveBeenCalled();
     expect(result.cycles.length).toBeGreaterThanOrEqual(1);
     expect(result.error).toBeUndefined();
+  });
+
+  // Every notifier-triggered run drops one JSON file under runs/ and nothing
+  // ever removed them: a machine that syncs every ten minutes accumulated
+  // thousands of files (measured 5,978 files / 24 MB locally) in a directory no
+  // code reads. The newest handful are useful for diagnosing the last few
+  // runs; the rest is a disk leak.
+  it("keeps only the newest run-log files", async () => {
+    const runsDir = join(stateDir, "runs");
+    await mkdir(runsDir, { recursive: true });
+    // Old runs first, named the way coordinator.ts writes them (ISO timestamp).
+    for (let i = 0; i < 120; i++) {
+      const stamp = new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString().replace(/[:.]/g, "-");
+      await fsWriteFile(join(runsDir, `${stamp}-old${String(i).padStart(3, "0")}.json`), "{}");
+    }
+
+    await coordinatedSync(trigger, { stateDir, executeSyncFn: vi.fn(async () => ({})) });
+
+    const left = (await readdir(runsDir)).filter((f) => f.endsWith(".json"));
+    expect(left.length).toBeLessThanOrEqual(100);
+    expect(left.some((f) => f.includes(new Date(Date.UTC(2026, 0, 1, 1, 59)).toISOString().replace(/[:.]/g, "-")))).toBe(true);
   });
 
   it("writes run log with correct structure after real filesystem sync", async () => {

@@ -5,6 +5,7 @@ import {
   readFile,
   unlink,
   mkdir,
+  readdir,
 } from "node:fs/promises";
 import { join } from "node:path";
 import type {
@@ -38,6 +39,11 @@ export interface FsOps {
   readFile: (path: string) => Promise<string>;
   unlink: (path: string) => Promise<unknown>;
   mkdir: (path: string, options: { recursive: boolean }) => Promise<unknown>;
+  /**
+   * Directory listing, needed to prune runs/. Optional so an injected fake in
+   * an older test keeps type-checking; pruning is skipped when it is absent.
+   */
+  readdir?: (path: string) => Promise<string[]>;
 }
 
 const defaultFs: FsOps = {
@@ -47,6 +53,7 @@ const defaultFs: FsOps = {
   readFile: readFile as unknown as FsOps["readFile"],
   unlink: unlink as unknown as FsOps["unlink"],
   mkdir: mkdir as unknown as FsOps["mkdir"],
+  readdir: readdir as unknown as FsOps["readdir"],
 };
 
 const defaultProcess: ProcessOps = {
@@ -350,6 +357,7 @@ async function writeRunLog(
     await fs.mkdir(runsDir, { recursive: true });
     // Diagnostic only: a failed runs/ write must not skip the two files below.
     await fs.writeFile(join(runsDir, `${result.runId}.json`), json).catch(() => { /* non-fatal */ });
+    await prunedRunLogs(runsDir, fs);
     await fs.writeFile(join(stateDir, "last-run.json"), json).catch(() => { /* non-fatal */ });
 
     // Write last-success.json only on success — used exclusively by cooldown.
@@ -363,6 +371,34 @@ async function writeRunLog(
     }
   } catch {
     // Run log write failures are non-fatal
+  }
+}
+
+/** How many run-log files to keep. Newest by name: runIds start with an ISO stamp. */
+const RUN_LOG_LIMIT = 100;
+
+/**
+ * Drop all but the newest {@link RUN_LOG_LIMIT} run logs.
+ *
+ * Nothing reads this directory — it exists to diagnose the last few runs after
+ * the fact — but every synced run wrote one file and nothing removed them. A
+ * machine syncing every few minutes accumulated thousands (measured 5,978
+ * files / 24 MB); the list below is sorted newest-first on the file name, so
+ * the survivors are exactly the most recent runs.
+ *
+ * Failures are swallowed: pruning is housekeeping and must never fail a sync.
+ */
+async function prunedRunLogs(runsDir: string, fs: FsOps): Promise<void> {
+  if (!fs.readdir) return;
+  try {
+    const names = (await fs.readdir(runsDir)).filter((name) => name.endsWith(".json"));
+    if (names.length <= RUN_LOG_LIMIT) return;
+    names.sort().reverse();
+    await Promise.all(
+      names.slice(RUN_LOG_LIMIT).map((name) => fs.unlink(join(runsDir, name))),
+    );
+  } catch {
+    // Housekeeping only: a failed prune must never fail the sync.
   }
 }
 
