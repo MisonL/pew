@@ -14,7 +14,7 @@ import { createD1Adapter } from "./d1-adapter";
 import { createKvAdapter } from "./kv-adapter";
 import { registerShutdownSignals, runScheduled } from "./node-runtime";
 import { resolveReadBasicAuth } from "./basic-auth";
-import { createSingleFlight, resolveDailyIntervalMs } from "./scheduler-guard";
+import { createSingleFlight, createSweeper, resolveDailyIntervalMs, SWEEP_INTERVAL_MS } from "./scheduler-guard";
 
 const RQLITE_URL = process.env.RQLITE_URL ?? "http://rqlite:4001";
 const D1_TOKEN = process.env.CF_D1_API_TOKEN ?? "";
@@ -64,22 +64,31 @@ const flight = createSingleFlight(() => console.warn("skipping a scheduled run: 
 const scheduled = runScheduled({
   scheduled: async (event, scheduledEnv) => {
     await flight.trigger(async () => {
-      // Cloudflare KV expires rows itself; rqlite keeps them forever, and
-      // leaderboard snapshot keys embed the revision — unswept, the table grows
-      // without bound. A sweep failure must not skip the pricing sync.
-      try {
-        const removed = await kv.sweepExpired();
-        if (removed > 0) console.log(`kv_cache sweep removed ${removed} expired rows`);
-      } catch (error) {
-        console.error("kv_cache sweep failed", error);
-      }
       await worker.scheduled?.(event, scheduledEnv);
     });
   },
 }, env, INTERVAL_MS);
 
+// Cloudflare KV expires rows itself; rqlite keeps them forever, and
+// leaderboard snapshot keys embed the revision, so every data change mints a
+// fresh key and the old ones become dead rows. The sweep used to ride the
+// daily tick above, which is the wrong period for the data it removes: a
+// leaderboard snapshot lives 10–30 minutes, so an hourly-or-better cadence is
+// what keeps the table from holding half a day of dead rows — and the daily
+// tick resets on every restart, so a deployment more frequent than DAILY_INTERVAL_MS
+// could postpone the sweep indefinitely (verified in the live backups: a
+// snapshot that expired on the 13th was still there on the 14th and 15th).
+// A sweep failure never affects the pricing sync, which no longer shares its
+// timer.
+const sweeper = createSweeper(() => kv.sweepExpired(), (error) => {
+  console.error("kv_cache sweep failed", error);
+});
+void sweeper.run();
+const sweepTimer = setInterval(() => { void sweeper.run(); }, SWEEP_INTERVAL_MS);
+
 registerShutdownSignals(async () => {
   scheduled.stop();
+  clearInterval(sweepTimer);
   // Let an in-flight sync finish: it writes D1 and KV in sequence, and a
   // process.exit mid-run would leave the cache half-updated. The 10s forced
   // timeout in registerShutdownSignals still bounds a wedged run.
