@@ -151,6 +151,96 @@ describe("readContinuityAnchors / resolveJsonlContinuity", () => {
     expect(decision).toEqual({ action: "rebase", startOffset: kept.length });
   });
 
+  // The recovery scan streams the file in 64 KiB chunks and reassembles records
+  // that straddle a boundary. Every everyday file fits in one chunk, so the
+  // reassembly branch only runs on a file large enough to split a record —
+  // exactly the case where a bug would silently lose an anchor and turn a
+  // genuine continuation into a false "skip" (re-reading the whole log).
+  it("finds anchors whose records straddle a read-chunk boundary", async () => {
+    const filler = Buffer.from(`{"pad":"${"p".repeat(70_000)}"}\n`, "utf8");
+    const tail = Buffer.concat([rec("a1"), rec("a2"), rec("a3")]);
+    const file = Buffer.concat([filler, tail]);
+    await writeFile(filePath, file);
+
+    const anchors = await readContinuityAnchors(filePath, file.length);
+    expect(anchors?.map((a) => a.length)).toEqual(
+      [rec("a1").length, rec("a2").length, rec("a3").length],
+    );
+
+    // The same file, one record longer: continuation must be proven.
+    const grown = Buffer.concat([file, rec("a4")]);
+    await writeFile(filePath, grown);
+    const decision = await resolveJsonlContinuity({
+      filePath,
+      fileSize: grown.length,
+      cursorSize: file.length,
+      offset: file.length,
+      anchors,
+    });
+    expect(decision.action).toBe("append");
+  });
+
+  it("finds anchors when a single record is longer than a chunk", async () => {
+    const huge = Buffer.from(`{"big":"${"x".repeat(150_000)}"}\n`, "utf8");
+    const tail = Buffer.concat([rec("b1"), rec("b2")]);
+    const file = Buffer.concat([huge, tail]);
+    await writeFile(filePath, file);
+
+    // The anchor window (1 MiB) covers the whole file, so all three trailing
+    // records come back — including the 150 KB one the stream had to
+    // reassemble across three read chunks.
+    const anchors = await readContinuityAnchors(filePath, file.length);
+    expect(anchors?.map((a) => a.length)).toEqual([huge.length, rec("b1").length, rec("b2").length]);
+
+    const grown = Buffer.concat([file, rec("b3")]);
+    await writeFile(filePath, grown);
+    const decision = await resolveJsonlContinuity({
+      filePath,
+      fileSize: grown.length,
+      cursorSize: file.length,
+      offset: file.length,
+      anchors,
+    });
+    expect(decision.action).toBe("append");
+  });
+
+  it("carries a partial line across many chunks instead of dropping it", async () => {
+    // 4000 short records (~80 KB) guarantee several 64 KiB read chunks, and the
+    // record sitting on a boundary is split. If the carry-over were dropped,
+    // that record would vanish from the stream and the anchor set would not
+    // match the file — a continuation would be misreported as a rewrite.
+    const lines = Array.from({ length: 6000 }, (_, i) => `{"id":"r${String(i).padStart(5, "0")}","v":123456}\n`);
+    const body = Buffer.from(lines.join(""), "utf8");
+    expect(body.length).toBeGreaterThan(64 * 1024 * 2);
+    const tail = Buffer.concat([rec("t1"), rec("t2"), rec("t3")]);
+    const file = Buffer.concat([body, tail]);
+    await writeFile(filePath, file);
+
+    const anchors = await readContinuityAnchors(filePath, file.length);
+    expect(anchors?.map((a) => a.length)).toEqual([rec("t1").length, rec("t2").length, rec("t3").length]);
+
+    // Drop the first half of the log so the anchors no longer sit at the old
+    // offset: this is the path that streams the file from byte 0, reassembling
+    // records across 64 KiB chunk boundaries. Dropping the carry-over would
+    // lose the split record and report the file as unrelated ("skip").
+    // Split on a record boundary so the retained suffix starts with a whole
+    // record; the stream must then find the anchors at that exact offset.
+    const lineBytes = Buffer.byteLength(lines[3000]!);
+    const cut = Math.floor(body.length / 2 / lineBytes) * lineBytes;
+    const kept = Buffer.concat([body.subarray(cut), tail]);
+    await writeFile(filePath, kept);
+    const decision = await resolveJsonlContinuity({
+      filePath,
+      fileSize: kept.length,
+      cursorSize: file.length,
+      offset: file.length,
+      anchors,
+    });
+    // rebase continues AFTER the matched anchor group, i.e. at the end of the
+    // trailing records — not where the retained suffix begins.
+    expect(decision).toEqual({ action: "rebase", startOffset: kept.length });
+  });
+
   it("skips an equal-size rewrite whose records do not match", async () => {
     const original = Buffer.concat([rec("aaa"), rec("bbb"), rec("ccc")]);
     const rewritten = Buffer.concat([rec("xxx"), rec("yyy"), rec("zzz")]);
