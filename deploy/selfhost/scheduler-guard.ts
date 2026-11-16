@@ -73,3 +73,43 @@ export function createSingleFlight(onSkip?: () => void): SingleFlight {
     running: () => inFlight !== null,
   };
 }
+
+/** Interval for the kv_cache sweep: far shorter than the daily pricing sync. */
+export const SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+
+export interface Sweeper {
+  /** Run a sweep now, joining one already in flight. Never rejects. */
+  run(): Promise<void>;
+  /** Invocations that actually ran (a joined call does not count). */
+  runs(): number;
+}
+
+/**
+ * Serialize kv_cache sweeps and swallow their failures.
+ *
+ * The sweep removes expired cache rows, and rqlite does not expire them
+ * itself. It used to ride the daily pricing tick, which is the wrong period:
+ * leaderboard snapshots live 10–30 minutes, so a day-long cadence left half a
+ * day of dead rows on average — and because the daily timer restarts with the
+ * container, a deployment more frequent than `DAILY_INTERVAL_MS` postponed the
+ * sweep indefinitely (verified in the live backups: a snapshot that expired on
+ * the 13th was still present on the 14th and 15th). Running it on its own
+ * short timer keeps the table near-clean and decouples it from the sync, so a
+ * wedge in one never stalls the other.
+ */
+export function createSweeper(sweep: () => Promise<number>, onError?: (error: unknown) => void): Sweeper {
+  let inFlight: Promise<void> | null = null;
+  let runs = 0;
+  return {
+    run(): Promise<void> {
+      if (inFlight) return inFlight;
+      runs += 1;
+      inFlight = sweep()
+        .then(() => undefined)
+        .catch((error: unknown) => { onError?.(error); })
+        .finally(() => { inFlight = null; });
+      return inFlight;
+    },
+    runs: () => runs,
+  };
+}

@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { createSingleFlight, resolveDailyIntervalMs, MAX_TIMER_DELAY_MS, DEFAULT_DAILY_INTERVAL_MS } from "./scheduler-guard";
+import { describe, it, expect, vi } from "vitest";
+import { createSingleFlight, createSweeper, resolveDailyIntervalMs, MAX_TIMER_DELAY_MS, DEFAULT_DAILY_INTERVAL_MS, SWEEP_INTERVAL_MS } from "./scheduler-guard";
 
 describe("resolveDailyIntervalMs", () => {
   it("defaults to 24h when the variable is absent", () => {
@@ -110,5 +110,44 @@ describe("createSingleFlight", () => {
     expect(flight.running()).toBe(false);
     await expect(flight.trigger(job)).resolves.toBeUndefined();
     expect(calls).toBe(2);
+  });
+});
+
+describe("createSweeper", () => {
+  it("sweeps well inside the shortest cache TTL", () => {
+    // Leaderboard snapshots live 10 minutes at the shortest. A sweep slower
+    // than that leaves dead rows behind on purpose.
+    expect(SWEEP_INTERVAL_MS).toBeLessThanOrEqual(10 * 60 * 1000);
+  });
+
+  it("joins a sweep already in flight instead of starting a second", async () => {
+    let release!: () => void;
+    const sweep = vi.fn(() => new Promise<number>((resolve) => { release = () => resolve(2); }));
+    const sweeper = createSweeper(sweep);
+
+    const a = sweeper.run();
+    const b = sweeper.run();
+    expect(sweep).toHaveBeenCalledTimes(1);
+    release();
+    await Promise.all([a, b]);
+    expect(sweeper.runs()).toBe(1);
+
+    // A later call starts a fresh sweep.
+    sweep.mockResolvedValueOnce(0);
+    await sweeper.run();
+    expect(sweep).toHaveBeenCalledTimes(2);
+  });
+
+  it("swallows a failed sweep so the timer keeps firing", async () => {
+    const failure = new Error("rqlite down");
+    const onError = vi.fn();
+    const sweep = vi.fn().mockRejectedValueOnce(failure).mockResolvedValueOnce(1);
+    const sweeper = createSweeper(sweep, onError);
+
+    await expect(sweeper.run()).resolves.toBeUndefined();
+    expect(onError).toHaveBeenCalledWith(failure);
+
+    await sweeper.run();
+    expect(sweep).toHaveBeenCalledTimes(2);
   });
 });
