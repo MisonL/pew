@@ -12,7 +12,8 @@ import { jsonResponse } from "@/lib/json-response";
 export async function GET(request: Request) {
   const db = await getDbRead();
   const pricingMap = await loadPricingMap(db);
-  // A merged catalogue runs ~0.5 MB of JSON; Next's built-in compression does
-  // not cover route-handler bodies, so gzip it like the other read endpoints.
+  // A merged catalogue runs ~0.5 MB of JSON; it goes out identity-encoded and
+  // the edge compresses it (see lib/json-response.ts for why the origin no
+  // longer does it itself).
   return jsonResponse(request, pricingMap, { headers: { "Cache-Control": "public, max-age=60" } });
 }
