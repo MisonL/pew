@@ -60,6 +60,19 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // Route handler
 // ---------------------------------------------------------------------------
 
+/**
+ * The session-stats enrichment degrades to zeros rather than failing the
+ * request: a season's standings are still worth showing when only the session
+ * counters are missing. A schema that simply lacks session_records is the
+ * expected reason, so it stays quiet; every other cause is a real fault and
+ * gets logged.
+ */
+function logSessionEnrichmentFailure(err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/no such table: session_records/i.test(message)) return;
+  console.error("Season leaderboard session stats unavailable:", err);
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ seasonId: string }> }
@@ -234,8 +247,13 @@ export async function GET(
               }
             }
           }
-        } catch {
-          // Silently skip if session_records table doesn't exist yet
+        } catch (err) {
+          // One failure here is expected: an installation whose schema
+          // predates session_records. Anything else (a read Worker that is
+          // down, a renamed column, a query budget) used to look identical —
+          // session_count 0 on every row and nothing in the logs. Keep
+          // rendering, but say so.
+          logSessionEnrichmentFailure(err);
         }
       }
     } else {
@@ -340,8 +358,13 @@ export async function GET(
               }
             }
           }
-        } catch {
-          // Silently skip if session_records table doesn't exist yet
+        } catch (err) {
+          // One failure here is expected: an installation whose schema
+          // predates session_records. Anything else (a read Worker that is
+          // down, a renamed column, a query budget) used to look identical —
+          // session_count 0 on every row and nothing in the logs. Keep
+          // rendering, but say so.
+          logSessionEnrichmentFailure(err);
         }
       }
     }

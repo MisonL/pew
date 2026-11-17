@@ -742,6 +742,74 @@ describe("GET /api/seasons/[seasonId]/leaderboard", () => {
   });
 
   describe("error handling", () => {
+    it("logs session enrichment failures instead of hiding them behind zeros", async () => {
+      // The catch around the session-stats enrichment serves one real case:
+      // an installation whose schema predates session_records. Any other
+      // failure (a read Worker that is down, a bad column, a query budget)
+      // used to vanish the same way, leaving session_count 0 and a bare
+      // "0" on the standings table with nothing in the logs to explain it.
+      const logged: unknown[][] = [];
+      const spy = vi.spyOn(console, "error").mockImplementation((...args) => {
+        logged.push(args);
+      });
+      try {
+        mockDbRead.getSeasonBySlug.mockResolvedValueOnce(ACTIVE_SEASON);
+        mockDbRead.getSeasonTeamTokens.mockResolvedValueOnce([
+          {
+            team_id: "team-a",
+            team_name: "Team Alpha",
+            team_slug: "team-alpha",
+            team_logo_url: null,
+            total_tokens: 15000,
+            input_tokens: 10000,
+            output_tokens: 5000,
+            cached_input_tokens: 3000,
+          },
+        ]);
+        mockDbRead.getSeasonTeamSessionStats.mockRejectedValueOnce(new Error("read worker unavailable"));
+
+        const res = await GET(makeRequest(), { params: routeParams });
+        const data = await res.json();
+
+        // A missing table is survivable, so the page still renders.
+        expect(res.status).toBe(200);
+        expect(data.entries[0].session_count).toBe(0);
+        // But the failure is no longer silent.
+        expect(logged.some((args) => args.some((a) => a instanceof Error && a.message === "read worker unavailable"))).toBe(true);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("stays quiet when the season tables are simply older than session_records", async () => {
+      const logged: unknown[][] = [];
+      const spy = vi.spyOn(console, "error").mockImplementation((...args) => {
+        logged.push(args);
+      });
+      try {
+        mockDbRead.getSeasonBySlug.mockResolvedValueOnce(ACTIVE_SEASON);
+        mockDbRead.getSeasonTeamTokens.mockResolvedValueOnce([
+          {
+            team_id: "team-a",
+            team_name: "Team Alpha",
+            team_slug: "team-alpha",
+            team_logo_url: null,
+            total_tokens: 15000,
+            input_tokens: 10000,
+            output_tokens: 5000,
+            cached_input_tokens: 3000,
+          },
+        ]);
+        mockDbRead.getSeasonTeamSessionStats.mockRejectedValueOnce(new Error("no such table: session_records"));
+
+        const res = await GET(makeRequest(), { params: routeParams });
+        expect(res.status).toBe(200);
+        expect(logged).toEqual([]);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
     it("should return 503 when season tables not migrated", async () => {
       mockDbRead.getSeasonBySlug.mockRejectedValueOnce(
         new Error("no such table: seasons"),
