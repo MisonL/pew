@@ -1,2 +1,23 @@
 # OSV-Scanner configuration
 # https://google.github.io/osv-scanner/configuration/
+#
+# Ignored entries are accepted only for advisories that cannot be fixed from
+# this repository (no patched release exists upstream) and whose exploitable
+# input does not cross a repository-controlled boundary. Each one carries an
+# expiry so it cannot silently outlive the reason that justified it.
+
+[[IgnoredVulns]]
+# picomatch ReDoS through single-branch repeated extglobs (CVE-2026-112366).
+# Latest release 4.0.7 is affected and the advisory lists no patched version;
+# upstream fix PRs (micromatch/picomatch#237, #238) were still open on
+# 2026-11-17, so there is nothing to upgrade to yet.
+#
+# The two importers both feed it repository-controlled patterns:
+#   - lint-staged matches the globs written in .husky config, which a
+#     contributor can only change by editing the repository;
+#   - tinyglobby is a build/test-time helper reached from tooling configs.
+# No request input becomes a picomatch pattern in the web app, the CLI or the
+# Workers. Re-check at expiry: drop this entry once a fixed picomatch ships.
+id = "GHSA-fc5q-39xc-vjpf"
+ignoreUntil = 2027-02-28
+reason = "No patched release upstream; patterns are repository-controlled (lint-staged config, build tooling), never request input."
