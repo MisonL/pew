@@ -404,7 +404,15 @@ CLI 侧 `PEW_HOST` 同步指向该域名。
 
 ### Caddy（推荐）
 
-两行配置自动 HTTPS；**需 Caddy ≥ 2.5**——[官方文档](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)
+配置含 `encode zstd gzip`：响应压缩放在这一层，不放在应用里。Next ≥ 16.4.5 会把所有
+route handler 响应的 `content-encoding` / `content-length` 一律剥掉（安全通告
+GHSA-pc58-hwjq-p385 的修复，见 `packages/web/src/lib/json-response.ts` 顶部注释），
+应用再自己 gzip 就会变成「gzip 字节 + 声明为 JSON」，前端解析直接抛
+`Unexpected token '^_'`。`encode` 顺带给强 ETag 加 `-gzip` 后缀并在回源前剥掉，
+所以应用侧的 304 复用不受影响。**绕过 Caddy 直连 7020 的部署拿不到压缩**——这些
+大响应（`/api/usage` 全时段约 6 MB）请始终经过这一层。
+
+**需 Caddy ≥ 2.5**——[官方文档](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)
 确认 v2.5 起 `reverse_proxy` **默认忽略入站 `X-Forwarded-For`** 并自行设置该头以防伪造
 （"the proxy will ignore their values from incoming requests, to prevent spoofing"），
 天然满足我们的 XFF 覆写硬约束，无需额外 `header_up`。无公网 DNS 的内网域名需在站点块里
@@ -428,6 +436,7 @@ cd /path/to/pew/deploy/selfhost
 # 2) Caddyfile 换成你的公网域名
 cat > Caddyfile <<'EOF'
 pew.example.com {
+    encode zstd gzip
     reverse_proxy web:7020
 }
 EOF

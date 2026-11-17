@@ -21,8 +21,9 @@ export async function fetchDynamicPricingPayload(request: Request): Promise<Resp
       dbRead.getDynamicPricingMeta(),
     ]);
 
-    // A full pricing catalogue is a few hundred KB; gzip it like the other
-    // read endpoints rather than shipping raw JSON from the route handler.
+    // A full pricing catalogue is a few hundred KB; like the other read
+    // endpoints it goes out identity-encoded and the edge compresses it (see
+    // lib/json-response.ts).
     return jsonResponse(request, {
       entries: dyn.entries,
       servedFrom: dyn.servedFrom,

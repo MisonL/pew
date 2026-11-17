@@ -1,6 +1,14 @@
 # Replace with your intranet hostname. Public DNS + ports 80/443 reachable:
 # automatic HTTPS. Otherwise uncomment tls internal (self-signed).
 example.intranet.corp {
+    # Compress here, not in the app. Next >= 16.4.5 strips `content-encoding`
+    # from every route-handler response (advisory GHSA-pc58-hwjq-p385), so an
+    # origin-compressed `/api/usage` would arrive labelled as JSON and every
+    # client would fail to parse it. The app now answers identity and this
+    # directive supplies the encoding; it also appends `-gzip` to the strong
+    # ETag and strips that suffix from `If-None-Match`, so the app's 304 path
+    # keeps working through the proxy.
+    encode zstd gzip
     reverse_proxy web:7020
     # tls internal
 }

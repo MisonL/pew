@@ -145,8 +145,8 @@ export async function GET(request: Request) {
       },
     );
 
-    // A month of sessions is ~2 MB of JSON; Next's built-in compression does
-    // not cover route-handler bodies, so this endpoint gzips its own.
+    // A month of sessions is ~2 MB of JSON; it goes out identity-encoded and
+    // the edge compresses it (see lib/json-response.ts).
     return jsonResponse(request, { records: rows, summary });
   } catch (err) {
     console.error("Failed to query sessions:", err);
