@@ -474,7 +474,7 @@ pew sync  --host https://pew.example.com
 
 ### Nginx（宿主，次选）
 
-完整 server 块示例——三条 `proxy_set_header` 与 `client_max_body_size` **都不可省**：
+完整 server 块示例——三条 `proxy_set_header`、`client_max_body_size` 与 `gzip` **都不可省**：
 
 ```nginx
 server {
@@ -483,6 +483,15 @@ server {
     # ssl_certificate ...; ssl_certificate_key ...;
 
     client_max_body_size 25m;   # worker 允许 /ingest/details 至 24MB；默认 1m 会直接 413
+
+    # 响应压缩放在这一层（理由见上面的 Caddy 一节：Next >= 16.4.5 会剥掉应用自己
+    # 设置的 content-encoding）。不加这几行时，这台实例的 /api/usage、/api/pricing
+    # 等大响应会以明文发出——可用，但没有任何压缩。
+    gzip on;
+    gzip_comp_level 5;
+    gzip_min_length 512;
+    gzip_vary on;
+    gzip_types application/json;
 
     location / {
         proxy_pass http://127.0.0.1:7020;
