@@ -805,10 +805,27 @@ describe("E2E process isolation", () => {
 
   it("cleans D1 when the Next process fails to start", async () => {
     const root = mkdtempSync(join(tmpdir(), "pew-start-failure-"));
+    // Pick the port from the kernel instead of pinning 37022. A fixed port
+    // collides with whatever else the test process has bound at that moment —
+    // CI failed this case with `EADDRINUSE 127.0.0.1:37022`, and the message
+    // surfaced as "E2E server exited 23" because the runner's own pre-flight
+    // probe was what failed, not the fake Next that exits 23. Binding and
+    // releasing first is not enough on its own; ask the kernel for a free one
+    // and give the child that.
+    const port = await new Promise<number>((done, reject) => {
+      const srv = createServer();
+      srv.once("error", reject);
+      srv.listen(0, "127.0.0.1", () => {
+        const address = srv.address();
+        const assigned = typeof address === "object" && address !== null ? address.port : 0;
+        srv.close((error) => (error ? reject(error) : done(assigned)));
+      });
+    });
+    expect(port).toBeGreaterThanOrEqual(1024);
     const bin = join(root, "bin");
     mkdirSync(bin);
     writeFileSync(join(bin, "node"), `#!/bin/sh\ncase "$1" in */next/dist/bin/next) exit 23;; esac\nexec ${JSON.stringify(process.execPath)} "$@"\n`, { mode: 0o755 });
-    const child = spawn("bun", ["--no-env-file", "scripts/run-e2e.ts"], { env: { PATH: `${bin}:${process.env.PATH}`, HOME: root, TMPDIR: root, E2E_PORT: "37022", PEW_E2E_DIST_DIR: ".next-e2e-unit" }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("bun", ["--no-env-file", "scripts/run-e2e.ts"], { env: { PATH: `${bin}:${process.env.PATH}`, HOME: root, TMPDIR: root, E2E_PORT: String(port), PEW_E2E_DIST_DIR: ".next-e2e-unit" }, stdio: ["ignore", "pipe", "pipe"] });
     const exited = new Promise<number | null>((done) => child.once("exit", done));
     let output = "";
     child.stdout.on("data", (data) => { output += data; });
@@ -817,7 +834,7 @@ describe("E2E process isolation", () => {
       expect(await exited, output).not.toBe(0);
       expect(output).toContain("E2E server exited 23");
       expect(readdirSync(root).filter((name) => name.startsWith("pew-e2e-")), output).toEqual([]);
-      await expect(ensurePortFree("37022")).resolves.toBeUndefined();
+      await expect(ensurePortFree(String(port))).resolves.toBeUndefined();
     } finally {
       if (child.exitCode === null && child.signalCode === null) { child.kill("SIGTERM"); await exited; }
       rmSync(root, { recursive: true, maxRetries: 3, retryDelay: 100 });
