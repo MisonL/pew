@@ -23,6 +23,10 @@ docker compose up -d --build
 
 首次启动后访问 `http://<host>:7020`。
 
+> 这条默认拓扑**不压缩**大响应：`/api/usage` 全时段约 6 MB、`/api/pricing` 约 0.5 MB 会
+> 以明文发出（应用不再自己 gzip，见「反向代理 → Caddy」一节的说明）。内网小团队可用；
+> 带宽敏感或用户较多时，叠加下面的 Caddy/Nginx 获得压缩。
+
 > **重要**：web 在**首次使用认证时**校验 `AUTH_SECRET`——缺失或仍是占位符（`replace-me`、
 > `changeme`、`secret`、空值）会抛错拒绝签发会话，登录/认证接口全部报错。实测：占位值下
 > **所有页面（含 `/setup`、`/login`）都返回 500**——proxy 的 auth 包装在每个请求上执行，
