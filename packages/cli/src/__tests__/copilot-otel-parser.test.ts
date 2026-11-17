@@ -236,6 +236,28 @@ describe("parseCopilotOtelFile", () => {
     expect(result.deltas[0].timestamp).toBe("2026-03-16T10:40:00.959Z");
   });
 
+  // The Date range is wider than the ingest contract. `+010000-01-01` and
+  // `+275760-09-13` are real Dates, but the server's ISO validator requires a
+  // four-digit year, so a span beyond 9999 produced a delta whose bucket could
+  // never be uploaded: `recordRejection` dropped it and the offset advanced
+  // past the tokens. A timestamp the contract cannot represent is no
+  // timestamp — skip the span like any other one without a usable time.
+  it("skips a span startTime that parses but lands past year 9999", async () => {
+    const filePath = join(tempDir, "otel.jsonl");
+    await writeFile(filePath, [
+      // 10000-01-01T00:00:00.000Z — inside the Date range, outside the contract.
+      otelSpan({ traceId: "t13", spanId: "s13", startTime: [253_402_300_800, 0] }),
+      // Same instant spelled as an ISO string, which the other branch accepts.
+      otelSpan({ traceId: "t14", spanId: "s14", startTime: "+275760-09-13T00:00:00.000Z" }),
+      otelSpan({ traceId: "t15", spanId: "s15", startTime: [253_402_300_799, 999_000_000] }),
+      "",
+    ].join("\n"));
+
+    const result = await parseCopilotOtelFile({ filePath, startOffset: 0 });
+    expect(result.deltas).toHaveLength(1);
+    expect(result.deltas[0].timestamp).toBe("9999-12-31T23:59:59.999Z");
+  });
+
   it("ignores non-span records and zero-usage spans", async () => {    const filePath = join(tempDir, "otel.jsonl");
     await writeFile(filePath, [
       JSON.stringify({ type: "log", traceId: "t6", spanId: "s6" }),

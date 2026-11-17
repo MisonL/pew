@@ -11,12 +11,26 @@ import type { Source, TokenDelta } from "@pew/core";
 import type { ParsedDelta } from "./claude.js";
 import { isAllZero, toNonNegInt } from "../utils/token-delta.js";
 import { clampedJsonlEndOffset, jsonlStreamBound } from "../utils/jsonl-offset.js";
+import { MAX_EPOCH_MS } from "../utils/time.js";
 
 export interface CopilotOtelFileResult {
   deltas: ParsedDelta[];
   endOffset: number;
 }
 
+/**
+ * Instant a span declares, or null when it carries no usable one.
+ *
+ * `startTime` comes from another process's JSONL, so it can be corrupt or
+ * hostile. The bound is the ingest contract's, not the Date range:
+ * `new Date(ms).toISOString()` throws RangeError past ±8.64e15 ms (one throw
+ * aborts the whole source's sync), and anything past `MAX_EPOCH_MS` silently
+ * serializes to a five- or six-digit year — `+010000-01-01T00:00:00.000Z` is a
+ * valid Date but the server requires a four-digit year, so the record would be
+ * rejected locally and its tokens dropped as the offset advanced. A timestamp
+ * the contract cannot represent is no timestamp: skip the span, exactly like
+ * one that never had a start time.
+ */
 function timestampFromSpan(span: Record<string, unknown>): string | null {
   const value = span.startTime;
   if (Array.isArray(value) && value.length >= 1) {
@@ -24,16 +38,18 @@ function timestampFromSpan(span: Record<string, unknown>): string | null {
     const nanos = Number(value[1] ?? 0);
     if (Number.isFinite(seconds) && Number.isFinite(nanos)) {
       const ms = seconds * 1000 + Math.floor(nanos / 1_000_000);
-      // The span comes from another process's JSONL; a corrupt or hostile
-      // value must not reach `toISOString()`, which throws RangeError outside
-      // ±8.64e15 ms — and one throw aborts the whole source's sync.
-      if (Number.isFinite(ms) && Math.abs(ms) <= 8_640_000_000_000_000) {
+      if (Number.isFinite(ms) && Math.abs(ms) <= MAX_EPOCH_MS) {
         return new Date(ms).toISOString();
       }
     }
   }
-  if (typeof value === "string" && !Number.isNaN(Date.parse(value))) {
-    return new Date(value).toISOString();
+  if (typeof value === "string") {
+    const ms = Date.parse(value);
+    // The string branch needs the same range check: `+275760-09-13T00:00:00.000Z`
+    // parses, and its `toISOString()` is just as unuploadable.
+    if (Number.isFinite(ms) && Math.abs(ms) <= MAX_EPOCH_MS) {
+      return new Date(ms).toISOString();
+    }
   }
   return null;
 }
