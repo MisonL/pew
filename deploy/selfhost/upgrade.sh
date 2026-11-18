@@ -63,7 +63,21 @@ if [ "$SKIP_BACKUP" -eq 0 ]; then
   mkdir -p "$BACKUP_DIR"
   STAMP=$(date +%F-%H%M%S)
   echo "==> backing up rqlite to $BACKUP_DIR/backup-$STAMP.db"
-  run bash backup.sh "$BACKUP_DIR/backup-$STAMP.db"
+  # Same lock file the README's crontab uses. backup.sh archives into a FIXED
+  # container path and deletes it on start and exit, so two runs — the nightly
+  # cron job and this upgrade — cannot be inside it at once: whichever ends
+  # first removes the archive the other is copying. Holding the lock here
+  # closes that window for every path this script documents (--dry-run never
+  # reaches this block because run() only prints).
+  BACKUP_LOCK="${PEW_BACKUP_LOCK:-/tmp/pew-backup.lock}"
+  command -v flock >/dev/null 2>&1 \
+    || { echo "upgrade.sh: flock is required to serialise backups with the cron job" >&2; exit 1; }
+  if [ "$DRY_RUN" -eq 1 ]; then
+    run flock -n "$BACKUP_LOCK" bash backup.sh "$BACKUP_DIR/backup-$STAMP.db"
+  elif ! flock -n "$BACKUP_LOCK" bash backup.sh "$BACKUP_DIR/backup-$STAMP.db"; then
+    echo "upgrade.sh: the backup did not run or failed (another backup may hold $BACKUP_LOCK — wait for it, or pass --skip-backup to upgrade without one)" >&2
+    exit 1
+  fi
 fi
 
 # The two preconditions the manual procedure documents. Both are warnings or

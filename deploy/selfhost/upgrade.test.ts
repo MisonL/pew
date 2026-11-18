@@ -61,6 +61,27 @@ esac
 exit 0
 `, { mode: 0o755 });
 
+  // Fake flock: records the lock command line it was asked to run and whether
+  // the real lock could be taken, then runs the wrapped command. The lock file
+  // lives in the fixture so two fixtures never contend.
+  writeFileSync(join(bin, "flock"), `#!/bin/sh
+lock=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n|-x|-s|-e) shift ;;
+    -w|-E) shift 2 ;;
+    *) lock="$1"; shift; break ;;
+  esac
+done
+if [ "\${PEW_UPGRADE_FAKE_LOCK_HELD:-}" = 1 ]; then
+  printf '{"lock":"%s","held":false}\\n' "$lock" >> ${JSON.stringify(join(root, "flock.log"))}
+  echo "flock: $lock: another process holds it" >&2
+  exit 1
+fi
+printf '{"lock":"%s","held":true}\\n' "$lock" >> ${JSON.stringify(join(root, "flock.log"))}
+exec "$@"
+`, { mode: 0o755 });
+
   const run = (args: string[] = [], env: Record<string, string> = {}) => new Promise<{ code: number | null; out: string }>((done) => {
     const child = spawn("bash", [join(selfhost, "upgrade.sh"), ...args], {
       env: { PATH: `${bin}:${process.env.PATH}`, HOME: root, ...env },
@@ -72,7 +93,7 @@ exit 0
     child.once("exit", (code) => done({ code, out }));
   });
 
-  return { root, argvLog, selfhost, run };
+  return { root, argvLog, selfhost, run, flockLog: join(root, "flock.log") };
 }
 
 describe("selfhost upgrade.sh", () => {
@@ -117,6 +138,34 @@ describe("selfhost upgrade.sh", () => {
     expect(out).toContain("DRY-RUN");
     expect(out).toContain("PEW_REVISION=");
     expect(existsSync(f.argvLog)).toBe(false);
+  });
+
+  // backup.sh archives into a FIXED container path (/rqlite/file/backup.db)
+  // and removes it on start and exit. The cron job serialises itself with
+  // flock -n, but the upgrade called backup.sh unlocked, so an upgrade that
+  // landed during the nightly backup (or a second hand-run upgrade) deleted
+  // the archive the other run was copying.
+  it("runs its backup under the same flock the cron job uses", async () => {
+    const f = fixture({});
+    const { code, out } = await f.run([], { PEW_UPGRADE_NO_RESTART: "1" });
+    expect(code, out).toBe(0);
+    const calls = readFileSync(f.flockLog, "utf8").trim().split("\n").map((l) => JSON.parse(l) as { lock: string; held: boolean });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ held: true });
+    // Same lock file the documented crontab uses, so cron and the upgrade
+    // cannot both be inside backup.sh.
+    expect(calls[0]!.lock).toBe("/tmp/pew-backup.lock");
+    expect(readFileSync(f.argvLog, "utf8")).toContain("compose build");
+  });
+
+  it("stops before rebuilding when another backup holds the lock", async () => {
+    const f = fixture({});
+    const { code, out } = await f.run([], { PEW_UPGRADE_NO_RESTART: "1", PEW_UPGRADE_FAKE_LOCK_HELD: "1" });
+    expect(code).not.toBe(0);
+    expect(out).toMatch(/another backup/);
+    // Nothing was rebuilt, so the fake docker was never asked to.
+    const argv = existsSync(f.argvLog) ? readFileSync(f.argvLog, "utf8") : "";
+    expect(argv).not.toContain("compose build");
   });
 
   it("prints usage for --help", async () => {
