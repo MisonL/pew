@@ -28,6 +28,7 @@ import { parseOpenRouter } from "./openrouter";
 import {
   readDynamic,
   readLastFetch,
+  readMeta,
   writeDynamicOrThrow,
   writeLastFetch,
   writeMetaOrThrow,
@@ -66,6 +67,31 @@ interface FetchResolution {
   error: string | null;
 }
 
+/**
+ * Whether a 200 body is the document the parser expects.
+ *
+ * Upstreams answer 200 with an error document behind their own gateways
+ * (OpenRouter does: `{"error":{"message":"temporary catalogue failure"}}`).
+ * Caching that body and letting the parser degrade it to a warning counted the
+ * run as a success, so the source's layer was rewritten as empty and the
+ * prices it had learned vanished until the next good fetch. A body that is not
+ * the expected document is therefore a FAILED fetch — no cache write, old
+ * layer preserved, `ok=false`.
+ */
+function payloadIsUsable(source: LastFetchSource, json: unknown): boolean {
+  if (!json || typeof json !== "object") return false;
+  if (source === "openrouter") return Array.isArray((json as { data?: unknown }).data);
+  // models.dev answers a provider → { models: {...} } catalogue. An error
+  // document has no such entry, so requiring one keeps a total shape change
+  // from being read as "every model was retired".
+  return Object.values(json as Record<string, unknown>).some(
+    (provider) =>
+      provider !== null &&
+      typeof provider === "object" &&
+      typeof (provider as { models?: unknown }).models === "object",
+  );
+}
+
 export interface SyncOptions {
   /**
    * Controls upstream-fetch policy:
@@ -86,7 +112,11 @@ async function resolveSource(
   // Cheap-rebuild path: do not hit upstream. Use cached JSON if any.
   if (forceRefetch === false) {
     const cached = await readLastFetch(deps.kv, source);
-    if (cached) return { json: cached.json, fromCache: true, error: null };
+    // A cache written before this guard existed can hold an error document;
+    // treat it as no cache rather than feeding it to the parser.
+    if (cached && payloadIsUsable(source, cached.json)) {
+      return { json: cached.json, fromCache: true, error: null };
+    }
     return { json: null, fromCache: false, error: null };
   }
 
@@ -95,6 +125,9 @@ async function resolveSource(
     const res = await fetchFn(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
+    if (!payloadIsUsable(source, json)) {
+      throw new Error("HTTP 200 without the expected document");
+    }
     await writeLastFetch(deps.kv, source, { json, fetchedAt: now });
     return { json, fromCache: false, error: null };
   } catch (err) {
@@ -127,25 +160,37 @@ export async function syncDynamicPricing(
   if (orRes.error) errors.push({ source: "openrouter", message: orRes.error });
   if (mdRes.error) errors.push({ source: "models.dev", message: mdRes.error });
 
-  // The bundled baseline is a floor, not a replacement. A source that produced
-  // no data this run (fetch failed with no cache, or the cheap-rebuild path
-  // found no cache) must not erase what the last successful run stored for it:
-  // entries that exist only upstream would silently vanish from the served map
-  // and stay gone until the next success. Those entries are re-fed as that
-  // source's layer, so a success still replaces them wholesale while a failure
-  // keeps them at their last known prices.
-  const previousDynamic = orRes.json === null || mdRes.json === null
-    ? (await readDynamic(deps.kv)) ?? []
-    : [];
+  // The bundled baseline is a floor, not a replacement. A source that failed
+  // this run must not erase what the last successful run stored for it: entries
+  // that exist only upstream would silently vanish from the served map and stay
+  // gone until the next success. Those entries are re-fed as that source's
+  // layer, so a success still replaces them wholesale while a failure keeps
+  // them at their last known prices.
+  //
+  // The stored layer wins over the last-fetch cache, not the other way round: a
+  // cache document holds only what THAT fetch saw, so re-parsing it dropped
+  // every entry learned since (a price learned two syncs later vanished the
+  // first time this source hiccupped). The cache is a bootstrap for an instance
+  // whose stored layer is empty, nothing more.
+  const sourceFailed = orRes.error !== null || mdRes.error !== null;
+  const previousDynamic = sourceFailed ? (await readDynamic(deps.kv)) ?? [] : [];
   const priorLayer = (origin: DynamicPricingEntry["origin"]) =>
     previousDynamic.filter((entry) => entry.origin === origin);
+  const layerFor = (
+    origin: DynamicPricingEntry["origin"],
+    resolution: FetchResolution,
+    parse: (json: unknown, now: string) => { entries: DynamicPricingEntry[]; warnings: string[] }
+  ): { entries: DynamicPricingEntry[]; warnings: string[] } => {
+    if (resolution.error === null) {
+      return resolution.json === null ? { entries: [], warnings: [] } : parse(resolution.json, now);
+    }
+    const prior = priorLayer(origin);
+    if (prior.length > 0) return { entries: prior, warnings: [] };
+    return resolution.json === null ? { entries: [], warnings: [] } : parse(resolution.json, now);
+  };
 
-  const orParse = orRes.json === null
-    ? { entries: priorLayer("openrouter"), warnings: [] }
-    : parseOpenRouter(orRes.json, now);
-  const mdParse = mdRes.json === null
-    ? { entries: priorLayer("models.dev"), warnings: [] }
-    : parseModelsDev(mdRes.json, now);
+  const orParse = layerFor("openrouter", orRes, parseOpenRouter);
+  const mdParse = layerFor("models.dev", mdRes, parseModelsDev);
 
   const merged = mergePricingSources({
     baseline: baseline as DynamicPricingEntry[],
@@ -153,6 +198,42 @@ export async function syncDynamicPricing(
     modelsDev: mdParse.entries,
     now,
   });
+
+  // Restore the alternate-route prices a failed source had contributed. When
+  // models.dev is the primary for a model and OpenRouter only an alternate
+  // route, the OpenRouter rates live in that entry's `routePrices`, not in an
+  // entry of their own — so re-feeding only `origin === "openrouter"` entries
+  // left them out, and one failed OpenRouter fetch silently dropped the
+  // OpenRouter route for every such model until OpenRouter recovered.
+  if (sourceFailed) {
+    const storedByModel = new Map(previousDynamic.map((entry) => [entry.model, entry]));
+    for (const entry of merged.entries) {
+      const stored = storedByModel.get(entry.model);
+      if (!stored?.routePrices) continue;
+      const restorable = Object.entries(stored.routePrices).filter(([route, rates]) =>
+        (orRes.error !== null && route === "openrouter") ||
+        (mdRes.error !== null && route === "models.dev" && rates.origin === "models.dev"),
+      );
+      if (restorable.length === 0) continue;
+      entry.routePrices = { ...Object.fromEntries(restorable), ...entry.routePrices };
+    }
+  }
+
+  // A run must not publish over a result that is already NEWER than its own
+  // start time. The scheduler's single-flight only covers its own invocation;
+  // an admin "Refresh prices" runs this orchestrator beside it, and whichever
+  // finished last used to win — so a slow stale fetch replaced the fresh
+  // catalogue with older prices. Both backends store the publication time in
+  // the meta, and both are last-write-wins, so this is a read-then-write guard
+  // that narrows the window to the gap between the read and the put rather
+  // than eliminating it; it is a strict improvement and cheap.
+  const published = await readMeta(deps.kv);
+  if (published?.lastSyncedAt && Date.parse(published.lastSyncedAt) > Date.parse(now)) {
+    const warnings = [
+      `pricing: a newer sync (${published.lastSyncedAt}) is already published; this run's result was discarded`,
+    ];
+    return { ok: errors.length === 0, entriesWritten: 0, meta: { ...published }, warnings, errors };
+  }
 
   // Build meta first so we can attempt to write both entries and meta atomically
   // (best-effort: if either write fails we surface kv error and ok=false).

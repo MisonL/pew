@@ -59,6 +59,8 @@ interface UseSeasonLeaderboardResult {
   loadTeamMembers: (teamId: string) => Promise<void>;
   /** Set of team IDs currently loading members */
   loadingTeamIds: Set<string>;
+  /** Teams whose member fetch failed; "no members" and "load failed" differ */
+  failedTeamIds: Set<string>;
 }
 
 export function useSeasonLeaderboard(
@@ -78,6 +80,7 @@ export function useSeasonLeaderboard(
   );
   const loadingTeamIdsRef = useRef<Set<string>>(new Set());
   const [loadingTeamIds, setLoadingTeamIds] = useState<Set<string>>(new Set());
+  const [failedTeamIds, setFailedTeamIds] = useState<Set<string>>(new Set());
 
   // Reset the lazy-member cache when the season changes: team IDs fetched in
   // season A must not satisfy season B (and must not pin A's member data).
@@ -126,10 +129,19 @@ export function useSeasonLeaderboard(
           if (teamWithMembers?.members) {
             const members = teamWithMembers.members;
             setMembersByTeam((prev) => new Map(prev).set(teamId, members));
+            setFailedTeamIds((prev) => {
+              if (!prev.has(teamId)) return prev;
+              const next = new Set(prev);
+              next.delete(teamId);
+              return next;
+            });
           }
         }
       } catch {
-        // Silently fail — user can retry by collapsing/expanding again
+        // Remember the failure: rendering "No members to display" for a team
+        // whose member request 500'd is a lie the user cannot tell apart from
+        // an actually empty team. The row offers a retry instead.
+        setFailedTeamIds((prev) => new Set(prev).add(teamId));
       } finally {
         loadingTeamIdsRef.current.delete(teamId);
         setLoadingTeamIds((prev) => {
@@ -163,5 +175,6 @@ export function useSeasonLeaderboard(
     },
     loadTeamMembers,
     loadingTeamIds,
+    failedTeamIds,
   };
 }

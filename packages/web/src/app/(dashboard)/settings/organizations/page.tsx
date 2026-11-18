@@ -57,6 +57,7 @@ export default function OrganizationsPage() {
     Map<string, { joined: boolean; delta: number }>
   >(new Map());
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const baseMyOrgIds = useMemo(
     () => new Set((mineData?.organizations ?? []).map((o) => o.id)),
@@ -100,9 +101,15 @@ export default function OrganizationsPage() {
 
   const handleJoin = async (orgId: string) => {
     setPendingAction(orgId);
+    setActionError(null);
     try {
       const res = await fetch(`/api/organizations/${orgId}/join`, { method: "POST" });
-      if (res.ok) {
+      if (!res.ok) {
+        // Without this the button just snapped back: the user believed they
+        // had joined until a reload showed they had not.
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        setActionError(body.error ?? "Could not join the organization");
+      } else {
         setOverrides((prev) => {
           const next = new Map(prev);
           next.set(orgId, { joined: true, delta: 1 });
@@ -112,6 +119,8 @@ export default function OrganizationsPage() {
         await mutateMine();
         setOverrides(new Map());
       }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Request failed");
     } finally {
       setPendingAction(null);
     }
@@ -119,9 +128,13 @@ export default function OrganizationsPage() {
 
   const handleLeave = async (orgId: string) => {
     setPendingAction(orgId);
+    setActionError(null);
     try {
       const res = await fetch(`/api/organizations/${orgId}/leave`, { method: "DELETE" });
-      if (res.ok) {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        setActionError(body.error ?? "Could not leave the organization");
+      } else {
         setOverrides((prev) => {
           const next = new Map(prev);
           next.set(orgId, { joined: false, delta: -1 });
@@ -131,6 +144,8 @@ export default function OrganizationsPage() {
         await mutateMine();
         setOverrides(new Map());
       }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not leave the organization");
     } finally {
       setPendingAction(null);
     }
@@ -210,6 +225,11 @@ export default function OrganizationsPage() {
 
       {/* Organization List */}
       <section>
+        {actionError !== null && (
+          <div className="mb-3">
+            <Banner variant="error" size="sm" description={actionError} />
+          </div>
+        )}
         <h2 className="flex items-center gap-2 text-sm font-medium text-foreground mb-3">
           <Building2 className="h-4 w-4" strokeWidth={1.5} />
           Available Organizations

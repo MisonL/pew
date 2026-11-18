@@ -84,17 +84,19 @@ function TeamRow({
   onMemberClick,
   onExpand,
   membersLoading,
+  membersFailed,
 }: {
   entry: SeasonTeamEntry;
   index: number;
   onMemberClick: (member: SeasonMember) => void;
   onExpand?: () => void;
   membersLoading?: boolean;
+  membersFailed?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const members = entry.members ?? [];
   const hasMembers = members.length > 0;
-  const canExpand = hasMembers || membersLoading !== undefined;
+  const canExpand = hasMembers || membersLoading !== undefined || membersFailed === true;
   const tc = teamColor(entry.team.name);
 
   const handleToggle = () => {
@@ -204,6 +206,17 @@ function TeamRow({
                 Loading members...
               </span>
             </div>
+          ) : membersFailed ? (
+            // A failed member fetch is not an empty team; say which one
+            // happened and let the row try again.
+            <div className="flex items-center justify-center gap-3 py-4">
+              <span className="text-sm text-muted-foreground">
+                Could not load members.
+              </span>
+              <Button type="button" variant="ghost" size="sm" onClick={() => onExpand?.()}>
+                Retry
+              </Button>
+            </div>
           ) : hasMembers ? (
             members.map((member) => {
             const displayName = member.name ?? "Anonymous";
@@ -287,7 +300,7 @@ export default function SeasonLeaderboardPage() {
   const { slug } = useParams<{ slug: string }>();
 
   // Pass slug directly to the API (supports both UUID and slug since Phase 3)
-  const { data, loading, refreshing, error, loadTeamMembers, loadingTeamIds } =
+  const { data, loading, refreshing, error, loadTeamMembers, loadingTeamIds, failedTeamIds } =
     useSeasonLeaderboard(slug);
 
   const isLoading = loading && !data;
@@ -385,6 +398,7 @@ export default function SeasonLeaderboardPage() {
                   onMemberClick={handleMemberClick}
                   onExpand={() => loadTeamMembers(entry.team.id)}
                   membersLoading={loadingTeamIds.has(entry.team.id)}
+                  membersFailed={failedTeamIds.has(entry.team.id)}
                 />
               ))
             )}
