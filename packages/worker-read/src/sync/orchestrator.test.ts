@@ -169,6 +169,65 @@ describe("syncDynamicPricing", () => {
     expect(stored.some((e) => e.model === "vendor/only-on-modelsdev")).toBe(true);
   });
 
+  // Upstream can answer 200 with an error document (OpenRouter does this behind
+  // its own gateway). readSource cached it, the parser degraded it to a warning,
+  // and `ok` only counted errors — so the run reported success, rewrote the
+  // source's layer as empty, and the previously known prices vanished until the
+  // next good fetch.
+  it("treats a 200 response without the expected payload as that source failing", async () => {
+    await kv.put(KEY_DYNAMIC, JSON.stringify([
+      { model: "vendor/only-on-openrouter", provider: "vendor", displayName: null,
+        inputPerMillion: 1, outputPerMillion: 2, cachedPerMillion: null, contextWindow: 1000,
+        origin: "openrouter", updatedAt: "2026-04-29T00:00:00.000Z", aliases: [] },
+    ]));
+    // A good document from yesterday: the bad body must not replace it, so a
+    // later cheap rebuild still has real data to fall back to.
+    kv.store.set(
+      KEY_LAST_FETCH_OPENROUTER,
+      JSON.stringify({ json: OPENROUTER_OK, fetchedAt: "2026-04-29T00:00:00.000Z" })
+    );
+    const fetchImpl = mockFetch({
+      [OPENROUTER_URL]: { status: 200, body: { error: { message: "temporary catalogue failure" } } },
+      [MODELS_DEV_URL]: { status: 200, body: MODELS_DEV_OK },
+    });
+
+    const r = await syncDynamicPricing({ db, kv, fetchImpl }, NOW);
+
+    expect(r.ok).toBe(false);
+    expect(r.errors.find((e) => e.source === "openrouter")).toBeDefined();
+    const stored = JSON.parse(kv.store.get(KEY_DYNAMIC)!) as DynamicPricingEntry[];
+    expect(stored.some((e) => e.model === "vendor/only-on-openrouter")).toBe(true);
+    const cached = JSON.parse(kv.store.get(KEY_LAST_FETCH_OPENROUTER)!) as { fetchedAt: string };
+    expect(cached.fetchedAt).toBe("2026-04-29T00:00:00.000Z");
+  });
+
+  // A model can carry OpenRouter rates as an ALTERNATE route on an entry whose
+  // primary origin is models.dev. Those rates are not an entry of their own, so
+  // preserving "openrouter-origin entries" did not cover them: one failed
+  // OpenRouter fetch dropped the OpenRouter route for every such model.
+  it("keeps an alternate-route price when that route's source fails", async () => {
+    await kv.put(KEY_DYNAMIC, JSON.stringify([
+      { model: "openai/only-via-route", provider: "openai", displayName: null,
+        inputPerMillion: 3, outputPerMillion: 6, cachedPerMillion: null, contextWindow: 1000,
+        origin: "models.dev", updatedAt: "2026-04-29T00:00:00.000Z", aliases: [],
+        route: "direct",
+        routePrices: { openrouter: { inputPerMillion: 1, outputPerMillion: 2, cachedPerMillion: null,
+          origin: "openrouter", updatedAt: "2026-04-29T00:00:00.000Z" } } },
+    ]));
+    const fetchImpl = mockFetch({
+      [OPENROUTER_URL]: { status: 500 },
+      [MODELS_DEV_URL]: { status: 200, body: { openai: { models: { "only-via-route": {
+        name: "Only", cost: { input: 3, output: 6 }, limit: { context: 1000 } } } } } },
+    });
+
+    const r = await syncDynamicPricing({ db, kv, fetchImpl }, NOW);
+
+    expect(r.ok).toBe(false);
+    const stored = JSON.parse(kv.store.get(KEY_DYNAMIC)!) as DynamicPricingEntry[];
+    const entry = stored.find((e) => e.model === "openai/only-via-route");
+    expect(entry?.routePrices?.openrouter?.inputPerMillion).toBe(1);
+  });
+
   it("still replaces a preserved entry once that source succeeds again", async () => {
     await kv.put(KEY_DYNAMIC, JSON.stringify([
       { model: "vendor/only-on-openrouter", provider: "vendor", displayName: null,
