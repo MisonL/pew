@@ -15,6 +15,8 @@ import {
   UserPlus,
 } from "lucide-react";
 import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
+import { ErrorBanner } from "@/components/ui/error-banner";
+import { failedToLoad } from "@/lib/fetch-state";
 import { Button } from "@nocoo/basalt/components/button";
 import { Empty } from "@nocoo/basalt/components/empty";
 import { Input } from "@nocoo/basalt/components/input";
@@ -196,11 +198,14 @@ function TeamCard({
 // ---------------------------------------------------------------------------
 
 export default function TeamsPage() {
-  const { data: teamsData, mutate: mutateTeams } = useSWR<{ teams: Team[] }>(
+  const { data: teamsData, mutate: mutateTeams, error: teamsError } = useSWR<{ teams: Team[] }>(
     "/api/teams",
     fetcher,
   );
   const teams = teamsData?.teams ?? [];
+  // A failed load is not "no teams": the empty state below told a member of
+  // several teams that they belonged to none whenever /api/teams answered 500.
+  const teamsFailed = failedToLoad(teamsData, teamsError);
   const [showCreateTeam, setShowCreateTeam] = useState(false);
   const [newTeamName, setNewTeamName] = useState("");
   const [creatingTeam, setCreatingTeam] = useState(false);
@@ -395,7 +400,12 @@ export default function TeamsPage() {
         )}
 
         {/* Teams list */}
-        {teams.length === 0 ? (
+        {teamsFailed ? (
+          <ErrorBanner
+            messagePrefix="Failed to load teams"
+            error={teamsError instanceof Error ? teamsError.message : "Request failed"}
+          />
+        ) : teams.length === 0 ? (
           <Empty
             title="You're not in any teams yet."
             description="Create one or join with an invite code."
