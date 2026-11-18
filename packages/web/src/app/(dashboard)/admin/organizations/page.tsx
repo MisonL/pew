@@ -381,6 +381,7 @@ function MembersModal({
   onMemberRemoved: () => void;
 }) {
   const [members, setMembers] = useState<MemberRow[]>([]);
+  const [membersError, setMembersError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [removing, setRemoving] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -398,14 +399,19 @@ function MembersModal({
   useEffect(() => {
     const fetchMembers = async () => {
       setLoading(true);
+      setMembersError(null);
       try {
         const res = await fetch(`/api/admin/organizations/${org.id}/members`);
         if (res.ok) {
           const data = (await res.json()) as { members: MemberRow[] };
           setMembers(data.members);
+        } else {
+          // Without this the dialog showed "Members (0) / No members yet" for
+          // an organization whose member list merely failed to load.
+          setMembersError("Failed to list members");
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        setMembersError(err instanceof Error ? err.message : "Failed to list members");
       } finally {
         setLoading(false);
       }
@@ -505,7 +511,9 @@ function MembersModal({
               <OrgLogo logoUrl={org.logoUrl} name={org.name} size="sm" />
               <div className="min-w-0">
                 <DialogTitle className="text-sm">{org.name}</DialogTitle>
-                <DialogDescription>Members ({members.length})</DialogDescription>
+                <DialogDescription>
+                  {membersError !== null ? "Members (unavailable)" : `Members (${members.length})`}
+                </DialogDescription>
               </div>
               <Button
                 type="button"
@@ -589,8 +597,10 @@ function MembersModal({
                   <Skeleton key={`slot-${i}`} className="h-12 w-full" />
                 ))}
               </div>
-            ) : members.length === 0 ? (
+            ) : members.length === 0 && membersError === null ? (
               <Empty title="No members yet." className="py-8" />
+            ) : membersError !== null ? (
+              <ErrorBanner messagePrefix="Failed to list members" error={membersError} />
             ) : (
               <div className="space-y-2">
                 {members.map((member) => (
