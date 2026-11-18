@@ -699,6 +699,8 @@ bash deploy/selfhost/backup.sh /var/backups/pew/pew.db
   `/rqlite/file/backup.db`，与宿主输出路径无关，所以并发运行必然互相覆盖，且先结束者的
   EXIT trap 会 `rm -f` 掉另一个正在使用的归档。**指向不同输出路径并不能避免冲突**——必须
   错开时间，或用 `flock`（如 `flock -n /var/lock/pew-backup.lock bash backup.sh ...`）串行化。
+  `upgrade.sh` 自带的备份已经用 cron 同一个锁文件 `/tmp/pew-backup.lock` 串行化：cron 正在
+  跑备份时升级会直接失败并提示，而不是把两边的归档互相删掉。
 - **备份会按天累积，保留策略由 cron 承担**：单个归档约等于数据库大小（实测 34 MB），
   每日备份不清理会缓慢吃满磁盘。在备份命令旁挂一条保留规则，例如只保留 14 天：
   `find /var/backups/pew -maxdepth 1 -name 'backup-*.db' -mtime +14 -delete`。

@@ -24,21 +24,41 @@ vi.mock("node:fs", async (importOriginal) => {
  * Random picks within that range still collided across the suite's parallel
  * workers (a full run produced listen EADDRINUSE from ensurePortFree). Give
  * each vitest worker its own 100-port slice of the range and walk it
- * sequentially, so two workers never hand the same port to their lanes. */
-const PORT_SLICE_BASE =
-  21_000 + ((Number(process.env.VITEST_WORKER_ID ?? process.pid) || 1) % 100) * 100;
+ * sequentially, so two workers never hand the same port to their lanes.
+ *
+ * Two later collisions: a 100-port slice was too narrow for one worker running
+ * concurrent test files (each file has its own module graph and starts at the
+ * same base), and the arithmetic itself left the TCP range from worker 44 on
+ * (21_000 + 43 * 1000 + 999 stayed below 65_535, 21_000 + 44 * 1000 did not),
+ * so later workers walked ports the kernel refuses. The allocator now hashes
+ * the worker identity onto a 400-port slice below the top of the range and
+ * skips any registry entry this process already handed out. */
+const PORT_SLICE_BASE = 20_000 + (hashWorkerIdentity() % 100) * 400;
+const handedOut = new Set<number>();
 let nextPort = PORT_SLICE_BASE;
 
+function hashWorkerIdentity(): number {
+  const id = process.env.VITEST_WORKER_ID ?? String(process.pid);
+  let hash = 0;
+  for (const ch of id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return hash;
+}
+
 async function freePort(): Promise<string> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
     const candidate = nextPort++;
+    if (nextPort > PORT_SLICE_BASE + 400) nextPort = PORT_SLICE_BASE;
+    if (handedOut.has(candidate)) continue;
     const probe = createServer();
     const bound = await new Promise<boolean>((done) => {
       probe.once("error", () => done(false));
       probe.listen(candidate, "127.0.0.1", () => done(true));
     });
     await new Promise<void>((done) => (bound ? probe.close(() => done()) : done()));
-    if (bound) return String(candidate);
+    if (bound) {
+      handedOut.add(candidate);
+      return String(candidate);
+    }
   }
   throw new Error(`could not find a free port in the worker's slice from ${PORT_SLICE_BASE}`);
 }
@@ -875,5 +895,31 @@ describe("E2E abort-listener hygiene", () => {
     const source = readFileSync(join(import.meta.dirname, "../e2e-utils.ts"), "utf8");
     expect(source).toContain('removeEventListener("abort", onAbort)');
     expect(source).not.toMatch(/addEventListener\("abort", \(\) => reject\(abort\.signal\.reason\)/);
+  });
+});
+
+describe("E2E port isolation across lanes", () => {
+  // Concurrent lanes (the suite spawns several, and a pre-push L2 lane can run
+  // beside them) each pick a port. Reusing one that a previous lane has only
+  // just released fails the later lane with listen EADDRINUSE (measured:
+  // `EADDRINUSE 127.0.0.1:21207` in a full coverage run), so two callers must
+  // never receive the same port.
+  it("never hands the same port to two callers", async () => {
+    const ports = await Promise.all(Array.from({ length: 8 }, () => freePort()));
+    expect(new Set(ports).size).toBe(ports.length);
+    for (const p of ports) {
+      const n = Number(p);
+      expect(n).toBeGreaterThanOrEqual(20_000);
+      expect(n).toBeLessThanOrEqual(65_535);
+    }
+  });
+
+  // The ephemeral pool is exactly what every other process on the machine
+  // draws from, so a lane that lets the OS pick can be handed a port a *real*
+  // server is about to take. Lanes therefore pick explicitly and must reach
+  // `next dev`/`next start` with that same port.
+  it("starts the server on the port it checked", async () => {
+    const source = readFileSync(join(import.meta.dirname, "../e2e-utils.ts"), "utf8");
+    expect(source).toMatch(/"--port", port/);
   });
 });
