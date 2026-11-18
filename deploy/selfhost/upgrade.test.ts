@@ -173,9 +173,17 @@ describe("selfhost upgrade.sh", () => {
       if (name !== "flock") symlinkSync(join(bin, name), join(mv, name));
     }
     symlinkSync(process.execPath, join(mv, "node"));
+    symlinkSync(process.env.BASH ?? "/bin/bash", join(mv, "bash"));
+    for (const tool of ["git", "date", "mkdir", "sed", "dirname", "stat"]) {
+      const found = execFileSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim();
+      symlinkSync(found, join(mv, tool));
+    }
+    // Every external the script runs comes from the fixture bin directory, so
+    // no system directory may appear in PATH — Ubuntu ships flock in
+    // /usr/bin, and a real one there would make this test prove nothing.
     const { code, out } = await f.run([], {
       PEW_UPGRADE_NO_RESTART: "1",
-      PATH: `${mv}:/usr/bin:/bin`,
+      PATH: mv,
     });
     expect(code, out).toBe(0);
     expect(out).toMatch(/flock not found/);
