@@ -67,13 +67,26 @@ if [ "$SKIP_BACKUP" -eq 0 ]; then
   # container path and deletes it on start and exit, so two runs — the nightly
   # cron job and this upgrade — cannot be inside it at once: whichever ends
   # first removes the archive the other is copying. Holding the lock here
-  # closes that window for every path this script documents (--dry-run never
-  # reaches this block because run() only prints).
+  # closes that window for every path this script documents; --dry-run only
+  # prints the locked command instead of taking the lock.
   BACKUP_LOCK="${PEW_BACKUP_LOCK:-/tmp/pew-backup.lock}"
-  command -v flock >/dev/null 2>&1 \
-    || { echo "upgrade.sh: flock is required to serialise backups with the cron job" >&2; exit 1; }
+  # flock lives on the Linux hosts this stack targets; macOS (a developer
+  # laptop) ships none. Without it a manual upgrade can race the cron job on
+  # the shared container path, so say so loudly and keep going rather than
+  # refuse to upgrade — same rule as backup.sh's missing-sqlite3 branch.
+  # `command -v` is asked of the target interpreter, not the file system, so
+  # the probe matches what `flock` below would actually run.
+  CAN_LOCK=1
+  if [ "$DRY_RUN" -eq 0 ] && ! command -v flock >/dev/null 2>&1; then
+    CAN_LOCK=0
+    echo "WARNING: flock not found — the backup will NOT be serialised with the cron job;" >&2
+    echo "  do not run an upgrade while a scheduled backup is in progress." >&2
+  fi
   if [ "$DRY_RUN" -eq 1 ]; then
     run flock -n "$BACKUP_LOCK" bash backup.sh "$BACKUP_DIR/backup-$STAMP.db"
+  elif [ "$CAN_LOCK" -eq 0 ]; then
+    bash backup.sh "$BACKUP_DIR/backup-$STAMP.db" \
+      || { echo "upgrade.sh: the backup failed" >&2; exit 1; }
   elif ! flock -n "$BACKUP_LOCK" bash backup.sh "$BACKUP_DIR/backup-$STAMP.db"; then
     echo "upgrade.sh: the backup did not run or failed (another backup may hold $BACKUP_LOCK — wait for it, or pass --skip-backup to upgrade without one)" >&2
     exit 1

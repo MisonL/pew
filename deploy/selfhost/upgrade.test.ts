@@ -1,5 +1,5 @@
 import { describe, expect, it, afterAll } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -155,6 +155,30 @@ describe("selfhost upgrade.sh", () => {
     // Same lock file the documented crontab uses, so cron and the upgrade
     // cannot both be inside backup.sh.
     expect(calls[0]!.lock).toBe("/tmp/pew-backup.lock");
+    expect(readFileSync(f.argvLog, "utf8")).toContain("compose build");
+  });
+
+  it("still backs up, loudly unlocked, on a host without flock", async () => {
+    // macOS (a developer laptop) has no flock. Refusing to upgrade there
+    // would make `bash upgrade.sh` unusable locally; the honest shape is to
+    // warn and run the backup unlocked, as backup.sh does for sqlite3.
+    const f = fixture({});
+    // A PATH with the fake docker but no fake flock: the fixture's bin
+    // directory alone, plus the directory holding the real `node` the
+    // version check needs. `command -v flock` in upgrade.sh then misses.
+    const bin = join(f.root, "bin");
+    const mv = join(f.root, "noflock");
+    mkdirSync(mv);
+    for (const name of readdirSync(bin)) {
+      if (name !== "flock") symlinkSync(join(bin, name), join(mv, name));
+    }
+    symlinkSync(process.execPath, join(mv, "node"));
+    const { code, out } = await f.run([], {
+      PEW_UPGRADE_NO_RESTART: "1",
+      PATH: `${mv}:/usr/bin:/bin`,
+    });
+    expect(code, out).toBe(0);
+    expect(out).toMatch(/flock not found/);
     expect(readFileSync(f.argvLog, "utf8")).toContain("compose build");
   });
 
