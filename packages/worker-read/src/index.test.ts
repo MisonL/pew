@@ -505,9 +505,17 @@ describe("pew read Worker", () => {
       // Both upstreams resolve concurrently and each reads its own body, so
       // the mock must hand out a fresh Response per call; a single shared one
       // makes the second read fail and turns this into the degraded path.
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-        new Response(JSON.stringify({ data: [] }), { status: 200 })
-      );
+      // Each upstream also answers its own document shape: a body that is not
+      // the source's document is a failed fetch (see payloadIsUsable), so
+      // handing OpenRouter's `{data: []}` to models.dev would make this a
+      // degraded run rather than the clean one under test.
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = String(input instanceof Request ? input.url : input);
+        const body = url.includes("openrouter")
+          ? { data: [] }
+          : { openai: { models: {} } };
+        return new Response(JSON.stringify(body), { status: 200 });
+      });
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       try {

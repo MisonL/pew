@@ -28,6 +28,7 @@ import { parseOpenRouter } from "./openrouter";
 import {
   readDynamic,
   readLastFetch,
+  readMeta,
   writeDynamicOrThrow,
   writeLastFetch,
   writeMetaOrThrow,
@@ -216,6 +217,22 @@ export async function syncDynamicPricing(
       if (restorable.length === 0) continue;
       entry.routePrices = { ...Object.fromEntries(restorable), ...entry.routePrices };
     }
+  }
+
+  // A run must not publish over a result that is already NEWER than its own
+  // start time. The scheduler's single-flight only covers its own invocation;
+  // an admin "Refresh prices" runs this orchestrator beside it, and whichever
+  // finished last used to win — so a slow stale fetch replaced the fresh
+  // catalogue with older prices. Both backends store the publication time in
+  // the meta, and both are last-write-wins, so this is a read-then-write guard
+  // that narrows the window to the gap between the read and the put rather
+  // than eliminating it; it is a strict improvement and cheap.
+  const published = await readMeta(deps.kv);
+  if (published?.lastSyncedAt && Date.parse(published.lastSyncedAt) > Date.parse(now)) {
+    const warnings = [
+      `pricing: a newer sync (${published.lastSyncedAt}) is already published; this run's result was discarded`,
+    ];
+    return { ok: errors.length === 0, entriesWritten: 0, meta: { ...published }, warnings, errors };
   }
 
   // Build meta first so we can attempt to write both entries and meta atomically

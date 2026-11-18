@@ -228,6 +228,39 @@ describe("syncDynamicPricing", () => {
     expect(entry?.routePrices?.openrouter?.inputPerMillion).toBe(1);
   });
 
+  // The scheduler's single-flight only covers its own invocation; an admin
+  // "Refresh prices" runs the same orchestrator beside it. Whichever run
+  // finishes LAST used to win, so a slow stale fetch (price 1) overwrote the
+  // newer manual run's price 3. A run whose start time is older than what is
+  // already stored must not publish.
+  it("does not let a run that started earlier overwrite a newer published result", async () => {
+    await kv.put(KEY_DYNAMIC_META, JSON.stringify({
+      lastSyncedAt: "2026-04-30T00:05:00.000Z", modelCount: 1, baselineCount: 0,
+      openRouterCount: 1, modelsDevCount: 0, lastErrors: null,
+    }));
+    await kv.put(KEY_DYNAMIC, JSON.stringify([
+      { model: "anthropic/claude-sonnet-4-20250514", provider: "anthropic", displayName: null,
+        inputPerMillion: 3, outputPerMillion: 15, cachedPerMillion: null, contextWindow: 200000,
+        origin: "openrouter", updatedAt: "2026-04-30T00:05:00.000Z", aliases: [] },
+    ]));
+    const fetchImpl = mockFetch({
+      [OPENROUTER_URL]: { status: 200, body: { data: [{ ...OPENROUTER_OK.data[0],
+        pricing: { prompt: "0.000001", completion: "0.000002" } }] } },
+      [MODELS_DEV_URL]: { status: 200, body: MODELS_DEV_OK },
+    });
+
+    // NOW is 00:00:00, older than the stored 00:05:00 publication.
+    const r = await syncDynamicPricing({ db, kv, fetchImpl }, NOW);
+
+    const stored = JSON.parse(kv.store.get(KEY_DYNAMIC)!) as DynamicPricingEntry[];
+    const entry = stored.find((e) => e.model === "anthropic/claude-sonnet-4-20250514");
+    expect(entry?.inputPerMillion).toBe(3);
+    expect(r.warnings.some((w) => /newer/i.test(w))).toBe(true);
+    // Nothing was written, so the outcome must not claim otherwise — the cron
+    // handler logs this number as "entries written".
+    expect(r.entriesWritten).toBe(0);
+  });
+
   it("still replaces a preserved entry once that source succeeds again", async () => {
     await kv.put(KEY_DYNAMIC, JSON.stringify([
       { model: "vendor/only-on-openrouter", provider: "vendor", displayName: null,
