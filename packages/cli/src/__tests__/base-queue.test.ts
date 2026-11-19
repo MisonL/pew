@@ -398,6 +398,24 @@ describe("BaseQueue", () => {
   });
 
   it.each([
+    ["null", "null"],
+    ["array", "[]"],
+    ["string", '"state"'],
+    ["number", "5"],
+  ])("falls back to an empty queue state when the state file parses to %s", async (_label, body) => {
+    // `JSON.parse` accepts all of these, so the SyntaxError branch never saw
+    // them and `state.offset` on a non-object threw `null is not an object`.
+    // That aborted every sync before any source was read, and it recurred on
+    // every later run: the crash comes before the next save could replace the
+    // file. Recovering must also leave the file WRITABLE again.
+    await writeFile(join(tempDir, "test.state.json"), body);
+    const queue = createQueue(tempDir);
+    expect(await queue.loadState()).toEqual({ offset: 0 });
+    await queue.saveOffset(7);
+    expect(await queue.loadOffset()).toBe(7);
+  });
+
+  it.each([
     ["negative", -5],
     ["fractional", 12.5],
     ["non-numeric", "4096"],
