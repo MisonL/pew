@@ -1,10 +1,30 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 
 import { dirname, join } from "node:path";
 import { ConfigManager as BaseConfigManager } from "@nocoo/base-cli";
 import type { PewConfig } from "@pew/core";
+import { isRecord } from "../storage/state-shape.js";
+
+/**
+ * A config document, or `{}` when it cannot be one.
+ *
+ * `JSON.parse` accepts `null`, arrays and bare scalars, and the base class
+ * hands any parse result back verbatim: `load()` returned it, and
+ * `isLoggedIn()`/`get()` then threw `null is not an object` on every command.
+ * Treating both a torn file and a non-object document as empty keeps that
+ * failure the plain "not logged in" the operator can act on — login rewrites
+ * the file, so nothing unrecoverable is lost.
+ */
+function parseConfig(raw: string): PewConfig {
+  try {
+    const config: unknown = JSON.parse(raw);
+    return isRecord(config) ? config : {};
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Temp path beside `destination`, unique per write.
@@ -21,15 +41,38 @@ function tempPathBeside(destination: string): string {
 /** Errors a filesystem raises when it cannot create a hard link. */
 const HARDLINK_UNSUPPORTED = new Set(["ENOTSUP", "EOPNOTSUPP", "EPERM", "EACCES", "ENOSYS", "EXDEV"]);
 
-/** The device id already on disk, or undefined when it is missing or torn. */
+/**
+ * The device id already on disk.
+ *
+ * A missing file means "no identity yet" and the caller mints one. Anything
+ * else that yields no usable id — a torn file, valid JSON that is not an
+ * object, an empty `deviceId` — is NOT the same thing: device.json is the
+ * only record of which machine this is, and history already uploaded under
+ * that id cannot be re-attributed. Minting a replacement there silently
+ * splits one machine's history across two device rows on every run, and the
+ * corrupt document stays on disk so it happens again next time. Refuse
+ * instead, naming the file, so the operator can restore it or delete it to
+ * accept a new identity deliberately.
+ */
 async function readDeviceId(devicePath: string): Promise<string | undefined> {
+  let raw: string;
   try {
-    const data = JSON.parse(await readFile(devicePath, "utf-8")) as { deviceId?: unknown };
-    return typeof data.deviceId === "string" && data.deviceId ? data.deviceId : undefined;
-  } catch {
-    // Missing or unparseable file: the caller mints a new id.
-    return undefined;
+    raw = await readFile(devicePath, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return undefined;
+    throw new Error(`Cannot read device state ${devicePath}: ${(error as Error | undefined)?.message ?? String(error)}`, { cause: error });
   }
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    throw new Error(`Cannot read device state ${devicePath}: not valid JSON. Restore it, or delete it to accept a new device identity.`);
+  }
+  if (data !== null && typeof data === "object" && !Array.isArray(data)) {
+    const id = (data as { deviceId?: unknown }).deviceId;
+    if (typeof id === "string" && id) return id;
+  }
+  throw new Error(`Cannot read device state ${devicePath}: no deviceId. Restore it, or delete it to accept a new device identity.`);
 }
 
 // The SaaS host URLs live here rather than in commands/login.ts so every
@@ -177,6 +220,30 @@ export class ConfigManager extends BaseConfigManager<PewConfig> {
     return this.readAsync();
   }
 
+  /** Invalid JSON can be rebuilt by login; unread credentials cannot be safely merged. */
+  override read(): PewConfig {
+    let raw: string;
+    try {
+      raw = readFileSync(this.configPath, "utf-8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return {};
+      throw new Error(`Cannot read config state ${this.configPath}`, { cause: error });
+    }
+    return parseConfig(raw);
+  }
+
+  /** Async counterpart of {@link read}. */
+  override async readAsync(): Promise<PewConfig> {
+    let raw: string;
+    try {
+      raw = await readFile(this.configPath, "utf-8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return {};
+      throw new Error(`Cannot read config state ${this.configPath}`, { cause: error });
+    }
+    return parseConfig(raw);
+  }
+
   /**
    * Save config to disk. Note: this merges with existing config.
    *
@@ -246,8 +313,13 @@ export class ConfigManager extends BaseConfigManager<PewConfig> {
         const code = (error as NodeJS.ErrnoException).code;
         if (code === "EEXIST") {
           // Another process created it first. Its id is the one on disk now.
+          // If that file then vanished or arrived unusable, returning our own
+          // candidate here would hand out an identity no file records.
           const winner = await readDeviceId(devicePath);
-          if (winner) kept = winner;
+          if (!winner) {
+            throw new Error(`Cannot read device state ${devicePath}: the winning writer's file is gone`);
+          }
+          kept = winner;
         } else if (!HARDLINK_UNSUPPORTED.has(code ?? "")) {
           throw error;
         } else {

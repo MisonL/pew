@@ -227,7 +227,11 @@ export class BaseQueue<T> {
   async loadState(): Promise<QueueState> {
     try {
       const raw = await readFile(this.statePath, "utf-8");
-      const state = JSON.parse(raw) as Partial<QueueState>;
+      const state = JSON.parse(raw) as Partial<QueueState> | null;
+      // A non-object has no acknowledged prefix; replay from byte zero is idempotent.
+      if (state === null || typeof state !== "object" || Array.isArray(state)) {
+        return { offset: 0 };
+      }
       return {
         // A torn or hand-edited state file can carry any JSON value here. A
         // cursor that is not a byte count slices the queue mid-record

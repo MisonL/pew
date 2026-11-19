@@ -155,6 +155,12 @@ export async function pruneAliasCursors<TCursor>(
 
   const aliasPaths = new Set<string>();
   const missingPaths = new Set<string>();
+  // Only evidence that the file is GONE may drop its cursor. This branch
+  // deletes state that cannot be rebuilt without double counting: the next
+  // sync reads a dropped file as new and SUMs a whole replay. EACCES, EIO and
+  // ELOOP mean the path could not be examined, not that it disappeared, so
+  // those keep the entry (and its knownFilePaths marker) exactly as it was.
+  const GONE = new Set(["ENOENT", "ENOTDIR"]);
   let protectedCount = 0;
   // Iterate the union of cursorFiles and knownFilePaths keys so we also
   // catch "known-only" stale entries: paths that made it into
@@ -173,9 +179,11 @@ export async function pruneAliasCursors<TCursor>(
       protectedCount++;
       continue;
     }
-    const st = await stat(path).catch(() => null);
-    if (!st) {
-      missingPaths.add(path);
+    let st: Awaited<ReturnType<typeof stat>>;
+    try {
+      st = await stat(path);
+    } catch (error) {
+      if (GONE.has((error as NodeJS.ErrnoException | undefined)?.code ?? "")) missingPaths.add(path);
       continue;
     }
     if (liveInodes.has(`${st.dev}:${st.ino}`)) {

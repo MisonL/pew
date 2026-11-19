@@ -724,6 +724,14 @@ describe("executeLogin", () => {
   describe("custom log callback", () => {
     it("should use custom log function instead of console.log", async () => {
       const logMessages: string[] = [];
+      // base-cli logs the fallback from a `.catch()` on the openBrowser
+      // promise, so the message lands one microtask after the rejection —
+      // normally long before the 50ms login timeout fires. Under load that
+      // timer can win the race, and the test then asserted on an array the
+      // log had not reached yet. Wait for the entry itself with a deadline
+      // instead of assuming the ordering.
+      let logged: () => void = () => {};
+      const logArrived = new Promise<void>((resolve) => { logged = resolve; });
 
       // Use a short timeout so the test doesn't hang waiting for browser callback
       const loginPromise = executeLogin({
@@ -731,7 +739,10 @@ describe("executeLogin", () => {
         apiUrl: "http://localhost:7020",
         timeoutMs: 50, // Reduced from 300ms for faster tests
         generateNonce: () => FIXED_NONCE,
-        log: (msg) => logMessages.push(msg),
+        log: (msg) => {
+          logMessages.push(msg);
+          if (msg.includes("Could not open browser")) logged();
+        },
         openBrowser: async (_url) => {
           // Simulate browser failure to trigger the log callback
           throw new Error("Browser not available");
@@ -740,8 +751,11 @@ describe("executeLogin", () => {
 
       // Wait for timeout or result
       const result = await loginPromise;
+      await Promise.race([
+        logArrived,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("the browser-failure log never fired")), 1_000)),
+      ]);
 
-      // The log function should have been called with the "Could not open browser" message
       const browserMsg = logMessages.find((m) => m.includes("Could not open browser"));
       expect(browserMsg).toBeDefined();
       expect(result.success).toBe(false);

@@ -231,6 +231,17 @@ describe("ConfigManager", () => {
     expect(config).toEqual({});
   });
 
+  it("handles a config file that parses to a non-object without throwing", async () => {
+    // `JSON.parse` accepts these, so the base class's SyntaxError branch never
+    // saw them and `readAsync` handed back the raw value. Every field accessor
+    // then failed with `null is not an object` — `load()` returned null and
+    // `isLoggedIn()` threw — harder to recover than a plain "not logged in".
+    await writeFile(join(tempDir, "config.json"), "null");
+    const manager = new ConfigManager(tempDir);
+    expect(await manager.load()).toEqual({});
+    expect(manager.isLoggedIn()).toBe(false);
+  });
+
   // The credentials file holds the only copy of the API key. The base class
   // truncates the file in place, so a crash (or ENOSPC) mid-write leaves a
   // half-written file; `readAsync` turns an unparseable file into `{}`, which
@@ -471,15 +482,51 @@ describe("ConfigManager", () => {
       expect(id).toBe(sharedId);
     });
 
-    it("should handle corrupted device.json gracefully", async () => {
-      await writeFile(join(tempDir, "device.json"), "not json!!!");
+    it("preserves corrupted device.json instead of issuing an unpersisted identity", async () => {
+      const path = join(tempDir, "device.json");
+      await writeFile(path, "not json!!!");
       const manager = new ConfigManager(tempDir);
-      const id = await manager.ensureDeviceId();
+      await expect(manager.ensureDeviceId()).rejects.toThrow(/device state/i);
+      await expect(manager.ensureDeviceId()).rejects.toThrow(/device state/i);
+      expect(await readFile(path, "utf-8")).toBe("not json!!!");
+      expect(await fsPromises.readdir(tempDir)).toEqual(["device.json"]);
+    });
 
-      // Should generate a new ID (no legacy config to migrate from)
-      expect(id).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-      );
+    it.each(["null", "[]", '"id"', "5", '{"deviceId":null}', '{"deviceId":""}'])(
+      "refuses to replace an existing device identity whose document is %s",
+      async (body) => {
+        const path = join(tempDir, "device.json");
+        await writeFile(path, body);
+        const manager = new ConfigManager(tempDir);
+        await expect(manager.ensureDeviceId()).rejects.toThrow(/device state/i);
+        expect(await readFile(path, "utf-8")).toBe(body);
+        expect(await fsPromises.readdir(tempDir)).toEqual(["device.json"]);
+      },
+    );
+
+    it("does not initialize a device when its existing identity cannot be read", async () => {
+      const path = join(tempDir, "device.json");
+      await fsPromises.mkdir(path);
+      const manager = new ConfigManager(tempDir);
+      await expect(manager.ensureDeviceId()).rejects.toThrow(/device state/i);
+      expect((await fsPromises.stat(path)).isDirectory()).toBe(true);
+      expect(await fsPromises.readdir(tempDir)).toEqual(["device.json"]);
+    });
+
+    it("does not return a candidate id if the concurrent winner disappeared", async () => {
+      const manager = new ConfigManager(tempDir);
+      await manager.save({ token: "synthetic-token", deviceId: "legacy-id" });
+      const before = await readFile(manager.configPath, "utf-8");
+      writeGate.linkHook = () => {
+        throw Object.assign(new Error("concurrent destination disappeared"), { code: "EEXIST" });
+      };
+      try {
+        await expect(manager.ensureDeviceId()).rejects.toThrow(/device state/i);
+      } finally {
+        writeGate.linkHook = null;
+      }
+      expect(await readFile(manager.configPath, "utf-8")).toBe(before);
+      expect(await fsPromises.readdir(tempDir)).toEqual(["config.json"]);
     });
 
     it("should create directory when writing device.json to nested path", async () => {
