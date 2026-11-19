@@ -328,6 +328,8 @@ export interface SyncOutcomeDto {
   meta: DynamicPricingMetaDto;
   warnings: string[];
   errors: SyncErrorDto[];
+  /** Set when the run published nothing on purpose (e.g. a newer result was already published). */
+  skippedReason?: string;
 }
 
 // ---------------------------------------------------------------------------
