@@ -304,6 +304,28 @@ describe("pruneAliasCursors", () => {
     expect(result.knownFilePaths?.[aliasPath]).toBeUndefined();
   });
 
+  it("keeps a cursor when stat fails for a reason other than the path being gone", async () => {
+    // The missing branch is the one that DELETES state, so it may only fire on
+    // evidence that the file is gone. ENOENT/ENOTDIR say so; a permission or
+    // I/O error does not — the file is still there, and dropping its cursor
+    // makes the next sync read it as brand new and SUM a whole replay. A
+    // symlink loop is used because it fails deterministically (ELOOP) for any
+    // user, unlike chmod under root.
+    const loopA = join(tempDir, "loop-a.jsonl");
+    const loopB = join(tempDir, "loop-b.jsonl");
+    await symlink(loopB, loopA);
+    await symlink(loopA, loopB);
+    const result = await pruneAliasCursors(
+      { [loopA]: { inode: 1, size: 2 } } as Record<string, DummyCursor>,
+      new Set(),
+      { [loopA]: true },
+    );
+
+    expect(result.removedMissing).toBe(0);
+    expect(result.cursorFiles[loopA]).toEqual({ inode: 1, size: 2 });
+    expect(result.knownFilePaths?.[loopA]).toBe(true);
+  });
+
   it("leaves a known-only entry alone when its path falls under a protected prefix", async () => {
     // Known-only entries inside an OpenCode mtime-skipped dir must
     // still respect the protectedPrefixes exemption, otherwise we'd
