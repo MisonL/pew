@@ -460,6 +460,9 @@ function AuthCodeModal({
   const [authCodeExpiresAt, setAuthCodeExpiresAt] = useState<Date | null>(null);
   const [authCodeRemaining, setAuthCodeRemaining] = useState<number>(0);
   const [generatingCode, setGeneratingCode] = useState(false);
+  // A refused code request used to be a pure no-op: the button spun and
+  // snapped back with no code, no message, nothing to retry from.
+  const [codeError, setCodeError] = useState<string | null>(null);
 
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const restoreFocus = useRestoreDialogFocus(open);
@@ -474,6 +477,7 @@ function AuthCodeModal({
       setAuthCode(null);
       setAuthCodeExpiresAt(null);
       setAuthCodeRemaining(0);
+      setCodeError(null);
     }
   }
 
@@ -507,6 +511,7 @@ function AuthCodeModal({
 
   const handleGenerateAuthCode = async () => {
     setGeneratingCode(true);
+    setCodeError(null);
 
     try {
       const res = await fetch("/api/auth/code", {
@@ -517,9 +522,12 @@ function AuthCodeModal({
         const data = await res.json();
         setAuthCode(data.code);
         setAuthCodeExpiresAt(new Date(data.expires_at));
+      } else {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setCodeError(body.error ?? `Could not generate a code (HTTP ${res.status})`);
       }
     } catch {
-      // Silently fail
+      setCodeError("Could not reach the server. Check your connection and try again.");
     } finally {
       setGeneratingCode(false);
     }
@@ -549,6 +557,10 @@ function AuthCodeModal({
               Generate a one-time code to authenticate the pew CLI on a headless machine (no browser).
             </DialogDescription>
           </DialogHeader>
+
+          {codeError !== null && (
+            <Banner variant="error" size="sm" description={codeError} />
+          )}
 
           {authCode ? (
             <div className="space-y-4">

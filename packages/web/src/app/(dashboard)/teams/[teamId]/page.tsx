@@ -150,11 +150,15 @@ function AutoRegisterToggle({
   onToggle?: (newValue: boolean) => void;
 }) {
   const [saving, setSaving] = useState(false);
+  // Reverting silently left the switch where it started with no explanation —
+  // the failure existed only in the developer console.
+  const [failed, setFailed] = useState(false);
   const toggleId = useId();
 
   const handleToggle = async (newValue: boolean) => {
     onToggle?.(newValue);
     setSaving(true);
+    setFailed(false);
 
     try {
       const res = await fetch(`/api/teams/${teamId}`, {
@@ -165,13 +169,14 @@ function AutoRegisterToggle({
 
       if (!res.ok) {
         // Revert on failure
-        const errorText = await res.text();
-        console.error("Auto-register toggle failed:", res.status, errorText);
+        console.error("Auto-register toggle failed:", res.status, await res.text().catch(() => ""));
         onToggle?.(!newValue);
+        setFailed(true);
       }
     } catch (err) {
       console.error("Auto-register toggle error:", err);
       onToggle?.(!newValue);
+      setFailed(true);
     } finally {
       setSaving(false);
     }
@@ -199,6 +204,11 @@ function AutoRegisterToggle({
           When enabled, your team will be automatically registered for new upcoming
           seasons. You can withdraw before a season starts; later withdrawal follows its rules.
         </p>
+        {failed && (
+          <p role="alert" className="mt-1 text-xs text-basalt-destructive">
+            Could not save this setting. It has been reverted — try again.
+          </p>
+        )}
       </div>
     </div>
   );
