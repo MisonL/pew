@@ -49,3 +49,49 @@ export function saveScopeToStorage(scope: ScopeSelection): void {
     // Silently fail
   }
 }
+
+// ---------------------------------------------------------------------------
+// Scope validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the stored scope against the memberships that actually loaded.
+ *
+ * The org/team lists are the evidence for "this scope is still valid". When
+ * the memberships request FAILS both lists are empty, and an empty list cannot
+ * tell "you left that team" from "we could not ask" — validating against it
+ * silently downgraded a team-scoped board to the global one, and the scope
+ * dropdown vanished because it renders nothing for two empty lists. The caller
+ * passes `unavailable` (the membership request failed) so the scope is left
+ * as stored and the caller can say why, instead of pretending the selection
+ * was revoked.
+ */
+export interface ResolvedScope {
+  scope: ScopeSelection;
+  /**
+   * True when the stored scope was kept because memberships could not be
+   * loaded. The scope is unverified, not invalid; callers surface this.
+   */
+  unverified: boolean;
+}
+
+export function resolveScope(
+  rawScope: ScopeSelection,
+  organizations: readonly { id: string }[],
+  teams: readonly { id: string }[],
+  membershipsUnavailable: boolean,
+): ResolvedScope {
+  if (rawScope.type === "global") return { scope: rawScope, unverified: false };
+  if (membershipsUnavailable) return { scope: rawScope, unverified: true };
+  if (rawScope.type === "org" && rawScope.id) {
+    return organizations.some((o) => o.id === rawScope.id)
+      ? { scope: rawScope, unverified: false }
+      : { scope: { type: "global" }, unverified: false };
+  }
+  if (rawScope.type === "team" && rawScope.id) {
+    return teams.some((t) => t.id === rawScope.id)
+      ? { scope: rawScope, unverified: false }
+      : { scope: { type: "global" }, unverified: false };
+  }
+  return { scope: rawScope, unverified: false };
+}

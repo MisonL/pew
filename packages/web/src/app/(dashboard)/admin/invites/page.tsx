@@ -92,11 +92,16 @@ export default function AdminInvitesPage() {
   const {
     data: settingsData,
     isLoading: settingsLoading,
+    error: settingsError,
     mutate: mutateSettings,
   } = useSWR<{ settings: Array<{ key: string; value: string }> }>(
     isAdmin ? "/api/admin/settings" : null,
     fetcher,
   );
+  // When the settings request fails the switch keeps its default (on) and the
+  // page claims registration is gated when nobody has read the real value.
+  const settingsFailed = isAdmin && settingsData === undefined && settingsError !== undefined;
+  const settingsErrorMessage = settingsError instanceof Error ? settingsError.message : "Request failed";
   const [requireInvite, setRequireInvite] = useState(true);
   const [syncedSettings, setSyncedSettings] = useState<typeof settingsData>(undefined);
   if (settingsData && settingsData !== syncedSettings) {
@@ -329,7 +334,7 @@ export default function AdminInvitesPage() {
           <Switch
             id={requireInviteId}
             checked={requireInvite}
-            disabled={requireInviteLoading || togglingRequireInvite}
+            disabled={requireInviteLoading || togglingRequireInvite || settingsFailed}
             onCheckedChange={handleToggleRequireInvite}
             className="mt-0.5"
           />
@@ -338,9 +343,11 @@ export default function AdminInvitesPage() {
               Require invite code for registration
             </Label>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {requireInvite
-                ? "New users must enter a valid invite code to register."
-                : "Anyone can register without an invite code."}
+              {settingsFailed
+                ? "Could not load this setting; the switch is disabled until it loads."
+                : requireInvite
+                  ? "New users must enter a valid invite code to register."
+                  : "Anyone can register without an invite code."}
             </p>
           </div>
         </div>
@@ -351,6 +358,7 @@ export default function AdminInvitesPage() {
 
       {/* Error */}
       <ErrorBanner messagePrefix="Failed to load invite codes" error={error} />
+      <ErrorBanner messagePrefix="Failed to load the invite-code setting" error={settingsFailed ? settingsErrorMessage : null} />
 
       {/* Generate form */}
       {showGenerate && (

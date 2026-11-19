@@ -371,6 +371,17 @@ function EditOrgRow({
 // Members modal
 // ---------------------------------------------------------------------------
 
+/**
+ * Read the server's refusal message for a failed member action.
+ *
+ * Every one of these calls used to ignore a non-2xx response entirely, so a
+ * refused remove/search/add looked exactly like a click that did nothing.
+ */
+async function readActionError(res: Response, fallback: string): Promise<string> {
+  const body = (await res.json().catch(() => ({}))) as { error?: string };
+  return body.error ?? `${fallback} (HTTP ${res.status})`;
+}
+
 function MembersModal({
   org,
   onClose,
@@ -382,6 +393,9 @@ function MembersModal({
 }) {
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [membersError, setMembersError] = useState<string | null>(null);
+  // Remove / search / add used to ignore every non-2xx: the dialog simply did
+  // nothing and the operator could not tell a refusal from a slow click.
+  const [actionError, setActionError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [removing, setRemoving] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -428,6 +442,7 @@ function MembersModal({
     if (!confirmed) return;
 
     setRemoving(member.userId);
+    setActionError(null);
     try {
       const res = await fetch(
         `/api/admin/organizations/${org.id}/members/${member.userId}`,
@@ -436,9 +451,11 @@ function MembersModal({
       if (res.ok) {
         setMembers((prev) => prev.filter((m) => m.userId !== member.userId));
         onMemberRemoved();
+      } else {
+        setActionError(await readActionError(res, "Could not remove the member"));
       }
     } catch {
-      // ignore
+      setActionError("Could not reach the server. The member was not removed.");
     } finally {
       setRemoving(null);
     }
@@ -448,6 +465,7 @@ function MembersModal({
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
     setSearching(true);
+    setActionError(null);
     try {
       const res = await fetch(`/api/admin/users?q=${encodeURIComponent(searchQuery.trim())}&limit=10`);
       if (res.ok) {
@@ -455,9 +473,14 @@ function MembersModal({
         // Filter out users who are already members
         const memberIds = new Set(members.map((m) => m.userId));
         setSearchResults(data.users.filter((u) => !memberIds.has(u.id)));
+      } else {
+        // An empty result set is what a search with no matches looks like.
+        setSearchResults([]);
+        setActionError(await readActionError(res, "Could not search users"));
       }
     } catch {
-      // ignore
+      setSearchResults([]);
+      setActionError("Could not reach the server while searching users.");
     } finally {
       setSearching(false);
     }
@@ -466,6 +489,7 @@ function MembersModal({
   // Add a user as member
   const handleAddMember = async (user: { id: string; name: string | null; email: string; image: string | null }) => {
     setAdding(true);
+    setActionError(null);
     try {
       const res = await fetch(`/api/admin/organizations/${org.id}/members`, {
         method: "POST",
@@ -478,9 +502,11 @@ function MembersModal({
         setSearchResults((prev) => prev.filter((u) => u.id !== user.id));
         setSearchQuery("");
         onMemberRemoved(); // Refresh parent to update member count
+      } else {
+        setActionError(await readActionError(res, "Could not add the member"));
       }
     } catch {
-      // ignore
+      setActionError("Could not reach the server. The member was not added.");
     } finally {
       setAdding(false);
     }
@@ -507,6 +533,11 @@ function MembersModal({
             </Button>
           </DialogClose>
           <DialogHeader>
+            {actionError !== null && (
+              <div className="mb-2">
+                <ErrorBanner messagePrefix="Member action failed" error={actionError} />
+              </div>
+            )}
             <div className="flex items-center gap-3 pr-16">
               <OrgLogo logoUrl={org.logoUrl} name={org.name} size="sm" />
               <div className="min-w-0">

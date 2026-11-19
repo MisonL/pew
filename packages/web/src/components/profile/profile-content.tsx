@@ -323,6 +323,12 @@ export function ProfileContent({
               </p>
               {yearData.loading ? (
                 <Skeleton className="h-[120px] w-full" />
+              ) : yearData.error ? (
+                // An empty grid reads as "no activity this year", which is a
+                // claim the failed request never made.
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  Could not load this year&apos;s activity.
+                </p>
               ) : (
                 <HeatmapCalendar
                   data={yearData.heatmap}

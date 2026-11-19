@@ -17,6 +17,23 @@ export type { ScopeSelection, Organization, Team } from "@/lib/leaderboard-scope
 
 const iconClass = "h-3.5 w-3.5 shrink-0 text-basalt-muted-foreground";
 
+/**
+ * Rendered when the org/team lists could not be loaded while an org or team
+ * scope is still selected.
+ *
+ * The dropdown itself renders nothing for two empty lists, so without this the
+ * page silently showed the stored team's board with no control and no reason.
+ */
+export function ScopeUnverifiedNotice({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <p role="status" className="text-xs text-basalt-muted-foreground">
+      Could not load your teams and organizations, so this board is showing your last
+      selection unverified.
+    </p>
+  );
+}
+
 export function ScopeDropdown({
   value,
   onChange,
