@@ -3,7 +3,7 @@ import type { EvidenceRecord } from "@pew/core";
 import { BaseQueue } from "./base-queue.js";
 import { evidenceKey, toEvidenceRecord } from "../utils/usage-evidence.js";
 
-function checkedRecord(r: EvidenceRecord): EvidenceRecord {
+export function checkedRecord(r: EvidenceRecord): EvidenceRecord {
   try {
     const projected = toEvidenceRecord({ source: r.source, model: r.model, timestamp: r.timestamp,
       tokens: { inputTokens: r.input_tokens, cachedInputTokens: r.cached_input_tokens,

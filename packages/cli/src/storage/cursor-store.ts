@@ -36,7 +36,7 @@ function isFileCursor(value: unknown): value is FileCursor {
  *   and the cross-rollout high-water marks in there are what stop a shared
  *   cumulative counter from being counted twice.
  */
-function reviveCursorState(state: Record<string, unknown>): CursorState | null {
+export function reviveCursorState(state: Record<string, unknown>): CursorState | null {
   if (!isRecord(state.files)) return null;
   for (const field of ["knownFilePaths", "knownDbSources", "dirMtimes", "hermesSqlite", "openCodeSqlite", "antigravity"] as const) {
     if (state[field] !== undefined && !isRecord(state[field])) return null;

@@ -90,7 +90,7 @@ function validBasis(v: LegacyTokenCounts): boolean {
     v.total_tokens === v.input_tokens + v.cached_input_tokens + v.output_tokens + v.reasoning_output_tokens;
 }
 
-function checkedRecord(value: AccountingRecord): AccountingRecord {
+export function checkedRecord(value: AccountingRecord): AccountingRecord {
   const invalid = () => { throw new Error("Invalid accounting ledger"); };
   if (!safeTree(value) || value.details_version !== 1 || !value.basis || !Array.isArray(value.groups) || value.groups.length === 0 ||
     ![value.source_revision, value.parser_revision, value.detail_revision].every((n) => optionalToken(n) !== null && n > 0)) throw new Error("Invalid accounting ledger");
