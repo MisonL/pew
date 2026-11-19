@@ -373,7 +373,11 @@ export default function RecentPage() {
   // instants, not their dates: a bare "YYYY-MM-DD" `to` is inclusive and gets
   // bumped a day by the route, which widened this chart to ~85 h of bars while
   // In/Out, By Agent and By Model above render exactly 72.
-  const { data: recentDeviceData, loading: deviceLoading } = useDeviceData({
+  const {
+    data: recentDeviceData,
+    loading: deviceLoading,
+    error: recentDeviceError,
+  } = useDeviceData({
     from: recentFrom,
     to: recentTo,
     granularity: "half-hour",
@@ -401,7 +405,7 @@ export default function RecentPage() {
   // The pattern charts rank by accountedTotal(); the server-side projection
   // returns exactly those numbers, so the annotations (the bulk of a 30-day
   // half-hour response) never leave the server.
-  const { data: patternData, loading: patternLoading } = useUsageData({
+  const { data: patternData, loading: patternLoading, error: patternError } = useUsageData({
     from: patternFrom,
     to: patternTo,
     granularity: "half-hour",
@@ -413,7 +417,7 @@ export default function RecentPage() {
   // hourly-by-device chart buckets the timeline by local hour-of-day, and the
   // per-device drill-down rows cannot distinguish two devices that ran the
   // same agent/model. The drill-down itself is not read here.
-  const { data: deviceData, loading: patternDeviceLoading } = useDeviceData({
+  const { data: deviceData, loading: patternDeviceLoading, error: patternDeviceError } = useDeviceData({
     from: patternFrom,
     to: patternTo,
     granularity: "half-hour",
@@ -485,6 +489,11 @@ export default function RecentPage() {
 
       {/* Error */}
       <ErrorBanner messagePrefix="Failed to load usage data" error={error} />
+      {/* Each of these feeds a panel of its own; swallowing the failure showed
+          "No agent data available" and hid the By Device timeline. */}
+      <ErrorBanner messagePrefix="Failed to load 72-hour device timeline" error={recentDeviceError} />
+      <ErrorBanner messagePrefix="Failed to load 30-day hourly pattern" error={patternError} />
+      <ErrorBanner messagePrefix="Failed to load hourly device pattern" error={patternDeviceError} />
 
       {/* Loading */}
       {allLoading && <RecentSkeleton />}

@@ -288,7 +288,10 @@ export default function DailyUsagePage() {
 
   // Device timeline for the By Device area and donut charts: labels and
   // totals only, so neither the drill-down rows nor the annotations are read.
-  const { data: deviceData, loading: deviceLoading } = useDeviceData({
+  // Its error is surfaced too: without it a failed device query simply hid the
+  // By Device chart and donut, which reads as "you have no devices" rather
+  // than "that request failed".
+  const { data: deviceData, loading: deviceLoading, error: deviceError } = useDeviceData({
     from, to, includeDetails: false, includeAccounting: false,
   });
 
@@ -406,6 +409,7 @@ export default function DailyUsagePage() {
 
       {/* Error */}
       <ErrorBanner messagePrefix="Failed to load usage data" error={error} />
+      <ErrorBanner messagePrefix="Failed to load device breakdown" error={deviceError} />
 
       {/* Loading */}
       {loading && <DailySkeleton />}

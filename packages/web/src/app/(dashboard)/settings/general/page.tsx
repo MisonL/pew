@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { MessageBanner, type MessageBannerMsg } from "@/components/ui/message-banner";
+import { ErrorBanner } from "@/components/ui/error-banner";
+import { failedToLoad } from "@/lib/fetch-state";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@nocoo/basalt/components/button";
 import { Field } from "@nocoo/basalt/components/field";
@@ -41,11 +43,16 @@ export default function SettingsPage() {
 
   // User settings state — disable focus revalidation to prevent overwriting
   // unsaved form edits when the user tabs away and back.
-  const { data: settingsData, mutate: mutateSettings } = useSWR<UserSettings>(
+  const { data: settingsData, error: settingsError, mutate: mutateSettings } = useSWR<UserSettings>(
     "/api/settings",
     fetcher,
     { revalidateOnFocus: false },
   );
+  // A failed load left every field at its default: empty nickname, empty slug,
+  // "show my profile publicly" off. That is indistinguishable from "you never
+  // set these", and the user could "correct" settings that were never read.
+  const settingsFailed = failedToLoad(settingsData, settingsError);
+  const settingsErrorMessage = settingsError instanceof Error ? settingsError.message : "Request failed";
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [nickname, setNickname] = useState("");
   const [slug, setSlug] = useState("");
@@ -210,6 +217,12 @@ export default function SettingsPage() {
           Public Profile
         </h2>
         <div className="rounded-xl bg-secondary p-5 space-y-4">
+          {settingsFailed && (
+            <ErrorBanner
+              messagePrefix="Failed to load your profile settings"
+              error={settingsErrorMessage}
+            />
+          )}
           {/* Nickname */}
           <Field
             label="Leaderboard Nickname"

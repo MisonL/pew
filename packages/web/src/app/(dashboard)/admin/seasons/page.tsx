@@ -515,6 +515,9 @@ export default function AdminSeasonsPage() {
     { team_id: string; team_name: string; registered_at: string }[]
   >([]);
   const [expandedLoading, setExpandedLoading] = useState(false);
+  // A failed roster fetch left the sub-row showing "No team data available."
+  // for a season that has teams — an admin reads that as "nobody registered".
+  const [expandedFailed, setExpandedFailed] = useState(false);
 
   // Snapshot generating
   const [snapshotting, setSnapshotting] = useState<string | null>(null);
@@ -556,6 +559,7 @@ export default function AdminSeasonsPage() {
       if (expandedId === seasonId) {
         setExpandedId(null);
         setExpandedTeams([]);
+        setExpandedFailed(false);
         expandedTeamsSeasonRef.current = null;
         return;
       }
@@ -564,6 +568,7 @@ export default function AdminSeasonsPage() {
       expandedTeamsSeasonRef.current = seasonId;
       setExpandedLoading(true);
       setExpandedTeams([]);
+      setExpandedFailed(false);
 
       try {
         // Use leaderboard API to get teams (it includes team names)
@@ -588,7 +593,10 @@ export default function AdminSeasonsPage() {
           );
         }
       } catch {
-        if (expandedTeamsSeasonRef.current === seasonId) setExpandedTeams([]);
+        if (expandedTeamsSeasonRef.current === seasonId) {
+          setExpandedTeams([]);
+          setExpandedFailed(true);
+        }
       } finally {
         if (expandedTeamsSeasonRef.current === seasonId) setExpandedLoading(false);
       }
@@ -828,6 +836,7 @@ export default function AdminSeasonsPage() {
                         expandedId={expandedId}
                         expandedTeams={expandedTeams}
                         expandedLoading={expandedLoading}
+                        expandedFailed={expandedFailed}
                         snapshotting={snapshotting}
                         syncing={syncing}
                         deleting={deleting}
@@ -863,6 +872,7 @@ function SeasonTableRow({
   expandedId,
   expandedTeams,
   expandedLoading,
+  expandedFailed,
   snapshotting,
   syncing,
   deleting,
@@ -876,6 +886,7 @@ function SeasonTableRow({
   expandedId: string | null;
   expandedTeams: { team_id: string; team_name: string; registered_at: string }[];
   expandedLoading: boolean;
+  expandedFailed: boolean;
   snapshotting: string | null;
   syncing: string | null;
   deleting: string | null;
@@ -1004,6 +1015,8 @@ function SeasonTableRow({
                   <Skeleton key={`slot-${i}`} className="h-4 w-48" />
                 ))}
               </div>
+            ) : expandedFailed ? (
+              <Empty title="Could not load team data." description="The roster request failed; close and reopen this row to retry." />
             ) : expandedTeams.length === 0 ? (
               <Empty title="No team data available." />
             ) : (

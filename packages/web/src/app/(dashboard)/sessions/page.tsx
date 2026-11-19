@@ -77,7 +77,7 @@ export default function SessionsPage() {
 
   // Fetch usage data for token totals (needed for tokens/hour + reasoning ratio)
   // Only the summary is read below, so the per-row records stay on the server.
-  const { data: usageData, loading: usageLoading } = useUsageData({
+  const { data: usageData, loading: usageLoading, error: usageError } = useUsageData({
     from,
     ...(to ? { to } : {}),
     summaryOnly: true,
@@ -87,7 +87,7 @@ export default function SessionsPage() {
   // Half-hour granularity for peak hour detection. Peaks are ranked by
   // total_tokens, which the annotation split preserves, so dropping the
   // annotations leaves every peak and bar unchanged.
-  const { data: halfHourUsage, loading: halfHourLoading } = useUsageData({
+  const { data: halfHourUsage, loading: halfHourLoading, error: halfHourError } = useUsageData({
     from,
     ...(to ? { to } : {}),
     granularity: "half-hour",
@@ -97,7 +97,7 @@ export default function SessionsPage() {
 
   // Daily device timeline for the "By Device" dimension on Daily Activity;
   // only labels and timeline totals are read.
-  const { data: deviceData, loading: deviceLoading } = useDeviceData({
+  const { data: deviceData, loading: deviceLoading, error: deviceError } = useDeviceData({
     from,
     ...(to ? { to } : {}),
     granularity: "day",
@@ -145,6 +145,12 @@ export default function SessionsPage() {
 
       {/* Error state */}
       <ErrorBanner messagePrefix="Failed to load session data" error={sessionData.error} />
+      {/* Each secondary request feeds its own panel: token totals, peak hours
+          and the By Device timeline. Without their own banners a failed one
+          renders "No peak hour data yet" / "No device data yet". */}
+      <ErrorBanner messagePrefix="Failed to load token totals" error={usageError} />
+      <ErrorBanner messagePrefix="Failed to load peak-hour data" error={halfHourError} />
+      <ErrorBanner messagePrefix="Failed to load device activity" error={deviceError} />
 
       {/* Loading state */}
       {(sessionData.loading || usageLoading || halfHourLoading) && <SessionsSkeleton />}
