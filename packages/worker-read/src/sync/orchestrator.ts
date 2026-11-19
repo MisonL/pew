@@ -53,6 +53,13 @@ export interface SyncOutcome {
   meta: DynamicPricingMeta;
   warnings: string[];
   errors: SyncError[];
+  /**
+   * Set when the run deliberately published nothing. `ok` alone cannot carry
+   * this: a discarded run has no errors, so every caller that branches on `ok`
+   * — the cron's "sync ok" log, the admin button's "Prices updated" — reported
+   * a success that did not happen.
+   */
+  skippedReason?: string;
 }
 
 export interface SyncDeps {
@@ -229,10 +236,9 @@ export async function syncDynamicPricing(
   // than eliminating it; it is a strict improvement and cheap.
   const published = await readMeta(deps.kv);
   if (published?.lastSyncedAt && Date.parse(published.lastSyncedAt) > Date.parse(now)) {
-    const warnings = [
-      `pricing: a newer sync (${published.lastSyncedAt}) is already published; this run's result was discarded`,
-    ];
-    return { ok: errors.length === 0, entriesWritten: 0, meta: { ...published }, warnings, errors };
+    const skippedReason = `a newer sync (${published.lastSyncedAt}) is already published; this run's result was discarded`;
+    const warnings = [`pricing: ${skippedReason}`];
+    return { ok: errors.length === 0, entriesWritten: 0, meta: { ...published }, warnings, errors, skippedReason };
   }
 
   // Build meta first so we can attempt to write both entries and meta atomically

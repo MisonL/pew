@@ -267,7 +267,11 @@ const worker: ExportedHandler<Env> = {
   async scheduled(_event, env) {
     const now = new Date().toISOString();
     const outcome = await syncDynamicPricing({ db: env.DB, kv: env.CACHE }, now);
-    if (!outcome.ok) {
+    if (outcome.skippedReason) {
+      // A run that published nothing is neither a success nor a degradation:
+      // logging it as "ok" hid that the nightly sync had lost to a newer one.
+      console.warn("dynamic pricing sync skipped", { reason: outcome.skippedReason });
+    } else if (!outcome.ok) {
       console.error("dynamic pricing sync degraded", {
         entries: outcome.entriesWritten,
         errors: outcome.errors,

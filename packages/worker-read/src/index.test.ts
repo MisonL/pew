@@ -3,6 +3,7 @@ import worker from "./index";
 import type { Env } from "./index";
 import { WORKER_VERSION } from "./index";
 import { MAX_JSON_BODY_BYTES } from "@pew/core";
+import { memoryKv } from "./__test-helpers__/memory-kv";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -497,6 +498,45 @@ describe("pew read Worker", () => {
       } finally {
         fetchSpy.mockRestore();
         logSpy.mockRestore();
+        errSpy.mockRestore();
+      }
+    });
+
+    it("reports a discarded run as skipped, not as a clean sync", async () => {
+      // A newer result is already published (an admin refresh finished while
+      // this run was fetching). The orchestrator refuses to write, and the
+      // cron must not log that as "ok": a run that published nothing is not a
+      // successful sync.
+      const kv = memoryKv();
+      kv.store.set("pricing:dynamic:meta", JSON.stringify({
+        lastSyncedAt: "2099-01-01T00:00:00.000Z", modelCount: 1, baselineCount: 0,
+        openRouterCount: 0, modelsDevCount: 0, lastErrors: null,
+      }));
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = String(input instanceof Request ? input.url : input);
+        return new Response(JSON.stringify(url.includes("openrouter") ? { data: [] } : { openai: { models: {} } }), { status: 200 });
+      });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        await worker.scheduled!(
+          { cron: "0 3 * * *", scheduledTime: Date.now(), type: "scheduled" } as unknown as ScheduledController,
+          createEnv({ CACHE: kv }),
+          { waitUntil: () => undefined, passThroughOnException: () => undefined } as unknown as ExecutionContext
+        );
+        const said = logSpy.mock.calls.flat().filter((arg) => typeof arg === "string");
+        expect(said.some((arg) => arg.startsWith("dynamic pricing sync ok"))).toBe(false);
+        expect(warnSpy.mock.calls.flat().some((arg) =>
+          typeof arg === "string" && arg.startsWith("dynamic pricing sync skipped")
+        )).toBe(true);
+        expect(errSpy.mock.calls.flat().some((arg) =>
+          typeof arg === "string" && arg.startsWith("dynamic pricing sync degraded")
+        )).toBe(false);
+      } finally {
+        fetchSpy.mockRestore();
+        logSpy.mockRestore();
+        warnSpy.mockRestore();
         errSpy.mockRestore();
       }
     });

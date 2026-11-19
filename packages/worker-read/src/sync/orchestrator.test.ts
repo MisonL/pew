@@ -259,6 +259,9 @@ describe("syncDynamicPricing", () => {
     // Nothing was written, so the outcome must not claim otherwise — the cron
     // handler logs this number as "entries written".
     expect(r.entriesWritten).toBe(0);
+    // …and a discarded run must not look like a successful one to callers that
+    // only branch on `ok`: the admin button reports "Prices updated" for 200.
+    expect(r.skippedReason).toMatch(/newer/i);
   });
 
   it("still replaces a preserved entry once that source succeeds again", async () => {
