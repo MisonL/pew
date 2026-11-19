@@ -16,8 +16,24 @@ import { useAdmin } from "@/hooks/use-admin";
 import { useSeasons, type SeasonListItem } from "@/hooks/use-seasons";
 
 function SnapshotAlertInner() {
-  const { data, loading } = useSeasons({ status: "ended" });
+  const { data, loading, error } = useSeasons({ status: "ended" });
   const [dismissed, setDismissed] = useState(false);
+
+  // A failed seasons request renders nothing, which is what "no season is
+  // awaiting a snapshot" looks like. Admins missed pending snapshots this way;
+  // say the check could not run instead of staying silent. This must sit
+  // before the !data guard: a failed request leaves data undefined.
+  if (error) {
+    return (
+      <div role="status" className="rounded-xl bg-basalt-warning-tint px-4 py-3 text-sm text-basalt-foreground">
+        Could not check for seasons awaiting a snapshot.{" "}
+        <Link href="/admin/seasons" className="underline">
+          Open Seasons
+        </Link>
+        .
+      </div>
+    );
+  }
 
   if (loading || !data) return null;
 
