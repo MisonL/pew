@@ -4,6 +4,7 @@ import {
   SCOPE_STORAGE_KEY,
   loadScopeFromStorage,
   saveScopeToStorage,
+  resolveScope,
   type ScopeSelection,
 } from "@/lib/leaderboard-scope";
 
@@ -91,5 +92,34 @@ describe("leaderboard-scope", () => {
       throw new Error("quota");
     });
     expect(() => saveScopeToStorage({ type: "global" })).not.toThrow();
+  });
+
+  // ---- resolveScope ----
+
+  it("keeps a team scope that the loaded memberships confirm", () => {
+    expect(resolveScope({ type: "team", id: "t1" }, [], [{ id: "t1" }], false))
+      .toEqual({ scope: { type: "team", id: "t1" }, unverified: false });
+  });
+
+  it("drops a team scope the memberships say is gone", () => {
+    expect(resolveScope({ type: "team", id: "t1" }, [], [{ id: "other" }], false))
+      .toEqual({ scope: { type: "global" }, unverified: false });
+  });
+
+  it("keeps the stored scope when the membership lists could not be loaded", () => {
+    // Both lists are empty because /api/teams failed. An empty list is not
+    // evidence of "not a member": validating against it silently turned a
+    // team board into the global one, and the scope dropdown disappeared.
+    expect(resolveScope({ type: "team", id: "t1" }, [], [], true))
+      .toEqual({ scope: { type: "team", id: "t1" }, unverified: true });
+    expect(resolveScope({ type: "org", id: "o1" }, [], [], true))
+      .toEqual({ scope: { type: "org", id: "o1" }, unverified: true });
+  });
+
+  it("keeps a global scope global whether or not memberships loaded", () => {
+    expect(resolveScope({ type: "global" }, [{ id: "o1" }], [{ id: "t1" }], false))
+      .toEqual({ scope: { type: "global" }, unverified: false });
+    expect(resolveScope({ type: "global" }, [], [], true))
+      .toEqual({ scope: { type: "global" }, unverified: false });
   });
 });

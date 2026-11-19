@@ -7,9 +7,11 @@ import { fetcher } from "@/lib/fetcher";
 import {
   loadScopeFromStorage,
   saveScopeToStorage,
+  resolveScope,
   type ScopeSelection,
   type Organization,
   type Team,
+  type ResolvedScope,
 } from "@/lib/leaderboard-scope";
 
 export interface UseLeaderboardScopeReturn {
@@ -33,6 +35,12 @@ export interface UseLeaderboardScopeReturn {
   teamId: string | null;
   /** Computed orgId for useLeaderboard */
   orgId: string | null;
+  /**
+   * True when the stored org/team scope is still selected but the membership
+   * lists that would validate it failed to load. The board is showing that
+   * scope unverified; callers surface it rather than silently showing global.
+   */
+  scopeUnverified: boolean;
 }
 
 interface OrgsResponse {
@@ -65,6 +73,12 @@ export function useLeaderboardScope(): UseLeaderboardScopeReturn {
   const organizations = useMemo(() => orgsData?.organizations ?? [], [orgsData]);
   const teams = useMemo(() => teamsData?.teams ?? [], [teamsData]);
 
+  // A failed membership request makes both lists empty, which is not evidence
+  // that the stored org/team scope is gone. Without this flag the validation
+  // below downgraded the board to global and the scope dropdown disappeared —
+  // a failure indistinguishable from "you are in no teams".
+  const membershipsFailed = isAuthenticated && (Boolean(orgsError) || Boolean(teamsError));
+
   // orgsLoaded: authenticated → orgs + teams fetch settled (success or error); unauthenticated → immediately true
   const orgsLoaded = isAuthenticated
     ? (!orgsLoading && !teamsLoading) || Boolean(orgsError) || Boolean(teamsError)
@@ -74,19 +88,12 @@ export function useLeaderboardScope(): UseLeaderboardScopeReturn {
 
   // Derived, validated scope: drops back to global when stored id is no longer valid.
   // When unauthenticated, always force global — localStorage may contain stale org/team scope.
-  const scope = useMemo<ScopeSelection>(() => {
-    if (!isAuthenticated) return { type: "global" };
-    if (!scopeInitialized) return rawScope;
-    if (rawScope.type === "org" && rawScope.id) {
-      const valid = organizations.some((o) => o.id === rawScope.id);
-      return valid ? rawScope : { type: "global" };
-    }
-    if (rawScope.type === "team" && rawScope.id) {
-      const valid = teams.some((t) => t.id === rawScope.id);
-      return valid ? rawScope : { type: "global" };
-    }
-    return rawScope;
-  }, [rawScope, scopeInitialized, isAuthenticated, organizations, teams]);
+  const resolved = useMemo<ResolvedScope>(() => {
+    if (!isAuthenticated) return { scope: { type: "global" }, unverified: false };
+    if (!scopeInitialized) return { scope: rawScope, unverified: false };
+    return resolveScope(rawScope, organizations, teams, membershipsFailed);
+  }, [rawScope, scopeInitialized, isAuthenticated, organizations, teams, membershipsFailed]);
+  const scope = resolved.scope;
 
   const setScope = useCallback((newScope: ScopeSelection) => {
     setRawScope(newScope);
@@ -107,5 +114,6 @@ export function useLeaderboardScope(): UseLeaderboardScopeReturn {
     isAuthenticated,
     teamId,
     orgId,
+    scopeUnverified: resolved.unverified,
   };
 }

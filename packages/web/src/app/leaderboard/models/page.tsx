@@ -12,7 +12,7 @@ import { useLeaderboardScope } from "@/hooks/use-leaderboard-scope";
 import { LeaderboardNav } from "@/components/leaderboard/leaderboard-nav";
 import { LeaderboardPageTitle } from "@/components/leaderboard/leaderboard-page-title";
 import { PeriodTabs } from "@/components/leaderboard/period-tabs";
-import { ScopeDropdown } from "@/components/leaderboard/scope-dropdown";
+import { ScopeDropdown, ScopeUnverifiedNotice } from "@/components/leaderboard/scope-dropdown";
 import { LeaderboardPageShell } from "@/components/leaderboard/leaderboard-page-shell";
 import {
   FilterDropdown,
@@ -92,6 +92,7 @@ function ModelsLeaderboardContent() {
     isAuthenticated,
     teamId,
     orgId,
+    scopeUnverified,
   } = useLeaderboardScope();
 
   // Update URL when model changes (URL is source of truth, not local state)
@@ -167,6 +168,8 @@ function ModelsLeaderboardContent() {
             </div>
           )}
         </div>
+
+        <ScopeUnverifiedNotice show={scopeUnverified} />
 
         {/* Shared page shell: error, table, loading, empty, dialog */}
         <LeaderboardPageShell
