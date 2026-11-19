@@ -124,6 +124,43 @@ describe("CursorStore", () => {
     expect(state.knownFilePaths).toBeUndefined();
   });
 
+  it("drops a per-file entry whose dedup ring is not a list of ids", async () => {
+    // Claude's preload() iterates `seenIds` into the per-run Set: a number
+    // threw "ids is not iterable" and a non-string entry put a bogus id in the
+    // Set. Both took down every source, not just the damaged file.
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      join(tempDir, "cursors.json"),
+      JSON.stringify({
+        version: 1,
+        files: {
+          "/good": { inode: 1, offset: 10, seenIds: ["a", "b"], updatedAt: "x" },
+          "/number": { inode: 1, offset: 10, seenIds: 5, updatedAt: "x" },
+          "/entries": { inode: 1, offset: 10, seenIds: [5], updatedAt: "x" },
+        },
+        knownFilePaths: { "/good": true, "/number": true, "/entries": true },
+      }),
+    );
+    const state = await new CursorStore(tempDir).load();
+    expect(Object.keys(state.files)).toEqual(["/good"]);
+    expect(state.knownFilePaths).toEqual({ "/good": true, "/number": true, "/entries": true });
+  });
+
+  it("discards the state when a codex scope's usage-key set is not iterable", async () => {
+    // The scan seeds ctx.codexSeenUsageKeys with `new Set(scope.usageKeys)`;
+    // a non-iterable value threw "number 5 is not iterable" before any file
+    // was read, on every later run too.
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      join(tempDir, "cursors.json"),
+      JSON.stringify({
+        version: 1, files: {}, knownFilePaths: {}, accountingSchemaVersion: 2,
+        codexScopes: { scope: { totals: null, usageKeys: 5 } },
+      }),
+    );
+    expect(await new CursorStore(tempDir).load()).toEqual({ version: 1, files: {}, updatedAt: null });
+  });
+
   it("discards the whole state when an optional field has the wrong type", async () => {
     // hermesSqlite: 5 crashed with "Cannot use 'in' operator … in 5"; the other
     // fields are only read through Object.entries/Object.keys, so a wrong type

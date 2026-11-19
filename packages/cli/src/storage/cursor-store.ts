@@ -7,7 +7,15 @@ const CURSORS_FILE = "cursors.json";
 
 /** A per-file cursor is an object carrying at least the change fingerprint. */
 function isFileCursor(value: unknown): value is FileCursor {
-  return isRecord(value) && typeof value.inode === "number";
+  if (!isRecord(value) || typeof value.inode !== "number") return false;
+  // Claude's dedup ring is the only field a driver ITERATES; a non-iterable
+  // one ("ids is not iterable") or a non-string entry poisons the per-run Set
+  // and takes down every source, not just this file.
+  if (value.seenIds !== undefined) {
+    if (!Array.isArray(value.seenIds)) return false;
+    if (!value.seenIds.every((id) => typeof id === "string")) return false;
+  }
+  return true;
 }
 
 /**
@@ -30,8 +38,17 @@ function isFileCursor(value: unknown): value is FileCursor {
  */
 function reviveCursorState(state: Record<string, unknown>): CursorState | null {
   if (!isRecord(state.files)) return null;
-  for (const field of ["knownFilePaths", "knownDbSources", "dirMtimes", "codexScopes", "hermesSqlite", "openCodeSqlite", "antigravity"] as const) {
+  for (const field of ["knownFilePaths", "knownDbSources", "dirMtimes", "hermesSqlite", "openCodeSqlite", "antigravity"] as const) {
     if (state[field] !== undefined && !isRecord(state[field])) return null;
+  }
+  // The scan seeds ctx.codexScopeTotals / codexSeenUsageKeys from this map
+  // before reading a single file; a non-iterable `usageKeys` aborted every
+  // source, and the entries are also destructured as objects below.
+  if (state.codexScopes !== undefined) {
+    if (!isRecord(state.codexScopes)) return null;
+    for (const scope of Object.values(state.codexScopes)) {
+      if (!isRecord(scope) || !Array.isArray(scope.usageKeys)) return null;
+    }
   }
   if (state.accountingSchemaVersion !== undefined && typeof state.accountingSchemaVersion !== "number") return null;
   if (state.updatedAt !== undefined && state.updatedAt !== null && typeof state.updatedAt !== "string") return null;
