@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BaseCursorStore } from "../storage/base-cursor-store.js";
@@ -55,6 +55,32 @@ describe("BaseCursorStore", () => {
     const store = new BaseCursorStore<TestState>(filePath, emptyState);
     const state = await store.load();
     expect(state).toEqual({ version: 1, data: "" });
+  });
+
+  it("treats any valid JSON that is not an object as corrupted", async () => {
+    // A torn or hand-edited file can still parse: "null", an array, a bare
+    // string. Returning it verbatim crashed every consumer that reads a field
+    // off the result (`cursors.antigravity`, `Object.entries(cursors.files)`)
+    // with a TypeError, which took down the whole sync for all sources.
+    const filePath = join(tempDir, "test.json");
+    const store = new BaseCursorStore<TestState>(filePath, emptyState);
+    for (const body of ["null", "[]", '"hello"', "5", "true"]) {
+      await writeFile(filePath, body);
+      expect(await store.load()).toEqual({ version: 1, data: "" });
+    }
+  });
+
+  it("treats only a missing file as an empty state, not an unreadable one", async () => {
+    // EACCES/EIO/EMFILE used to read as "no cursors yet". The next sync then
+    // treated itself as a first run and REPLACED queue.jsonl with only what it
+    // could rediscover, silently dropping pending un-uploaded records whose raw
+    // logs had since rotated away. A directory at the path produces a
+    // deterministic non-ENOENT failure on every platform (EISDIR/EPERM),
+    // unlike chmod under root.
+    const filePath = join(tempDir, "test.json");
+    await mkdir(filePath);
+    const store = new BaseCursorStore<TestState>(filePath, emptyState);
+    await expect(store.load()).rejects.toThrow(/Cannot read cursor state/);
   });
 
   it("should expose filePath", () => {
