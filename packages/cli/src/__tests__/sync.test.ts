@@ -539,6 +539,54 @@ describe("executeSync", () => {
     }
   });
 
+  it("does not abort the sync when the cursor file parses but has no cursor shape", async () => {
+    // A hand-edited or restored-from-backup cursors.json can be valid JSON of
+    // the wrong shape. It used to escape CursorStore.load() and crash the scan
+    // loop at `Object.entries(cursors.files)` — every source lost, and the same
+    // crash came back on every later run until the file was deleted by hand.
+    const claudeRoot = join(dataDir, ".claude");
+    const claudeDir = join(claudeRoot, "projects", "proj-a");
+    await mkdir(claudeDir, { recursive: true });
+    await writeFile(
+      join(claudeDir, "session.jsonl"),
+      `${claudeLine("2026-03-07T10:15:00.000Z", 5000, 800)}\n`,
+    );
+
+    for (const body of ["null", "[]", '"hello"', "{}", '{"version":1,"files":"abc"}', '{"version":1,"files":{},"hermesSqlite":5}']) {
+      await mkdir(stateDir, { recursive: true });
+      await writeFile(join(stateDir, "cursors.json"), body);
+      const result = await executeSync({ stateDir, deviceId: "dev-1", claudeDir: claudeRoot });
+      // The damaged state is treated as lost, so this run is a full rescan and
+      // still produces the source's data.
+      expect(result.sources.claude).toBe(1);
+    }
+  });
+
+  it("keeps the pending queue when the cursor file cannot be read", async () => {
+    // An unreadable cursors.json (EACCES/EIO) used to read as "no cursors yet",
+    // making the next sync a first run that REPLACED the queue with only what
+    // it could rediscover. A pending record whose raw log has since rotated
+    // away was destroyed without a warning. A directory at the path produces a
+    // deterministic non-ENOENT failure on every platform.
+    const claudeRoot = join(dataDir, ".claude");
+    const claudeDir = join(claudeRoot, "projects", "proj-a");
+    await mkdir(claudeDir, { recursive: true });
+    await writeFile(
+      join(claudeDir, "session.jsonl"),
+      `${claudeLine("2026-03-07T10:15:00.000Z", 5000, 800)}\n`,
+    );
+    await executeSync({ stateDir, deviceId: "dev-1", claudeDir: claudeRoot });
+    const before = await readFile(join(stateDir, "queue.jsonl"), "utf-8");
+
+    await rm(join(stateDir, "cursors.json"));
+    await mkdir(join(stateDir, "cursors.json"));
+
+    await expect(
+      executeSync({ stateDir, deviceId: "dev-1", claudeDir: claudeRoot }),
+    ).rejects.toThrow();
+    expect(await readFile(join(stateDir, "queue.jsonl"), "utf-8")).toBe(before);
+  });
+
   // ===== OpenCode incremental sync + triple-check skip =====
 
   it("should be incremental for OpenCode (second sync with no file changes skips parsing)", async () => {
