@@ -279,6 +279,30 @@ describe("POST /api/ingest", () => {
       expect(body.ingested).toBe(2);
     });
 
+    it("passes the Worker receipt through instead of synthesizing the count", async () => {
+      // A revoked device is answered 200 with `dropped_devices`; the route
+      // must not read that as a successful write.
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ ingested: 1, dropped_devices: ["revoked-device"] }), { status: 200 }),
+      );
+
+      const res = await POST(makeRequest([VALID_RECORD, { ...VALID_RECORD, device_id: "revoked-device" }], undefined, VALID_VERSION));
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ingested: 1, dropped_devices: ["revoked-device"] });
+    });
+
+    it("refuses to synthesize a count when the Worker receipt is unreadable", async () => {
+      // Answering with `validated.length` would clear records the server may
+      // have dropped; a retry is safe because the upserts are idempotent.
+      mockFetch.mockResolvedValueOnce(new Response("not json", { status: 200 }));
+
+      const res = await POST(makeRequest([VALID_RECORD], undefined, VALID_VERSION));
+
+      expect(res.status).toBe(502);
+      expect((await res.json()).error).toContain("ingest");
+    });
+
     it("should return 500 when Worker returns error", async () => {
       stubWorkerError(500, "D1 batch failed: table not found");
 

@@ -14,4 +14,5 @@ export const POST = createIngestHandler({
   validateRecord: validateIngestRecord,
   getWorkerUrl: () => resolveIngestUrl("tokens"),
   entityName: "records",
+  receiptName: "dropped_devices",
 });

@@ -227,6 +227,60 @@ async function secureCompare(a: string, b: string): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// Revocation receipt
+// ---------------------------------------------------------------------------
+
+/**
+ * Devices that already appear in `device_revocations` for this user.
+ * The batch upserts carry their own guard, but a guard silently discards rows:
+ * without this pre-query the response could claim a revoked device's records
+ * were written. One query per request, never one per record.
+ */
+async function revokedDevices(
+  env: Env,
+  userId: string,
+  deviceIds: Array<string | undefined>,
+): Promise<Set<string>> {
+  const unique = [...new Set(deviceIds.filter((device): device is string => device !== undefined))];
+  if (unique.length === 0) return new Set();
+  const placeholders = unique.map(() => "?").join(", ");
+  const { results } = await env.DB.prepare(
+    `SELECT device_id FROM device_revocations WHERE user_id = ? AND device_id IN (${placeholders})`,
+  ).bind(userId, ...unique).all<{ device_id: string }>();
+  return new Set(results.map((row) => row.device_id));
+}
+
+interface RevocableRecord {
+  device_id?: string;
+}
+
+/**
+ * Drop revoked-device records from the receipt and name the devices so the CLI
+ * can keep exactly those records pending. Untagged legacy records are outside
+ * the guard by design and stay counted.
+ *
+ * `revoked` is derived from this batch's own device ids, so a non-empty set
+ * always matches at least one record — the receipt here is never a bare count.
+ */
+function revokedReceipt<T extends RevocableRecord>(
+  records: T[],
+  revoked: Set<string>,
+): { ingested: number; dropped_devices?: string[] } {
+  if (revoked.size === 0) return { ingested: records.length };
+  const dropped: string[] = [];
+  let applied = 0;
+  for (const record of records) {
+    const device = record.device_id;
+    if (device !== undefined && revoked.has(device)) {
+      if (!dropped.includes(device)) dropped.push(device);
+    } else {
+      applied++;
+    }
+  }
+  return { ingested: applied, dropped_devices: dropped };
+}
+
+// ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
@@ -263,10 +317,12 @@ async function handleTokenIngest(body: unknown, env: Env): Promise<Response> {
   }
 
   const { userId, records, ignored } = validation;
-  const counts = { ingested: records.length, ...(ignored ? { ignored } : {}) };
-  if (records.length === 0) return Response.json(counts);
+  if (records.length === 0) {
+    return Response.json({ ingested: 0, ...(ignored ? { ignored } : {}) });
+  }
 
   try {
+    const receipt = revokedReceipt(records, await revokedDevices(env, userId, records.map((r) => r.device_id)));
     const stmts = records.map((r) => {
       const values = [userId, r.device_id ?? "default", r.source, r.model, r.hour_start,
         r.input_tokens, r.cached_input_tokens, r.output_tokens, r.reasoning_output_tokens, r.total_tokens];
@@ -276,7 +332,7 @@ async function handleTokenIngest(body: unknown, env: Env): Promise<Response> {
     });
 
     await env.DB.batch(stmts);
-    return Response.json(counts);
+    return Response.json({ ...receipt, ...(ignored ? { ignored } : {}) });
   } catch (err) {
     console.error(err);
     return Response.json({ error: "Internal server error" }, { status: 500 });
@@ -325,9 +381,11 @@ async function handleEvidenceIngest(body: unknown, env: Env): Promise<Response> 
   const validation = validateRequest<EvidenceRecord>(body, validateEvidenceRecord);
   if (!validation.ok) return Response.json({ error: validation.error }, { status: 400 });
   const { userId, records, ignored } = validation;
-  const counts = { ingested: records.length, ...(ignored ? { ignored } : {}) };
-  if (records.length === 0) return Response.json(counts);
+  if (records.length === 0) {
+    return Response.json({ ingested: 0, ...(ignored ? { ignored } : {}) });
+  }
   try {
+    const receipt = revokedReceipt(records, await revokedDevices(env, userId, records.map((r) => r.device_id)));
     await env.DB.batch(records.map((r) => {
       const e = r.evidence;
       return env.DB.prepare(EVIDENCE_UPSERT_SQL).bind(
@@ -337,7 +395,7 @@ async function handleEvidenceIngest(body: unknown, env: Env): Promise<Response> 
         r.reasoning_output_tokens, r.total_tokens,
       );
     }));
-    return Response.json(counts);
+    return Response.json({ ...receipt, ...(ignored ? { ignored } : {}) });
   } catch {
     // Do not log bound values, source identifiers or request bodies.
     console.error("Usage evidence ingest failed");

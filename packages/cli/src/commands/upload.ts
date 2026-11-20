@@ -19,6 +19,40 @@ import type {
   UploadProgressEvent,
 } from "./upload-engine.js";
 import type { AccountingRecord, EvidenceRecord, QueueRecord } from "@pew/core";
+import type { RefusedRecords } from "./upload-engine.js";
+
+// ---------------------------------------------------------------------------
+// Record identity and revoked-device receipt
+// ---------------------------------------------------------------------------
+
+/** Token records are one bucket per (source, model, hour, device). */
+function tokenKey(r: QueueRecord): string {
+  return `${r.source}|${r.model}|${r.hour_start}|${r.device_id}`;
+}
+
+/**
+ * The ingest Worker answers revoked-device records with `dropped_devices`
+ * (device ids whose rows the revocation guard discarded). Those records were
+ * not applied, so they stay pending here; the token/evidence queues keep a
+ * per-record pending set, so the engine can clear exactly them. Records whose
+ * device the server did not revoke are left alone, so a whole-batch retry
+ * never re-revokes healthy data.
+ */
+function droppedDevicesRefusal<T extends { device_id?: string }>(
+  body: unknown,
+  batch: T[],
+  keyOf: (record: T) => string,
+  entityName: string,
+): string | RefusedRecords | null {
+  const value = body as { dropped_devices?: unknown } | null;
+  if (!Array.isArray(value?.dropped_devices)) return null;
+  const droppedSet = new Set(value.dropped_devices as string[]);
+  const keys = batch
+    .filter((r) => r.device_id !== undefined && droppedSet.has(r.device_id as string))
+    .map(keyOf);
+  if (keys.length === 0) return null;
+  return { keys, reason: `the server revoked device(s) ${[...droppedSet].join(", ")} and ignored their ${entityName}` };
+}
 
 // ---------------------------------------------------------------------------
 // Types (re-exported for backward compatibility)
@@ -105,9 +139,10 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
     endpoint: "/api/ingest",
     entityName: "records",
     preprocess: aggregateRecords,
-    recordKey: (r) => `${r.source}|${r.model}|${r.hour_start}|${r.device_id}`,
+    recordKey: tokenKey,
     rejectRecord: tokenRecordRejection,
     trackUploadTarget: true,
+    validateResponse: (body, batch) => droppedDevicesRefusal(body, batch, tokenKey, "usage records"),
   });
 
   const main = await engine.execute(opts);
@@ -120,6 +155,7 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
     queue: new EvidenceQueue(opts.stateDir), endpoint: "/api/ingest/evidence",
     entityName: "usage evidence", preprocess: (records) => records,
     recordKey: evidenceKey, rejectRecord: evidenceRecordRejection,
+    validateResponse: (body, batch) => droppedDevicesRefusal(body, batch, evidenceKey, "usage evidence"),
   }).execute(opts);
   // The token stage is the only one that records the target, so it is also the
   // one that notices a switch — but it says nothing when its own queue is
@@ -180,7 +216,13 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
       (main.uploaded > 0 || supplemental.uploaded > 0 || details.uploaded > 0)) {
     warnings.push(`Last successful upload went to ${main.targetChangedFrom}; this run sent pending records to ${opts.apiUrl}.`);
   }
+  // A refusal (a revoked device, an accounting base mismatch) keeps the record
+  // pending and warns, but the caller only receives this merged result — each
+  // stage's own `refused` count has to be carried across or the operator's
+  // summary says everything was accepted.
+  const refused = (main.refused ?? 0) + (supplemental.refused ?? 0) + (details.refused ?? 0);
   return { ...usage, uploaded: usage.uploaded + details.uploaded, batches: usage.batches + details.batches,
+    ...(refused > 0 ? { refused } : {}),
     ...mergeWarnings(warnings) };
 }
 

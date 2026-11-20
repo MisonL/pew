@@ -783,7 +783,9 @@ describe("GET /api/devices", () => {
         body: JSON.stringify({ device_id: deviceId, revoked: true }) });
       expect(revoke.status).toBe(200);
       const rejected = await ingest([original, { ...original, device_id: "e2e-device-lifecycle-active", model: "active-model" }]);
-      expect(await rejected.json()).toMatchObject({ ingested: 2 });
+      // The receipt names the revoked device: the CLI keeps exactly those
+      // records pending instead of clearing an upload that never happened.
+      expect(await rejected.json()).toMatchObject({ ingested: 1, dropped_devices: [deviceId] });
       expect(await count("SELECT COUNT(*) AS n FROM usage_records WHERE user_id=? AND device_id=? AND model='lifecycle-model'", [TEST_USER_ID, deviceId])).toBe(1);
       expect(await count("SELECT COUNT(*) AS n FROM usage_records WHERE user_id=? AND device_id='e2e-device-lifecycle-active' AND model='active-model'", [TEST_USER_ID])).toBe(1);
       const revokedList = await (await fetch(`${BASE_URL}/api/devices`)).json() as { devices: Array<{ device_id: string; revoked: boolean }> };
@@ -802,7 +804,7 @@ describe("GET /api/devices", () => {
       expect((await fetch(`${BASE_URL}/api/devices`, { method: "DELETE", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ device_id: deviceId }) })).status).toBe(200);
       const blockedAfterDelete = await ingest([{ ...original, model: "blocked-after-delete" }]);
-      expect(await blockedAfterDelete.json()).toMatchObject({ ingested: 1 });
+      expect(await blockedAfterDelete.json()).toMatchObject({ ingested: 0, dropped_devices: [deviceId] });
       expect(await count("SELECT COUNT(*) AS n FROM usage_records WHERE user_id=? AND device_id=? AND model='blocked-after-delete'", [TEST_USER_ID, deviceId])).toBe(0);
       const hiddenRevoked = await (await fetch(`${BASE_URL}/api/devices`)).json() as { devices: Array<{ device_id: string }> };
       expect(hiddenRevoked.devices.some((device) => device.device_id === deviceId)).toBe(false);
