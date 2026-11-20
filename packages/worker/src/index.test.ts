@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { Mock } from "vitest";
 import type { Env, IngestRecord } from "./index";
 
 // Import the default export (Worker handler) and version constant
@@ -24,13 +25,31 @@ const SECRET = "test-secret-abc123";
 function createMockEnv(): Env {
   return {
     DB: {
-      prepare: vi.fn().mockReturnValue({
+      prepare: vi.fn((_sql: string) => ({
         bind: vi.fn().mockReturnValue({}),
-      }),
+      })),
       batch: vi.fn().mockResolvedValue([]),
     } as unknown as D1Database,
     WORKER_SECRET: SECRET,
   };
+}
+
+/** Answer the handler's revocation pre-query with this device list. */
+function mockRevokedDevices(env: Env, revoked: string[]): void {
+  const prepare = env.DB.prepare as unknown as Mock<(sql: string) => unknown>;
+  const original = prepare.getMockImplementation()!;
+  prepare.mockImplementation((sql: string) => {
+    if (!String(sql).includes("device_revocations")) return original(sql);
+    return {
+      bind: (...params: unknown[]) => ({
+        all: async () => ({
+          results: params.slice(1)
+            .filter((device) => revoked.includes(device as string))
+            .map((device) => ({ device_id: device })),
+        }),
+      }),
+    };
+  });
 }
 
 function makeRequest(
@@ -176,6 +195,34 @@ describe("Worker ingest endpoint", () => {
           env,
         );
         expect(bad.status).toBe(401);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("still runs the byte comparison when the lengths differ (no short-circuit)", async () => {
+      // The padded shape only hides the secret's length if timingSafeEqual is
+      // actually invoked for a wrong-length guess. `length === x && compare()`
+      // skips it entirely on a mismatch, which reintroduces the length oracle
+      // the padding exists to remove.
+      const fastEqual = vi.fn((a: BufferSource, b: BufferSource): boolean => {
+        const x = a as Uint8Array;
+        const y = b as Uint8Array;
+        return x.length === y.length && x.every((v, i) => v === y[i]);
+      });
+      const realCrypto = (globalThis as unknown as { crypto: Crypto }).crypto;
+      vi.stubGlobal("crypto", new Proxy(realCrypto, {
+        get: (target, key) => key === "subtle"
+          ? { timingSafeEqual: fastEqual }
+          : Reflect.get(target, key),
+      }));
+      try {
+        const res = await worker.fetch(
+          makeRequest({ userId: "u1", records: [VALID_RECORD] }, { secret: "x" }),
+          env,
+        );
+        expect(res.status).toBe(401);
+        expect(fastEqual).toHaveBeenCalledTimes(1);
       } finally {
         vi.unstubAllGlobals();
       }
@@ -423,6 +470,54 @@ describe("Worker ingest endpoint", () => {
       expect(res.status).toBe(200);
       const body = await json(res);
       expect(body.ingested).toBe(2);
+    });
+
+    it("reports device-tagged records the revocation guard discarded", async () => {
+      // The web layer used to synthesize `ingested: records.length`, so a
+      // revoked device looked uploaded while the device guard dropped it.
+      const records = [VALID_RECORD, { ...VALID_RECORD, device_id: "revoked" }, VALID_RECORD];
+      mockRevokedDevices(env, ["revoked"]);
+      const res = await worker.fetch(makeRequest({ userId: "u1", records }), env);
+      expect(res.status).toBe(200);
+      expect(await json(res)).toEqual({ ingested: 2, dropped_devices: ["revoked"] });
+    });
+
+    it("checks revocation once per batch, not once per record", async () => {
+      const records = [
+        { ...VALID_RECORD, device_id: "revoked" },
+        { ...VALID_RECORD, device_id: "active", model: "m2" },
+        { ...VALID_RECORD, device_id: "revoked", model: "m3" },
+      ];
+      mockRevokedDevices(env, ["revoked"]);
+      await worker.fetch(makeRequest({ userId: "u1", records }), env);
+      const revocationCalls = (env.DB.prepare as ReturnType<typeof vi.fn>).mock.calls
+        .filter(([sql]) => String(sql).startsWith("SELECT device_id FROM device_revocations"));
+      expect(revocationCalls).toHaveLength(1);
+    });
+
+    it("stays silent for untagged batches and for fully accepted ones", async () => {
+      const untagged = await worker.fetch(makeRequest({ userId: "u1", records: [VALID_RECORD] }), env);
+      expect(await json(untagged)).toEqual({ ingested: 1 });
+      mockRevokedDevices(env, []);
+      const tagged = await worker.fetch(
+        makeRequest({ userId: "u1", records: [{ ...VALID_RECORD, device_id: "active" }] }), env);
+      expect(await json(tagged)).toEqual({ ingested: 1 });
+    });
+
+    it("reports discarded evidence the same way", async () => {
+      const evidence = { ...VALID_RECORD, source: "pi", device_id: "revoked", timestamp: VALID_RECORD.hour_start,
+        evidence: { eventId: "a".repeat(64), groupId: "b".repeat(64), callType: "compaction", origin: "pi-session",
+          provider: "test", granularity: "call", timePrecision: "exact", intervalStart: null, intervalEnd: null,
+          callCount: 1, snapshotSeq: 1 } };
+      mockRevokedDevices(env, ["revoked"]);
+      const res = await worker.fetch(
+        new Request("https://pew-ingest.workers.dev/ingest/evidence", { method: "POST",
+          headers: { Authorization: `Bearer ${SECRET}` },
+          body: JSON.stringify({ userId: "u1", records: [evidence, { ...evidence, device_id: "active" }] }) }),
+        env,
+      );
+      expect(res.status).toBe(200);
+      expect(await json(res)).toEqual({ ingested: 1, dropped_devices: ["revoked"] });
     });
 
     it("should return 500 when D1 batch fails", async () => {

@@ -5,7 +5,7 @@
  * runtime emulation is needed.
  */
 
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 export interface WorkerLike {
   fetch(request: Request, env: never): Promise<Response>;
@@ -19,10 +19,18 @@ export interface WorkerServerOptions<E> {
   hostname?: string;
   /** Override for tests; production keeps the Cloudflare-derived default. */
   maxBodyBytes?: number;
+  /**
+   * Called for server errors raised after listen() succeeded (accept-loop
+   * failures). Defaults to logging: the process must keep running so the
+   * supervisor's restart policy decides, rather than exiting silently.
+   */
+  onServerError?: (error: unknown) => void;
 }
 
 export interface WorkerServerHandle {
   port: number;
+  /** The underlying node:http server, exposed so tests can drive error paths. */
+  server: Server;
   close(): Promise<void>;
 }
 
@@ -127,10 +135,21 @@ export function createWorkerServer<E>(options: WorkerServerOptions<E>) {
       });
 
       // Port collision raises a (port, error) callback, so listen can reject
-      // here. Port collisions are the most common runtime failure.
+      // here. Port collisions are the most common runtime failure. The
+      // listener is swapped out on success: a `once("error", reject)` left
+      // attached would settle the already-resolved promise (a no-op) and then
+      // be gone, so errors after listen — a failing accept loop — vanished
+      // with no handler at all and Node would kill the process as unhandled.
       await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(options.port, options.hostname ?? "0.0.0.0", resolve);
+        const onError = (error: Error): void => reject(error);
+        server.once("error", onError);
+        server.listen(options.port, options.hostname ?? "0.0.0.0", () => {
+          server.off("error", onError);
+          resolve();
+        });
+      });
+      server.on("error", (error) => {
+        (options.onServerError ?? ((err: unknown) => console.error("worker server error", err)))(error);
       });
 
       const address = server.address();
@@ -138,6 +157,7 @@ export function createWorkerServer<E>(options: WorkerServerOptions<E>) {
 
       return {
         port,
+        server,
         close: () =>
           new Promise<void>((resolve, reject) => {
             // closeIdleConnections first: keep-alive sockets that are not

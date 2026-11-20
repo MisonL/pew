@@ -117,6 +117,34 @@ fi
 
 if [ "${PEW_UPGRADE_NO_RESTART:-0}" = "1" ]; then
   echo "==> PEW_UPGRADE_NO_RESTART=1 — not restarting containers"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "DRY-RUN: docker inspect <built web image> --format revision/version labels"
+    echo "DRY-RUN complete"
+    exit 0
+  fi
+  # The documented reason for this mode is a window pre-warm: build now, swap
+  # later. It must still prove the image it just built is traceable, which is
+  # exactly the failure this script exists to catch — a build that lost
+  # PEW_REVISION starts fine and only fails later, at the next real upgrade.
+  WEB_IMAGE=$(docker compose config --format json 2>/dev/null \
+    | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).services.web.image" 2>/dev/null) || WEB_IMAGE=""
+  if [ -z "$WEB_IMAGE" ]; then
+    echo "upgrade.sh: cannot resolve the web image from docker compose config" >&2
+    exit 1
+  fi
+  built_revision=$(docker image inspect "$WEB_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null || true)
+  if [ "$built_revision" != "$REVISION" ]; then
+    echo "upgrade.sh: built image '$WEB_IMAGE' revision is '${built_revision:-<empty>}', expected '$REVISION'" >&2
+    echo "  The image was built without PEW_REVISION. Nothing was restarted; rebuild before using it:" >&2
+    echo "    PEW_REVISION=$REVISION PEW_VERSION=$VERSION docker compose build" >&2
+    exit 1
+  fi
+  built_version=$(docker image inspect "$WEB_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)
+  if [ "$built_version" != "$VERSION" ]; then
+    echo "upgrade.sh: built image '$WEB_IMAGE' version is '${built_version:-<empty>}', expected '$VERSION'" >&2
+    exit 1
+  fi
+  echo "✅ built $REVISION ($VERSION); labels verified (containers untouched)"
   exit 0
 fi
 
@@ -126,6 +154,16 @@ run docker compose up -d
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "DRY-RUN complete"
   exit 0
+fi
+
+# Resolve the web container by compose service, not by a hardcoded name:
+# compose names containers `<project>-<service>-<n>` after the checkout
+# directory (or -p / COMPOSE_PROJECT_NAME), so a checkout in a differently
+# named directory never matched `selfhost-web-1` and the health poll timed out.
+WEB_CONTAINER_ID=$(docker compose ps -q web 2>/dev/null || true)
+if [ -z "$WEB_CONTAINER_ID" ]; then
+  echo "upgrade.sh: docker compose ps -q web returned no container" >&2
+  exit 1
 fi
 
 # Wait for the web container to report healthy. The healthcheck interval is
@@ -139,7 +177,7 @@ esac
 echo "==> waiting for the web container to become healthy"
 deadline=$(( $(date +%s) + HEALTH_TIMEOUT_S ))
 while :; do
-  status=$(docker compose ps --format '{{.Name}} {{.Health}}' 2>/dev/null | grep '^selfhost-web-1 ' | awk '{print $2}')
+  status=$(docker compose ps --format '{{.Service}} {{.Health}}' 2>/dev/null | grep '^web ' | awk '{print $2}')
   [ "$status" = "healthy" ] && break
   if [ "$(date +%s)" -ge "$deadline" ]; then
     echo "upgrade.sh: web did not become healthy within ${HEALTH_TIMEOUT_S}s (last status: ${status:-unknown})" >&2
@@ -152,7 +190,7 @@ done
 # without PEW_REVISION still starts and passes its healthcheck, so nothing
 # downstream notices that it cannot be traced back to a commit.
 echo "==> verifying image provenance"
-actual=$(docker inspect selfhost-web-1 --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null || true)
+actual=$(docker inspect "$WEB_CONTAINER_ID" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null || true)
 if [ "$actual" != "$REVISION" ]; then
   echo "upgrade.sh: running image revision is '${actual:-<empty>}', expected '$REVISION'" >&2
   echo "  The image was probably built without PEW_REVISION. Rebuild and redeploy:" >&2
@@ -160,7 +198,7 @@ if [ "$actual" != "$REVISION" ]; then
   exit 1
 fi
 
-actual_version=$(docker inspect selfhost-web-1 --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)
+actual_version=$(docker inspect "$WEB_CONTAINER_ID" --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)
 if [ "$actual_version" != "$VERSION" ]; then
   echo "upgrade.sh: image version is '${actual_version:-<empty>}', expected '$VERSION'" >&2
   exit 1

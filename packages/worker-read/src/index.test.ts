@@ -213,6 +213,33 @@ describe("pew read Worker", () => {
       expect(res.status).toBe(401);
     });
 
+    it("still runs the byte comparison when the lengths differ (no short-circuit)", async () => {
+      // Padding only hides the secret's length if the byte comparison actually
+      // runs for a wrong-length guess. A `length === x && compare()` shortcut
+      // skips it, which restores the length oracle the padding removes.
+      const fastEqual = vi.fn((a: BufferSource, b: BufferSource): boolean => {
+        const x = a as Uint8Array;
+        const y = b as Uint8Array;
+        return x.length === y.length && x.every((v, i) => v === y[i]);
+      });
+      const realCrypto = (globalThis as unknown as { crypto: Crypto }).crypto;
+      vi.stubGlobal("crypto", new Proxy(realCrypto, {
+        get: (target, key) => key === "subtle"
+          ? { timingSafeEqual: fastEqual }
+          : Reflect.get(target, key),
+      }));
+      try {
+        const res = await callWorker(
+          makeRequest("POST", "/api/rpc", { method: "users.getById", id: "u1" }, "x"),
+          env,
+        );
+        expect(res.status).toBe(401);
+        expect(fastEqual).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
     it("accepts matching bytes when the runtime provides subtle.timingSafeEqual", async () => {
       // The Workers fast path. Bun/Node do not expose it, so it must be stubbed
       // explicitly, otherwise this branch never executes and the length guard

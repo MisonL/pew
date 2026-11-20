@@ -88,6 +88,13 @@ export interface IngestHandlerConfig<T> {
   /** A versioned route can project an explicit receipt instead of legacy {ingested}. */
   acknowledgment?: (body: unknown, records: T[]) => { details_version: 1; acknowledgments: AccountingAck[] } | null;
   retiredAcknowledgment?: (record: unknown) => AccountingAck | null;
+  /**
+   * Receipt field naming: token/evidence routes let the Worker report dropped
+   * revoked-device records under `dropped_devices`; session routes keep the
+   * legacy `{ ingested }` shape. When set, the Worker response body is passed
+   * through so a drop is not reported as a successful write.
+   */
+  receiptName?: "dropped_devices";
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +246,25 @@ export function createIngestHandler<T>(
         const receipt = config.acknowledgment(await res.json().catch(() => null), validated);
         if (!receipt) return NextResponse.json({ error: "Worker did not acknowledge this accounting protocol" }, { status: 502 });
         return NextResponse.json(withRetiredReceipts(receipt));
+      }
+      if (config.receiptName) {
+        // The Worker's receipt is authoritative: `ingested` is what actually
+        // applied, and `dropped_devices` names the revoked devices the guard
+        // discarded. Synthesizing `ingested: validated.length` here is what
+        // reported a revoked device's records as written. Retired-source
+        // records were already filtered out above, so their skip count still
+        // comes from this side.
+        //
+        // An unreadable receipt is NOT a fallback case: answering with the
+        // synthesized count would claim an apply nobody confirmed, and the
+        // CLI would clear records the server may have dropped. Fail so the
+        // client retries (the upserts are idempotent).
+        const receipt = await res.json().catch(() => null);
+        if (typeof receipt !== "object" || receipt === null) {
+          console.error(`Worker ${entityName} ingest returned an unreadable receipt`);
+          return NextResponse.json({ error: `Failed to ingest ${entityName}` }, { status: 502 });
+        }
+        return NextResponse.json({ ...receipt as Record<string, unknown>, ...(ignored ? { ignored } : {}) });
       }
     } catch {
       console.error(`Failed to ingest ${entityName}`);

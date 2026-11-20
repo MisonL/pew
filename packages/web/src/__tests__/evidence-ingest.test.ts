@@ -33,6 +33,13 @@ describe("evidence web ingest boundary", () => {
     expect(JSON.parse(options.body)).toEqual({ userId: "synthetic-user", records: [record] });
   });
 
+  it("passes a revoked-device receipt through unchanged", async () => {
+    fetch.mockResolvedValueOnce(Response.json({ ingested: 0, dropped_devices: ["revoked-device"] }));
+    const res = await POST(request());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ingested: 0, dropped_devices: ["revoked-device"] });
+  });
+
   it("rejects unauthenticated callers and private fields without forwarding", async () => {
     vi.mocked(resolveUser).mockResolvedValueOnce(null);
     expect((await POST(request())).status).toBe(401);

@@ -369,6 +369,38 @@ describe("createWorkerServer.listen", () => {
       await first.close();
     }
   });
+
+  it("reports a post-listen server error instead of swallowing it", async () => {
+    // `server.once("error", reject)` stays attached after a successful listen.
+    // The next error settles an already-resolved promise — a no-op — so a
+    // failing accept loop vanished silently; the once-listener is then gone,
+    // and a second error has no handler at all.
+    const errors: unknown[] = [];
+    const worker = { fetch: async () => new Response("ok") };
+    const handle = await createWorkerServer({
+      worker, env: {}, port: 0, onServerError: (error: unknown) => errors.push(error),
+    }).listen();
+    try {
+      handle.server.emit("error", new Error("accept failed"));
+      handle.server.emit("error", new Error("second failure"));
+      expect(errors).toHaveLength(2);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("logs a post-listen server error by default", async () => {
+    const worker = { fetch: async () => new Response("ok") };
+    const handle = await createWorkerServer({ worker, env: {}, port: 0 }).listen();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      handle.server.emit("error", new Error("accept failed"));
+      expect(log).toHaveBeenCalledWith("worker server error", expect.any(Error));
+    } finally {
+      log.mockRestore();
+      await handle.close();
+    }
+  });
 });
 
 describe("requireSecret", () => {

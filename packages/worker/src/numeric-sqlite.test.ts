@@ -19,12 +19,16 @@ beforeEach(() => {
   sqlite.exec("INSERT INTO users (id, email) VALUES ('u', 'fixture@example.invalid')");
   env = { WORKER_SECRET: "test", DB: {
     prepare(sql: string) {
-      return { bind: (...params: SQLInputValue[]) => ({ sql, params }) };
+      return { bind: (...params: SQLInputValue[]) => ({ sql, params, all: () => ({ results: sqlite.prepare(sql).all(...params) }) }) };
     },
     async batch(statements: { sql: string; params: SQLInputValue[] }[]) {
       sqlite.exec("BEGIN");
       try {
-        const result = statements.map(({ sql, params }) => ({ results: sqlite.prepare(sql).all(...params), success: true }));
+        const result = statements.map(({ sql, params }) => {
+          const stmt = sqlite.prepare(sql);
+          const results = stmt.all(...params);
+          return { results, success: true, meta: { changes: Number(sqlite.prepare("SELECT changes() AS n").get()?.n ?? 0) } };
+        });
         sqlite.exec("COMMIT");
         return result;
       } catch (error) {
@@ -66,9 +70,15 @@ describe("numeric validation through SQLite integer affinity", () => {
     expect(await untagged.json()).toEqual({ ingested: 1 });
     expect(sqlite.prepare("SELECT total_tokens FROM usage_records WHERE device_id='default'").get()?.total_tokens).toBe(record.total_tokens);
 
+    // An untagged record that rewrites the same row reports a real write.
+    const untaggedAgain = await ingest("tokens", [record]);
+    expect(await untaggedAgain.json()).toEqual({ ingested: 1 });
+
+    // The guard skipped the INSERT, so the receipt must say so instead of
+    // reporting the record as written.
     const explicitlyDefault = await ingest("tokens", [{ ...record, device_id: "default", model: "explicit-default" }]);
     expect(explicitlyDefault.status).toBe(200);
-    expect(await explicitlyDefault.json()).toEqual({ ingested: 1 });
+    expect(await explicitlyDefault.json()).toEqual({ ingested: 0, dropped_devices: ["default"] });
     expect(sqlite.prepare("SELECT COUNT(*) AS n FROM usage_records WHERE device_id='default' AND model='explicit-default'").get()?.n).toBe(0);
   });
 
@@ -80,7 +90,7 @@ describe("numeric validation through SQLite integer affinity", () => {
       { ...record, device_id: "active-device" },
     ]);
     expect(tokenMixed.status).toBe(200);
-    expect(await tokenMixed.json()).toEqual({ ingested: 2 });
+    expect(await tokenMixed.json()).toEqual({ ingested: 1, dropped_devices: ["revoked-device"] });
     expect(sqlite.prepare("SELECT COUNT(*) AS n FROM usage_records WHERE device_id='revoked-device'").get()?.n).toBe(0);
     expect(sqlite.prepare("SELECT COUNT(*) AS n FROM usage_records WHERE device_id='active-device'").get()?.n).toBe(1);
 
@@ -90,7 +100,7 @@ describe("numeric validation through SQLite integer affinity", () => {
         callCount: 1, snapshotSeq: 1 } };
     const evidenceMixed = await ingest("evidence", [evidence, { ...evidence, device_id: "active-device", evidence: { ...evidence.evidence, eventId: "c".repeat(64), groupId: "d".repeat(64) } }]);
     expect(evidenceMixed.status).toBe(200);
-    expect(await evidenceMixed.json()).toEqual({ ingested: 2 });
+    expect(await evidenceMixed.json()).toEqual({ ingested: 1, dropped_devices: ["revoked-device"] });
     expect(sqlite.prepare("SELECT COUNT(*) AS n FROM usage_evidence WHERE device_id='revoked-device'").get()?.n).toBe(0);
 
     sqlite.exec("INSERT INTO usage_records(user_id,device_id,source,model,hour_start,input_tokens,cached_input_tokens,output_tokens,reasoning_output_tokens,total_tokens) VALUES ('u','revoked-device','codex','test','2026-09-01T00:00:00.000Z',1,0,0,0,1)");

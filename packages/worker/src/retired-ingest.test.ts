@@ -13,7 +13,10 @@ const event = { ...token, source: "hermes", device_id: "synthetic-device", times
   evidence: { eventId: "a".repeat(64), groupId: "b".repeat(64), callType: "approval", origin: "hermes-acp-ledger", provider: "openai",
     granularity: "call", timePrecision: "exact", intervalStart: null, intervalEnd: null, callCount: 1, snapshotSeq: 1 } };
 function env(): Env {
-  return { WORKER_SECRET: "test", DB: { prepare: vi.fn().mockReturnValue({ bind: vi.fn().mockReturnValue({}) }),
+  // The statements the handlers bind also answer `.all()` for the revocation
+  // pre-query (one extra read on routes whose records carry a device id).
+  return { WORKER_SECRET: "test", DB: { prepare: vi.fn().mockReturnValue({
+    bind: vi.fn().mockReturnValue({ all: async () => ({ results: [] }) }) }),
     batch: vi.fn().mockResolvedValue([]) } as unknown as D1Database };
 }
 const request = (path: string, records: unknown[], secret = "test", userId: unknown = "synthetic-user") => new Request(`https://synthetic.invalid${path}`, {
@@ -44,15 +47,17 @@ describe("Worker retired source defense", () => {
     const response = await worker.fetch(request("/ingest/tokens", [{ source: "zcode", private: "PRIVATE" }, token]), e);
     expect(await response.json()).toEqual({ ingested: 1, ignored: 1 });
     expect(e.DB.prepare).toHaveBeenCalledOnce();
-    expect(e.DB.batch).toHaveBeenCalledWith([{}]);
+    expect(e.DB.batch).toHaveBeenCalledWith([expect.objectContaining({})]);
   });
 
   it.each([["/ingest/sessions", session], ["/ingest/evidence", event]] as const)("persists only active records on %s", async (path, active) => {
     const e = env();
     const response = await worker.fetch(request(path, [{ source: "zcode", private: "PRIVATE" }, active]), e);
     expect(await response.json()).toEqual({ ingested: 1, ignored: 1 });
-    expect(e.DB.prepare).toHaveBeenCalledOnce();
-    expect(e.DB.batch).toHaveBeenCalledWith([{}]);
+    // Evidence records are device-tagged, so the receipt adds one read for the
+    // revocation set; sessions stay at the single upsert statement.
+    expect(e.DB.prepare).toHaveBeenCalledTimes(path === "/ingest/evidence" ? 2 : 1);
+    expect(e.DB.batch).toHaveBeenCalledWith([expect.objectContaining({})]);
   });
 
   it.each(routes)("enforces auth, envelope and original batch limits before filtering on %s", async (path) => {

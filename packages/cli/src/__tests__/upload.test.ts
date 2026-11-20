@@ -512,6 +512,103 @@ describe("executeUpload", () => {
     expect(calls).toHaveLength(3);
   });
 
+  // ----- Revoked device receipt -----
+
+  it("keeps records for a revoked device pending and counts only what applied", async () => {
+    // The server used to answer 200 with nothing naming the drop, so the CLI
+    // cleared an upload that never happened. It now names the device; the
+    // affected records stay pending while the healthy ones clear.
+    await new ConfigManager(dir).save({ token: "pk_revoke" });
+    const queue = new LocalQueue(dir);
+    const records = [
+      makeRecord({ device_id: "revoked-device" }),
+      makeRecord({ device_id: "active-device", model: "m2" }),
+    ];
+    await queue.appendBatch(records);
+    // Sync marks the buckets it produced; without those keys the engine has
+    // no per-record pending set and refuses to clear anything (see the
+    // engine's own refusal test), which is a different path.
+    await queue.saveDirtyKeys(records.map((r) => `${r.source}|${r.model}|${r.hour_start}|${r.device_id}`).sort());
+
+    const result = await executeUpload({
+      stateDir: dir,
+      apiUrl: DEFAULT_HOST,
+      fetch: createMockFetch([{ status: 200, body: { ingested: 1, dropped_devices: ["revoked-device"] } }]).fetchFn,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.uploaded).toBe(1);
+    expect(result.refused).toBe(1);
+    expect(result.warning).toMatch(/revoked device\(s\) revoked-device/);
+
+    // The refused record is the only thing a later run ships.
+    const { fetchFn, calls } = createMockFetch([{ status: 200, body: { ingested: 1 } }]);
+    await executeUpload({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn });
+    expect(calls.map((c) => JSON.parse(c.init.body as string).map((r: QueueRecord) => r.device_id))).toEqual([["revoked-device"]]);
+  });
+
+  it("accepts legacy servers that answer without a dropped_devices field", async () => {
+    await new ConfigManager(dir).save({ token: "pk_legacy" });
+    const queue = new LocalQueue(dir);
+    await queue.appendBatch([makeRecord({ device_id: "some-device" })]);
+    await queue.saveDirtyKeys([`${"claude-code"}|${"claude-sonnet-4-20250514"}|${"2026-03-07T10:00:00.000Z"}|some-device`]);
+    const result = await executeUpload({
+      stateDir: dir,
+      apiUrl: DEFAULT_HOST,
+      fetch: createMockFetch([{ status: 200, body: { ingested: 1 } }]).fetchFn,
+    });
+    expect(result).toMatchObject({ success: true, uploaded: 1 });
+    expect(result.refused).toBeUndefined();
+  });
+
+  it("ignores a dropped_devices list that names no record in this batch", async () => {
+    // A receipt naming some other device is not this batch's business; acting
+    // on it would clear pending intent for the wrong rows.
+    await new ConfigManager(dir).save({ token: "pk_other" });
+    const queue = new LocalQueue(dir);
+    const record = makeRecord({ device_id: "some-device" });
+    await queue.appendBatch([record]);
+    await queue.saveDirtyKeys([`${record.source}|${record.model}|${record.hour_start}|some-device`]);
+    const result = await executeUpload({
+      stateDir: dir,
+      apiUrl: DEFAULT_HOST,
+      fetch: createMockFetch([{ status: 200, body: { ingested: 1, dropped_devices: ["other-device"] } }]).fetchFn,
+    });
+    expect(result).toMatchObject({ success: true, uploaded: 1 });
+    expect(result.refused).toBeUndefined();
+    const { fetchFn, calls } = createMockFetch([{ status: 200, body: { ingested: 1 } }]);
+    await executeUpload({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("keeps revoked evidence pending with its own key shape", async () => {
+    await new ConfigManager(dir).save({ token: "pk_evidence" });
+    const evidence = new EvidenceQueue(dir);
+    const record = {
+      source: "hermes", model: "test-model", device_id: "revoked-device",
+      timestamp: "2026-09-06T16:00:01.000Z", hour_start: "2026-09-06T16:00:00.000Z",
+      input_tokens: 100, cached_input_tokens: 0, output_tokens: 20, reasoning_output_tokens: 0, total_tokens: 120,
+      evidence: { eventId: "a".repeat(64), groupId: "b".repeat(64), callType: "approval",
+        origin: "hermes-aux-ledger", provider: "openai", granularity: "session",
+        timePrecision: "session-start", intervalStart: null, intervalEnd: null,
+        callCount: 1, snapshotSeq: 1 },
+    } as const;
+    await evidence.merge([record]);
+
+    const first = await executeUpload({
+      stateDir: dir,
+      apiUrl: DEFAULT_HOST,
+      fetch: createMockFetch([{ status: 200, body: { ingested: 0, dropped_devices: ["revoked-device"] } }]).fetchFn,
+    });
+    expect(first.success).toBe(true);
+    expect(first.refused).toBe(1);
+    expect(first.warning).toMatch(/revoked device\(s\) revoked-device/);
+
+    const { fetchFn, calls } = createMockFetch([{ status: 200, body: {} }]);
+    await executeUpload({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn });
+    expect(calls.map((c) => String(c.url))).toEqual([`${DEFAULT_HOST}/api/ingest/evidence`]);
+  });
+
   // ----- Cross-host queue warning -----
 
   it("surfaces the host-switch warning even though the supplemental stages merge the result", async () => {
