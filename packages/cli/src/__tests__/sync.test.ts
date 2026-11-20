@@ -156,6 +156,42 @@ describe("executeSync", () => {
     expect(records[0].hour_start).toBe("2026-03-07T10:00:00.000Z");
   });
 
+  it("warns instead of silently dropping events whose timestamp cannot become an uploadable bucket", async () => {
+    // The parsers only require the timestamp to be a string. Aggregation then
+    // maps it through toUtcHalfHourStart and `continue`s when that yields
+    // null — and a value like "+010000-01-01T…" yields an expanded-year bucket
+    // the upload contract rejects. Either way the cursor advanced past the
+    // bytes and the tokens were never queued, with nothing said. The scan
+    // cannot repair such a line, so it must at least be counted and reported.
+    const claudeDir = join(dataDir, ".claude", "projects", "proj-a");
+    await mkdir(claudeDir, { recursive: true });
+    await writeFile(
+      join(claudeDir, "session.jsonl"),
+      `${[
+        claudeLine("2026-03-07T10:15:00.000Z", 5000, 800),
+        claudeLine("not-a-date", 100, 10),
+        claudeLine("+010000-01-01T00:15:00.000Z", 1, 1),
+      ].join("\n")}\n`,
+    );
+
+    const warnings: string[] = [];
+    const result = await executeSync({
+      stateDir,
+      claudeDir: join(dataDir, ".claude"),
+      onProgress: (e) => { if (e.phase === "warn") warnings.push(e.message ?? ""); },
+    });
+
+    expect(result.sources.claude).toBe(3);
+    // The good event still lands, with the unuploadable ones reported.
+    const queueRaw = await readFile(join(stateDir, "queue.jsonl"), "utf-8");
+    const records = queueRaw.trim().split("\n").map((l) => JSON.parse(l) as QueueRecord);
+    expect(records).toHaveLength(1);
+    expect(records[0].hour_start).toBe("2026-03-07T10:00:00.000Z");
+    const warned = warnings.find((w) => w.includes("timestamp"));
+    expect(warned, warnings.join(" | ")).toBeDefined();
+    expect(warned).toContain("2");
+  });
+
   it("keeps the pending queue when a full scan finds no source at all", async () => {
     const claudeRoot = join(dataDir, ".claude");
     const claudeDir = join(claudeRoot, "projects", "proj-a");
@@ -3920,6 +3956,47 @@ describe("executeSync", () => {
     const after = JSON.parse(await readFile(join(stateDir, "cursors.json"), "utf-8"));
     expect(beforeOffset).toBe(sizeBefore);
     expect(after.files[sessionPath].offset).toBeGreaterThan(beforeOffset);
+  });
+
+  it("does not advance cursors when the run fails before the commit is staged", async () => {
+    // The recovery path used to advance the cursors of every file whose data
+    // had been read whenever no journal was pending — including failures that
+    // happened before commitSync was reached at all. In that direction the
+    // parsed deltas exist only in memory and were never queued (the queue
+    // state read itself was the failure), so the advance destroyed the new
+    // tokens and accounting rows for good. Before the commit nothing durable
+    // holds them; the next run has to re-read the same bytes.
+    const claudeRoot = join(dataDir, ".claude");
+    const projDir = join(claudeRoot, "projects", "p1");
+    await mkdir(projDir, { recursive: true });
+    const sessionPath = join(projDir, "A.jsonl");
+    await writeFile(sessionPath, `${claudeLine("2026-03-07T10:15:00.000Z", 100, 10)}\n`);
+    await executeSync({ stateDir, deviceId: "dev-fail", claudeDir: claudeRoot });
+    const before = JSON.parse(await readFile(join(stateDir, "cursors.json"), "utf-8"));
+    const beforeOffset = before.files[sessionPath].offset;
+    const sizeBefore = Buffer.byteLength(`${claudeLine("2026-03-07T10:15:00.000Z", 100, 10)}\n`);
+
+    await writeFile(
+      sessionPath,
+      `${claudeLine("2026-03-07T10:15:00.000Z", 100, 10)}\n${claudeLine("2026-03-07T10:45:00.000Z", 7, 3)}\n`,
+    );
+    // An unreadable queue state file: the scan itself succeeds, and the
+    // failure surfaces when the queue's dirty set is loaded — after the
+    // deltas were parsed, before the journal was written.
+    await rm(join(stateDir, "queue.state.json"), { force: true });
+    await mkdir(join(stateDir, "queue.state.json"));
+
+    await expect(executeSync({ stateDir, deviceId: "dev-fail", claudeDir: claudeRoot })).rejects.toThrow();
+    const mid = JSON.parse(await readFile(join(stateDir, "cursors.json"), "utf-8"));
+    expect(beforeOffset).toBe(sizeBefore);
+    expect(mid.files[sessionPath].offset).toBe(beforeOffset);
+
+    // With the state file readable again the new event must reach the queue.
+    await rm(join(stateDir, "queue.state.json"), { recursive: true, force: true });
+    await executeSync({ stateDir, deviceId: "dev-fail", claudeDir: claudeRoot });
+    const records = (await readFile(join(stateDir, "queue.jsonl"), "utf-8"))
+      .trim().split("\n").map((l) => JSON.parse(l) as QueueRecord);
+    expect(records.some((r) => r.hour_start === "2026-03-07T10:30:00.000Z" && r.total_tokens === 10)).toBe(true);
   });
 
   it("does not advance cursors when the run fails after the journal was staged", async () => {

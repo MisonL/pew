@@ -23,7 +23,7 @@ import { CursorStore } from "../storage/cursor-store.js";
 import { LocalQueue } from "../storage/local-queue.js";
 import { EvidenceQueue } from "../storage/evidence-queue.js";
 import { AccountingQueue, accountingJson, accountingKey, planAccountingUpdates } from "../storage/accounting-queue.js";
-import { commitSync, recoverSyncCommit, syncCommitPending } from "../storage/sync-commit.js";
+import { commitSync, recoverSyncCommit } from "../storage/sync-commit.js";
 import { withStateLock } from "../storage/state-lock.js";
 import { toEvidenceRecord } from "../utils/usage-evidence.js";
 import { appendAll } from "../utils/append.js";
@@ -49,6 +49,7 @@ import {
   restoreJsonlSharedState,
   snapshotJsonlSharedState,
 } from "../utils/jsonl-shared-state.js";
+import { isValidIsoInstant } from "../utils/ingest-contract.js";
 import { aggregateRecords } from "./upload.js";
 import { readAntigravitySource } from "../parsers/antigravity.js";
 import { antigravityRecords, readAntigravityBaseline, replaceAntigravityPartition, tokenRecordKey } from "../utils/antigravity-snapshot.js";
@@ -269,37 +270,22 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     return await executeSyncScan({ ...opts,
       onCollected: (cursors, paths, deltas) => { collected = { cursors, paths, deltas }; } });
   } catch (error) {
-    // The scan got past discovery and at least one file was committed to the
-    // in-memory batch, so its parsed deltas are gone with this failure. Advance
-    // those files' cursors past the bytes already read — otherwise the next run
-    // re-reads them and the same batches are lost again, silently.
+    // A failure here never needs to move a cursor. commitSync stages its
+    // journal before the first queue write, so either the journal exists —
+    // then it is the replay boundary and the next run's recovery finishes the
+    // commit (queue, ledgers and cursors together) — or nothing durable was
+    // written at all: the parsed deltas exist only in memory, and the next run
+    // re-reads the same bytes and rebuilds exactly these records (aggregation
+    // is idempotent and every upload deduplicates on upsert).
     //
-    // Skipped once the commit is in flight: there the queue (and its journal)
-    // is the replay boundary, and a cursor ahead of it would skip records the
-    // queue never took. Only the scanned files move; every other cursor, the
-    // evidence queue and the token queue are left exactly as they were.
-    if (collected && !(await syncCommitPending(opts.stateDir).catch(() => true))) {
-      const snapshot: CursorState = { ...collected.cursors, files: {} };
-      for (const path of collected.paths) {
-        const cursor = collected.cursors.files[path];
-        if (cursor) snapshot.files[path] = cursor;
-      }
-      // Evidence is derived here, once, from the deltas that were read: the
-      // same rows the successful path would have queued, so a later upload
-      // cannot count them twice (the queue merge is keyed by evidence id).
-      const evidence: EvidenceRecord[] = [];
-      for (const delta of collected.deltas) {
-        if (!delta.evidence) continue;
-        try { evidence.push(toEvidenceRecord(delta, opts.deviceId)); } catch { /* reported at the end of the scan */ }
-      }
-      if (evidence.length) {
-        await new EvidenceQueue(opts.stateDir).merge(evidence, false)
-          .catch(() => { /* the original error is the one to report */ });
-      }
-      await new CursorStore(opts.stateDir).save(snapshot)
-        .catch(() => { /* the original error is the one to report */ });
+    // The old path advanced the scanned files' cursors whenever no journal was
+    // pending. That is precisely the direction with nothing durable behind
+    // them: a failure after the scan but before the commit — an unreadable
+    // queue state file, a failed ledger merge — silently dropped that run's
+    // new tokens and accounting rows for good.
+    if (collected) {
       opts.onProgress?.({ source: "all", phase: "warn",
-        message: "Sync failed after reading file data; those files' cursors were advanced. Uploaded data for this run was not queued." });
+        message: "Sync failed before committing; the files read in this run will be re-read on the next sync" });
     }
     throw error;
   }
@@ -1229,10 +1215,19 @@ async function executeSyncScan(opts: InternalSyncOptions & {
 
   const buckets = new Map<string, Bucket>();
 
+  // A delta whose timestamp has no uploadable bucket (unparseable, or an
+  // expanded-year value the wire contract rejects) used to be skipped with a
+  // bare `continue`: the cursor still advanced past the bytes, so those tokens
+  // were gone and nothing said so. The scan cannot repair the line, but it can
+  // count it and say it — the same treatment the evidence projection gets.
+  let unuploadableTokenTimestamps = 0;
   for (const delta of allDeltas) {
     if (delta.evidence) continue;
     const hourStart = toUtcHalfHourStart(delta.timestamp);
-    if (!hourStart) continue;
+    if (!hourStart || !isValidIsoInstant(hourStart)) {
+      unuploadableTokenTimestamps++;
+      continue;
+    }
 
     const bk = bucketKey(delta.source, delta.model, hourStart);
     let bucket = buckets.get(bk);
@@ -1338,6 +1333,10 @@ async function executeSyncScan(opts: InternalSyncOptions & {
   if (unprojectableEvidence > 0) {
     onProgress?.({ source: "all", phase: "warn",
       message: `Skipped ${unprojectableEvidence} usage evidence events that cannot pass the upload contract; the usage itself is not included` });
+  }
+  if (unuploadableTokenTimestamps > 0) {
+    onProgress?.({ source: "all", phase: "warn",
+      message: `Skipped ${unuploadableTokenTimestamps} token events whose timestamp cannot be turned into an uploadable hour bucket; the raw log is untouched, so the loss is reparable only at the source` });
   }
 
   const { records: oldRecords } = await queue.readFromOffset(0);
