@@ -90,10 +90,18 @@ export async function applyPasswordReset(
   userId: string,
   password: string,
 ): Promise<void> {
-  await db
+  const result = await db
     .prepare("UPDATE users SET password_hash = ?, api_key = NULL, updated_at = datetime('now') WHERE id = ?")
     .bind(hashPasswordForReset(password), userId)
     .run();
+  // The SELECT above and this UPDATE are separate round trips: the row can be
+  // gone by now (deleted account, concurrent reset). Reporting success for an
+  // UPDATE that matched nothing tells the operator to re-login to an account
+  // whose password never changed.
+  const changes = (result as { meta?: { changes?: number } } | null)?.meta?.changes;
+  if (changes === 0) {
+    throw new Error(`password reset matched no user row for ${userId}`);
+  }
 }
 
 async function main(): Promise<void> {

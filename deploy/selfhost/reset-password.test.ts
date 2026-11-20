@@ -38,12 +38,19 @@ describe("hashPasswordForReset", () => {
 });
 
 describe("applyPasswordReset revokes the CLI credential", () => {
-  function recordingDb() {
+  function recordingDb(changes = 1) {
     const calls: Array<{ sql: string; values: unknown[] }> = [];
     return {
       calls,
       prepare(sql: string) {
-        return { bind: (...values: unknown[]) => ({ run: async () => { calls.push({ sql, values }); } }) };
+        return {
+          bind: (...values: unknown[]) => ({
+            run: async () => {
+              calls.push({ sql, values });
+              return { success: true, results: [], meta: { changes, duration: 0 } };
+            },
+          }),
+        };
       },
     };
   }
@@ -56,6 +63,15 @@ describe("applyPasswordReset revokes the CLI credential", () => {
     expect(db.calls[0]?.values[1]).toBe("user-1");
     // The stored hash still verifies, so the revocation is not accidental.
     expect(verifyLikeWebApp("a-long-enough-password", String(db.calls[0]?.values[0]))).toBe(true);
+  });
+
+  it("fails when the UPDATE matched no user instead of reporting success", async () => {
+    // The preceding SELECT and this UPDATE are two round trips; the row can
+    // disappear in between (account deleted, id no longer that user). The
+    // script printed "password updated" either way.
+    const db = recordingDb(0);
+    await expect(applyPasswordReset(db, "user-gone", "a-long-enough-password"))
+      .rejects.toThrow(/matched no user/);
   });
 });
 
