@@ -541,7 +541,7 @@ describe("pew read Worker", () => {
       }));
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
         const url = String(input instanceof Request ? input.url : input);
-        return new Response(JSON.stringify(url.includes("openrouter") ? { data: [] } : { openai: { models: {} } }), { status: 200 });
+        return new Response(JSON.stringify(url.includes("openrouter") ? { data: [] } : { openai: { models: { "gpt-4o": { cost: { input: 2.5, output: 10 } } } } }), { status: 200 });
       });
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -575,12 +575,15 @@ describe("pew read Worker", () => {
       // Each upstream also answers its own document shape: a body that is not
       // the source's document is a failed fetch (see payloadIsUsable), so
       // handing OpenRouter's `{data: []}` to models.dev would make this a
-      // degraded run rather than the clean one under test.
+      // degraded run rather than the clean one under test. The catalogue also
+      // needs one model in it: `models: {}` is the same shape a malformed
+      // upstream error document takes, and payloadIsUsable treats it as a
+      // failed fetch.
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
         const url = String(input instanceof Request ? input.url : input);
         const body = url.includes("openrouter")
           ? { data: [] }
-          : { openai: { models: {} } };
+          : { openai: { models: { "gpt-4o": { name: "GPT-4o", cost: { input: 2.5, output: 10 } } } } };
         return new Response(JSON.stringify(body), { status: 200 });
       });
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
