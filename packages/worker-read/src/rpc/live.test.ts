@@ -83,7 +83,10 @@ describe("live RPC handlers", () => {
       await handleLiveRpc({ method: "live.getActiveSessions" }, db);
 
       const sql = String(db.prepare.mock.calls[0]![0]);
-      expect(sql).toContain("ORDER BY sr.last_message_at DESC, sr.id DESC");
+      // Epoch order, not text: an offset-bearing ISO timestamp such as
+      // 2026-11-21T02:28:20+14:00 (12:28Z) sorts BEFORE 2026-11-20T12:47:20Z
+      // as text, putting an older session at the top of a limited feed.
+      expect(sql).toContain("ORDER BY julianday(sr.last_message_at) DESC, sr.last_message_at DESC, sr.id DESC");
     });
   });
 
@@ -165,7 +168,7 @@ describe("live RPC handlers", () => {
 
       const sql = String(db.prepare.mock.calls[0]![0]);
       expect(sql).toContain(
-        "ORDER BY ur.hour_start DESC, ur.user_id, ur.device_id, ur.source, ur.model",
+        "ORDER BY julianday(ur.hour_start) DESC, ur.hour_start DESC, ur.user_id, ur.device_id, ur.source, ur.model",
       );
     });
 

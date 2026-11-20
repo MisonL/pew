@@ -100,7 +100,9 @@ async function handleGetActiveSessions(
     FROM session_records sr
     JOIN users u ON u.id = sr.user_id
     WHERE julianday(sr.last_message_at) >= julianday('now', '-30 minutes')
-    ORDER BY sr.last_message_at DESC, sr.id DESC
+    -- julianday() gives epoch order for legacy rows carrying a non-UTC
+    -- offset; the text value is the tie-break, then the unique id.
+    ORDER BY julianday(sr.last_message_at) DESC, sr.last_message_at DESC, sr.id DESC
     LIMIT ?
   `;
 
@@ -152,7 +154,10 @@ async function handleGetRecentActivity(
       ur.hour_start AS created_at
     FROM recent ur
     JOIN users u ON u.id = ur.user_id
-    ORDER BY ur.hour_start DESC, ur.user_id, ur.device_id, ur.source, ur.model
+    -- Same epoch-first rule as the active-session feed: the WHERE already
+    -- uses julianday(), so sorting by raw text would still put an
+    -- offset-bearing hour ahead of a newer UTC hour.
+    ORDER BY julianday(ur.hour_start) DESC, ur.hour_start DESC, ur.user_id, ur.device_id, ur.source, ur.model
     LIMIT ?
   `;
 

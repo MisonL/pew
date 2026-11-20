@@ -55,14 +55,21 @@ describe("applyPasswordReset revokes the CLI credential", () => {
     };
   }
 
-  it("nulls api_key alongside password_hash", async () => {
+  it("nulls api_key and invalidates outstanding auth codes", async () => {
+    // Same contract as the web reset path: a one-time CLI login code stays
+    // usable for five minutes and mints a fresh key when the user has none,
+    // so the reset has to burn them too.
     const db = recordingDb();
     await applyPasswordReset(db, "user-1", "a-long-enough-password");
-    expect(db.calls).toHaveLength(1);
-    expect(db.calls[0]?.sql).toContain("api_key = NULL");
-    expect(db.calls[0]?.values[1]).toBe("user-1");
+    expect(db.calls).toHaveLength(2);
+    const codes = db.calls[0]!;
+    expect(codes.sql).toBe("UPDATE auth_codes SET used_at = datetime('now') WHERE user_id = ? AND used_at IS NULL");
+    expect(codes.values).toEqual(["user-1"]);
+    const users = db.calls[1]!;
+    expect(users.sql).toContain("api_key = NULL");
+    expect(users.values[1]).toBe("user-1");
     // The stored hash still verifies, so the revocation is not accidental.
-    expect(verifyLikeWebApp("a-long-enough-password", String(db.calls[0]?.values[0]))).toBe(true);
+    expect(verifyLikeWebApp("a-long-enough-password", String(users.values[0]))).toBe(true);
   });
 
   it("fails when the UPDATE matched no user instead of reporting success", async () => {
