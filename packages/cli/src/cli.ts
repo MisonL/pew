@@ -259,6 +259,11 @@ export const syncCommand = defineCommand({
       description: "API host for a self-hosted instance (e.g. http://pew.corp:7020)",
       required: false,
     },
+    dropRevoked: {
+      type: "boolean",
+      description: "Discard queued records for devices the server has revoked, instead of keeping them pending and re-sending on every sync",
+      default: false,
+    },
   },
   async run({ args }) {
     const paths = resolveDefaultPaths();
@@ -417,7 +422,7 @@ export const syncCommand = defineCommand({
       // the token under the host that was actually used.
       const host = resolveHostOrReport(dev, args.host);
       if (!host) return;
-      await runUpload(paths.stateDir, host, dev);
+      await runUpload(paths.stateDir, host, dev, args.dropRevoked);
       await runSessionUpload(paths.stateDir, host, dev);
     }
   },
@@ -932,7 +937,7 @@ const uninstallCommand = defineCommand({
 // Upload helper (used by `sync --upload`)
 // ---------------------------------------------------------------------------
 
-async function runUpload(stateDir: string, apiUrl: string, dev: boolean): Promise<void> {
+async function runUpload(stateDir: string, apiUrl: string, dev: boolean, dropRevoked = false): Promise<void> {
   log.blank();
   // Print the resolved target: the queue is shared across hosts, so the only
   // thing that decides where data goes is this URL. Without it, a stray
@@ -948,6 +953,7 @@ async function runUpload(stateDir: string, apiUrl: string, dev: boolean): Promis
     fetch: globalThis.fetch,
     clientVersion: CLI_VERSION,
     onCorruptLine: handleCorruptLine,
+    dropRevoked,
     onProgress(event) {
       if (event.phase === "uploading") {
         log.text(`${pc.dim(`Batch ${event.batch}/${event.totalBatches}`)} (${event.message})`);

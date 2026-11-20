@@ -547,6 +547,39 @@ describe("executeUpload", () => {
     expect(calls.map((c) => JSON.parse(c.init.body as string).map((r: QueueRecord) => r.device_id))).toEqual([["revoked-device"]]);
   });
 
+  it("discards revoked-device records when the run asks for it", async () => {
+    // The pending set is the safe default, but a permanently revoked device
+    // would otherwise re-upload the same records on every sync forever. The
+    // explicit flag acknowledges the loss; the healthy sibling still ships.
+    await new ConfigManager(dir).save({ token: "pk_discard" });
+    const queue = new LocalQueue(dir);
+    const records = [
+      makeRecord({ device_id: "revoked-device" }),
+      makeRecord({ device_id: "active-device", model: "m2" }),
+    ];
+    await queue.appendBatch(records);
+    await queue.saveDirtyKeys(records.map((r) => `${r.source}|${r.model}|${r.hour_start}|${r.device_id}`).sort());
+
+    const result = await executeUpload({
+      stateDir: dir,
+      apiUrl: DEFAULT_HOST,
+      dropRevoked: true,
+      fetch: createMockFetch([{ status: 200, body: { ingested: 1, dropped_devices: ["revoked-device"] } }]).fetchFn,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.uploaded).toBe(1);
+    expect(result.discarded).toBe(1);
+    expect(result.refused).toBeUndefined();
+    expect(result.warning).toMatch(/discarded 1/i);
+    expect(await queue.loadDirtyKeys()).toEqual([]);
+
+    // Nothing was re-sent on the next run: the discarded keys left the set.
+    const { fetchFn, calls } = createMockFetch([{ status: 200, body: { ingested: 1 } }]);
+    await executeUpload({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn });
+    expect(calls).toHaveLength(0);
+  });
+
   it("accepts legacy servers that answer without a dropped_devices field", async () => {
     await new ConfigManager(dir).save({ token: "pk_legacy" });
     const queue = new LocalQueue(dir);

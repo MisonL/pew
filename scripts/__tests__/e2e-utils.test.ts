@@ -31,9 +31,19 @@ vi.mock("node:fs", async (importOriginal) => {
  * same base), and the arithmetic itself left the TCP range from worker 44 on
  * (21_000 + 43 * 1000 + 999 stayed below 65_535, 21_000 + 44 * 1000 did not),
  * so later workers walked ports the kernel refuses. The allocator now hashes
- * the worker identity onto a 400-port slice below the top of the range and
- * skips any registry entry this process already handed out. */
-const PORT_SLICE_BASE = 20_000 + (hashWorkerIdentity() % 100) * 400;
+ * the worker identity onto a slice of the range and skips any registry entry
+ * this process already handed out.
+ *
+ * The slices must also stay below the OS ephemeral range: macOS hands out
+ * 49152–65535 to outgoing connections and Linux defaults to 32768–60999, and
+ * the previous 400-port slices from 20_000 reached 59_600. An ephemeral
+ * connection could claim a port between `freePort`'s probe and
+ * `ensurePortFree`'s bind, surfacing as `listen EADDRINUSE` (the full suite on
+ * the maintainer machine reproduced it twice in a row). 99 slices of 128 ports
+ * fit under 32_768; a file needs a handful of ports, not hundreds. */
+const PORT_SLICE_SIZE = 128;
+const PORT_SLICE_SLOTS = 99;
+const PORT_SLICE_BASE = 20_000 + (hashWorkerIdentity() % PORT_SLICE_SLOTS) * PORT_SLICE_SIZE;
 const handedOut = new Set<number>();
 let nextPort = PORT_SLICE_BASE;
 
@@ -45,9 +55,9 @@ function hashWorkerIdentity(): number {
 }
 
 async function freePort(): Promise<string> {
-  for (let attempt = 0; attempt < 400; attempt += 1) {
+  for (let attempt = 0; attempt < PORT_SLICE_SIZE; attempt += 1) {
     const candidate = nextPort++;
-    if (nextPort > PORT_SLICE_BASE + 400) nextPort = PORT_SLICE_BASE;
+    if (nextPort >= PORT_SLICE_BASE + PORT_SLICE_SIZE) nextPort = PORT_SLICE_BASE;
     if (handedOut.has(candidate)) continue;
     const probe = createServer();
     const bound = await new Promise<boolean>((done) => {
@@ -899,6 +909,18 @@ describe("E2E abort-listener hygiene", () => {
 });
 
 describe("E2E port isolation across lanes", () => {
+  it("keeps every worker's port slice below the OS ephemeral range", () => {
+    // 32768 is Linux's default ip_local_port_range start and below macOS's
+    // 49152; a port in either range can be taken by an outgoing connection
+    // between the probe and the bind, which is how a full run produced
+    // `listen EADDRINUSE` from ensurePortFree.
+    // Formula-level, not just this worker's slice: the old 100 × 400 layout
+    // reached 60_000 and would fail here for every worker.
+    expect(PORT_SLICE_BASE).toBeGreaterThanOrEqual(20_000);
+    expect(20_000 + PORT_SLICE_SLOTS * PORT_SLICE_SIZE).toBeLessThanOrEqual(32_768);
+    expect(PORT_SLICE_BASE + PORT_SLICE_SIZE).toBeLessThanOrEqual(32_768);
+  });
+
   // Concurrent lanes (the suite spawns several, and a pre-push L2 lane can run
   // beside them) each pick a port. Reusing one that a previous lane has only
   // just released fails the later lane with listen EADDRINUSE (measured:

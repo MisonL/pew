@@ -89,6 +89,16 @@ describe("syncCommand.run() forwarding", () => {
     expect(executeSessionSyncMock).toHaveBeenCalledWith(expect.objectContaining({ antigravityDir: root }));
   });
 
+  it("forwards --drop-revoked into the token uploader", async () => {
+    // The flag is an acknowledgement of data loss; dropping it between the
+    // citty arg and the engine would silently keep re-uploading revoked
+    // records the operator believes they discarded.
+    await syncCommand.run!({ args: { upload: true, dev: false, dropRevoked: true } as never });
+    expect(uploadTokensMock).toHaveBeenCalledWith(expect.objectContaining({ dropRevoked: true }));
+    // The session queue carries no device id, so it must not receive it.
+    expect(uploadSessionsMock).toHaveBeenCalledWith(expect.not.objectContaining({ dropRevoked: expect.anything() }));
+  });
+
   it("labels Antigravity token, session and database summaries", async () => {
     const tokenResult = await executeSyncMock();
     const sessionResult = await executeSessionSyncMock();

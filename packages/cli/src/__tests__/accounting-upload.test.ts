@@ -60,6 +60,32 @@ describe("accounting outbox capability acknowledgment", () => {
     expect(await details.loadDirtyKeys()).toEqual([accountingKey(record)]);
   });
 
+  it("discards only the revoked subset of a mixed accounting batch", async () => {
+    // A queued batch can mix a revoked device's annotation with one the
+    // server rejected for a different reason. --drop-revoked is an
+    // acknowledgement about the revocation only; the base_mismatch key must
+    // stay pending or the flag would quietly drop a different record too.
+    const { dir, record, details } = await setup();
+    const second = { ...record, model: `${record.model}-b` } as AccountingRecord;
+    await details.merge([second]);
+    // Answer per received record: the queue reads its buckets in its own
+    // order, so positional acks would test the fixture's order, not the rule.
+    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async (url, init) => {
+      if (!String(url).endsWith("/api/ingest/details")) return Response.json({ ingested: 1 });
+      const batch = JSON.parse(String(init?.body)) as AccountingRecord[];
+      return Response.json({ details_version: 1, acknowledgments: batch.map((r) => ({
+        key: accountingKey(r), source_revision: r.source_revision,
+        parser_revision: r.parser_revision, detail_revision: r.detail_revision,
+        status: r.model === record.model ? "device_revoked" : "base_mismatch",
+      })) });
+    });
+    const result = await executeUpload({ stateDir: dir, apiUrl: API, fetch, maxRetries: 0, dropRevoked: true });
+    expect(result.success).toBe(true);
+    expect(result.discarded).toBe(1);
+    expect(result.refused).toBe(1);
+    expect(await details.loadDirtyKeys()).toEqual([accountingKey(second)]);
+  });
+
   it.each(["base_mismatch", "conflict"])("retains %s for reconciliation", async (status) => {
     const { dir, record, details } = await setup();
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({ ingested: 1 })).mockResolvedValueOnce(Response.json(ack(record, status)));

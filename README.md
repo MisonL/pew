@@ -45,6 +45,7 @@ pew status
 | --- | --- |
 | `pew sync` | 扫描本地数据；已登录时上传 |
 | `pew sync --no-upload` | 只解析并写入本地队列 |
+| `pew sync --drop-revoked` | 丢弃服务器已撤销设备的待传记录（默认保留 pending 等待设备恢复）；原始日志不受影响，需要时仍可用 `pew reset && pew sync` 重建 |
 | `pew status` | 查看扫描、队列与自动同步状态 |
 | `pew init` | 配置受支持工具的自动同步集成 |
 | `pew uninstall` | 移除自动同步集成 |
