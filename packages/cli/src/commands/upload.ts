@@ -185,6 +185,7 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
       const value = body as { details_version?: unknown; acknowledgments?: unknown } | null;
       if (value?.details_version !== 1 || !Array.isArray(value.acknowledgments) || value.acknowledgments.length !== batch.length) return "Server did not acknowledge accounting details v1";
       const refused: string[] = [];
+      const reasons = new Set<string>();
       for (let i = 0; i < batch.length; i++) {
         const ack = value.acknowledgments[i]; const r = batch[i];
         if (!ack || ack.key !== accountingKey(r) || ack.source_revision !== r.source_revision || ack.parser_revision !== r.parser_revision ||
@@ -193,10 +194,18 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
         // server has no token base for the bucket or a newer stored revision
         // disagrees. Retrying cannot change that answer, so the record stays
         // pending without blocking the annotations queued behind it.
-        if (ack.status === "base_mismatch" || ack.status === "conflict") refused.push(accountingKey(r));
-        else if (!["applied", "duplicate", "superseded"].includes(ack.status)) return "Accounting details need reconciliation or a compatible server";
+        // `device_revoked` is the same shape: the trigger discarded the row
+        // and the answer only changes if the device is un-revoked, so the
+        // annotation keeps its pending key instead of being cleared.
+        if (ack.status === "base_mismatch" || ack.status === "conflict") {
+          refused.push(accountingKey(r));
+          reasons.add("the server has no matching token base or a newer stored revision");
+        } else if (ack.status === "device_revoked") {
+          refused.push(accountingKey(r));
+          reasons.add("the revoked device's details were discarded; the annotation stays pending until the device is un-revoked");
+        } else if (!["applied", "duplicate", "superseded"].includes(ack.status)) return "Accounting details need reconciliation or a compatible server";
       }
-      return refused.length > 0 ? { keys: refused, reason: "the server has no matching token base or a newer stored revision" } : null;
+      return refused.length > 0 ? { keys: refused, reason: [...reasons].join("; ") } : null;
     },
   }).execute(opts);
   if (!details.success) warnings.push(`Accounting details pending: ${details.error}`);

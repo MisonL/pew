@@ -71,7 +71,7 @@ export interface AccountingAnnotation {
   groups: AccountingGroup[];
 }
 
-export type AccountingAckStatus = "applied" | "duplicate" | "superseded" | "base_mismatch" | "conflict";
+export type AccountingAckStatus = "applied" | "duplicate" | "superseded" | "base_mismatch" | "conflict" | "device_revoked";
 export interface AccountingAck {
   key: string;
   source_revision: number;

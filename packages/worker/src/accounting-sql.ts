@@ -51,7 +51,12 @@ export async function ingestAccounting(db: D1Database, userId: string, records: 
     const state = results[i * 2 + 1].results[0] as Record<string, unknown>;
     let status: AccountingAck["status"];
     const storedMatches = Object.entries(r.basis).every(([k, v]) => state[k] === v) && state.evidence_snapshot_seq === r.evidence_snapshot_seq;
-    if (state.device_revoked) status = "superseded";
+    // A revoked device's detail row never lands (the trigger discards it).
+    // `superseded` claimed a newer revision had won, which told the CLI the
+    // record was settled and made it clear the pending key. The revocation is
+    // its own answer: nothing was stored, and retrying stays pointless until
+    // the device is un-revoked.
+    if (state.device_revoked) status = "device_revoked";
     else if (!state.base_matches) status = "base_mismatch";
     else if (results[i * 2].results.length > 0) status = "applied";
     else if (storedMatches && state.source_revision === r.source_revision && state.parser_revision === r.parser_revision &&

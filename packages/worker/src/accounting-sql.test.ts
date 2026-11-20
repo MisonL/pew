@@ -56,6 +56,17 @@ describe("accounting acknowledgment status", () => {
     expect(ack?.status).toBe("superseded");
   });
 
+  it("names the revocation instead of claiming a newer revision won", async () => {
+    // A revoked device's detail row is discarded by the trigger, and nothing
+    // was stored. `superseded` told the CLI a newer revision existed and made
+    // it clear the annotation; a distinct status keeps it pending and names
+    // the reason.
+    const r = record();
+    const { db } = dbReturning([{ state: stateFor(r, { device_revoked: 1 }) }]);
+    const [ack] = await ingestAccounting(db, "u1", [r]);
+    expect(ack?.status).toBe("device_revoked");
+  });
+
   it("marks an upload conflict when the stored basis differs and nothing supersedes it", async () => {
     const r = record();
     // base_matches is 1 (the row exists for this basis) but the stored counters
