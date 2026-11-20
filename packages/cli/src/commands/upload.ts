@@ -51,7 +51,12 @@ function droppedDevicesRefusal<T extends { device_id?: string }>(
     .filter((r) => r.device_id !== undefined && droppedSet.has(r.device_id as string))
     .map(keyOf);
   if (keys.length === 0) return null;
-  return { keys, reason: `the server revoked device(s) ${[...droppedSet].join(", ")} and ignored their ${entityName}` };
+  // The refusal is permanent while the device stays revoked, so the warning
+  // carries the two exits: restore the device and the pending set retries on
+  // the next sync, or run `pew reset && pew sync` once it is gone for good.
+  // Every one of these keys is a revoked-device record, so the engine may
+  // discard exactly this subset when the user asked for it.
+  return { keys, revokedKeys: keys, reason: `the server revoked device(s) ${[...droppedSet].join(", ")} and ignored their ${entityName}; restore the device to retry` };
 }
 
 // ---------------------------------------------------------------------------
@@ -77,6 +82,11 @@ export interface UploadOptions {
   onProgress?: (event: UploadProgressEvent) => void;
   /** CLI version string for server-side version gate */
   clientVersion?: string;
+  /**
+   * Discard queued records the server refused as revoked-device records
+   * instead of keeping them pending (`pew sync --drop-revoked`).
+   */
+  dropRevoked?: boolean;
   /** Callback invoked when a corrupted JSONL line is found in the queue */
   onCorruptLine?: OnCorruptLine;
 }
@@ -142,6 +152,7 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
     recordKey: tokenKey,
     rejectRecord: tokenRecordRejection,
     trackUploadTarget: true,
+    discardRevoked: opts.dropRevoked,
     validateResponse: (body, batch) => droppedDevicesRefusal(body, batch, tokenKey, "usage records"),
   });
 
@@ -155,6 +166,7 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
     queue: new EvidenceQueue(opts.stateDir), endpoint: "/api/ingest/evidence",
     entityName: "usage evidence", preprocess: (records) => records,
     recordKey: evidenceKey, rejectRecord: evidenceRecordRejection,
+    discardRevoked: opts.dropRevoked,
     validateResponse: (body, batch) => droppedDevicesRefusal(body, batch, evidenceKey, "usage evidence"),
   }).execute(opts);
   // The token stage is the only one that records the target, so it is also the
@@ -175,6 +187,7 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
   const details = await createUploadEngine<AccountingRecord>({
     queue: new AccountingQueue(opts.stateDir), endpoint: "/api/ingest/details", entityName: "accounting details",
     preprocess: (records) => records, recordKey: accountingKey, maxBatchSize: 25, maxBatchBytes: 600_000,
+    discardRevoked: opts.dropRevoked,
     // 600 KB is a network-timeout guard, not the server's ceiling: an
     // AccountingRecord may carry 256 groups × 4 reported costs, and one that
     // validates can measure ~617 KB. The engine skips a record over this limit
@@ -185,6 +198,7 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
       const value = body as { details_version?: unknown; acknowledgments?: unknown } | null;
       if (value?.details_version !== 1 || !Array.isArray(value.acknowledgments) || value.acknowledgments.length !== batch.length) return "Server did not acknowledge accounting details v1";
       const refused: string[] = [];
+      const revoked: string[] = [];
       const reasons = new Set<string>();
       for (let i = 0; i < batch.length; i++) {
         const ack = value.acknowledgments[i]; const r = batch[i];
@@ -202,10 +216,11 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
           reasons.add("the server has no matching token base or a newer stored revision");
         } else if (ack.status === "device_revoked") {
           refused.push(accountingKey(r));
-          reasons.add("the revoked device's details were discarded; the annotation stays pending until the device is un-revoked");
+          revoked.push(accountingKey(r));
+          reasons.add("the revoked device's details were discarded; the annotation stays pending until the device is restored unless --drop-revoked was passed");
         } else if (!["applied", "duplicate", "superseded"].includes(ack.status)) return "Accounting details need reconciliation or a compatible server";
       }
-      return refused.length > 0 ? { keys: refused, reason: [...reasons].join("; ") } : null;
+      return refused.length > 0 ? { keys: refused, revokedKeys: revoked, reason: [...reasons].join("; ") } : null;
     },
   }).execute(opts);
   if (!details.success) warnings.push(`Accounting details pending: ${details.error}`);
@@ -230,8 +245,10 @@ async function uploadLocked(opts: UploadOptions): Promise<UploadResult> {
   // stage's own `refused` count has to be carried across or the operator's
   // summary says everything was accepted.
   const refused = (main.refused ?? 0) + (supplemental.refused ?? 0) + (details.refused ?? 0);
+  const discarded = (main.discarded ?? 0) + (supplemental.discarded ?? 0) + (details.discarded ?? 0);
   return { ...usage, uploaded: usage.uploaded + details.uploaded, batches: usage.batches + details.batches,
     ...(refused > 0 ? { refused } : {}),
+    ...(discarded > 0 ? { discarded } : {}),
     ...mergeWarnings(warnings) };
 }
 

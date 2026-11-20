@@ -83,6 +83,14 @@ export interface UploadEngineConfig<T> {
    * otherwise re-route a pending backlog with no line of output saying so.
    */
   trackUploadTarget?: boolean;
+  /**
+   * Discard the records the server refused because their device is revoked,
+   * instead of keeping them pending. Off by default: the pending set is what
+   * lets an un-revoke retry the same records. A permanently revoked device
+   * would otherwise re-upload them on every sync, so the CLI exposes this as
+   * an explicit acknowledgement of the loss.
+   */
+  discardRevoked?: boolean;
 }
 
 export interface UploadExecuteOptions {
@@ -130,6 +138,13 @@ export interface UploadProgressEvent {
 export interface RefusedRecords {
   keys: string[];
   reason: string;
+  /**
+   * The subset of `keys` the server refused specifically because the device
+   * is revoked. Only this subset is discarded by `discardRevoked`: one batch
+   * can mix a revoked device with a `base_mismatch` annotation, and dropping
+   * the latter would be a different (wrong) decision.
+   */
+  revokedKeys?: string[];
 }
 
 export interface UploadResult {
@@ -144,6 +159,12 @@ export interface UploadResult {
    * answer), so it is reported separately from `error`.
    */
   refused?: number;
+  /**
+   * Records the server refused as revoked-device records and the run
+   * discarded instead of keeping pending (`discardRevoked`). Reported apart
+   * from `refused` so the caller can say plainly that a loss was accepted.
+   */
+  discarded?: number;
   /**
    * Set when this stage actually shipped records to an origin different from
    * the recorded one. The caller composes the warning across stages: a stage
@@ -337,6 +358,9 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
     // when a later run gets a different answer, so they are carried across
     // batches and re-saved as the remaining dirty set.
     const refusedKeys = new Set<string>();
+    // Refused as revoked-device records and discarded on request; counted for
+    // the warning, never persisted as pending.
+    const discardedKeys = new Set<string>();
     let refusalReason = "";
 
     for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
@@ -376,7 +400,7 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
       // stay pending: the offset would advance past a record the server never
       // applied. Fail loudly there rather than lose it.
       if (result.refused) {
-        const { keys, reason } = result.refused;
+        const { keys, reason, revokedKeys } = result.refused;
         // Without per-record keys there is nowhere for a refused record to
         // stay pending; the offset is about to advance past it. Fail loudly
         // rather than strand it.
@@ -384,19 +408,25 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
           return { success: false, uploaded: totalUploaded, batches: batchesCompleted, error: reason };
         }
         const sent = new Set(batch.map(recordKey));
+        const discardable = new Set(config.discardRevoked ? revokedKeys ?? [] : []);
         for (const key of keys) {
           // A receipt naming a record this batch never carried is a protocol
           // violation; acting on it would clear pending intent for the wrong
           // record.
           if (!sent.has(key)) return { success: false, uploaded: totalUploaded, batches: batchesCompleted,
             error: `Server refused an unknown ${entityName} key` };
+          if (discardable.has(key)) {
+            discardedKeys.add(key);
+            continue;
+          }
           refusedKeys.add(key);
         }
         refusalReason = reason;
         // Every batch already succeeded, so the offset will advance past the
         // refused records. This queue has keys, so give them a pending set
         // instead of failing an upload whose other records were applied.
-        gainedPendingSet = true;
+        // Discarded keys leave no pending intent at all.
+        if (refusedKeys.size > 0) gainedPendingSet = true;
       }
 
       totalUploaded += batch.length - (result.refused?.keys.length ?? 0);
@@ -426,6 +456,9 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
       refusedKeys.size > 0
         ? `Server refused ${refusedKeys.size} ${entityName} and left them pending: ${refusalReason}`
         : undefined,
+      discardedKeys.size > 0
+        ? `Discarded ${discardedKeys.size} ${entityName} the server ignored for revoked devices (--drop-revoked); the source logs are untouched, so \`pew reset && pew sync\` rebuilds them.`
+        : undefined,
       oversizedKeys.size > 0
         ? `Skipped ${oversizedKeys.size} ${entityName} larger than the ${config.maxRecordBytes} byte record limit and left them pending; retrying would send the same bytes.`
         : undefined,
@@ -439,6 +472,7 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
       uploaded: totalUploaded,
       batches: batchesCompleted,
       ...(refusedKeys.size > 0 ? { refused: refusedKeys.size } : {}),
+      ...(discardedKeys.size > 0 ? { discarded: discardedKeys.size } : {}),
       ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
       ...(targetChanged ? { targetChangedFrom: previousTarget } : {}),
     };

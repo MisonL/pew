@@ -1509,6 +1509,59 @@ describe("upload-engine", () => {
       expect(await queue.loadOffset()).toBe(0);
     });
 
+    it("discards a revoked refusal instead of giving it a pending set when asked", async () => {
+      // Same flag contract as the CLI: only refusals the server labelled
+      // `revoked` are discarded, and only when the run asked for it.
+      const queue = new BaseQueue<TestRecord>(dir, "test.jsonl", "test.state.json");
+      await new ConfigManager(dir).save({ token: "pk_test" });
+      await queue.appendBatch([makeRecord(1)]);
+      const config: UploadEngineConfig<TestRecord> = {
+        queue, endpoint: "/api/test-ingest", entityName: "test records",
+        preprocess: (records) => records,
+        recordKey: (r) => `key-${r.id}`,
+        discardRevoked: true,
+        validateResponse: (_body, batch) => ({
+          keys: batch.map((r) => `key-${r.id}`),
+          reason: "revoked",
+          revokedKeys: batch.map((r) => `key-${r.id}`),
+        }),
+      };
+
+      const { fetchFn } = createMockFetch([{ status: 200, body: { ingested: 1 } }]);
+      const result = await createUploadEngine(config).execute({
+        stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.discarded).toBe(1);
+      expect(result.refused).toBeUndefined();
+      expect(result.warning).toMatch(/discarded/i);
+      expect(await queue.loadDirtyKeys()).toBeFalsy();
+    });
+
+    it("keeps an unlabelled refusal pending even when discarding revocations", async () => {
+      const queue = new BaseQueue<TestRecord>(dir, "test.jsonl", "test.state.json");
+      await new ConfigManager(dir).save({ token: "pk_test" });
+      await queue.appendBatch([makeRecord(1)]);
+      const config: UploadEngineConfig<TestRecord> = {
+        queue, endpoint: "/api/test-ingest", entityName: "test records",
+        preprocess: (records) => records,
+        recordKey: (r) => `key-${r.id}`,
+        discardRevoked: true,
+        validateResponse: refuseWholeBatch,
+      };
+
+      const { fetchFn } = createMockFetch([{ status: 200, body: { ingested: 1 } }]);
+      const result = await createUploadEngine(config).execute({
+        stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.refused).toBe(1);
+      expect(result.discarded).toBeUndefined();
+      expect(await queue.loadDirtyKeys()).toEqual(["key-1"]);
+    });
+
     it("gives an offset-mode refusal a pending set instead of failing the upload", async () => {
       // A queue that has per-record keys can hold the refused record itself.
       // Failing the whole stage instead (the behaviour when there is no key)
