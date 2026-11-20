@@ -43,15 +43,32 @@ vi.mock("node:fs", async (importOriginal) => {
  * fit under 32_768; a file needs a handful of ports, not hundreds. */
 const PORT_SLICE_SIZE = 128;
 const PORT_SLICE_SLOTS = 99;
-const PORT_SLICE_BASE = 20_000 + (hashWorkerIdentity() % PORT_SLICE_SLOTS) * PORT_SLICE_SIZE;
+const PORT_SLICE_BASE = portSliceBase(
+  process.env.VITEST_POOL_ID ?? process.env.VITEST_WORKER_ID,
+  process.pid,
+);
 const handedOut = new Set<number>();
 let nextPort = PORT_SLICE_BASE;
 
-function hashWorkerIdentity(): number {
-  const id = process.env.VITEST_WORKER_ID ?? String(process.pid);
+/**
+ * The slot one pool worker owns.
+ *
+ * A pool worker's id is already a small dense integer, so it indexes a slot
+ * directly. The old form hashed the id pseudo-randomly over the 99 slots, and
+ * 99 slots hold ~12 workers without a collision only half the time (birthday):
+ * two workers then walked the same slice and handed the same port to two
+ * lanes, which is how a full run produced `listen EADDRINUSE: 127.0.0.1:26531`
+ * inside a runner case whose sibling had just probed it. Runs without a pool
+ * id (a bare import) fall back to the process id so two simultaneous runs do
+ * not both start at the first slot.
+ */
+function portSliceBase(poolId: string | undefined, pid: number): number {
+  if (poolId !== undefined && /^\d+$/.test(poolId)) {
+    return 20_000 + (Number(poolId) % PORT_SLICE_SLOTS) * PORT_SLICE_SIZE;
+  }
   let hash = 0;
-  for (const ch of id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  return hash;
+  for (const ch of String(pid)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return 20_000 + (hash % PORT_SLICE_SLOTS) * PORT_SLICE_SIZE;
 }
 
 async function freePort(): Promise<string> {
@@ -909,6 +926,20 @@ describe("E2E abort-listener hygiene", () => {
 });
 
 describe("E2E port isolation across lanes", () => {
+  it("gives every pool worker a distinct slice instead of hashing ids into one", () => {
+    // Hashing the pool id across the 99 slots collides for a pair of workers
+    // more often than not once a dozen run concurrently; the two then walked
+    // one slice (full-run `listen EADDRINUSE: 127.0.0.1:26531`). The mapping
+    // must be injective over the ids a run can actually produce.
+    const bases = new Set<number>();
+    for (let id = 1; id <= PORT_SLICE_SLOTS; id += 1) bases.add(portSliceBase(String(id), 1234));
+    expect(bases.size).toBe(PORT_SLICE_SLOTS);
+    // A bare import has no pool id; it still lands inside the guarded range.
+    const fallback = portSliceBase(undefined, 4242);
+    expect(fallback).toBeGreaterThanOrEqual(20_000);
+    expect(fallback + PORT_SLICE_SIZE).toBeLessThanOrEqual(32_768);
+  });
+
   it("keeps every worker's port slice below the OS ephemeral range", () => {
     // 32768 is Linux's default ip_local_port_range start and below macOS's
     // 49152; a port in either range can be taken by an outgoing connection

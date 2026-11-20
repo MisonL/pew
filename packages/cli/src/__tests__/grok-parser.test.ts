@@ -359,6 +359,20 @@ describe("pickModelFromTimeline / resolveGrokModel", () => {
     expect(pickModelFromTimeline(timeline, "2026-07-10T00:00:01.000Z")).toBeNull();
   });
 
+  it("orders turn starts by instant, not by their ISO text, when offsets are present", () => {
+    // 15:00+08 and 16:00+08 are 07:00Z and 08:00Z. Comparing the text put
+    // "16:00+08" ahead of any later "Z" value in the same wall-clock hour and
+    // made an 08:30Z event pick nothing, so the token bucket fell back to the
+    // primary model or grok-unknown: the wrong model owned the usage.
+    const timeline = [
+      { ts: "2026-11-20T15:00:00+08:00", modelId: "grok-4" },
+      { ts: "2026-11-20T16:00:00+08:00", modelId: "grok-5" },
+    ];
+    expect(pickModelFromTimeline(timeline, "2026-11-20T08:30:00Z")).toBe("grok-5");
+    expect(pickModelFromTimeline(timeline, "2026-11-20T07:30:00Z")).toBe("grok-4");
+    expect(pickModelFromTimeline(timeline, "2026-11-20T06:30:00Z")).toBeNull();
+  });
+
   it("resolveGrokModel falls back through primary to grok-unknown", () => {
     expect(
       resolveGrokModel({

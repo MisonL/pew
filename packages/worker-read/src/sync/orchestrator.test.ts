@@ -201,6 +201,36 @@ describe("syncDynamicPricing", () => {
     expect(cached.fetchedAt).toBe("2026-04-29T00:00:00.000Z");
   });
 
+  // models.dev answers `{ provider: { models: {...} } }`. `typeof models` is
+  // "object" for null and for arrays too, so a 200 carrying `models: null`
+  // passed payloadIsUsable, was cached as a good fetch, parsed to zero entries,
+  // and the merge rewrote the models.dev layer as empty — the prices it had
+  // learned vanished while the run reported success.
+  it("treats a 200 models.dev body whose models block is null as that source failing", async () => {
+    await kv.put(KEY_DYNAMIC, JSON.stringify([
+      { model: "vendor/only-on-modelsdev", provider: "vendor", displayName: null,
+        inputPerMillion: 3, outputPerMillion: 4, cachedPerMillion: null, contextWindow: 2000,
+        origin: "models.dev", updatedAt: "2026-04-29T00:00:00.000Z", aliases: [] },
+    ]));
+    kv.store.set(
+      KEY_LAST_FETCH_MODELS_DEV,
+      JSON.stringify({ json: MODELS_DEV_OK, fetchedAt: "2026-04-29T00:00:00.000Z" })
+    );
+    const fetchImpl = mockFetch({
+      [OPENROUTER_URL]: { status: 200, body: OPENROUTER_OK },
+      [MODELS_DEV_URL]: { status: 200, body: { openai: { models: null } } },
+    });
+
+    const r = await syncDynamicPricing({ db, kv, fetchImpl }, NOW);
+
+    expect(r.ok).toBe(false);
+    expect(r.errors.find((e) => e.source === "models.dev")).toBeDefined();
+    const stored = JSON.parse(kv.store.get(KEY_DYNAMIC)!) as DynamicPricingEntry[];
+    expect(stored.some((e) => e.model === "vendor/only-on-modelsdev")).toBe(true);
+    const cached = JSON.parse(kv.store.get(KEY_LAST_FETCH_MODELS_DEV)!) as { fetchedAt: string };
+    expect(cached.fetchedAt).toBe("2026-04-29T00:00:00.000Z");
+  });
+
   // A model can carry OpenRouter rates as an ALTERNATE route on an entry whose
   // primary origin is models.dev. Those rates are not an entry of their own, so
   // preserving "openrouter-origin entries" did not cover them: one failed
