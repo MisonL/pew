@@ -5,6 +5,7 @@ import * as dbModule from "@/lib/db";
 import * as authHelpersModule from "@/lib/auth-helpers";
 import * as adminModule from "@/lib/admin";
 import { createMockDbRead } from "./test-utils";
+import { inMemoryRateLimiter, PUBLIC_PROFILE_RATE_LIMIT } from "@/lib/rate-limit";
 import { accountingFixture } from "../../../core/src/__test-helpers__/accounting";
 
 // Mock DB
@@ -45,6 +46,9 @@ describe("GET /api/users/[slug]", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // The limiter is module-global; reset it so the rate-limit case cannot
+    // drain a bucket a neighbouring test relies on.
+    inMemoryRateLimiter.reset();
     mockDbRead = createMockDbRead();
     vi.mocked(dbModule.getDbRead).mockResolvedValue(
       mockDbRead as any,
@@ -52,6 +56,22 @@ describe("GET /api/users/[slug]", () => {
     // Default: unauthenticated caller (public access)
     vi.mocked(authHelpersModule.resolveUser).mockResolvedValue(null);
     vi.mocked(adminModule.isAdmin).mockReturnValue(false);
+  });
+
+  it("rate limits anonymous profile reads like the public leaderboard", async () => {
+    // This route is public and its payload is bounded by the profile's whole
+    // history rather than a query range. Without a limit an anonymous loop
+    // repeats that read work; the leaderboard has carried the same bound since
+    // the cache-churn finding.
+    mockDbRead.getPublicUserBySlugOrId.mockResolvedValue({ id: "u1", name: "Test", image: null, slug: "test", is_public: 1, created_at: "2026-01-01" });
+    mockDbRead.getUsageRecords.mockResolvedValue([]);
+    mockDbRead.getUserFirstSeen.mockResolvedValue(null);
+    for (let i = 0; i < PUBLIC_PROFILE_RATE_LIMIT.maxRequests; i++) {
+      expect((await GET(...makeRequest("test"))).status).toBe(200);
+    }
+    const limited = await GET(...makeRequest("test"));
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("Retry-After")).toMatch(/^\d+$/);
   });
 
   it("keeps billing amounts private even if an upstream read returns them", async () => {

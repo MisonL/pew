@@ -185,6 +185,19 @@ export const LEADERBOARD_RATE_LIMIT: RateLimitConfig = {
   windowSeconds: 60,
 };
 
+/**
+ * Public profile reads (`/api/users/[slug]`). The route answers anonymously
+ * and its body is bounded by the profile's history rather than a query range,
+ * so an unauthenticated loop repeats the whole read and no range cap shrinks
+ * it. Same bound as the public leaderboard: well above what profile browsing
+ * produces (the page fetches its header plus the tab bodies), far below what
+ * makes amplification cheap.
+ */
+export const PUBLIC_PROFILE_RATE_LIMIT: RateLimitConfig = {
+  maxRequests: 60,
+  windowSeconds: 60,
+};
+
 export const INGEST_RATE_LIMIT: RateLimitConfig = {
   maxRequests: 300,
   windowSeconds: 60,
