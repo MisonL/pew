@@ -12,7 +12,6 @@ import { resolveUser } from "@/lib/auth-helpers";
 import { getDbWrite } from "@/lib/db";
 import {
   AUTH_CODE_GENERATE_RATE_LIMIT,
-  clientIpKey,
   inMemoryRateLimiter,
 } from "@/lib/rate-limit";
 
@@ -40,10 +39,20 @@ function generateCode(): string {
 }
 
 export async function POST(request: Request) {
-  // Rate limit: 10 code generations per hour per IP
-  const ip = clientIpKey(request);
+  // 1. Require session authentication
+  const authResult = await resolveUser(request);
+  if (!authResult) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const userId = authResult.userId;
+
+  // Rate limit: 10 code generations per hour per user. Keyed after auth and by
+  // user, not by IP: spending the bucket before authentication let anyone
+  // sharing an IP (NAT, office) exhaust every user's bucket behind it with
+  // unauthenticated requests this route rejects anyway.
   const rl = inMemoryRateLimiter.check(
-    `auth-code-generate:${ip}`,
+    `auth-code-generate:${userId}`,
     AUTH_CODE_GENERATE_RATE_LIMIT,
   );
   if (!rl.allowed) {
@@ -52,14 +61,6 @@ export async function POST(request: Request) {
       { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
     );
   }
-
-  // 1. Require session authentication
-  const authResult = await resolveUser(request);
-  if (!authResult) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const userId = authResult.userId;
   const dbWrite = await getDbWrite();
 
   try {
