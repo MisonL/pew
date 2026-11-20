@@ -130,7 +130,7 @@ describe("POST /api/admin/invites", () => {
     });
     // checkInviteCodeExists returns null (no collision)
     mockDbRead.checkInviteCodeExists.mockResolvedValue(null);
-    mockDbWrite.execute.mockResolvedValue({ changes: 1, duration: 0.01 });
+    mockDbWrite.batch.mockResolvedValue([]);
 
     const res = await POST(makeJsonRequest("POST", "/api/admin/invites", { count: 3 }));
     expect(res.status).toBe(201);
@@ -140,6 +140,26 @@ describe("POST /api/admin/invites", () => {
     for (const code of json.codes) {
       expect(typeof code).toBe("string");
     }
+    // One statement list, one round trip: a mid-list failure used to leave the
+    // earlier rows in the table while answering 500 without them.
+    expect(mockDbWrite.execute).not.toHaveBeenCalled();
+    expect(mockDbWrite.batch).toHaveBeenCalledOnce();
+    const statements = mockDbWrite.batch.mock.calls[0]![0] as Array<{ sql: string; params: unknown[] }>;
+    expect(statements).toHaveLength(3);
+    expect(statements.map((s) => s.params[0])).toEqual(json.codes);
+  });
+
+  it("answers 500 without codes when the insert batch fails", async () => {
+    resolveAdmin.mockResolvedValueOnce({ userId: "admin-1", email: "admin@test.com" });
+    mockDbRead.checkInviteCodeExists.mockResolvedValue(null);
+    mockDbWrite.batch.mockRejectedValueOnce(new Error("constraint failed"));
+
+    const res = await POST(makeJsonRequest("POST", "/api/admin/invites", { count: 2 }));
+
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.error).toBe("Failed to generate invite codes");
+    expect(json.codes).toBeUndefined();
   });
 
   it("should reject count > 20", async () => {
@@ -169,7 +189,7 @@ describe("POST /api/admin/invites", () => {
   it("should default count to 1 when not provided", async () => {
     resolveAdmin.mockResolvedValueOnce({ userId: "admin-1", email: "admin@test.com" });
     mockDbRead.checkInviteCodeExists.mockResolvedValue(null);
-    mockDbWrite.execute.mockResolvedValue({ changes: 1, duration: 0.01 });
+    mockDbWrite.batch.mockResolvedValue([]);
 
     const res = await POST(makeJsonRequest("POST", "/api/admin/invites", {}));
     expect(res.status).toBe(201);
@@ -191,7 +211,7 @@ describe("POST /api/admin/invites", () => {
     mockDbRead.checkInviteCodeExists
       .mockResolvedValueOnce({ id: 1 })
       .mockResolvedValueOnce(null);
-    mockDbWrite.execute.mockResolvedValue({ changes: 1, duration: 0.01 });
+    mockDbWrite.batch.mockResolvedValue([]);
 
     const res = await POST(makeJsonRequest("POST", "/api/admin/invites", { count: 1 }));
     expect(res.status).toBe(201);
@@ -209,10 +229,10 @@ describe("POST /api/admin/invites", () => {
     expect(json.error).toContain("unique code after retries");
   });
 
-  it("should return 500 when dbWrite.execute fails", async () => {
+  it("should return 500 when the insert batch fails", async () => {
     resolveAdmin.mockResolvedValueOnce({ userId: "admin-1", email: "admin@test.com" });
     mockDbRead.checkInviteCodeExists.mockResolvedValue(null);
-    mockDbWrite.execute.mockRejectedValueOnce(new Error("D1 write failed"));
+    mockDbWrite.batch.mockRejectedValueOnce(new Error("D1 write failed"));
 
     const res = await POST(makeJsonRequest("POST", "/api/admin/invites", { count: 1 }));
     expect(res.status).toBe(500);

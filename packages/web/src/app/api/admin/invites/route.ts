@@ -74,7 +74,8 @@ export async function POST(request: Request) {
 
   try {
     for (let i = 0; i < count; i++) {
-      // Generate unique code with retry for collision
+      // Generate unique code with retry for collision — against the table and
+      // against this batch, which has not been written yet.
       let code: string;
       let attempts = 0;
       do {
@@ -87,17 +88,24 @@ export async function POST(request: Request) {
           );
         }
         // Check for collision
-        const existing = await dbRead.checkInviteCodeExists(code);
+        const existing = codes.includes(code) || (await dbRead.checkInviteCodeExists(code));
         if (!existing) break;
         // biome-ignore lint/correctness/noConstantCondition: retry-until-unique loop bounded by the attempts guard above
       } while (true);
 
-      await dbWrite.execute(
-        `INSERT INTO invite_codes (code, created_by) VALUES (?, ?)`,
-        [code, admin.userId]
-      );
       codes.push(code);
     }
+
+    // One batch instead of one insert per row: a row-by-row loop could fail
+    // partway and leave the earlier codes in the table while the route
+    // answered 500 with no codes — usable invites the admin never saw. The
+    // batch is the documented unit of a single request (the self-host adapter
+    // applies it in one rqlite transaction); the hosted D1 REST adapter is not
+    // atomic, which the bootstrapAdmin guard elsewhere already accounts for.
+    await dbWrite.batch(codes.map((code) => ({
+      sql: "INSERT INTO invite_codes (code, created_by) VALUES (?, ?)",
+      params: [code, admin.userId],
+    })));
 
     return NextResponse.json({ codes }, { status: 201 });
   } catch (err) {
