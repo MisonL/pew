@@ -23,7 +23,7 @@ import { CursorStore } from "../storage/cursor-store.js";
 import { LocalQueue } from "../storage/local-queue.js";
 import { EvidenceQueue } from "../storage/evidence-queue.js";
 import { AccountingQueue, accountingJson, accountingKey, planAccountingUpdates } from "../storage/accounting-queue.js";
-import { commitSync, recoverSyncCommit } from "../storage/sync-commit.js";
+import { commitSync, recoverSyncCommit, syncCommitPending } from "../storage/sync-commit.js";
 import { withStateLock } from "../storage/state-lock.js";
 import { toEvidenceRecord } from "../utils/usage-evidence.js";
 import { appendAll } from "../utils/append.js";
@@ -283,7 +283,7 @@ async function executeSyncInternal(opts: InternalSyncOptions): Promise<SyncResul
     // them: a failure after the scan but before the commit — an unreadable
     // queue state file, a failed ledger merge — silently dropped that run's
     // new tokens and accounting rows for good.
-    if (collected) {
+    if (collected && !(await syncCommitPending(opts.stateDir).catch(() => true))) {
       opts.onProgress?.({ source: "all", phase: "warn",
         message: "Sync failed before committing; the files read in this run will be re-read on the next sync" });
     }
