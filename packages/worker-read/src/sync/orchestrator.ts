@@ -90,13 +90,16 @@ function payloadIsUsable(source: LastFetchSource, json: unknown): boolean {
   if (source === "openrouter") return Array.isArray((json as { data?: unknown }).data);
   // models.dev answers a provider → { models: {...} } catalogue. An error
   // document has no such entry, so requiring one keeps a total shape change
-  // from being read as "every model was retired".
-  return Object.values(json as Record<string, unknown>).some(
-    (provider) =>
-      provider !== null &&
-      typeof provider === "object" &&
-      typeof (provider as { models?: unknown }).models === "object",
-  );
+  // from being read as "every model was retired". `typeof models === "object"`
+  // is true for null and for arrays as well, and a provider block that carries
+  // either is not a catalogue: it satisfied the old test, was cached as a good
+  // fetch, parsed to zero entries, and the merge erased the models.dev layer.
+  return Object.values(json as Record<string, unknown>).some((provider) => {
+    if (provider === null || typeof provider !== "object" || Array.isArray(provider)) return false;
+    const models = (provider as { models?: unknown }).models;
+    return models !== null && typeof models === "object" && !Array.isArray(models) &&
+      Object.keys(models as Record<string, unknown>).length > 0;
+  });
 }
 
 export interface SyncOptions {
