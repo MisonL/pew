@@ -181,6 +181,34 @@ describe("Worker ingest endpoint", () => {
       }
     });
 
+    it("still runs the byte comparison when the lengths differ (no short-circuit)", async () => {
+      // The padded shape only hides the secret's length if timingSafeEqual is
+      // actually invoked for a wrong-length guess. `length === x && compare()`
+      // skips it entirely on a mismatch, which reintroduces the length oracle
+      // the padding exists to remove.
+      const fastEqual = vi.fn((a: BufferSource, b: BufferSource): boolean => {
+        const x = a as Uint8Array;
+        const y = b as Uint8Array;
+        return x.length === y.length && x.every((v, i) => v === y[i]);
+      });
+      const realCrypto = (globalThis as unknown as { crypto: Crypto }).crypto;
+      vi.stubGlobal("crypto", new Proxy(realCrypto, {
+        get: (target, key) => key === "subtle"
+          ? { timingSafeEqual: fastEqual }
+          : Reflect.get(target, key),
+      }));
+      try {
+        const res = await worker.fetch(
+          makeRequest({ userId: "u1", records: [VALID_RECORD] }, { secret: "x" }),
+          env,
+        );
+        expect(res.status).toBe(401);
+        expect(fastEqual).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
     it("rejects a same-length wrong secret (the fast path must compare bytes)", async () => {
       // Matches SECRET's length, so a length short-circuit would accept it.
       const sameLength = `${SECRET.slice(0, -1)}X`;

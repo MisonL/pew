@@ -210,7 +210,11 @@ async function secureCompare(a: string, b: string): Promise<boolean> {
     timingSafeEqual?: (a: BufferSource, b: BufferSource) => boolean;
   };
   if (typeof subtle.timingSafeEqual === "function") {
-    return bufA.byteLength === bufB.byteLength && subtle.timingSafeEqual(paddedA, paddedB);
+    // Compare first, then fold the length in. `length === x && compare()`
+    // short-circuits the comparison away on a length mismatch, which is
+    // exactly the oracle the padding above exists to remove.
+    const bytesEqual = subtle.timingSafeEqual(paddedA, paddedB);
+    return bufA.byteLength === bufB.byteLength && bytesEqual;
   }
   // Fallback constant-time comparison (XOR every byte, accumulate diff bits).
   let diff = bufA.byteLength ^ bufB.byteLength;
