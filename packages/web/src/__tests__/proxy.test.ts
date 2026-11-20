@@ -104,10 +104,30 @@ describe("buildRedirectUrl", () => {
 });
 
 // ---------------------------------------------------------------------------
+// isSessionLoggedIn
+// ---------------------------------------------------------------------------
+
+describe("isSessionLoggedIn", () => {
+  it("counts a session with a user id as logged in", () => {
+    expect(isSessionLoggedIn({ user: { id: "u1" } })).toBe(true);
+  });
+
+  it("treats a session whose password went stale as logged out", () => {
+    // sessionCallback clears the id when the token's password version no
+    // longer matches; a bare truthiness check on the session object still
+    // said "logged in", so the page gate let the dead session through to an
+    // empty dashboard instead of the login page.
+    expect(isSessionLoggedIn({ user: { id: "" } })).toBe(false);
+    expect(isSessionLoggedIn({})).toBe(false);
+    expect(isSessionLoggedIn(null)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // isPublicRoute — import once (no env dependency)
 // ---------------------------------------------------------------------------
 
-const { isPublicRoute, resolveProxyAction } = await importProxy();
+const { isPublicRoute, isSessionLoggedIn, resolveProxyAction } = await importProxy();
 
 describe("isPublicRoute", () => {
   it.each([

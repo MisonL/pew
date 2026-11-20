@@ -70,6 +70,16 @@ export function isPublicRoute(pathname: string): boolean {
  * - "redirect:/dashboard" → redirect to dashboard (logged-in user on login page)
  * - "redirect:/login"    → redirect to login (unauthenticated user)
  */
+/**
+ * A session counts only when it carries a user id. `sessionCallback` clears
+ * the id when the token's password version no longer matches the database, so
+ * a session object that merely exists can describe a password that has since
+ * been reset; `!!auth` would still let it through to the pages.
+ */
+export function isSessionLoggedIn(auth: { user?: { id?: string } | null } | null | undefined): boolean {
+  return Boolean(auth?.user?.id);
+}
+
 export function resolveProxyAction(
   pathname: string,
   isLoggedIn: boolean,
@@ -123,7 +133,7 @@ export async function proxy(request: NextRequest) {
   const authHandler = await auth((req) => {
     const action = resolveProxyAction(
       req.nextUrl.pathname,
-      !!req.auth,
+      isSessionLoggedIn(req.auth),
       SKIP_AUTH,
     );
 
