@@ -93,7 +93,11 @@ describe("syncCommand.run() forwarding", () => {
     // The flag is an acknowledgement of data loss; dropping it between the
     // citty arg and the engine would silently keep re-uploading revoked
     // records the operator believes they discarded.
-    await syncCommand.run!({ args: { upload: true, dev: false, dropRevoked: true } as never });
+    // An explicit host pins the target: with only the default path, an ambient
+    // PEW_HOST (present in some runners) makes resolveHost reject it, the
+    // upload block returns early, and this assertion reports "0 calls" for a
+    // reason that has nothing to do with the flag.
+    await syncCommand.run!({ args: { upload: true, dev: false, host: "https://pew.test", dropRevoked: true } as never });
     expect(uploadTokensMock).toHaveBeenCalledWith(expect.objectContaining({ dropRevoked: true }));
     // The session queue carries no device id, so it must not receive it.
     expect(uploadSessionsMock).toHaveBeenCalledWith(expect.not.objectContaining({ dropRevoked: expect.anything() }));
