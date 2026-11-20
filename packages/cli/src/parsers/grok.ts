@@ -51,15 +51,24 @@ export function normalizeGrokUsage(ctx: Record<string, unknown>): TokenDelta {
 
 /**
  * Pick model for an inference event: last turn_started with ts ≤ event.ts.
+ *
+ * Compared by instant (epoch), not as ISO text: the log's own timestamps can
+ * carry a UTC offset, and "2026-11-20T15:00:00+08:00" sorts after
+ * "2026-11-20T09:00:00Z" as a string although it is the earlier moment. Under
+ * a text comparison an event could match no turn at all, and the usage then
+ * fell back to the primary model or grok-unknown — the wrong model owned the
+ * bucket. An unparseable value yields NaN and matches nothing, which is the
+ * same answer the text form gave.
  */
 export function pickModelFromTimeline(
   timeline: GrokTurnTimeline | undefined,
   eventTs: string,
 ): string | null {
   if (!timeline || timeline.length === 0) return null;
+  const eventAt = Date.parse(eventTs);
   let chosen: string | null = null;
   for (const entry of timeline) {
-    if (entry.ts <= eventTs) {
+    if (Date.parse(entry.ts) <= eventAt) {
       chosen = entry.modelId;
     } else {
       break;
@@ -252,8 +261,14 @@ export async function parseGrokTurnTimeline(
     if (!ts || !modelId) continue;
     timeline.push({ ts, modelId });
   }
-  // Ensure chronological order
-  timeline.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+  // Chronological by instant: the timeline feeds pickModelFromTimeline, whose
+  // early-exit assumes entries are ascending, and offset-bearing timestamps do
+  // not sort chronologically as text.
+  timeline.sort((a, b) => {
+    const at = Date.parse(a.ts), bt = Date.parse(b.ts);
+    if (at !== bt) return at < bt ? -1 : 1;
+    return a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
+  });
   return timeline;
 }
 
