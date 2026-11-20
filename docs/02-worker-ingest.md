@@ -59,9 +59,17 @@ CLI ──POST /api/ingest (≤50)──→ Next.js (Railway)
 
 ### Why 50?
 
-D1 Free plan limits: **50 queries per Worker invocation**. Each prepared
-statement in `db.batch()` counts as one query. With 50 records × 1
-statement/record = 50 queries, we stay exactly within the free tier limit.
+The record cap keeps one request to a single `db.batch()` and well inside the
+per-statement limits: D1 caps SQL text at 100 KB and bound parameters at 100
+per query, and a pew row binds ten. The free-plan figure is 50 queries per
+Worker invocation, but a `db.batch()` call counts as **one** query against
+it, not one per statement — Cloudflare's D1 limits page says so explicitly
+("a `db.batch()` call counts as a single query against it, not one query per
+statement", verified 2026-11-21). This document previously assumed each
+statement counted; under that reading a 50-record batch looked like an exact
+fit. It is only a conservative bound. The revocation SELECT that rides as the
+first statement of the ingest batch therefore does not push a request over
+any limit.
 
 The CLI's `aggregateRecords()` deduplicates by `(source, model, hour_start)`,
 so a typical sync produces far fewer than 50 unique records. If aggregated
@@ -73,7 +81,7 @@ records exceed 50, the CLI automatically sends multiple HTTP batches.
 |----------|-----------|---------------|-----|
 | Worker requests | 100K/day | ~tens/day | yes |
 | Worker CPU | 10ms/invocation | batch 50 → ~1-2ms | yes |
-| D1 queries/invocation | **50** | 50 statements | yes |
+| D1 queries/invocation | **50** | 1 `db.batch()` call per request | yes |
 | D1 rows written | 100K/day | 50 × few batches/day | yes |
 | D1 bound params/query | 100 | 9 params/stmt | yes |
 | D1 storage | 5 GB | tiny | yes |
