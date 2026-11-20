@@ -57,7 +57,8 @@ describe("Worker retired source defense", () => {
     // Evidence records are device-tagged, so the receipt adds one read for the
     // revocation set; sessions stay at the single upsert statement.
     expect(e.DB.prepare).toHaveBeenCalledTimes(path === "/ingest/evidence" ? 2 : 1);
-    expect(e.DB.batch).toHaveBeenCalledWith([expect.objectContaining({})]);
+    const [statements] = (e.DB.batch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
+    expect(statements).toHaveLength(path === "/ingest/evidence" ? 2 : 1);
   });
 
   it.each(routes)("enforces auth, envelope and original batch limits before filtering on %s", async (path) => {

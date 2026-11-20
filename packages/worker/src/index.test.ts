@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Mock } from "vitest";
 import type { Env, IngestRecord } from "./index";
 
 // Import the default export (Worker handler) and version constant
@@ -34,22 +33,14 @@ function createMockEnv(): Env {
   };
 }
 
-/** Answer the handler's revocation pre-query with this device list. */
+/** Answer the handler's revocation read (the first statement of its batch). */
 function mockRevokedDevices(env: Env, revoked: string[]): void {
-  const prepare = env.DB.prepare as unknown as Mock<(sql: string) => unknown>;
-  const original = prepare.getMockImplementation()!;
-  prepare.mockImplementation((sql: string) => {
-    if (!String(sql).includes("device_revocations")) return original(sql);
-    return {
-      bind: (...params: unknown[]) => ({
-        all: async () => ({
-          results: params.slice(1)
-            .filter((device) => revoked.includes(device as string))
-            .map((device) => ({ device_id: device })),
-        }),
-      }),
-    };
-  });
+  (env.DB.batch as ReturnType<typeof vi.fn>).mockImplementation(async (statements: unknown[]) =>
+    statements.map((_, index) => ({
+      results: index === 0 ? revoked.map((device) => ({ device_id: device })) : [],
+      success: true,
+      meta: { changes: 1 },
+    })));
 }
 
 function makeRequest(
@@ -480,6 +471,19 @@ describe("Worker ingest endpoint", () => {
       const res = await worker.fetch(makeRequest({ userId: "u1", records }), env);
       expect(res.status).toBe(200);
       expect(await json(res)).toEqual({ ingested: 2, dropped_devices: ["revoked"] });
+    });
+
+    it("reads the revocation set inside the write batch (one transaction)", async () => {
+      // A separate pre-query is a weak read on the self-host adapter: in the
+      // cluster profile it may hit a lagging follower, and a revocation that
+      // committed just before this request would be missed — the guard would
+      // still drop the rows while the receipt claimed they applied. Sharing
+      // the write batch makes the read transactional with the writes.
+      mockRevokedDevices(env, ["revoked"]);
+      await worker.fetch(makeRequest({ userId: "u1", records: [{ ...VALID_RECORD, device_id: "revoked" }] }), env);
+      const [statements] = (env.DB.batch as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(env.DB.batch).toHaveBeenCalledOnce();
+      expect(statements).toHaveLength(2); // revocation SELECT + the upsert
     });
 
     it("checks revocation once per batch, not once per record", async () => {

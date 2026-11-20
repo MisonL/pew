@@ -230,28 +230,42 @@ async function secureCompare(a: string, b: string): Promise<boolean> {
 // Revocation receipt
 // ---------------------------------------------------------------------------
 
-/**
- * Devices that already appear in `device_revocations` for this user.
- * The batch upserts carry their own guard, but a guard silently discards rows:
- * without this pre-query the response could claim a revoked device's records
- * were written. One query per request, never one per record.
- */
-async function revokedDevices(
-  env: Env,
-  userId: string,
-  deviceIds: Array<string | undefined>,
-): Promise<Set<string>> {
-  const unique = [...new Set(deviceIds.filter((device): device is string => device !== undefined))];
-  if (unique.length === 0) return new Set();
-  const placeholders = unique.map(() => "?").join(", ");
-  const { results } = await env.DB.prepare(
-    `SELECT device_id FROM device_revocations WHERE user_id = ? AND device_id IN (${placeholders})`,
-  ).bind(userId, ...unique).all<{ device_id: string }>();
-  return new Set(results.map((row) => row.device_id));
-}
-
 interface RevocableRecord {
   device_id?: string;
+}
+
+/**
+ * The receipt needs to know which devices are revoked, and the batch upserts
+ * carry their own guard. Reading that set in a separate pre-query made the
+ * answer a weak, non-transactional read — on the self-host adapter (`all()` is
+ * `level=weak`) a revocation committed just before the request could be
+ * missed, so the guard dropped the rows while the receipt claimed they were
+ * written, the exact lie this receipt exists to stop.
+ *
+ * The revocation SELECT therefore rides as the first statement of the same
+ * batch: the read and the writes see one transaction, and the request costs
+ * the same number of round trips as before.
+ */
+async function batchReceipt<T extends RevocableRecord>(
+  env: Env,
+  userId: string,
+  records: T[],
+  prepare: (record: T) => D1PreparedStatement,
+): Promise<{ ingested: number; dropped_devices?: string[] }> {
+  const statements = records.map(prepare);
+  const deviceIds = [...new Set(records.map((r) => r.device_id).filter((d): d is string => d !== undefined))];
+  if (deviceIds.length === 0) {
+    await env.DB.batch(statements);
+    return { ingested: records.length };
+  }
+  const placeholders = deviceIds.map(() => "?").join(", ");
+  const revoked = env.DB.prepare(
+    `SELECT device_id FROM device_revocations WHERE user_id = ? AND device_id IN (${placeholders})`,
+  ).bind(userId, ...deviceIds);
+  const results = await env.DB.batch([revoked, ...statements]);
+  const rows = (results[0]?.results ?? []) as Array<{ device_id: string }>;
+  const revokedSet = new Set(rows.map((row) => row.device_id));
+  return revokedReceipt(records, revokedSet);
 }
 
 /**
@@ -322,16 +336,13 @@ async function handleTokenIngest(body: unknown, env: Env): Promise<Response> {
   }
 
   try {
-    const receipt = revokedReceipt(records, await revokedDevices(env, userId, records.map((r) => r.device_id)));
-    const stmts = records.map((r) => {
+    const receipt = await batchReceipt(env, userId, records, (r) => {
       const values = [userId, r.device_id ?? "default", r.source, r.model, r.hour_start,
         r.input_tokens, r.cached_input_tokens, r.output_tokens, r.reasoning_output_tokens, r.total_tokens];
       return r.device_id === undefined
         ? env.DB.prepare(TOKEN_UPSERT_SQL).bind(...values)
         : env.DB.prepare(DEVICE_TOKEN_UPSERT_SQL).bind(...values, userId, r.device_id);
     });
-
-    await env.DB.batch(stmts);
     return Response.json({ ...receipt, ...(ignored ? { ignored } : {}) });
   } catch (err) {
     console.error(err);
@@ -385,8 +396,7 @@ async function handleEvidenceIngest(body: unknown, env: Env): Promise<Response> 
     return Response.json({ ingested: 0, ...(ignored ? { ignored } : {}) });
   }
   try {
-    const receipt = revokedReceipt(records, await revokedDevices(env, userId, records.map((r) => r.device_id)));
-    await env.DB.batch(records.map((r) => {
+    const receipt = await batchReceipt(env, userId, records, (r) => {
       const e = r.evidence;
       return env.DB.prepare(EVIDENCE_UPSERT_SQL).bind(
         userId, r.device_id, e.eventId, e.groupId, r.source, r.model, r.hour_start, r.timestamp,
@@ -394,7 +404,7 @@ async function handleEvidenceIngest(body: unknown, env: Env): Promise<Response> 
         e.callCount, e.snapshotSeq, r.input_tokens, r.cached_input_tokens, r.output_tokens,
         r.reasoning_output_tokens, r.total_tokens,
       );
-    }));
+    });
     return Response.json({ ...receipt, ...(ignored ? { ignored } : {}) });
   } catch {
     // Do not log bound values, source identifiers or request bodies.
