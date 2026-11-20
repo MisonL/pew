@@ -27,6 +27,11 @@ function fixture(opts: {
   reportedRevision?: string;
   reportedVersion?: string;
   neverHealthy?: boolean;
+  /** Value of services.web.image the fake `docker compose config` reports. */
+  webImage?: string;
+  /** Label values the fake `docker image inspect` reports for the built image. */
+  builtRevision?: string;
+  builtVersion?: string;
 }) {
   const root = mkdtempSync(join(tmpdir(), "pew-upgrade-"));
   dirs.push(root);
@@ -44,19 +49,42 @@ function fixture(opts: {
   const head = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 
   const argvLog = join(root, "argv.log");
+  // A container id shaped like the real thing. The project name is
+  // `pewstack`, not `selfhost`: a script that hardcodes `<project>-web-1`
+  // cannot find this container, and its inspect call (by name) answers
+  // nothing, so the provenance check fails instead of passing silently.
+  const containerId = "9f0c2a7dbe11";
   writeFileSync(join(bin, "docker"), `#!/bin/sh
 printf '%s\\n' "$*" >> ${JSON.stringify(argvLog)}
 case "$1 $2" in
-  "compose build") exit 0 ;;
-  "compose up") exit 0 ;;
-  "compose ps")
-    echo "${opts.neverHealthy ? "selfhost-web-1 starting" : "selfhost-web-1 healthy"}"
+  "compose build")
+    # Record the provenance args the build actually received: the script must
+    # export them onto this exact invocation, not merely accept them.
+    printf 'build-args:%s:%s\\n' "\${PEW_REVISION:-}" "\${PEW_VERSION:-}" >> ${JSON.stringify(argvLog)}
     exit 0 ;;
-  "inspect selfhost-web-1")
+  "compose up") exit 0 ;;
+  "compose config")
+    printf '{"services":{"web":{"image":%s}}}\\n' ${JSON.stringify(JSON.stringify(opts.webImage ?? "pew:standalone"))}
+    exit 0 ;;
+  "compose ps")
+    if [ "\${3:-}" = "-q" ]; then
+      echo ${JSON.stringify(containerId)}
+    else
+      echo "web ${opts.neverHealthy ? "starting" : "healthy"}"
+    fi
+    exit 0 ;;
+  "inspect ${containerId}")
     case "$*" in
       *"image.revision"*) echo ${JSON.stringify(opts.reportedRevision ?? head)} ;;
-      *"image.version"*) echo ${JSON.stringify(opts.reportedVersion ?? "")} ;;
+      *"image.version"*) echo ${JSON.stringify(opts.reportedVersion ?? "9.9.9")} ;;
     esac
+    exit 0 ;;
+  "image inspect")
+    case "$*" in
+      *"image.revision"*) echo ${JSON.stringify(opts.builtRevision ?? head)} ;;
+      *"image.version"*) echo ${JSON.stringify(opts.builtVersion ?? "9.9.9")} ;;
+    esac
+    exit 0 ;;
 esac
 exit 0
 `, { mode: 0o755 });
@@ -105,6 +133,37 @@ describe("selfhost upgrade.sh", () => {
     // script exported them; check both the log line and the script's stdout.
     expect(out).toContain("building images");
     expect(readFileSync(f.argvLog, "utf8")).toContain("compose build");
+  });
+
+  it("resolves the web container from compose, not a hardcoded project name", async () => {
+    // Compose names containers `<project>-<service>-<n>` after the directory
+    // (or -p / COMPOSE_PROJECT_NAME). A checkout in a differently named
+    // directory produced `pewstack-web-1`, the hardcoded `selfhost-web-1`
+    // matched nothing, the health poll never saw "healthy", and the upgrade
+    // timed out with a misleading "did not become healthy".
+    const f = fixture({});
+    const { code, out } = await f.run(["--skip-backup"]);
+    expect(code, out).toBe(0);
+    expect(out).toContain("provenance verified");
+  });
+
+  it("fails when PEW_UPGRADE_NO_RESTART builds an image without provenance labels", async () => {
+    // The header promised "build and verify the labels without touching
+    // running containers", but the branch exited 0 right after the build —
+    // a window pre-warm that lost its build args reported success.
+    const f = fixture({ builtRevision: "" });
+    const { code, out } = await f.run(["--skip-backup"], { PEW_UPGRADE_NO_RESTART: "1" });
+    expect(code).not.toBe(0);
+    expect(out).toContain("built image 'pew:standalone' revision is '<empty>'");
+    expect(readFileSync(f.argvLog, "utf8")).not.toContain("compose up");
+  });
+
+  it("verifies the built image and reports success under PEW_UPGRADE_NO_RESTART=1", async () => {
+    const f = fixture({});
+    const { code, out } = await f.run(["--skip-backup"], { PEW_UPGRADE_NO_RESTART: "1" });
+    expect(code, out).toBe(0);
+    expect(out).toContain("labels verified");
+    expect(readFileSync(f.argvLog, "utf8")).not.toContain("compose up");
   });
 
   it("fails when the running image carries no revision label", async () => {

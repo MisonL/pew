@@ -865,7 +865,7 @@ docker compose up -d
 以上步骤已封装成 `bash upgrade.sh`（推荐使用）：它会备份 rqlite 到 `~/pew-backups/`、带 provenance 参数构建、重启、等待 web healthy，**并校验运行中镜像的 `org.opencontainers.image.revision` 标签等于仓库 HEAD**，不等就非零退出。漏掉构建参数时镜像照样能起、healthy 也能过，只有 label 是空的——这是脚本存在的主要理由。它还拒绝在 `RQLITE_USERNAME` 已配而 `.rqlite-auth.json` 缺失时执行，并对非 0600 的 `.env` 告警。
 
 - `--skip-backup` 跳过备份；`--dry-run` 只打印将执行的命令。
-- `PEW_UPGRADE_NO_RESTART=1` 只构建不重启（用于提前预热镜像）。
+- `PEW_UPGRADE_NO_RESTART=1` 只构建不重启（用于提前预热镜像）。该模式仍会校验刚构建镜像的 revision/version 标签，标签不对同样非零退出；它不碰运行中的容器。
 - 需要宿主上 git 与 node 可用（脚本用它们解析 revision 与 version）。
 - E2E 相关（仅在跑本仓库质量门时有用）：`PEW_E2E_BINDINGS_TIMEOUT_MS` 控制
   `pre-push` 里本地 D1/KV 绑定进程的**启动**上限（默认 900s，足够宽松，一般不需要设）。
