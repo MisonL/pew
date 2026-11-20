@@ -37,6 +37,15 @@ describe("clampedLimit", () => {
 });
 
 describe("clampedOffset", () => {
+  it("caps values SQLite would reject as a datatype mismatch", () => {
+    // Binding 1e20 to OFFSET makes node:sqlite answer "datatype mismatch"
+    // (verified with the sqlite3 CLI), which the RPC surfaces as a 500 for a
+    // request that only asked for a page nobody could have. Any offset past
+    // the row count returns the same empty page, so capping loses nothing.
+    expect(clampedOffset(1e20)).toBe(Number.MAX_SAFE_INTEGER);
+    expect(clampedOffset(Number.MAX_SAFE_INTEGER + 2)).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
   it("keeps a non-negative integer", () => {
     expect(clampedOffset(20)).toBe(20);
     expect(clampedOffset(0)).toBe(0);

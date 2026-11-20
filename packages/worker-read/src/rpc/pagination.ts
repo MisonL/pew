@@ -18,5 +18,8 @@ export function clampedLimit(value: unknown, fallback: number, max: number): num
 
 export function clampedOffset(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return 0;
-  return Math.max(Math.trunc(value), 0);
+  // SQLite rejects an OFFSET that does not fit its integer binding with
+  // "datatype mismatch" — a 500 for a page request whose answer is empty at
+  // any offset past the row count. Cap instead; the result is identical.
+  return Math.min(Math.max(Math.trunc(value), 0), Number.MAX_SAFE_INTEGER);
 }

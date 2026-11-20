@@ -90,6 +90,15 @@ export async function applyPasswordReset(
   userId: string,
   password: string,
 ): Promise<void> {
+  // Burn outstanding one-time login codes first: a code stays usable for five
+  // minutes and the verify route mints a fresh API key when the user has none
+  // — which is the state the next statement creates. Codes dead but the
+  // password unchanged is recoverable (the operator re-runs); the reverse
+  // leaves a stolen code able to revive the credential this reset revokes.
+  await db
+    .prepare("UPDATE auth_codes SET used_at = datetime('now') WHERE user_id = ? AND used_at IS NULL")
+    .bind(userId)
+    .run();
   const result = await db
     .prepare("UPDATE users SET password_hash = ?, api_key = NULL, updated_at = datetime('now') WHERE id = ?")
     .bind(hashPasswordForReset(password), userId)

@@ -34,6 +34,25 @@ describe("POST /api/auth/code", () => {
     inMemoryRateLimiter.reset();
   });
 
+  it("does not spend the generate limit on unauthenticated requests", async () => {
+    // The route requires a session before it does anything, so the limiter
+    // belongs after that check and keyed by the user: paying it before
+    // authentication let anyone sharing an IP (NAT, office) exhaust the reset
+    // bucket of every user behind it.
+    mockResolveUser.mockResolvedValue(null);
+    const headers = { "x-forwarded-for": "203.0.113.77" };
+    for (let i = 0; i < 11; i++) {
+      const r = await POST(new Request("http://localhost/api/auth/code", { method: "POST", headers }));
+      expect(r.status).toBe(401);
+    }
+    mockResolveUser.mockResolvedValue({ userId: "user-123", email: "test@example.com" });
+    const mockDbWrite = createMockDbWrite();
+    mockDbWrite.execute.mockResolvedValue({ changes: 1 });
+    mockGetDbWrite.mockResolvedValue(mockDbWrite as unknown as DbWrite);
+    const allowed = await POST(new Request("http://localhost/api/auth/code", { method: "POST", headers }));
+    expect(allowed.status).toBe(200);
+  });
+
   it("should return 429 when rate limit is exceeded", async () => {
     mockResolveUser.mockResolvedValue({
       userId: "user-123",
