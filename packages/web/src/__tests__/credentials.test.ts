@@ -131,7 +131,7 @@ describe("password reset", () => {
   });
 
   it("createPasswordReset returns an opaque token and stores it with an expiry", async () => {
-    dbWrite.batch.mockResolvedValueOnce([{ success: true, meta: { changes: 1, duration: 1 } }, { success: true, meta: { changes: 1, duration: 1 } }]);
+    dbWrite.batch.mockResolvedValueOnce([{ success: true, meta: { changes: 1, duration: 1 } }, { success: true, meta: { changes: 1, duration: 1 } }, { success: true, meta: { changes: 1, duration: 1 } }]);
     const token = await createPasswordReset("u1");
     expect(token).toMatch(/^[A-Za-z0-9_-]{40,}$/);
     const stmts = dbWrite.batch.mock.calls[0]![0] as Array<{ sql: string; params?: unknown[] }>;
@@ -182,6 +182,42 @@ describe("password reset", () => {
     // survive the reset meant to lock the attacker out.
     expect(stmts[1]!.sql).toMatch(/api_key = NULL/);
     expect(stmts[1]!.params![0]).toMatch(/^scrypt\$/);
+  });
+
+  it("consumePasswordReset invalidates outstanding auth codes", async () => {
+    // A one-time login code stays valid for five minutes after it is issued.
+    // Before this, a code stolen just before a reset still minted a fresh API
+    // key (verify/route.ts creates one when api_key IS NULL), reviving exactly
+    // the credential the reset was meant to kill.
+    mockQuery.mockResolvedValueOnce({
+      results: [{ user_id: "u1", expires_at: new Date(Date.now() + 60_000).toISOString() }],
+    });
+    dbWrite.batch.mockResolvedValueOnce([{ success: true, meta: { changes: 1, duration: 1 } }, { success: true, meta: { changes: 1, duration: 1 } }, { success: true, meta: { changes: 1, duration: 1 } }]);
+
+    expect(await consumePasswordReset("tok", "newpassword")).toEqual({ userId: "u1" });
+    const stmts = dbWrite.batch.mock.calls[0]![0] as Array<{ sql: string; params?: unknown[] }>;
+    const invalidation = stmts.find((s) => /UPDATE auth_codes SET used_at = datetime\('now'\)/.test(s.sql));
+    expect(invalidation, stmts.map((s) => s.sql).join(" | ")).toBeDefined();
+    expect(invalidation!.sql).toMatch(/WHERE user_id = \? AND used_at IS NULL/);
+    expect(invalidation!.params).toEqual(["u1"]);
+  });
+
+  it("consumePasswordReset claims with a marker no other request can match", async () => {
+    // The gate compares the row's used_at to the value this transaction wrote.
+    // A millisecond timestamp is not unique: two consumers in the same
+    // millisecond both match, so the loser (which sees 0 claimed rows, returns
+    // null, and tells the user "invalid or expired") could still overwrite the
+    // winner's password. The marker carries a random suffix.
+    mockQuery.mockResolvedValueOnce({
+      results: [{ user_id: "u1", expires_at: new Date(Date.now() + 60_000).toISOString() }],
+    });
+    dbWrite.batch.mockResolvedValueOnce([{ success: true, meta: { changes: 1, duration: 1 } }, { success: true, meta: { changes: 1, duration: 1 } }, { success: true, meta: { changes: 1, duration: 1 } }]);
+
+    await consumePasswordReset("tok", "newpassword");
+    const stmts = dbWrite.batch.mock.calls[0]![0] as Array<{ sql: string; params?: unknown[] }>;
+    const marker = stmts[0]!.params![0] as string;
+    expect(marker).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z#[0-9a-f]{12}$/);
+    expect(stmts[1]!.params![3]).toBe(marker);
   });
 
   it("consumePasswordReset reports a busy instance without claiming when the slot is exhausted", async () => {

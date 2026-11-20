@@ -317,6 +317,13 @@ export async function consumePasswordReset(
 
   const dbWrite = await getDbWrite();
   const now = new Date().toISOString();
+  // The gate below compares the row's used_at to the marker THIS transaction
+  // wrote, so the marker has to be unique per request. A bare millisecond
+  // timestamp is not: two consumers inside the same millisecond both match,
+  // and the loser — which claimed 0 rows, returns null, and tells the user
+  // "invalid or expired" — would still overwrite the winner's password. The
+  // random suffix removes that; only the claim gate reads this column.
+  const claimMarker = `${now}#${randomBytes(6).toString("hex")}`;
   // Derive before the claim so the batch's second statement can reference the
   // result; the old code derived synchronously inside the parameter list. A
   // failed derivation throws rather than returning null — see the docstring.
@@ -341,7 +348,7 @@ export async function consumePasswordReset(
   const claim = await dbWrite.batch([
     {
       sql: "UPDATE password_resets SET used_at = ? WHERE token = ? AND used_at IS NULL",
-      params: [now, token],
+      params: [claimMarker, token],
     },
     {
       // api_key is revoked with the password: it is a long-lived Bearer
@@ -353,7 +360,16 @@ export async function consumePasswordReset(
               SELECT 1 FROM password_resets
               WHERE token = ? AND used_at = ?
             )`,
-      params: [passwordHash, row.user_id, token, now],
+      params: [passwordHash, row.user_id, token, claimMarker],
+    },
+    {
+      // One-time CLI login codes stay valid for five minutes, and the verify
+      // route mints a fresh API key whenever the user has none — which is
+      // exactly the state this reset just created. Without this statement a
+      // code stolen before the reset would revive the credential the reset
+      // was meant to kill. Unused codes only: consumed ones are already spent.
+      sql: "UPDATE auth_codes SET used_at = datetime('now') WHERE user_id = ? AND used_at IS NULL",
+      params: [row.user_id],
     },
   ]);
   const claimChanges = claim[0]?.meta?.changes ?? 0;
