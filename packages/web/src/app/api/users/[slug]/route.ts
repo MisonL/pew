@@ -23,6 +23,7 @@ import { resolveUser } from "@/lib/auth-helpers";
 import { canBypassPublic } from "@/lib/profile-access";
 import { jsonResponse } from "@/lib/json-response";
 import { isDateParam } from "@/lib/date-params";
+import { PUBLIC_PROFILE_RATE_LIMIT, clientIpKey, inMemoryRateLimiter } from "@/lib/rate-limit";
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -40,6 +41,21 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await params;
+
+  // 0. Public endpoint: the payload is bounded by the profile, not the query,
+  // so one anonymous caller can repeat a multi-megabyte read at will. Bound it
+  // per client the way the public leaderboard is bounded. The check runs
+  // before any DB read so a throttled request costs nothing.
+  const rateLimited = inMemoryRateLimiter.check(
+    `public-profile:${clientIpKey(request)}`,
+    PUBLIC_PROFILE_RATE_LIMIT,
+  );
+  if (!rateLimited.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again later." },
+      { status: 429, headers: { "Retry-After": String(rateLimited.retryAfter) } },
+    );
+  }
 
   // 1. Validate slug format (alphanumeric + hyphens, 1-64 chars) OR UUID
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

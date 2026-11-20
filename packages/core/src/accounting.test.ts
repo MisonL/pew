@@ -94,7 +94,7 @@ describe("accounting acknowledgment projection", () => {
     const ack = { key, source_revision: 1, parser_revision: 1, detail_revision: 1, status: "applied" };
     const valid = { details_version: 1, acknowledgments: [ack] };
     expect(accountingAcknowledgment({ ...valid, secret: "PRIVATE", acknowledgments: [{ ...ack, raw: "PRIVATE" }] }, [r])).toEqual(valid);
-    for (const status of ["duplicate", "superseded", "base_mismatch", "conflict"]) expect(accountingAcknowledgment({ ...valid, acknowledgments: [{ ...ack, status }] }, [r])?.acknowledgments[0].status).toBe(status);
+    for (const status of ["duplicate", "superseded", "base_mismatch", "conflict", "device_revoked"]) expect(accountingAcknowledgment({ ...valid, acknowledgments: [{ ...ack, status }] }, [r])?.acknowledgments[0].status).toBe(status);
     for (const value of [null, [], {}, { ...valid, details_version: 2 }, { ...valid, acknowledgments: [] },
       ...[{ key: "wrong" }, { source_revision: 2 }, { parser_revision: 2 }, { detail_revision: 2 }, { status: "ok" }].map((patch) => ({ ...valid, acknowledgments: [{ ...ack, ...patch }] })),
       { ...valid, acknowledgments: [null] }]) expect(accountingAcknowledgment(value, [r])).toBeNull();

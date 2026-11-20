@@ -211,6 +211,9 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
     const queueState = await queue.loadState();
     const dirtyKeys = recordKey ? queueState.dirtyKeys : undefined;
     const useDirtyKeys = recordKey && dirtyKeys !== undefined;
+    // Set when an offset-mode queue gains a pending set mid-run (step 4): the
+    // refused keys become dirtyKeys, so the next run retries just those.
+    let gainedPendingSet = false;
     // Reported on every path, including the "nothing of mine to send" ones: a
     // stage with an empty queue ships nothing, but the caller composes one
     // warning across stages and its siblings may still ship the backlog.
@@ -374,7 +377,10 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
       // applied. Fail loudly there rather than lose it.
       if (result.refused) {
         const { keys, reason } = result.refused;
-        if (!useDirtyKeys || !recordKey) {
+        // Without per-record keys there is nowhere for a refused record to
+        // stay pending; the offset is about to advance past it. Fail loudly
+        // rather than strand it.
+        if (!recordKey) {
           return { success: false, uploaded: totalUploaded, batches: batchesCompleted, error: reason };
         }
         const sent = new Set(batch.map(recordKey));
@@ -387,6 +393,10 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
           refusedKeys.add(key);
         }
         refusalReason = reason;
+        // Every batch already succeeded, so the offset will advance past the
+        // refused records. This queue has keys, so give them a pending set
+        // instead of failing an upload whose other records were applied.
+        gainedPendingSet = true;
       }
 
       totalUploaded += batch.length - (result.refused?.keys.length ?? 0);
@@ -395,7 +405,7 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
 
     // 5. All batches succeeded — save state
     await queue.saveOffset(newOffset);
-    if (useDirtyKeys) {
+    if (useDirtyKeys || gainedPendingSet) {
       // Both sets stay pending: the server-refused keys and the oversized ones
       // this run never carried. Clearing the latter would drop local state for
       // a record no server ever saw.

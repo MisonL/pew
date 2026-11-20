@@ -46,6 +46,20 @@ describe("accounting outbox capability acknowledgment", () => {
     expect((await details.readFromOffset(0)).records).toHaveLength(1);
   });
 
+  it("retains a revoked-device annotation and names the revocation", async () => {
+    // `device_revoked` is permanent while the device stays revoked, and the
+    // annotation never landed. Clearing it (as `superseded` did) lost the
+    // retry that a later un-revoke would have made succeed.
+    const { dir, record, details } = await setup();
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({ ingested: 1 }))
+      .mockResolvedValueOnce(Response.json(ack(record, "device_revoked")));
+    const result = await executeUpload({ stateDir: dir, apiUrl: API, fetch, maxRetries: 0 });
+    expect(result.success).toBe(true);
+    expect(result.refused).toBe(1);
+    expect(result.warning).toMatch(/revoked device/i);
+    expect(await details.loadDirtyKeys()).toEqual([accountingKey(record)]);
+  });
+
   it.each(["base_mismatch", "conflict"])("retains %s for reconciliation", async (status) => {
     const { dir, record, details } = await setup();
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({ ingested: 1 })).mockResolvedValueOnce(Response.json(ack(record, status)));

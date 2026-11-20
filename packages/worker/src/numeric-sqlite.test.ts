@@ -111,7 +111,7 @@ describe("numeric validation through SQLite integer affinity", () => {
     ]);
     expect(detailsMixed.status).toBe(200);
     const detailsBody = await detailsMixed.json() as { acknowledgments: Array<{ status: string }> };
-    expect(detailsBody.acknowledgments.map((ack) => ack.status)).toEqual(["superseded", "base_mismatch"]);
+    expect(detailsBody.acknowledgments.map((ack) => ack.status)).toEqual(["device_revoked", "base_mismatch"]);
 
     const session = { session_key: "revoked-session", source: "codex", kind: "human", started_at: record.hour_start,
       last_message_at: record.hour_start, snapshot_at: record.hour_start, duration_seconds: 60,

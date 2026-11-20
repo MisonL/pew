@@ -102,7 +102,7 @@ export function accountingAcknowledgment(value: unknown, records: AccountingReco
     const a: unknown = value.acknowledgments[i]; const r = records[i];
     const key = JSON.stringify([r.device_id, r.source, r.model, r.hour_start, r.event_id]);
     if (!object(a) || a.key !== key || a.source_revision !== r.source_revision || a.parser_revision !== r.parser_revision ||
-      a.detail_revision !== r.detail_revision || !["applied", "duplicate", "superseded", "base_mismatch", "conflict"].includes(String(a.status))) return null;
+      a.detail_revision !== r.detail_revision || !["applied", "duplicate", "superseded", "base_mismatch", "conflict", "device_revoked"].includes(String(a.status))) return null;
     acknowledgments.push({ key, source_revision: r.source_revision, parser_revision: r.parser_revision, detail_revision: r.detail_revision,
       status: a.status as AccountingAck["status"] });
   }
