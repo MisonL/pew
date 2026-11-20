@@ -1508,6 +1508,38 @@ describe("upload-engine", () => {
       expect(result.error).toBe("no matching base");
       expect(await queue.loadOffset()).toBe(0);
     });
+
+    it("gives an offset-mode refusal a pending set instead of failing the upload", async () => {
+      // A queue that has per-record keys can hold the refused record itself.
+      // Failing the whole stage instead (the behaviour when there is no key)
+      // re-sent the records the server had already applied and reported an
+      // error for an upload that otherwise succeeded.
+      const queue = new BaseQueue<TestRecord>(dir, "test.jsonl", "test.state.json");
+      await new ConfigManager(dir).save({ token: "pk_test" });
+      await queue.appendBatch([makeRecord(1), makeRecord(2)]);
+      const config: UploadEngineConfig<TestRecord> = {
+        queue, endpoint: "/api/test-ingest", entityName: "test records",
+        preprocess: (records) => records,
+        recordKey: (r) => `key-${r.id}`,
+        validateResponse: (_body, batch) => ({
+          keys: [`key-${batch[0]?.id}`],
+          reason: "no matching base",
+        }),
+      };
+
+      const { fetchFn } = createMockFetch([{ status: 200, body: { ingested: 2 } }]);
+      const result = await createUploadEngine(config).execute({
+        stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.refused).toBe(1);
+      expect(result.uploaded).toBe(1);
+      expect(result.warning).toContain("no matching base");
+      // The refused record stays pending, and only that one: the applied
+      // sibling must not be re-sent on the next run.
+      expect(await queue.loadDirtyKeys()).toEqual(["key-1"]);
+    });
   });
 });
 
