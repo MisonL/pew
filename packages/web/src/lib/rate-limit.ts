@@ -189,12 +189,17 @@ export const LEADERBOARD_RATE_LIMIT: RateLimitConfig = {
  * Public profile reads (`/api/users/[slug]`). The route answers anonymously
  * and its body is bounded by the profile's history rather than a query range,
  * so an unauthenticated loop repeats the whole read and no range cap shrinks
- * it. Same bound as the public leaderboard: well above what profile browsing
- * produces (the page fetches its header plus the tab bodies), far below what
- * makes amplification cheap.
+ * it.
+ *
+ * 240/min rather than the leaderboard's 60: one profile page view issues three
+ * calls to this route (the light header, the selected range and the 365-day
+ * heatmap, `use-user-profile` at `profile-content.tsx:161/164`), and the key
+ * is the client IP without the slug — so 60 would throttle a NAT'd office at
+ * around twenty page views a minute. Four requests a second still bounds the
+ * amplification this exists for.
  */
 export const PUBLIC_PROFILE_RATE_LIMIT: RateLimitConfig = {
-  maxRequests: 60,
+  maxRequests: 240,
   windowSeconds: 60,
 };
 
