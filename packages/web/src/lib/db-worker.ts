@@ -772,8 +772,8 @@ export function createWorkerDbRead(): DbRead {
     // Live domain RPC methods
     // -------------------------------------------------------------------------
 
-    async ping(): Promise<void> {
-      await rpc<{ ok: boolean }>({ method: "live.ping" });
+    async ping(signal?: AbortSignal): Promise<void> {
+      await rpc<{ ok: boolean }>({ method: "live.ping" }, signal);
     },
 
     // -------------------------------------------------------------------------

@@ -15,6 +15,10 @@ vi.mock("@/lib/version", () => ({
   APP_VERSION: "1.2.3",
 }));
 
+const { inMemoryRateLimiter, LIVE_RATE_LIMIT } = (await import("@/lib/rate-limit")) as unknown as {
+  inMemoryRateLimiter: { reset: () => void };
+  LIVE_RATE_LIMIT: { maxRequests: number };
+};
 const { getDbRead: initialGetDbRead } = (await import("@/lib/db")) as unknown as {
   getDbRead: ReturnType<typeof vi.fn>;
 };
@@ -33,6 +37,7 @@ describe("GET /api/live", () => {
 
   beforeEach(async () => {
     vi.resetModules();
+    inMemoryRateLimiter.reset();
 
     vi.doMock("@/lib/db", () => ({
       getDbRead: vi.fn(),
@@ -183,8 +188,12 @@ describe("GET /api/live", () => {
     vi.useFakeTimers();
     try {
       const mockDbRead = createMockDbRead();
-      // ping never resolves -- timeout branch must win the race
-      mockDbRead.ping.mockReturnValue(new Promise(() => {}));
+      // ping never resolves on its own -- the timeout branch must win the race
+      let signal: AbortSignal | undefined;
+      mockDbRead.ping.mockImplementation((s: AbortSignal) => {
+        signal = s;
+        return new Promise(() => {});
+      });
       getDbRead.mockResolvedValue(mockDbRead);
 
       const resPromise = GET(makeGetRequest());
@@ -198,9 +207,28 @@ describe("GET /api/live", () => {
       const database = body.database as Record<string, unknown>;
       expect(database.connected).toBe(false);
       expect(database.error).toBe("database unavailable");
+      // The timeout aborts the signal handed to the DB call, so the underlying
+      // RPC fetch is cancelled rather than left running after the response.
+      expect(signal?.aborted).toBe(true);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("should throttle a public caller past the per-IP cap", async () => {
+    const mockDbRead = createMockDbRead();
+    mockDbRead.ping.mockResolvedValue(undefined);
+    getDbRead.mockResolvedValue(mockDbRead);
+    // The limiter is above the login wall and its callers are anonymous, so
+    // the only cost model is requests per IP. Drive one past the cap.
+    const limit = LIVE_RATE_LIMIT.maxRequests;
+    for (let i = 0; i < limit; i++) {
+      await GET(makeGetRequest());
+    }
+    const res = await GET(makeGetRequest());
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).not.toBeNull();
+    expect(mockDbRead.ping).toHaveBeenCalledTimes(limit);
   });
 
   // -------------------------------------------------------------------------

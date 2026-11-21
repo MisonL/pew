@@ -186,6 +186,17 @@ export const LEADERBOARD_RATE_LIMIT: RateLimitConfig = {
 };
 
 /**
+ * Unauthenticated health checks (`/api/live`). The route answers without
+ * login and opens a DB read client plus a ping per call, so one client can
+ * occupy the single web process from outside the login wall. 60/min is one a
+ * second: far above any monitor cadence and well below a useful flood.
+ */
+export const LIVE_RATE_LIMIT: RateLimitConfig = {
+  maxRequests: 60,
+  windowSeconds: 60,
+};
+
+/**
  * Public profile reads (`/api/users/[slug]`). The route answers anonymously
  * and its body is bounded by the profile's history rather than a query range,
  * so an unauthenticated loop repeats the whole read and no range cap shrinks

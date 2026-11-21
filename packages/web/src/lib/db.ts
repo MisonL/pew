@@ -432,8 +432,8 @@ export interface DbRead {
   // Live domain RPC methods
   // ---------------------------------------------------------------------------
 
-  /** Ping database (health check) */
-  ping(): Promise<void>;
+  /** Ping database (health check); the signal aborts the underlying call. */
+  ping(signal?: AbortSignal): Promise<void>;
 
   // ---------------------------------------------------------------------------
   // Cache management (admin only)
