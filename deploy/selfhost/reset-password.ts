@@ -99,6 +99,13 @@ export async function applyPasswordReset(
     .prepare("UPDATE auth_codes SET used_at = datetime('now') WHERE user_id = ? AND used_at IS NULL")
     .bind(userId)
     .run();
+  // An unused reset token stays valid for an hour; leaving it alive let
+  // whoever held it replace the password this reset just set. Burn them
+  // with the login codes, before the password write.
+  await db
+    .prepare("UPDATE password_resets SET used_at = datetime('now') WHERE user_id = ? AND used_at IS NULL")
+    .bind(userId)
+    .run();
   const result = await db
     .prepare("UPDATE users SET password_hash = ?, api_key = NULL, updated_at = datetime('now') WHERE id = ?")
     .bind(hashPasswordForReset(password), userId)
