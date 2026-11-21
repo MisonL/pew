@@ -15,6 +15,7 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -49,6 +50,26 @@ function parseConfig(): R2Config {
   return { endpoint, accessKeyId, secretAccessKey, bucket };
 }
 
+/**
+ * Bounds on the R2 connection and request.
+ *
+ * Logo uploads run inside a Next.js route handler, and the default handler
+ * has no request timeout: a connection R2 accepts but never answers parks
+ * the caller until the platform kills it, holding the upload and its D1 work
+ * open the whole time. The route already compensates a failed upload, so
+ * timing out turns a hang into an ordinary 500 response.
+ */
+export const R2_CONNECTION_TIMEOUT_MS = 5_000;
+export const R2_REQUEST_TIMEOUT_MS = 30_000;
+
+/** Request handler with the bounds above. Exported for the wiring test. */
+export function buildR2RequestHandler(): NodeHttpHandler {
+  return new NodeHttpHandler({
+    connectionTimeout: R2_CONNECTION_TIMEOUT_MS,
+    requestTimeout: R2_REQUEST_TIMEOUT_MS,
+  });
+}
+
 function getClient(): { client: S3Client; bucket: string } {
   if (_client && _bucket) {
     return { client: _client, bucket: _bucket };
@@ -62,6 +83,7 @@ function getClient(): { client: S3Client; bucket: string } {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,
     },
+    requestHandler: buildR2RequestHandler(),
   });
   _bucket = config.bucket;
 
