@@ -434,13 +434,21 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
     }
 
     // 5. All batches succeeded — save state
-    await queue.saveOffset(newOffset);
+    //
+    // The pending set lands before the offset. A run that dies between the
+    // two writes (or whose second write fails) then keeps the refused keys
+    // with a stale offset, and the next run retries exactly those records:
+    // dirty-key mode never reads the offset, and uploads deduplicate on
+    // upsert. Saving the offset first instead advanced a legacy-mode queue
+    // past a record the server never applied; the restart read from beyond
+    // it and the refusal was silently abandoned.
     if (useDirtyKeys || gainedPendingSet) {
       // Both sets stay pending: the server-refused keys and the oversized ones
       // this run never carried. Clearing the latter would drop local state for
       // a record no server ever saw.
       await queue.saveDirtyKeys([...refusedKeys, ...oversizedKeys].sort());
     }
+    await queue.saveOffset(newOffset);
     if (config.trackUploadTarget) {
       await queue.saveLastUploadTarget(apiUrl);
     }
