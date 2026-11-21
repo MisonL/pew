@@ -268,6 +268,18 @@ describe("seasons RPC handlers", () => {
       expect(body).toEqual({ result: null });
     });
 
+    it("rejects non-string or oversized id lists before binding them", async () => {
+      // The ids go through json_each as values; a non-array or non-string
+      // entry used to reach SQL as an opaque blob.
+      for (const userIds of ["u1", [1], [""], Array.from({ length:501 }, () => "u")]) {
+        const response = await handleSeasonsRpc(
+          { method: "seasons.checkMemberConflict", seasonId: "s1", userIds } as CheckSeasonMemberConflictRequest,
+          db,
+          kv,
+        );
+        expect(response.status, JSON.stringify(userIds).slice(0,40)).toBe(400);
+      }
+    });
     it("should return 400 when params missing", async () => {
       const request = {
         method: "seasons.getRegistration",

@@ -187,6 +187,28 @@ describe("cache RPC handlers", () => {
       expect(kv.delete).toHaveBeenCalledOnce();
     });
 
+    it("rejects a non-string key instead of crashing on startsWith", async () => {
+      // A number reached `request.key.startsWith` and threw a TypeError — a
+      // 500 for plainly bad input.
+      const response = await handleCacheRpc(
+        { method: "cache.invalidate", key: 5 } as unknown as CacheInvalidateRequest,
+        kv,
+        db,
+      );
+      expect(response.status).toBe(400);
+    });
+
+    it("rejects a non-string prefix on list and clear", async () => {
+      for (const method of ["cache.list", "cache.clear"] as const) {
+        const response = await handleCacheRpc(
+          { method, prefix: 7 } as unknown as CacheListRequest,
+          kv,
+          db,
+        );
+        expect(response.status, method).toBe(400);
+      }
+    });
+
     it("should return 400 when key is missing", async () => {
       const request = {
         method: "cache.invalidate",
