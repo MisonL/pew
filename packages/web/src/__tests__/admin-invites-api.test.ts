@@ -104,6 +104,17 @@ describe("GET /api/admin/invites", () => {
     const json = await res.json();
     expect(json.rows).toEqual(mockRows);
   });
+  it("treats a non-Error rejection as an unexpected failure", async () => {
+    resolveAdmin.mockResolvedValueOnce({ userId: "admin-1", email: "admin@test.com" });
+    mockDbRead.listInviteCodes.mockRejectedValueOnce("storage exploded");
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    
+    const res = await GET(makeJsonRequest("GET", "/api/admin/invites"));
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Failed to load invite codes");
+    consoleSpy.mockRestore();
+  });
+  
 });
 
 describe("POST /api/admin/invites", () => {

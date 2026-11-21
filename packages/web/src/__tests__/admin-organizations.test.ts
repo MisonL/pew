@@ -133,6 +133,17 @@ describe("GET /api/admin/organizations", () => {
     const json = await res.json();
     expect(json.error).toBe("Failed to list organizations");
   });
+  it("treats a non-Error rejection as an unexpected failure", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.listOrganizationsWithCount.mockRejectedValueOnce("storage exploded");
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    
+    const res = await GET(makeJsonRequest("GET", "/api/admin/organizations"));
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Failed to list organizations");
+    consoleSpy.mockRestore();
+  });
+  
 });
 
 // ---------------------------------------------------------------------------
@@ -300,6 +311,20 @@ describe("POST /api/admin/organizations", () => {
     );
     expect(res.status).toBe(503);
   });
+  it("treats a non-Error rejection as an unexpected failure", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getOrganizationBySlug.mockResolvedValueOnce(null);
+    mockDbWrite.execute.mockRejectedValueOnce("storage exploded");
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    
+    const res = await POST(
+      makeJsonRequest("POST", "/api/admin/organizations", { name: "Test", slug: "test" })
+    );
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Failed to create organization");
+    consoleSpy.mockRestore();
+  });
+  
 });
 
 // ---------------------------------------------------------------------------
@@ -378,6 +403,19 @@ describe("GET /api/admin/organizations/[orgId]", () => {
     const json = await res.json();
     expect(json.error).toBe("Failed to get organization");
   });
+  it("treats a non-Error rejection as an unexpected failure", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getOrganizationById.mockRejectedValueOnce("storage exploded");
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    
+    const res = await GET_ONE(makeOrgRequest("GET", "org-1"), {
+      params: Promise.resolve({ orgId: "org-1" }),
+    });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Failed to get organization");
+    consoleSpy.mockRestore();
+  });
+  
 });
 
 // ---------------------------------------------------------------------------
@@ -593,6 +631,28 @@ describe("PATCH /api/admin/organizations/[orgId]", () => {
     const json = await res.json();
     expect(json.error).toBe("Failed to update organization");
   });
+  it("skips the uniqueness lookup when the slug is unchanged", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getOrganizationById.mockResolvedValueOnce({ id: "org-1", slug: "anthropic" });
+    mockDbRead.getOrganizationById.mockResolvedValueOnce({
+      id: "org-1",
+      name: "Anthropic Inc",
+      slug: "anthropic",
+      logo_url: null,
+      created_by: "admin-1",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-02T00:00:00Z",
+    });
+    mockDbRead.countOrgMembers.mockResolvedValueOnce(0);
+    mockDbWrite.execute.mockResolvedValueOnce({ changes:1 });
+    
+    const res = await PATCH(makeOrgRequest("PATCH", "org-1", { name: "Anthropic Inc", slug: "anthropic" }), {
+      params: Promise.resolve({ orgId: "org-1" }),
+    });
+    expect(res.status).toBe(200);
+    expect(mockDbRead.getOrganizationBySlug).not.toHaveBeenCalled();
+  });
+  
 });
 
 // ---------------------------------------------------------------------------
@@ -663,4 +723,17 @@ describe("DELETE /api/admin/organizations/[orgId]", () => {
     const json = await res.json();
     expect(json.error).toBe("Failed to delete organization");
   });
+  it("treats a non-Error rejection as an unexpected failure", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getOrganizationById.mockRejectedValueOnce("storage exploded");
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    
+    const res = await DELETE(makeOrgRequest("DELETE", "org-1"), {
+      params: Promise.resolve({ orgId: "org-1" }),
+    });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Failed to delete organization");
+    consoleSpy.mockRestore();
+  });
+  
 });

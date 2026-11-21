@@ -17,6 +17,7 @@ vi.mock("@/auth", () => ({ shouldUseSecureCookies: () => false }));
 
 import { POST } from "@/app/api/auth/register/route";
 import { getDbRead, getDbWrite } from "@/lib/db";
+import { MAX_AUTH_BODY_BYTES } from "@pew/core";
 import { AUTH_REGISTER_RATE_LIMIT, inMemoryRateLimiter } from "@/lib/rate-limit";
 
 const mockGetDbWrite = getDbWrite as unknown as ReturnType<typeof vi.fn>;
@@ -209,4 +210,13 @@ describe("POST /api/auth/register", () => {
       setScryptSlotForced(false);
     }
   });
+  it("rejects a body larger than the auth cap with413", async () => {
+    const res = await post({
+      email: "big@test.com",
+      password: "12345678",
+      name: "x".repeat(MAX_AUTH_BODY_BYTES),
+    });
+    expect(res.status).toBe(413);
+  });
+  
 });

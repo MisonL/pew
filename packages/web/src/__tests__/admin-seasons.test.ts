@@ -122,6 +122,17 @@ describe("GET /api/admin/seasons", () => {
     const json = await res.json();
     expect(json.error).toContain("not yet migrated");
   });
+  it("treats a non-Error rejection as an unexpected failure", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.listSeasons.mockRejectedValueOnce("storage exploded");
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    
+    const res = await GET(makeJsonRequest("GET", "/api/admin/seasons"));
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toContain("Failed to list seasons");
+    consoleSpy.mockRestore();
+  });
+  
 });
 
 // ---------------------------------------------------------------------------
@@ -471,6 +482,50 @@ describe("POST /api/admin/seasons", () => {
     expect((await res.json()).error).toContain("already exists");
     consoleSpy.mockRestore();
   });
+  it("persists explicit boolean toggle flags", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getSeasonBySlug.mockResolvedValueOnce(null);
+    mockDbWrite.execute.mockResolvedValueOnce({ changes:1, duration:0.01 });
+    autoRegisterTeamsForSeason.mockResolvedValueOnce({ registered:0, skipped:0, seasonEligible: true });
+    
+    const res = await POST(
+      makeJsonRequest("POST", "/api/admin/seasons", {
+        name: "Season9",
+        slug: "s9",
+        start_date: "2099-06-01T00:00:00Z",
+        end_date: "2099-06-30T23:59:00Z",
+        allow_late_registration: true,
+        allow_roster_changes: true,
+        allow_late_withdrawal: true,
+      })
+    );
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.allow_late_registration).toBe(true);
+    expect(json.allow_roster_changes).toBe(true);
+    expect(json.allow_late_withdrawal).toBe(true);
+    const params = mockDbWrite.execute.mock.calls[0]?.[1] as unknown[];
+    expect(params.slice(6)).toEqual([1,1,1]);
+  });
+  
+  it("treats a non-Error rejection as an unexpected failure", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getSeasonBySlug.mockRejectedValueOnce("storage exploded");
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    
+    const res = await POST(
+      makeJsonRequest("POST", "/api/admin/seasons", {
+        name: "Season10",
+        slug: "s10",
+        start_date: "2099-07-01T00:00:00Z",
+        end_date: "2099-07-31T23:59:00Z",
+      })
+    );
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Failed to create season");
+    consoleSpy.mockRestore();
+  });
+  
 });
 
 // ---------------------------------------------------------------------------
