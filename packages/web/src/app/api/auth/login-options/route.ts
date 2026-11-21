@@ -12,8 +12,26 @@
 
 import { NextResponse } from "next/server";
 import { getD1Client } from "@/lib/d1";
+import { clientIpKey, inMemoryRateLimiter, LOGIN_OPTIONS_RATE_LIMIT } from "@/lib/rate-limit";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const rateLimited = inMemoryRateLimiter.check(
+    `login-options:${clientIpKey(request)}`,
+    LOGIN_OPTIONS_RATE_LIMIT,
+  );
+  if (!rateLimited.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again later." },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(rateLimited.retryAfter),
+          "Cache-Control": "no-store",
+        },
+      },
+    );
+  }
+
   const googleEnabled = Boolean(
     process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET
   );

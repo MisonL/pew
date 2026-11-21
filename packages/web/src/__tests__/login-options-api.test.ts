@@ -7,6 +7,7 @@ vi.mock("@/lib/d1", () => ({
 }));
 
 import { GET } from "@/app/api/auth/login-options/route";
+import { inMemoryRateLimiter, LOGIN_OPTIONS_RATE_LIMIT } from "@/lib/rate-limit";
 
 describe("GET /api/auth/login-options", () => {
   const ORIGINAL_ENV = process.env;
@@ -17,48 +18,60 @@ describe("GET /api/auth/login-options", () => {
   beforeEach(() => {
     process.env = { ...ORIGINAL_ENV };
     mockQuery.mockReset();
+    inMemoryRateLimiter.reset();
   });
 
   it("reports setupNeeded=true on an empty instance", async () => {
     mockQuery.mockResolvedValueOnce({ results: [{ n: 0 }] });
-    const res = await GET();
+    const res = await GET(new Request("http://localhost:7020/api/auth/login-options"));
     expect(await res.json()).toMatchObject({ setupNeeded: true });
   });
 
   it("reports setupNeeded=false once a user exists", async () => {
     mockQuery.mockResolvedValueOnce({ results: [{ n: 1 }] });
-    const res = await GET();
+    const res = await GET(new Request("http://localhost:7020/api/auth/login-options"));
     expect(await res.json()).toMatchObject({ setupNeeded: false });
   });
 
   it("treats an empty result set as instance-empty", async () => {
     // results:[] → results[0]?.n ?? 0 → 0 → setupNeeded: true
     mockQuery.mockResolvedValueOnce({ results: [] });
-    const res = await GET();
+    const res = await GET(new Request("http://localhost:7020/api/auth/login-options"));
     expect(await res.json()).toMatchObject({ setupNeeded: true });
   });
 
   it("reflects googleEnabled from the OAuth env vars", async () => {
     mockQuery.mockResolvedValue({ results: [{ n: 1 }] });
     process.env = { ...process.env, AUTH_GOOGLE_ID: "id", AUTH_GOOGLE_SECRET: "secret" };
-    expect(await (await GET()).json()).toMatchObject({ googleEnabled: true });
+    expect(await (await GET(new Request("http://localhost:7020/api/auth/login-options"))).json()).toMatchObject({ googleEnabled: true });
 
     process.env = { ...process.env, AUTH_GOOGLE_ID: "", AUTH_GOOGLE_SECRET: "" };
-    expect(await (await GET()).json()).toMatchObject({ googleEnabled: false });
+    expect(await (await GET(new Request("http://localhost:7020/api/auth/login-options"))).json()).toMatchObject({ googleEnabled: false });
   });
 
   it("defaults to setupNeeded=false when the query fails (no bootstrap advert)", async () => {
     mockQuery.mockRejectedValueOnce(new Error("no such table: users"));
-    const res = await GET();
+    const res = await GET(new Request("http://localhost:7020/api/auth/login-options"));
     expect(await res.json()).toMatchObject({ setupNeeded: false });
   });
 
+  it("throttles a public caller past the per-IP cap", async () => {
+    mockQuery.mockResolvedValue({ results: [{ n:1 }] });
+    const makeRequest = () => new Request("http://localhost:7020/api/auth/login-options");
+    const limit = LOGIN_OPTIONS_RATE_LIMIT.maxRequests;
+    for (let i = 0; i < limit; i++) {
+      expect((await GET(makeRequest())).status).toBe(200);
+    }
+    const res = await GET(makeRequest());
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).not.toBeNull();
+  });
   it("is never cached: the answer flips as soon as the instance is set up", async () => {
     // This response tells an anonymous visitor whether /setup is still open.
     // A cached copy would keep advertising (or hiding) the wizard after the
     // first admin exists.
     mockQuery.mockResolvedValueOnce({ results: [{ n: 0 }] });
-    const res = await GET();
+    const res = await GET(new Request("http://localhost:7020/api/auth/login-options"));
     expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 });
