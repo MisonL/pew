@@ -172,6 +172,27 @@ describe("POST /api/admin/organizations", () => {
     expect(json.createdBy).toBe("admin-1");
   });
 
+  it("stores a trimmed name", async () => {
+    // Lists sort and group by name; padding made one organization read as a
+    // different one, and the slug is derived separately.
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getOrganizationBySlug.mockResolvedValueOnce(null);
+    mockDbWrite.execute.mockResolvedValueOnce({ changes: 1, duration: 0.01 });
+
+    const res = await POST(
+      makeJsonRequest("POST", "/api/admin/organizations", {
+        name: " Acme ",
+        slug: "acme",
+      })
+    );
+
+    expect(res.status).toBe(201);
+    expect((await res.json()).name).toBe("Acme");
+    const params = mockDbWrite.execute.mock.calls[0]?.[1] as unknown[];
+    expect(params).toContain("Acme");
+    expect(params).not.toContain(" Acme ");
+  });
+
   it("should reject non-admin users", async () => {
     resolveAdmin.mockResolvedValueOnce(null);
     const res = await POST(

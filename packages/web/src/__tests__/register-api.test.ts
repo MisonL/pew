@@ -78,6 +78,20 @@ describe("POST /api/auth/register", () => {
     expect((await res.json()).error).toMatch(/8 characters/);
   });
 
+  it("rejects an oversized display name", async () => {
+    // The route trims first; the bound matches the admin forms so a name
+    // cannot bloat every response that carries the user.
+    const res = await post({
+      email: "big@x.y",
+      name: "n".repeat(65),
+      password: "password123",
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("64");
+  });
+
+
   it("bootstraps the first admin when the instance is empty", async () => {
     // Both the route's mode check and bootstrapAdmin's own guard count users.
     mockQuery.mockResolvedValue({ results: [{ n: 0 }] });

@@ -105,7 +105,8 @@ export async function PATCH(
 
     // Name
     if (body.name !== undefined) {
-      const name = body.name as string;
+      const rawName = body.name as string;
+      const name = typeof rawName === "string" ? rawName.trim() : rawName;
       if (typeof name !== "string" || name.length < 1 || name.length > 64) {
         return NextResponse.json(
           { error: "name must be 1-64 characters" },

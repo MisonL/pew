@@ -71,10 +71,14 @@ export async function POST(request: Request) {
 
   const parsed = await readJsonBody(request);
   if (!parsed.ok) return parsed.response;
-  const { name, slug } = parsed.body as {
+  const { name: rawName, slug } = parsed.body as {
     name?: string;
     slug?: string;
   };
+
+  // Store the name without surrounding whitespace: a padded name sorts to
+  // the top of every list and reads as a duplicate of the unpadded one.
+  const name = typeof rawName === "string" ? rawName.trim() : rawName;
 
   // Validate name
   if (!name || typeof name !== "string" || name.length < 1 || name.length > 64) {

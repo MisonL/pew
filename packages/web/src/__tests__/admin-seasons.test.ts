@@ -163,6 +163,25 @@ describe("POST /api/admin/seasons", () => {
     expect(autoRegisterTeamsForSeason).toHaveBeenCalledTimes(1);
   });
 
+  it("stores a trimmed name", async () => {
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getSeasonBySlug.mockResolvedValueOnce(null);
+    mockDbWrite.execute.mockResolvedValueOnce({ changes: 1, duration: 0.01 });
+    autoRegisterTeamsForSeason.mockResolvedValueOnce({ registered: 0, skipped: 0, seasonEligible: true });
+
+    const res = await POST(
+      makeJsonRequest("POST", "/api/admin/seasons", {
+        name: " Season1 ",
+        slug: "s1",
+        start_date: "2099-04-01T00:00:00Z",
+        end_date: "2099-04-30T23:59:00Z",
+      })
+    );
+
+    expect(res.status).toBe(201);
+    expect((await res.json()).name).toBe("Season1");
+  });
+
   it("rejects a non-boolean toggle instead of coercing it", async () => {
     // `"false"` is truthy, so `!!body.allow_late_withdrawal` created the season
     // with late withdrawal enabled — the same coercion PATCH already rejects.
