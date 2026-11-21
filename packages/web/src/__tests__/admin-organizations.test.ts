@@ -487,6 +487,24 @@ describe("PATCH /api/admin/organizations/[orgId]", () => {
     expect(res.status).toBe(403);
   });
 
+  it("maps a UNIQUE slug collision from the update into 409", async () => {
+    // The pre-check is a read-then-write race; the loser reaches the
+    // UNIQUE(slug) constraint and used to answer a generic 500.
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    mockDbRead.getOrganizationById.mockResolvedValueOnce({ id: "org-1", name: "Org", slug: "old" });
+    mockDbWrite.execute.mockRejectedValueOnce(
+      new Error("UNIQUE constraint failed: organizations.slug"),
+    );
+
+    const res = await PATCH(
+      makeOrgRequest("PATCH", "org-1", { slug: "taken" }),
+      { params: Promise.resolve({ orgId: "org-1" }) },
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("already exists");
+  });
+
   it("should reject invalid JSON body", async () => {
     resolveAdmin.mockResolvedValueOnce(ADMIN);
     const req = new Request("http://localhost:7020/api/admin/organizations/org-1", {

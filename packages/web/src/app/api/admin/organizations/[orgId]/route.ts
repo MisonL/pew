@@ -150,10 +150,24 @@ export async function PATCH(
     updates.push("updated_at = datetime('now')");
     values.push(orgId);
 
-    await dbWrite.execute(
-      `UPDATE organizations SET ${updates.join(", ")} WHERE id = ?`,
-      values
-    );
+    try {
+      await dbWrite.execute(
+        `UPDATE organizations SET ${updates.join(", ")} WHERE id = ?`,
+        values
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      // The uniqueness check above is a read-then-write race: a concurrent
+      // PATCH can take the slug between the check and this statement. Answer
+      // the same409 the pre-check would, instead of a generic500.
+      if (msg.includes("UNIQUE") && msg.includes("slug")) {
+        return NextResponse.json(
+          { error: "An organization with this slug already exists" },
+          { status: 409 }
+        );
+      }
+      throw err;
+    }
 
     // Return updated organization
     const updated = await dbRead.getOrganizationById(orgId);
