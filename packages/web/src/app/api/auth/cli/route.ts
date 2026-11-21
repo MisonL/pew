@@ -16,7 +16,6 @@ import { getDbRead, getDbWrite } from "@/lib/db";
 import { isE2EMode } from "@/lib/e2e-mode";
 import {
   AUTH_CLI_RATE_LIMIT,
-  clientIpKey,
   inMemoryRateLimiter,
 } from "@/lib/rate-limit";
 
@@ -49,24 +48,6 @@ export async function GET(request: Request) {
   const isWarmupProbe =
     isE2EMode() && url.searchParams.get("pew-warmup") === "1";
 
-  // Rate limit: 10 CLI auth attempts per hour per IP
-  if (!isWarmupProbe) {
-    const ip = clientIpKey(request);
-    const rl = inMemoryRateLimiter.check(
-      `auth-cli:${ip}`,
-      AUTH_CLI_RATE_LIMIT,
-    );
-    if (!rl.allowed) {
-      return NextResponse.json(
-        { error: "Too many requests. Please try again later." },
-        { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
-      );
-    }
-  }
-
-  const callback = url.searchParams.get("callback");
-  const state = url.searchParams.get("state");
-
   // 1. Check authentication
   const authResult = await resolveUser(request);
   if (!authResult) {
@@ -78,7 +59,30 @@ export async function GET(request: Request) {
     );
   }
 
+  // Rate limit: 10 CLI auth attempts per hour per user.
+  //
+  // Keyed by user and checked after authentication. Spending it by client IP
+  // before the session check let ten session-less requests from one NAT empty
+  // the bucket every legitimate user behind that IP needed for `pew login` —
+  // and the answer this route gives an anonymous request is a redirect, which
+  // costs nothing. The E2E warmup probe still skips the limiter because in the
+  // isolated environment it authenticates as a real test user.
+  if (!isWarmupProbe) {
+    const rl = inMemoryRateLimiter.check(
+      `auth-cli:${authResult.userId}`,
+      AUTH_CLI_RATE_LIMIT,
+    );
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again later." },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
+      );
+    }
+  }
+
   // 2. Validate callback parameter
+  const callback = url.searchParams.get("callback");
+  const state = url.searchParams.get("state");
   if (!callback) {
     return NextResponse.json(
       { error: "Missing callback parameter" },

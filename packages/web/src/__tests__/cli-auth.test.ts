@@ -76,7 +76,7 @@ describe("GET /api/auth/cli", () => {
       process.env.E2E_SKIP_AUTH = "true";
       process.env.RESOURCE_ENV = "test";
       process.env.PEW_TEST_RUN_ID = "owned-run";
-      vi.mocked(resolveUser).mockResolvedValue(null);
+      vi.mocked(resolveUser).mockResolvedValue({ userId: "warmup", email: "w@test.local" });
 
       for (let i = 0; i < AUTH_CLI_RATE_LIMIT.maxRequests + 5; i++) {
         const res = await GET(makeWarmupRequest());
@@ -85,23 +85,10 @@ describe("GET /api/auth/cli", () => {
       expect(inMemoryRateLimiter.size()).toBe(0);
     });
 
-    it("still counts a normal request inside the e2e environment", async () => {
-      process.env.E2E_SKIP_AUTH = "true";
-      process.env.RESOURCE_ENV = "test";
-      process.env.PEW_TEST_RUN_ID = "owned-run";
-      vi.mocked(resolveUser).mockResolvedValue(null);
-
-      for (let i = 0; i < AUTH_CLI_RATE_LIMIT.maxRequests; i++) {
-        await GET(makeRequest());
-      }
-      const res = await GET(makeRequest());
-      expect(res.status).toBe(429);
-    });
-
     it("ignores the warmup marker outside the e2e environment", async () => {
       // No RESOURCE_ENV/E2E_SKIP_AUTH: production-like process must treat the
       // marker as an ordinary request and keep counting.
-      vi.mocked(resolveUser).mockResolvedValue(null);
+      vi.mocked(resolveUser).mockResolvedValue({ userId: "u-warm", email: "w@x.test" });
 
       for (let i = 0; i < AUTH_CLI_RATE_LIMIT.maxRequests; i++) {
         await GET(makeWarmupRequest());
@@ -109,6 +96,37 @@ describe("GET /api/auth/cli", () => {
       const res = await GET(makeWarmupRequest());
       expect(res.status).toBe(429);
       expect(inMemoryRateLimiter.size()).toBe(1);
+    });
+  });
+
+  describe("rate limit ordering", () => {
+    // The bucket used to be keyed by client IP and spent before the request
+    // was authenticated: ten session-less GETs from one NAT exhausted it, and
+    // every user behind that IP then got 429 from `pew login` for an hour. The
+    // endpoint's own answer to an anonymous request is a redirect to /login,
+    // so an anonymous flood must not cost anyone anything.
+    it("does not spend the bucket on unauthenticated requests", async () => {
+      vi.mocked(resolveUser).mockResolvedValue(null);
+
+      for (let i = 0; i < AUTH_CLI_RATE_LIMIT.maxRequests + 10; i++) {
+        const res = await GET(makeRequest("http://localhost:9999/callback"));
+        expect(res.status).not.toBe(429);
+      }
+      expect(inMemoryRateLimiter.size()).toBe(0);
+    });
+
+    it("limits authenticated requests per user instead of per IP", async () => {
+      vi.mocked(resolveUser).mockResolvedValue({ userId: "u-a", email: "a@x.test" });
+      // Walking past the limiter without a callback keeps the DB out of these
+      // assertions: the response is a 400, but the slot is spent.
+      for (let i = 0; i < AUTH_CLI_RATE_LIMIT.maxRequests; i++) {
+        expect((await GET(makeRequest())).status).toBe(400);
+      }
+      expect((await GET(makeRequest())).status).toBe(429);
+
+      // A different user behind the same IP is unaffected.
+      vi.mocked(resolveUser).mockResolvedValue({ userId: "u-b", email: "b@x.test" });
+      expect((await GET(makeRequest())).status).toBe(400);
     });
   });
 

@@ -1593,6 +1593,54 @@ describe("upload-engine", () => {
       // sibling must not be re-sent on the next run.
       expect(await queue.loadDirtyKeys()).toEqual(["key-1"]);
     });
+
+    it("persists the pending set before the offset, so a failure between the two keeps the refusal retryable", async () => {
+      // The end-of-run state is written in two steps. Offset first was the
+      // dangerous order: the offset advances past the refused record, and a
+      // crash or a failed write before the dirty set lands leaves the queue in
+      // legacy mode past it — the refused record is never sent again and the
+      // server never applied it. The second write in whatever order is the one
+      // that can lose the refusal, so each is failed in turn.
+      const queue = new BaseQueue<TestRecord>(dir, "test.jsonl", "test.state.json");
+      await new ConfigManager(dir).save({ token: "pk_test" });
+      await queue.appendBatch([makeRecord(1), makeRecord(2)]);
+      const config: UploadEngineConfig<TestRecord> = {
+        queue, endpoint: "/api/test-ingest", entityName: "test records",
+        preprocess: (records) => records,
+        recordKey: (r) => `key-${r.id}`,
+        validateResponse: (_body, batch) => ({ keys: [`key-${batch[0]?.id}`], reason: "no matching base" }),
+      };
+
+      const writes: string[] = [];
+      let failAt = 0;
+      let count = 0;
+      const realOffset = queue.saveOffset.bind(queue);
+      const realDirty = queue.saveDirtyKeys.bind(queue);
+      vi.spyOn(queue, "saveOffset").mockImplementation(async (offset: number) => {
+        writes.push("offset");
+        if (++count === failAt) throw new Error("synthetic disk full");
+        return realOffset(offset);
+      });
+      vi.spyOn(queue, "saveDirtyKeys").mockImplementation(async (keys?: string[]) => {
+        writes.push("dirtyKeys");
+        if (++count === failAt) throw new Error("synthetic disk full");
+        return realDirty(keys);
+      });
+
+      const first = createMockFetch([{ status: 200, body: { ingested: 2 } }]);
+      await createUploadEngine(config).execute({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: first.fetchFn });
+      expect(writes).toEqual(["dirtyKeys", "offset"]);
+
+      // Fail the second persistence step and confirm the refused key survives
+      // into the next run's pending set. Under offset-first it would not.
+      writes.length = 0;
+      count = 0;
+      failAt = 2;
+      const second = createMockFetch([{ status: 200, body: { ingested: 1 } }]);
+      await expect(createUploadEngine(config).execute({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: second.fetchFn }))
+        .rejects.toThrow("synthetic disk full");
+      expect(await queue.loadDirtyKeys()).toEqual(["key-1"]);
+    });
   });
 });
 
