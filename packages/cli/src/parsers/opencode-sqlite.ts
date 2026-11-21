@@ -19,6 +19,8 @@ export interface OpenCodeSqliteResult {
    * values are not final yet; the driver re-reads these ids on the next run.
    */
   pendingIds: string[];
+  /** Token-bearing rows dropped because neither time.completed nor time.created parsed */
+  skippedNoTimestamp?: number;
   /** DB file inode (for detecting replacement/recreation) */
   inode: number;
 }
@@ -87,6 +89,7 @@ export function processOpenCodeMessages(
   const deltas: ParsedDelta[] = [];
   const messageKeys = new Set<string>();
   const pendingIds: string[] = [];
+  let skippedNoTimestamp = 0;
   let maxTimeCreated = 0;
 
   for (const row of rows) {
@@ -136,7 +139,10 @@ export function processOpenCodeMessages(
 
     // Extract timestamp from time.completed or time.created
     const timestampMs = completedMs || createdMs;
-    if (!timestampMs) continue;
+    if (!timestampMs) {
+      skippedNoTimestamp++;
+      continue;
+    }
 
     // Extract model
     const model =
@@ -155,7 +161,7 @@ export function processOpenCodeMessages(
     });
   }
 
-  return { deltas, messageKeys, maxTimeCreated, pendingIds };
+  return { deltas, messageKeys, maxTimeCreated, pendingIds, skippedNoTimestamp };
 }
 
 /**

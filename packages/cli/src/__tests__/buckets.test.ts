@@ -50,6 +50,37 @@ describe("toUtcHalfHourStart", () => {
     );
   });
 
+  it("reads a timestamp without a zone as UTC, independent of the host", () => {
+    // The same log line must not land in a different hour bucket depending on
+    // which machine ran the sync. The project stores UTC everywhere, so a naive
+    // value is read as UTC; before this it was parsed in the host timezone.
+    expect(toUtcHalfHourStart("2026-11-20T15:00:00")).toBe("2026-11-20T15:00:00.000Z");
+    expect(toUtcHalfHourStart("2026-11-20 15:45:00")).toBe("2026-11-20T15:30:00.000Z");
+    expect(toUtcHalfHourStart("2026-11-20")).toBe("2026-11-20T00:00:00.000Z");
+  });
+
+  it("rejects calendar dates that do not exist instead of rolling them over", () => {
+    // Date.parse rolls2026-02-30 over to March2. That silently filed the
+    // usage under a date the producer never wrote; it is counted and skipped.
+    expect(toUtcHalfHourStart("2026-02-30T10:15:00Z")).toBeNull();
+    expect(toUtcHalfHourStart("2026-04-31T10:15:00Z")).toBeNull();
+    expect(toUtcHalfHourStart("2026-13-01T00:00:00Z")).toBeNull();
+    expect(toUtcHalfHourStart("2026-00-10T00:00:00Z")).toBeNull();
+    expect(toUtcHalfHourStart("2026-03-07T24:00:00Z")).toBeNull();
+  });
+
+  it("keeps an explicit UTC offset as the instant it names", () => {
+    expect(toUtcHalfHourStart("2026-03-07T18:15:00+08:00")).toBe("2026-03-07T10:00:00.000Z");
+    expect(toUtcHalfHourStart("2026-03-07T10:15:00.500z")).toBe("2026-03-07T10:00:00.000Z");
+    expect(toUtcHalfHourStart("2026-03-07t10:15:00Z")).toBe("2026-03-07T10:00:00.000Z");
+  });
+
+  it("returns null for shapes it cannot resolve to a calendar instant", () => {
+    expect(toUtcHalfHourStart("2026-03-07T10:15:00+25:00")).toBeNull();
+    expect(toUtcHalfHourStart("10000-01-01T00:00:00Z")).toBeNull();
+    expect(toUtcHalfHourStart("March7,202610:15 UTC")).toBeNull();
+    expect(toUtcHalfHourStart("2026-03-07T10:15:00.123456789Z")).toBe("2026-03-07T10:00:00.000Z");
+  });
   it("should return null for invalid timestamp", () => {
     expect(toUtcHalfHourStart("not a date")).toBeNull();
   });

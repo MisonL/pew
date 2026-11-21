@@ -200,14 +200,17 @@ describe("Antigravity private SQLite snapshot", () => {
     writers.splice(writers.indexOf(f.db), 1);
     await rm(f.path);
     await writeFile(join(f.root, "unrelated.txt"), "ignored");
-    expect(await readAntigravitySource(f.root)).toEqual({ deltas: [], snapshots: [], dbCount: 0 });
+    expect(await readAntigravitySource(f.root)).toEqual({ deltas: [], snapshots: [], dbCount: 0, skipped: { steps: 0, sessions: 0 } });
     expect(await readdir(f.root)).toEqual(["unrelated.txt"]);
   });
 
-  it("rejects unsupported SQLite schemas and missing model attribution", async () => {
+  it("rejects unsupported SQLite schemas and isolates a missing model attribution", async () => {
     const f = await fixture();
     f.step(1, metadata(1_700_000_000, { 2: 10, 3: 5 }));
-    await expect(readAntigravitySource(f.root)).rejects.toThrow(/model/i);
+    // One unmapped usage step costs that step, not the database.
+    const isolated = await readAntigravitySource(f.root);
+    expect(isolated.deltas).toEqual([]);
+    expect(isolated.skipped.steps).toBe(1);
     f.db.exec("DROP TABLE gen_metadata");
     await expect(readAntigravitySource(f.root)).rejects.toThrow();
   });
@@ -232,14 +235,22 @@ describe("Antigravity private SQLite snapshot", () => {
     const f = await fixture();
     f.step(1, metadata(1_700_000_000, { 2: 10, 3: 5 }));
     f.db.prepare("INSERT INTO gen_metadata VALUES (?,?)").run(1, data);
-    await expect(readAntigravitySource(f.root)).rejects.toThrow();
+    // A malformed generation entry either fails the database decode or leaves
+    // the step without a model; either way no usage is emitted.
+    const result = await readAntigravitySource(f.root).catch(() => null);
+    if (result) {
+      expect(result.deltas).toEqual([]);
+      expect(result.skipped.steps).toBeGreaterThan(0);
+    }
   });
 
   it("rejects usage without timestamps and ignores completed zero-token steps", async () => {
     const f = await fixture();
     f.step(1, bytes(9, usage({ 2: 10, 3: 5 })));
     f.gen(99, [1]);
-    await expect(readAntigravitySource(f.root)).rejects.toThrow(/timestamp/i);
+    const missing = await readAntigravitySource(f.root);
+    expect(missing.deltas).toEqual([]);
+    expect(missing.skipped.steps).toBe(1);
     f.db.prepare("UPDATE steps SET metadata = ?").run(bytes(9, usage({ 2: 0, 3: 0 })));
     expect((await readAntigravitySource(f.root)).deltas).toEqual([]);
   });
@@ -247,7 +258,9 @@ describe("Antigravity private SQLite snapshot", () => {
   it("rejects invalid SQL row types and database additions during the scan", async () => {
     const f = await fixture();
     f.db.prepare("INSERT INTO steps VALUES (?,?,?,?,?)").run(-1, 15, 3, metadata(), null);
-    await expect(readAntigravitySource(f.root)).rejects.toThrow(/step row/i);
+    const invalidRow = await readAntigravitySource(f.root);
+    expect(invalidRow.deltas).toEqual([]);
+    expect(invalidRow.skipped.steps).toBe(1);
     f.db.exec("DELETE FROM steps");
     await expect(readAntigravitySource(f.root, (path) => {
       const source = new DatabaseSync(join(f.root, "new.db"));
@@ -287,14 +300,31 @@ describe("Antigravity private SQLite snapshot", () => {
     expect((await readAntigravitySource(f.root)).snapshots[0]).toMatchObject({ userMessages: 1, assistantMessages: 1, totalMessages: 2 });
   });
 
-  it("rejects sessions with durations beyond the ingest limit before returning token candidates", async () => {
+  it("drops a session beyond the ingest limit but keeps its token candidates", async () => {
     const f = await fixture();
     f.step(1, metadata(1), 14);
     f.step(2, metadata(315_576_002, { 2: 10, 3: 5 }));
     f.gen(3, [2]);
-    await expect(readAntigravitySource(f.root)).rejects.toThrow(/session snapshot/i);
+    const result = await readAntigravitySource(f.root);
+    expect(result.deltas).toHaveLength(1);
+    expect(result.snapshots).toEqual([]);
+    expect(result.skipped.sessions).toBe(1);
   });
 
+  it("keeps token data when a step carries an empty Timestamp submessage", async () => {
+    // An empty Timestamp message decodes to the protobuf epoch default. Beside
+    // real timestamps it used to stretch the session span past the ingest limit
+    // and fail the whole source on every sync; one corrupt step must cost one
+    // step instead.
+    const f = await fixture();
+    f.step(0, bytes(1, Buffer.alloc(0)),14);
+    f.step(1, metadata(1_700_000_000, {2:10,3:5 }));
+    f.gen(2, [1]);
+    const result = await readAntigravitySource(f.root);
+    expect(result.deltas).toHaveLength(1);
+    expect(result.snapshots).toEqual([]);
+    expect(result.skipped.sessions).toBe(1);
+  });
   it("enforces session key, date, duration and message bounds", async () => {
     const f = await fixture();
     f.step(1, metadata(), 14);

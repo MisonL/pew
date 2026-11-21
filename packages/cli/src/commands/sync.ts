@@ -276,6 +276,11 @@ export async function executeSync(opts: SyncOptions): Promise<SyncResult> {
           onVerified: (key) => { verified.add(key); } });
         if (invalid || verified.size !== records.length) throw new Error("Invalid Antigravity accounting snapshot");
         internal.antigravitySnapshot = snapshot;
+        const skippedAntigravity = snapshot.skipped;
+        if (skippedAntigravity && (skippedAntigravity.steps > 0 || skippedAntigravity.sessions > 0)) {
+          opts.onProgress?.({ source: "antigravity", phase: "warn",
+            message: `Skipped ${skippedAntigravity.steps} corrupt Antigravity step(s) and ${skippedAntigravity.sessions} out-of-contract session(s); their usage is not included and the raw database is untouched` });
+        }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT" || internal.previousAntigravityRecords.length ||
           internal.previousAntigravityCursor) {
@@ -549,6 +554,7 @@ async function executeSyncScan(opts: InternalSyncOptions & {
   const collectedPaths = new Set<string>();
   for (const driver of fileDrivers) {
     const key = sourceKey(driver.source);
+    let skippedNoTimestamp = 0;
 
     onProgress?.({
       source: driver.source,
@@ -893,12 +899,21 @@ async function executeSyncScan(opts: InternalSyncOptions & {
       // Collect deltas
       appendAll(allDeltas, result.deltas);
       sourceCounts[key] += result.deltas.length;
+      skippedNoTimestamp += result.skippedNoTimestamp ?? 0;
 
       onProgress?.({
         source: driver.source,
         phase: "parse",
         current: i + 1,
         total: files.length,
+      });
+    }
+
+    if (skippedNoTimestamp > 0) {
+      onProgress?.({
+        source: driver.source,
+        phase: "warn",
+        message: `Skipped ${skippedNoTimestamp} ${driver.source} token events whose timestamp is missing; the raw logs are untouched`,
       });
     }
 

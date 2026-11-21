@@ -7,7 +7,7 @@ import worker from "../../packages/worker-read/src/index";
 import type { Env } from "../../packages/worker-read/src/index";
 import { createD1Adapter } from "./d1-adapter";
 import { createKvAdapter } from "./kv-adapter";
-import { createWorkerServer, registerShutdownSignals, requireSecret } from "./node-runtime";
+import { bearerGuard, createWorkerServer, registerShutdownSignals, requireSecret } from "./node-runtime";
 import { resolveReadBasicAuth } from "./basic-auth";
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -30,15 +30,23 @@ const db = createD1Adapter({ baseUrl: RQLITE_URL, token: D1_TOKEN, ...(BASIC_AUT
 // full D1Database/KVNamespace interfaces (exec/withSession/dump/getWithMetadata
 // are unused upstream). Narrow through `unknown` at this single wiring point
 // rather than widening the adapters with unused stubs.
+const WORKER_READ_SECRET = requireSecret("WORKER_READ_SECRET", process.env.WORKER_READ_SECRET ?? "");
 const env = {
   DB: db,
   CACHE: createKvAdapter({ db }),
-  WORKER_READ_SECRET: requireSecret("WORKER_READ_SECRET", process.env.WORKER_READ_SECRET ?? ""),
+  WORKER_READ_SECRET,
 } as unknown as Env;
 
 createWorkerServer({
   // worker.fetch is optional per its Cloudflare type but always defined here.
   worker: worker as { fetch: (request: Request, env: Env) => Promise<Response> },
+  // /api/live stays open; everything else is Bearer-only. The worker still
+  // enforces; refusing here keeps an unauthenticated body out of memory.
+  authorize: (req) => {
+    const path = new URL(req.url ?? "/", "http://localhost").pathname;
+    if (path === "/api/live") return true;
+    return bearerGuard(WORKER_READ_SECRET)(req);
+  },
   env,
   port: PORT,
 })

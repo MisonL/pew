@@ -258,7 +258,11 @@ export async function parseGrokTurnTimeline(
     if (obj.type !== "turn_started") continue;
     const ts = typeof obj.ts === "string" ? obj.ts : null;
     const modelId = typeof obj.model_id === "string" ? obj.model_id.trim() : null;
-    if (!ts || !modelId) continue;
+    // A ts that is not an instant becomes NaN in the sort comparator (which
+    // then has no total order) and compares false against every event in
+    // pickModelFromTimeline, whose early break assumes ascending entries. One
+    // such row could hide every later turn from the event it belongs to.
+    if (!ts || !modelId || !Number.isFinite(Date.parse(ts))) continue;
     timeline.push({ ts, modelId });
   }
   // Chronological by instant: the timeline feeds pickModelFromTimeline, whose

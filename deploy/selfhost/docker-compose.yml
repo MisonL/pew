@@ -265,6 +265,10 @@ services:
       RQLITE_PASSWORD: ${RQLITE_PASSWORD:-}
       WORKER_READ_SECRET: ${WORKER_READ_SECRET}
       DAILY_INTERVAL_MS: ${DAILY_INTERVAL_MS:-86400000}
+    # The app forces its own exit at 10 s; Docker's default stop timeout
+    # is also 10 s, so a drain finishing near the bound raced SIGKILL. Give the
+    # app's own bound room to write its final exit code.
+    stop_grace_period: 20s
     depends_on:
       migrate: { condition: service_completed_successfully }
     deploy:

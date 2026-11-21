@@ -182,6 +182,9 @@ export type ValidationResult<T> =
  * Validate a single token ingest record.
  * Returns a discriminated union: { valid: true, record } or { valid: false, error }.
  */
+/** One half-hour usage bucket, matching the CLI's `toUtcHalfHourStart`. */
+const HOUR_BUCKET_MS = 1_800_000;
+
 export function validateIngestRecord(
   r: unknown,
   index: number,
@@ -201,10 +204,19 @@ export function validateIngestRecord(
   if (!isNonEmptyString(rec.model)) {
     return { valid: false, error: `record[${index}]: model is required (non-empty string, max ${MAX_STRING_LENGTH} chars)` };
   }
-  const hourStart = canonicalUtcTimestamp(rec.hour_start);
-  if (hourStart === null) {
+  const canonicalHour = canonicalUtcTimestamp(rec.hour_start);
+  if (canonicalHour === null) {
     return { valid: false, error: `record[${index}]: invalid hour_start format (ISO 8601 required)` };
   }
+  // The bucket is part of the storage contract: usage_records dedupes on the
+  // raw hour_start string and every read groups by it, so a value inside a
+  // bucket but off its boundary (10:17 and10:00) became two rows for one
+  // hour and SUM double-counted. Floor to the half-hour boundary instead of
+  // rejecting: an old client that sent a raw event time keeps its usage, in
+  // the bucket it actually belongs to.
+  const hourStart = new Date(
+    Math.floor(Date.parse(canonicalHour) / HOUR_BUCKET_MS) * HOUR_BUCKET_MS,
+  ).toISOString();
 
   // Optional device_id (backward compat: old CLIs don't send it)
   if (rec.device_id !== undefined && !isNonEmptyString(rec.device_id)) {

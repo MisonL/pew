@@ -505,4 +505,24 @@ describe("buildGrokModelMaps", () => {
     const tl = await parseGrokTurnTimeline(path);
     expect(tl).toEqual([{ ts: "2026-07-10T00:01:00.000Z", modelId: "ok" }]);
   });
+
+  it("parseGrokTurnTimeline drops turn entries whose ts is not an instant", async () => {
+    const path = join(root, "events.jsonl");
+    await writeFile(
+      path,
+      `${[
+        JSON.stringify({ ts: "2026-07-10T00:01:00.000Z", type: "turn_started", model_id: "a" }),
+        JSON.stringify({ ts: "not-a-date", type: "turn_started", model_id: "bad" }),
+        JSON.stringify({ ts: "2026-07-10T00:02:00.000Z", type: "turn_started", model_id: "b" }),
+      ].join("\n")}\n`,
+    );
+
+    const tl = await parseGrokTurnTimeline(path);
+
+    expect(tl).toEqual([
+      { ts: "2026-07-10T00:01:00.000Z", modelId: "a" },
+      { ts: "2026-07-10T00:02:00.000Z", modelId: "b" },
+    ]);
+    expect(pickModelFromTimeline(tl, "2026-07-10T00:03:00.000Z")).toBe("b");
+  });
 });

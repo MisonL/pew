@@ -5,6 +5,36 @@ import { isRecord } from "./state-shape.js";
 
 const CURSORS_FILE = "cursors.json";
 
+/** Finite number, for values later used in arithmetic or stream offsets. */
+function isFiniteNumber(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/** null or a string, for values used as map keys / labels. */
+function isNullableText(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === "string";
+}
+
+/** Array of strings, for id lists that are iterated. */
+function isStringArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+/**
+ * A token-total baseline, or null.
+ *
+ * The Codex/OpenCode/Hermes drivers subtract this from the next cumulative
+ * total. A string or missing field turns that subtraction into NaN, and NaN
+ * flows into the uploaded record — rejected by the server after the cursor
+ * has already moved past the bytes.
+ */
+function isTokenTotals(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (!isRecord(value)) return false;
+  return ["inputTokens", "cachedInputTokens", "outputTokens", "reasoningOutputTokens"]
+    .every((key) => isFiniteNumber(value[key]));
+}
+
 /** A per-file cursor is an object carrying at least the change fingerprint. */
 function isFileCursor(value: unknown): value is FileCursor {
   if (!isRecord(value) || typeof value.inode !== "number") return false;
@@ -14,6 +44,54 @@ function isFileCursor(value: unknown): value is FileCursor {
   if (value.seenIds !== undefined) {
     if (!Array.isArray(value.seenIds)) return false;
     if (!value.seenIds.every((id) => typeof id === "string")) return false;
+  }
+  // Resume arithmetic: a non-numeric offset becomes NaN in comparisons and
+  // inside createReadStream's start option, and a string offset or size
+  // silently skips or replays the file.
+  for (const key of ["mtimeMs", "size", "offset", "lastCacheWrite"]) {
+    if (value[key] !== undefined && value[key] !== null && !isFiniteNumber(value[key])) return false;
+  }
+  if (value.updatedAt !== undefined && typeof value.updatedAt !== "string") return false;
+  if (value.continuityBroken !== undefined && typeof value.continuityBroken !== "boolean") return false;
+  if (value.continuityAnchors !== undefined) {
+    if (!Array.isArray(value.continuityAnchors)) return false;
+    for (const anchor of value.continuityAnchors) {
+      if (!isRecord(anchor) || typeof anchor.sha256 !== "string" || !isFiniteNumber(anchor.length)) return false;
+    }
+  }
+  if (!isTokenTotals(value.lastTotals)) return false;
+  for (const key of ["lastModel", "messageKey", "scopeId"]) {
+    if (!isNullableText(value[key])) return false;
+  }
+  if (value.accountingContext !== undefined) {
+    if (!isRecord(value.accountingContext)) return false;
+    for (const key of ["provider", "route", "service_tier"]) {
+      if (!isNullableText(value.accountingContext[key])) return false;
+    }
+  }
+  return true;
+}
+
+/** SQLite cursor shapes are dereferenced field by field by the DB drivers. */
+function isOpenCodeSqliteCursor(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (!isFiniteNumber(value.lastTimeCreated) || !isFiniteNumber(value.lastSessionUpdated)) return false;
+  if (!isFiniteNumber(value.inode) || typeof value.updatedAt !== "string") return false;
+  for (const key of ["pendingIds", "lastProcessedIds"]) {
+    if (value[key] !== undefined && !isStringArray(value[key])) return false;
+  }
+  return true;
+}
+
+function isHermesSqliteCursor(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (!isFiniteNumber(value.inode) || typeof value.updatedAt !== "string") return false;
+  if (!isRecord(value.sessionTotals)) return false;
+  for (const totals of Object.values(value.sessionTotals)) {
+    if (!isRecord(totals)) return false;
+    for (const key of ["input", "output", "cacheRead", "cacheWrite", "reasoning"]) {
+      if (!isFiniteNumber(totals[key])) return false;
+    }
   }
   return true;
 }
@@ -48,8 +126,34 @@ export function reviveCursorState(state: Record<string, unknown>): CursorState |
     if (!isRecord(state.codexScopes)) return null;
     for (const scope of Object.values(state.codexScopes)) {
       if (!isRecord(scope) || !Array.isArray(scope.usageKeys)) return null;
+      if (!isStringArray(scope.usageKeys)) return null;
+      if (!isTokenTotals(scope.totals)) return null;
     }
   }
+  // Nested shapes the drivers dereference directly. A DB cursor that is a
+  // record but carries strings where epochs belong reads as an epoch of NaN,
+  // which the incremental query compares against every row: the source either
+  // re-reads everything or skips it, permanently. Discard the whole state and
+  // take the documented full-rescan recovery.
+  if (state.openCodeSqlite !== undefined && !isOpenCodeSqliteCursor(state.openCodeSqlite)) return null;
+  if (state.antigravity !== undefined) {
+    if (!isRecord(state.antigravity) || !isFiniteNumber(state.antigravity.dbCount) || typeof state.antigravity.updatedAt !== "string") return null;
+  }
+  if (state.hermesSqlite !== undefined) {
+    // A pre-multi-profile cursor is the flat Hermes cursor itself; sync.ts
+    // migrates it to { default: cursor } on first access.
+    if (!isHermesSqliteCursor(state.hermesSqlite)) {
+      for (const cursor of Object.values(state.hermesSqlite as Record<string, unknown>)) {
+        if (!isHermesSqliteCursor(cursor)) return null;
+      }
+    }
+  }
+  if (state.dirMtimes !== undefined) {
+    for (const mtime of Object.values(state.dirMtimes as Record<string, unknown>)) {
+      if (!isFiniteNumber(mtime)) return null;
+    }
+  }
+
   if (state.accountingSchemaVersion !== undefined && typeof state.accountingSchemaVersion !== "number") return null;
   if (state.updatedAt !== undefined && state.updatedAt !== null && typeof state.updatedAt !== "string") return null;
   if (state.version !== undefined && state.version !== 1) return null;

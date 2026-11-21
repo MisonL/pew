@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { createSingleFlight, createSweeper, resolveDailyIntervalMs, MAX_TIMER_DELAY_MS, DEFAULT_DAILY_INTERVAL_MS, SWEEP_INTERVAL_MS } from "./scheduler-guard";
+import { createSingleFlight, createSweeper, resolveDailyIntervalMs, MAX_TIMER_DELAY_MS, MIN_DAILY_INTERVAL_MS, DEFAULT_DAILY_INTERVAL_MS, SWEEP_INTERVAL_MS } from "./scheduler-guard";
 
 describe("resolveDailyIntervalMs", () => {
   it("defaults to 24h when the variable is absent", () => {
@@ -29,6 +29,17 @@ describe("resolveDailyIntervalMs", () => {
     expect(result.error).toContain("2592000000");
   });
 
+  it("rejects an interval short enough to hammer the upstream pricing APIs", () => {
+    // The range check above only stops timer overflow. A value of 1 ms or 30 s
+    // fits it perfectly and would poll models.dev/OpenRouter on that cadence; a
+    // misconfiguration must not turn the daily sync into a polling loop.
+    for (const raw of ["1", "999", "59999"]) {
+      const result = resolveDailyIntervalMs(raw);
+      expect(result.intervalMs, raw).toBe(DEFAULT_DAILY_INTERVAL_MS);
+      expect(result.error, raw).not.toBeNull();
+    }
+    expect(resolveDailyIntervalMs(String(MIN_DAILY_INTERVAL_MS))).toEqual({ intervalMs: MIN_DAILY_INTERVAL_MS, error: null });
+  });
   it("rejects a non-positive, non-integer or non-numeric value", () => {
     for (const raw of ["abc", "0", "-5", "1.5", "NaN", "Infinity"]) {
       const result = resolveDailyIntervalMs(raw);

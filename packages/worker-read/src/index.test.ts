@@ -575,14 +575,14 @@ describe("pew read Worker", () => {
       // Each upstream also answers its own document shape: a body that is not
       // the source's document is a failed fetch (see payloadIsUsable), so
       // handing OpenRouter's `{data: []}` to models.dev would make this a
-      // degraded run rather than the clean one under test. The catalogue also
-      // needs one model in it: `models: {}` is the same shape a malformed
-      // upstream error document takes, and payloadIsUsable treats it as a
-      // failed fetch.
+      // degraded run rather than the clean one under test. Both documents need
+      // one usable entry: a body that parses to zero entries is also a failed
+      // fetch, and `models: {}` is the same shape a malformed upstream error
+      // document takes.
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
         const url = String(input instanceof Request ? input.url : input);
         const body = url.includes("openrouter")
-          ? { data: [] }
+          ? { data: [{ id: "openai/gpt-4o", pricing: { prompt: "0.0000025", completion: "0.00001" } }] }
           : { openai: { models: { "gpt-4o": { name: "GPT-4o", cost: { input: 2.5, output: 10 } } } } };
         return new Response(JSON.stringify(body), { status: 200 });
       });

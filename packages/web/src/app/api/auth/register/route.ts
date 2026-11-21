@@ -76,6 +76,14 @@ export async function POST(request: Request) {
 
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   const name = typeof body.name === "string" ? body.name.trim() : "";
+  // Same bound as the admin forms: an oversized display name breaks list
+  // layouts and bloats every response that carries it.
+  if (name.length > 64) {
+    return NextResponse.json(
+      { error: "Name must be at most 64 characters" },
+      { status: 400 },
+    );
+  }
   const password = typeof body.password === "string" ? body.password : "";
   const inviteCode = typeof body.inviteCode === "string" ? body.inviteCode.trim().toUpperCase() : "";
 

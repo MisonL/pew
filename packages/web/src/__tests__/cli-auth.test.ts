@@ -27,14 +27,14 @@ vi.mock("@/lib/auth-helpers", () => ({
 
 const { resolveUser } = await loadMockedAuthHelpers();
 
-function makeRequest(callback?: string, state?: string): Request {
+function makeRequest(callback?: string, state?: string, headers?: Record<string, string>): Request {
   let url = "http://localhost:7020/api/auth/cli";
   const params = new URLSearchParams();
   if (callback) params.set("callback", callback);
   if (state) params.set("state", state);
   const qs = params.toString();
   if (qs) url += `?${qs}`;
-  return new Request(url, { method: "GET" });
+  return new Request(url, { method: "GET", ...(headers ? { headers } : {}) });
 }
 
 describe("GET /api/auth/cli", () => {
@@ -55,6 +55,28 @@ describe("GET /api/auth/cli", () => {
     vi.mocked(dbModule.getDbWrite).mockResolvedValue(
       mockDbWrite as unknown as dbModule.DbWrite
     );
+  });
+
+  describe("cross-site navigation guard", () => {
+    // A third-party page navigating the signed-in user here would otherwise
+    // mint (or re-serve) an api_key with the victim's session.
+    it("rejects a cross-site navigation before any work is done", async () => {
+      vi.mocked(resolveUser).mockResolvedValue({ userId: "u1", email: "u1@test.local" });
+      const res = await GET(makeRequest(undefined, undefined, { "sec-fetch-site": "cross-site" }));
+
+      expect(res.status).toBe(403);
+      expect(resolveUser).not.toHaveBeenCalled();
+      expect(dbModule.getDbRead).not.toHaveBeenCalled();
+    });
+
+    it("allows a direct navigation from the address bar", async () => {
+      vi.mocked(resolveUser).mockResolvedValue({ userId: "u1", email: "u1@test.local" });
+      const res = await GET(makeRequest(undefined, undefined, { "sec-fetch-site": "none" }));
+
+      // No callback: the next validation rejects it, which proves the guard let
+      // the request through.
+      expect(res.status).toBe(400);
+    });
   });
 
   describe("e2e warmup probe", () => {

@@ -7,6 +7,7 @@
 
 import { NextResponse } from "next/server";
 import { resolveAdmin } from "@/lib/admin";
+import { privateJson } from "@/lib/private-json";
 import { readJsonBody } from "@/lib/request-json";
 import { getDbRead, getDbWrite } from "@/lib/db";
 
@@ -51,7 +52,7 @@ export async function GET(
       },
     }));
 
-    return NextResponse.json({ members });
+    return privateJson({ members });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     if (msg.includes("no such table")) {
@@ -143,7 +144,7 @@ export async function POST(
       );
     }
 
-    return NextResponse.json(
+    return privateJson(
       {
         id,
         orgId,

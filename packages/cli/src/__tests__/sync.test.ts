@@ -348,6 +348,33 @@ describe("executeSync", () => {
     expect(warned).toContain("2");
   });
 
+  it("reports token events the parser dropped for a missing timestamp", async () => {
+    // A usage row without a timestamp leaves the file but never becomes a
+    // delta, and the cursor still advances past it. Without a warning the loss
+    // is invisible; the counter is what the parse loop reports once per driver.
+    const claudeDir = join(dataDir, ".claude", "projects", "proj-a");
+    await mkdir(claudeDir, { recursive: true });
+    const noTimestamp = JSON.stringify({
+      type: "assistant",
+      message: { model: "glm-5", usage: { input_tokens:100, output_tokens:50 } },
+    });
+    await writeFile(
+      join(claudeDir, "session.jsonl"),
+      `${[claudeLine("2026-03-07T10:15:00.000Z",5000,800), noTimestamp].join("\n")}\n`,
+    );
+
+    const warnings: string[] = [];
+    const result = await executeSync({
+      stateDir,
+      claudeDir: join(dataDir, ".claude"),
+      onProgress: (e) => { if (e.phase === "warn") warnings.push(e.message ?? ""); },
+    });
+
+    expect(result.sources.claude).toBe(1);
+    const warned = warnings.find((w) => w.includes("timestamp is missing"));
+    expect(warned, warnings.join(" | ")).toBeDefined();
+    expect(warned).toContain("1 claude-code");
+  });
   it("keeps the pending queue when a full scan finds no source at all", async () => {
     const claudeRoot = join(dataDir, ".claude");
     const claudeDir = join(claudeRoot, "projects", "proj-a");

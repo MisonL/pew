@@ -191,13 +191,6 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 // freeze every other pew command for hours.
 const MAX_RETRY_AFTER_MS = 120_000;
 
-/**
- * How many distinct sources one batch may lose to `invalid source` rejections
- * before the run gives up. Each peel removes one named source, so this only
- * bounds a pathological server answer; a real drift names one identity.
- */
-const MAX_SOURCE_PEELS = 3;
-
 /** The server's per-record rejection for a source its validator does not know. */
 const INVALID_SOURCE_RE = /invalid source "([^"]+)"/;
 
@@ -431,7 +424,11 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
       // the rejected source out, re-send the rest, and say what was skipped.
       // Strictly narrower than the generic 4xx path: other rejections keep
       // failing, because dropping those records would hide a real defect.
-      for (let peel = 0; !result.ok && peel < MAX_SOURCE_PEELS; peel++) {
+   // Each peel strictly shrinks the batch, so its length is what guarantees
+   // termination. A fixed three-peel cap left a batch carrying four rejected
+   // sources still unprocessable: the queue wedged on the same prefix forever.
+   const maxPeels = pendingBatch.length;
+   for (let peel = 0; !result.ok && peel < maxPeels; peel++) {
         const split = splitSourceRejection(result.error, pendingBatch);
         if (split.dropped.length === 0) break;
         for (const record of split.dropped) {

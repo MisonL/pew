@@ -16,6 +16,10 @@ import { MAX_EPOCH_MS } from "../utils/time.js";
 export interface CopilotOtelFileResult {
   deltas: ParsedDelta[];
   endOffset: number;
+  /** Spans cannot reach the counter: they are timestamped by the OTel
+   * envelope itself, and a span without one is not indexed at all. Declared
+   * so the two file shapes share one driver return type. */
+  skippedNoTimestamp?: number;
 }
 
 /**

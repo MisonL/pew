@@ -1,4 +1,5 @@
 import type { TokenDelta } from "@pew/core";
+import { parseSourceInstant } from "./time.js";
 
 /**
  * Floor a timestamp to the nearest half-hour UTC boundary.
@@ -14,8 +15,8 @@ import type { TokenDelta } from "@pew/core";
  * preserved a >= 10000 year that the canonical `hour_start` contract rejects.
  */
 export function toUtcHalfHourStart(ts: string | number): string | null {
-  const time = new Date(ts).getTime();
-  if (!Number.isFinite(time)) return null;
+  const time = typeof ts === "string" ? parseSourceInstant(ts) : new Date(ts).getTime();
+  if (time === null || !Number.isFinite(time)) return null;
   return new Date(Math.floor(time / 1_800_000) * 1_800_000).toISOString();
 }
 

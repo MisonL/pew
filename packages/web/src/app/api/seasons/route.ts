@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import type { SeasonStatus } from "@pew/core";
 import { getDbRead } from "@/lib/db";
 import { deriveSeasonStatus } from "@/lib/seasons";
+import { clientIpKey, inMemoryRateLimiter, SEASONS_LIST_RATE_LIMIT } from "@/lib/rate-limit";
 
 const VALID_STATUSES = new Set<SeasonStatus>(["upcoming", "active", "ended"]);
 
@@ -22,6 +23,19 @@ const STATUS_ORDER: Record<SeasonStatus, number> = {
 };
 
 export async function GET(request: Request) {
+  // Public and unauthenticated: bound how fast one client can ask for the
+  // joined read.
+  const rateLimited = inMemoryRateLimiter.check(
+    `seasons-list:${clientIpKey(request)}`,
+    SEASONS_LIST_RATE_LIMIT,
+  );
+  if (!rateLimited.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again later." },
+      { status: 429, headers: { "Retry-After": String(rateLimited.retryAfter), "Cache-Control": "no-store" } },
+    );
+  }
+
   const url = new URL(request.url);
   const statusFilter = url.searchParams.get("status") as SeasonStatus | null;
 

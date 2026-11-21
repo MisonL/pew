@@ -92,12 +92,15 @@ export async function POST(request: Request) {
   if (!parsed.ok) return parsed.response;
   const body = parsed.body;
 
-  const { name, slug, start_date, end_date } = body as {
+  const { name: rawName, slug, start_date, end_date } = body as {
     name?: string;
     slug?: string;
     start_date?: string;
     end_date?: string;
   };
+
+  // Store the name without surrounding whitespace (same rule as organizations).
+  const name = typeof rawName === "string" ? rawName.trim() : rawName;
 
   // Toggle flags default to false, but only an actual `false` may turn one off:
   // `!!body.allow_late_withdrawal` reads the string "false" as true and would

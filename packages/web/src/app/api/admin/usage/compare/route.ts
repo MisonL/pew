@@ -13,6 +13,7 @@
 import { NextResponse } from "next/server";
 import { sumCounts } from "@pew/core";
 import { resolveAdmin } from "@/lib/admin";
+import { privateJson } from "@/lib/private-json";
 import { isBareDate, isDateParam, isInvertedRange } from "@/lib/date-params";
 import { getDbRead } from "@/lib/db";
 
@@ -204,7 +205,7 @@ export async function GET(request: Request) {
       models: Array.from(modelsSet).sort(),
     };
 
-    return NextResponse.json(response);
+    return privateJson(response);
   } catch (err) {
     console.error("Failed to compare user usage:", err);
     return NextResponse.json(

@@ -22,6 +22,7 @@ export interface ParsedDelta {
 export interface ClaudeFileResult {
   deltas: ParsedDelta[];
   endOffset: number;
+  skippedNoTimestamp: number;
   /**
    * `message.id` values that produced an emitted delta on this parse call.
    * Callers persist this into the cursor so a later sync's incremental read
@@ -75,9 +76,10 @@ export async function parseClaudeFile(opts: {
   const { filePath, startOffset, seenMessageIds } = opts;
   const deltas: ParsedDelta[] = [];
   const emittedIds: string[] = [];
+  let skippedNoTimestamp = 0;
 
   const st = await stat(filePath).catch(() => null);
-  if (!st?.isFile()) return { deltas, endOffset: startOffset, emittedIds };
+  if (!st?.isFile()) return { deltas, endOffset: startOffset, emittedIds, skippedNoTimestamp };
 
   const endOffset = await jsonlCompleteBound(
     filePath,
@@ -85,7 +87,7 @@ export async function parseClaudeFile(opts: {
     st.size,
     opts.endBound,
   );
-  if (startOffset >= endOffset) return { deltas, endOffset, emittedIds };
+  if (startOffset >= endOffset) return { deltas, endOffset, emittedIds, skippedNoTimestamp };
 
   const stream = createReadStream(filePath, {
     encoding: "utf8",
@@ -123,7 +125,10 @@ export async function parseClaudeFile(opts: {
       // Extract timestamp
       const timestamp =
         typeof obj?.timestamp === "string" ? obj.timestamp : null;
-      if (!timestamp) continue;
+      if (!timestamp) {
+        skippedNoTimestamp++;
+        continue;
+      }
 
       const id = typeof msg?.id === "string" ? msg.id : null;
 
@@ -162,5 +167,5 @@ export async function parseClaudeFile(opts: {
     stream.destroy();
   }
 
-  return { deltas, endOffset, emittedIds };
+  return { deltas, endOffset, emittedIds, skippedNoTimestamp };
 }

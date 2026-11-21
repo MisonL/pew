@@ -485,13 +485,21 @@ describe("timestamp canonicalization at the ingest boundary", () => {
     }
   });
 
-  it("floors sub-millisecond precision instead of keeping a sixth-digit variant", () => {
-    const result = validateIngestRecord(
-      { ...validTokenRecord(), hour_start: "2026-03-08T10:00:00.999999Z" },
-      0,
-    );
-    expect(result.valid).toBe(true);
-    if (result.valid) expect(result.record.hour_start).toBe("2026-03-08T10:00:00.999Z");
+  it("floors hour_start to its half-hour bucket", () => {
+    // Dedup and every read group by the raw string, so two spellings inside
+    // one hour are two rows and SUM double-counts. Flooring keeps an old
+    // client's usage in the bucket it belongs to instead of rejecting it.
+    const cases: Array<[string, string]> = [
+      ["2026-03-08T10:17:42.000Z", "2026-03-08T10:00:00.000Z"],
+      ["2026-03-08T10:47:42.000Z", "2026-03-08T10:30:00.000Z"],
+      ["2026-03-08T10:00:00.999999Z", "2026-03-08T10:00:00.000Z"],
+      ["2026-03-08T18:59:59+08:00", "2026-03-08T10:30:00.000Z"],
+    ];
+    for (const [input, expected] of cases) {
+      const result = validateIngestRecord({ ...validTokenRecord(), hour_start: input }, 0);
+      expect(result.valid, input).toBe(true);
+      if (result.valid) expect(result.record.hour_start, input).toBe(expected);
+    }
   });
 
   it("keeps grok's microsecond session timestamps and normalizes them to milliseconds", () => {

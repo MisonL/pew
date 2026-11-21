@@ -9,6 +9,7 @@ import type { ParsedDelta } from "./claude.js";
 export interface CopilotCliFileResult {
   deltas: ParsedDelta[];
   endOffset: number;
+  skippedNoTimestamp?: number;
 }
 
 /**
@@ -34,12 +35,13 @@ export async function parseCopilotCliFile(opts: {
 }): Promise<CopilotCliFileResult> {
   const { filePath, startOffset } = opts;
   const deltas: ParsedDelta[] = [];
+  let skippedNoTimestamp = 0;
 
   const st = await stat(filePath).catch(() => null);
-  if (!st?.isFile()) return { deltas, endOffset: startOffset };
+  if (!st?.isFile()) return { deltas, endOffset: startOffset, skippedNoTimestamp };
 
   const fileSize = jsonlStreamBound(st.size, opts.endBound);
-  if (startOffset >= fileSize) return { deltas, endOffset: fileSize };
+  if (startOffset >= fileSize) return { deltas, endOffset: fileSize, skippedNoTimestamp };
 
   // Line endings are counted from the bytes actually consumed, not from a
   // width probed once. The old probe read the first 4 KB and assumed every
@@ -77,7 +79,9 @@ export async function parseCopilotCliFile(opts: {
     try {
       const parsed = JSON.parse(raw) as Record<string, unknown>;
       if (parsed.kind === "assistant_usage") {
-        const delta = extractUsageDelta(parsed);
+        const delta = extractUsageDelta(parsed, () => {
+          skippedNoTimestamp++;
+        });
         if (delta) deltas.push(delta);
       }
       jsonLines = [];
@@ -178,7 +182,7 @@ export async function parseCopilotCliFile(opts: {
   const consumed = Math.min(startOffset + bytesConsumed, fileSize);
   const endOffset = collectingJson ? lastCompletedOffset : consumed;
 
-  return { deltas, endOffset };
+  return { deltas, endOffset, skippedNoTimestamp };
 }
 
 /**
@@ -187,6 +191,7 @@ export async function parseCopilotCliFile(opts: {
  */
 function extractUsageDelta(
   event: Record<string, unknown>,
+  onMissingTimestamp: () => void,
 ): ParsedDelta | null {
   const props = event.properties as Record<string, unknown> | undefined;
   const metrics = event.metrics as Record<string, unknown> | undefined;
@@ -197,7 +202,10 @@ function extractUsageDelta(
     typeof event.created_at === "string" && event.created_at.length > 0
       ? event.created_at
       : null;
-  if (!timestamp) return null;
+  if (!timestamp) {
+    onMissingTimestamp();
+    return null;
+  }
 
   const model =
     typeof props?.model === "string" && props.model.length > 0

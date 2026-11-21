@@ -7,13 +7,14 @@
  *
  * Partial-success policy (intentionally distinct from C2's all-or-nothing
  * baseline-refresh CLI):
- *   - Each upstream is fetched independently with a 20 s timeout.
- *   - On success → fresh JSON is used and immediately cached via
- *     writeLastFetch so a future failure can fall back to it.
- *   - On failure → fall back to the source's `pricing:last-fetch:*` if any.
- *     Push a {source, message} entry into errors regardless.
- *   - On failure with no cache → feed [] for that source into merge; the
- *     bundled baseline still floors the output.
+ * - Each upstream is fetched independently with a 20-second timeout.
+ * - On success → fresh JSON is used; it is cached via writeLastFetch only
+ * after the run wins the newer-publication guard, so a discarded run
+ * cannot poison the cache a newer run wrote.
+ * - On failure → fall back to the source's `pricing:last-fetch:*` if any.
+ * Push a {source, message} entry into errors regardless.
+ * - On failure with no cache → feed [] for that source into merge; the
+ * bundled baseline still floors the output.
  *
  * KV write is best-effort and logged; merged entries are still returned to
  * the caller even if KV writes fail — that's what the SyncOutcome carries.
@@ -54,11 +55,11 @@ export interface SyncOutcome {
   warnings: string[];
   errors: SyncError[];
   /**
-   * Set when the run deliberately published nothing. `ok` alone cannot carry
-   * this: a discarded run has no errors, so every caller that branches on `ok`
-   * — the cron's "sync ok" log, the admin button's "Prices updated" — reported
-   * a success that did not happen.
-   */
+  * Set when the run deliberately published nothing. `ok` alone cannot carry
+  * this: a discarded run has no errors, so every caller that branches on `ok`
+  * — the cron's "sync ok" log, the admin button's "Prices updated" — reported
+  * a success that did not happen.
+  */
   skippedReason?: string;
 }
 
@@ -72,43 +73,47 @@ interface FetchResolution {
   json: unknown | null;
   fromCache: boolean;
   error: string | null;
+  /** Upstream produced a usable document; the caller caches it once the run publishes. */
+  fresh?: boolean;
+  /**
+  * A cheap rebuild found no usable cache. The stored layer must not be erased
+  * just because there is no fetch document to re-parse.
+  */
+  preservePrevious?: boolean;
 }
 
+type ParseFn = (
+  json: unknown,
+  now: string,
+) => { entries: DynamicPricingEntry[]; warnings: string[] };
+
 /**
- * Whether a 200 body is the document the parser expects.
+ * Whether a document actually yields entries the merge can use.
  *
- * Upstreams answer 200 with an error document behind their own gateways
+ * Upstreams answer200 with an error document behind their own gateways
  * (OpenRouter does: `{"error":{"message":"temporary catalogue failure"}}`).
- * Caching that body and letting the parser degrade it to a warning counted the
- * run as a success, so the source's layer was rewritten as empty and the
- * prices it had learned vanished until the next good fetch. A body that is not
- * the expected document is therefore a FAILED fetch — no cache write, old
- * layer preserved, `ok=false`.
+ * Shape checks alone were not enough: `{"data":[]}` and a models.dev catalogue
+ * whose every model lacks `cost` both satisfied them, parsed to zero entries,
+ * and were counted as successes — the merge then rewrote that source's layer
+ * as empty and the prices it had learned vanished until the next good fetch.
+ * A document that parses to zero entries is therefore a FAILED fetch: no cache
+ * write, old layer preserved, `ok=false`.
  */
-function payloadIsUsable(source: LastFetchSource, json: unknown): boolean {
-  if (!json || typeof json !== "object") return false;
-  if (source === "openrouter") return Array.isArray((json as { data?: unknown }).data);
-  // models.dev answers a provider → { models: {...} } catalogue. An error
-  // document has no such entry, so requiring one keeps a total shape change
-  // from being read as "every model was retired". `typeof models === "object"`
-  // is true for null and for arrays as well, and a provider block that carries
-  // either is not a catalogue: it satisfied the old test, was cached as a good
-  // fetch, parsed to zero entries, and the merge erased the models.dev layer.
-  return Object.values(json as Record<string, unknown>).some((provider) => {
-    if (provider === null || typeof provider !== "object" || Array.isArray(provider)) return false;
-    const models = (provider as { models?: unknown }).models;
-    return models !== null && typeof models === "object" && !Array.isArray(models) &&
-      Object.keys(models as Record<string, unknown>).length > 0;
-  });
+function documentYieldsEntries(parse: ParseFn, json: unknown, now: string): boolean {
+  try {
+    return parse(json, now).entries.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 export interface SyncOptions {
   /**
-   * Controls upstream-fetch policy:
-   *   - undefined (cron default): fetch upstream, fall back to last-fetch cache on failure.
-   *   - false (cheap rebuild): skip upstream fetch entirely; merge from last-fetch cache + baseline.
-   *   - true ("Force sync now"): always fetch upstream; do NOT fall back to cache on failure (operator wants fresh).
-   */
+  * Controls upstream-fetch policy:
+  * - undefined (cron default): fetch upstream, fall back to last-fetch cache on failure.
+  * - false (cheap rebuild): skip upstream fetch entirely; merge from last-fetch cache + baseline.
+  * - true ("Force sync now"): always fetch upstream; do NOT fall back to cache on failure (operator wants fresh).
+  */
   forceRefetch?: boolean;
 }
 
@@ -117,17 +122,21 @@ async function resolveSource(
   url: string,
   now: string,
   deps: SyncDeps,
-  forceRefetch: boolean | undefined
+  forceRefetch: boolean | undefined,
+  parse: ParseFn,
 ): Promise<FetchResolution> {
   // Cheap-rebuild path: do not hit upstream. Use cached JSON if any.
   if (forceRefetch === false) {
     const cached = await readLastFetch(deps.kv, source);
-    // A cache written before this guard existed can hold an error document;
-    // treat it as no cache rather than feeding it to the parser.
-    if (cached && payloadIsUsable(source, cached.json)) {
+    // A cache written before this guard existed can hold an error document or
+    // a shape that parses to nothing; treat it as no cache rather than feeding
+    // it to the merge as this source's whole layer.
+    if (cached && documentYieldsEntries(parse, cached.json, now)) {
       return { json: cached.json, fromCache: true, error: null };
     }
-    return { json: null, fromCache: false, error: null };
+    // No cache, but the published layer may still hold prices this source
+    // learned. It is re-fed below instead of being erased by an empty merge.
+    return { json: null, fromCache: false, error: null, preservePrevious: true };
   }
 
   const fetchFn = deps.fetchImpl ?? fetch;
@@ -135,11 +144,13 @@ async function resolveSource(
     const res = await fetchFn(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
-    if (!payloadIsUsable(source, json)) {
-      throw new Error("HTTP 200 without the expected document");
+    if (!documentYieldsEntries(parse, json, now)) {
+      throw new Error("HTTP 200 without a usable document");
     }
-    await writeLastFetch(deps.kv, source, { json, fetchedAt: now });
-    return { json, fromCache: false, error: null };
+    // Cached by syncDynamicPricing only after it decides to publish: a run
+    // that is discarded as older than the published result must not overwrite
+    // the last-fetch entry the newer run wrote.
+    return { json, fromCache: false, error: null, fresh: true };
   } catch (err) {
     const message = (err as Error).message ?? String(err);
     // forceRefetch=true → operator wants fresh; do not silently substitute stale cache.
@@ -147,7 +158,7 @@ async function resolveSource(
       return { json: null, fromCache: false, error: message };
     }
     const cached = await readLastFetch(deps.kv, source);
-    if (cached) {
+    if (cached && documentYieldsEntries(parse, cached.json, now)) {
       return { json: cached.json, fromCache: true, error: message };
     }
     return { json: null, fromCache: false, error: message };
@@ -157,14 +168,14 @@ async function resolveSource(
 export async function syncDynamicPricing(
   deps: SyncDeps,
   now: string,
-  options?: SyncOptions
+  options?: SyncOptions,
 ): Promise<SyncOutcome> {
   const forceRefetch = options?.forceRefetch;
   const errors: SyncError[] = [];
 
   const [orRes, mdRes] = await Promise.all([
-    resolveSource("openrouter", OPENROUTER_URL, now, deps, forceRefetch),
-    resolveSource("models.dev", MODELS_DEV_URL, now, deps, forceRefetch),
+      resolveSource("openrouter", OPENROUTER_URL, now, deps, forceRefetch, parseOpenRouter),
+      resolveSource("models.dev", MODELS_DEV_URL, now, deps, forceRefetch, parseModelsDev),
   ]);
 
   if (orRes.error) errors.push({ source: "openrouter", message: orRes.error });
@@ -182,16 +193,21 @@ export async function syncDynamicPricing(
   // every entry learned since (a price learned two syncs later vanished the
   // first time this source hiccupped). The cache is a bootstrap for an instance
   // whose stored layer is empty, nothing more.
-  const sourceFailed = orRes.error !== null || mdRes.error !== null;
-  const previousDynamic = sourceFailed ? (await readDynamic(deps.kv)) ?? [] : [];
+  const sourceFailed =
+  orRes.error !== null ||
+  mdRes.error !== null ||
+  orRes.preservePrevious === true ||
+  mdRes.preservePrevious === true;
+  const previousDynamic = sourceFailed ? ((await readDynamic(deps.kv)) ?? []) : [];
   const priorLayer = (origin: DynamicPricingEntry["origin"]) =>
-    previousDynamic.filter((entry) => entry.origin === origin);
+  previousDynamic.filter((entry) => entry.origin === origin);
   const layerFor = (
     origin: DynamicPricingEntry["origin"],
     resolution: FetchResolution,
-    parse: (json: unknown, now: string) => { entries: DynamicPricingEntry[]; warnings: string[] }
+    parse: ParseFn,
   ): { entries: DynamicPricingEntry[]; warnings: string[] } => {
-    if (resolution.error === null) {
+    const failed = resolution.error !== null || resolution.preservePrevious === true;
+    if (!failed) {
       return resolution.json === null ? { entries: [], warnings: [] } : parse(resolution.json, now);
     }
     const prior = priorLayer(origin);
@@ -203,10 +219,10 @@ export async function syncDynamicPricing(
   const mdParse = layerFor("models.dev", mdRes, parseModelsDev);
 
   const merged = mergePricingSources({
-    baseline: baseline as DynamicPricingEntry[],
-    openRouter: orParse.entries,
-    modelsDev: mdParse.entries,
-    now,
+      baseline: baseline as DynamicPricingEntry[],
+      openRouter: orParse.entries,
+      modelsDev: mdParse.entries,
+      now,
   });
 
   // Restore the alternate-route prices a failed source had contributed. When
@@ -220,12 +236,16 @@ export async function syncDynamicPricing(
     for (const entry of merged.entries) {
       const stored = storedByModel.get(entry.model);
       if (!stored?.routePrices) continue;
-      const restorable = Object.entries(stored.routePrices).filter(([route, rates]) =>
+      const restorable = Object.entries(stored.routePrices).filter(
+        ([route, rates]) =>
         (orRes.error !== null && route === "openrouter") ||
         (mdRes.error !== null && route === "models.dev" && rates.origin === "models.dev"),
       );
       if (restorable.length === 0) continue;
-      entry.routePrices = { ...Object.fromEntries(restorable), ...entry.routePrices };
+      // The published route prices win: the other side of this spread can be a
+      // re-parsed last-fetch cache from an older fetch, and letting it override
+      // rolled a newer price back for the model's whole route.
+      entry.routePrices = { ...(entry.routePrices ?? {}), ...Object.fromEntries(restorable) };
     }
   }
 
@@ -244,37 +264,59 @@ export async function syncDynamicPricing(
     return { ok: errors.length === 0, entriesWritten: 0, meta: { ...published }, warnings, errors, skippedReason };
   }
 
+  // Publish the fetched documents now that this run is allowed to publish.
+  // Writing them inside resolveSource put an older run's document into the
+  // cache even when the run itself was discarded, and a later upstream failure
+  // then re-parsed that stale document back over the newer prices.
+  if (orRes.fresh && orRes.json !== null) {
+    await writeLastFetch(deps.kv, "openrouter", { json: orRes.json, fetchedAt: now });
+  }
+  if (mdRes.fresh && mdRes.json !== null) {
+    await writeLastFetch(deps.kv, "models.dev", { json: mdRes.json, fetchedAt: now });
+  }
+
   // Build meta first so we can attempt to write both entries and meta atomically
   // (best-effort: if either write fails we surface kv error and ok=false).
   const buildMeta = (): DynamicPricingMeta => ({
-    ...merged.meta,
-    lastErrors: errors.length
+      ...merged.meta,
+      lastErrors: errors.length
       ? errors.map((e) => ({ source: e.source, at: now, message: e.message }))
       : null,
   });
 
+  let dynamicWritten = true;
   try {
     await writeDynamicOrThrow(deps.kv, merged.entries);
   } catch (err) {
+    dynamicWritten = false;
     const message = (err as Error).message ?? String(err);
     console.error("dynamic pricing kv write error key=pricing:dynamic:", err);
     errors.push({ source: "kv", message });
   }
 
-  // Re-build meta now that errors may include the entries-write failure.
-  let meta = buildMeta();
-  try {
-    await writeMetaOrThrow(deps.kv, meta);
-  } catch (err) {
-    const message = (err as Error).message ?? String(err);
-    console.error("dynamic pricing kv write error key=pricing:dynamic:meta:", err);
-    errors.push({ source: "kv", message });
+  let meta: DynamicPricingMeta;
+  if (!dynamicWritten) {
+    // Meta and prices must describe the same generation. Advancing lastSyncedAt
+    // while the entry write failed served a meta claiming a catalogue the KV
+    // does not hold, and the newer-run guard then discarded the next good run
+    // for being older than that phantom publication.
+    meta = (await readMeta(deps.kv)) ?? buildMeta();
+  } else {
+    // Re-build meta now that errors may include the entries-write failure.
     meta = buildMeta();
+    try {
+      await writeMetaOrThrow(deps.kv, meta);
+    } catch (err) {
+      const message = (err as Error).message ?? String(err);
+      console.error("dynamic pricing kv write error key=pricing:dynamic:meta:", err);
+      errors.push({ source: "kv", message });
+      meta = buildMeta();
+    }
   }
 
   return {
     ok: errors.length === 0,
-    entriesWritten: merged.entries.length,
+    entriesWritten: dynamicWritten ? merged.entries.length : 0,
     meta,
     warnings: [...orParse.warnings, ...mdParse.warnings, ...merged.warnings],
     errors,

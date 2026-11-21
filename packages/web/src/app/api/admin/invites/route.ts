@@ -11,6 +11,7 @@ import { resolveAdmin } from "@/lib/admin";
 import { readJsonBody } from "@/lib/request-json";
 import { getDbRead, getDbWrite } from "@/lib/db";
 import { generateInviteCode } from "@/lib/invite";
+import { privateJson } from "@/lib/private-json";
 
 // ---------------------------------------------------------------------------
 // GET — list all invite codes
@@ -27,11 +28,11 @@ export async function GET(request: Request) {
   try {
     // Admin list wants all codes - use 1000 as reasonable upper bound
     const results = await dbRead.listInviteCodes(1000);
-    return NextResponse.json({ rows: results });
+    return privateJson({ rows: results });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     if (msg.includes("no such table")) {
-      return NextResponse.json({ rows: [] });
+      return privateJson({ rows: [] });
     }
     console.error("Failed to load invite codes:", err);
     return NextResponse.json(
@@ -107,7 +108,7 @@ export async function POST(request: Request) {
       params: [code, admin.userId],
     })));
 
-    return NextResponse.json({ codes }, { status: 201 });
+    return privateJson({ codes }, { status: 201 });
   } catch (err) {
     console.error("Failed to generate invite codes:", err);
     return NextResponse.json(
@@ -153,7 +154,7 @@ export async function DELETE(request: Request) {
     );
 
     if (meta.changes > 0) {
-      return NextResponse.json({ deleted: true });
+      return privateJson({ deleted: true });
     }
 
     // changes=0: either the row doesn't exist, or it's fully consumed.

@@ -395,7 +395,7 @@ async function handleCheckSeasonMemberConflict(
   req: CheckSeasonMemberConflictRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.seasonId || !req.userIds || req.userIds.length === 0) {
+  if (!req.seasonId || !isIdList(req.userIds)) {
     return Response.json(
       { error: "seasonId and userIds are required" },
       { status: 400 }
@@ -522,7 +522,7 @@ async function handleGetSeasonMemberTokens(
   req: GetSeasonMemberTokensRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.seasonId || !req.teamIds || req.teamIds.length === 0 || !req.fromDate || !req.toDate) {
+  if (!req.seasonId || !isIdList(req.teamIds) || !req.fromDate || !req.toDate) {
     return Response.json(
       { error: "seasonId, teamIds, fromDate, and toDate are required" },
       { status: 400 }
@@ -566,7 +566,7 @@ async function handleGetSeasonTeamSessionStats(
   req: GetSeasonTeamSessionStatsRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.seasonId || !req.teamIds || req.teamIds.length === 0 || !req.fromDate || !req.toDate) {
+  if (!req.seasonId || !isIdList(req.teamIds) || !req.fromDate || !req.toDate) {
     return Response.json(
       { error: "seasonId, teamIds, fromDate, and toDate are required" },
       { status: 400 }
@@ -596,7 +596,7 @@ async function handleGetSeasonMemberSessionStats(
   req: GetSeasonMemberSessionStatsRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.seasonId || !req.teamIds || req.teamIds.length === 0 || !req.fromDate || !req.toDate) {
+  if (!req.seasonId || !isIdList(req.teamIds) || !req.fromDate || !req.toDate) {
     return Response.json(
       { error: "seasonId, teamIds, fromDate, and toDate are required" },
       { status: 400 }
@@ -676,7 +676,7 @@ async function handleAggregateMemberTokens(
   req: AggregateMemberTokensRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.seasonId || !req.fromDate || !req.toDate || !req.teamIds?.length) {
+  if (!req.seasonId || !req.fromDate || !req.toDate || !isIdList(req.teamIds)) {
     return Response.json(
       { error: "seasonId, fromDate, toDate, and teamIds are required" },
       { status: 400 }
@@ -709,6 +709,19 @@ async function handleAggregateMemberTokens(
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
+
+/** Bound on id lists the admin UI can legitimately send in one call. */
+const MAX_ID_LIST = 500;
+
+/** Element-wise check: json_each binds these as values, not literals. */
+function isIdList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= MAX_ID_LIST &&
+    value.every((id) => typeof id === "string" && id.length > 0 && id.length <= 100)
+  );
+}
 
 export async function handleSeasonsRpc(
   request: SeasonsRpcRequest,

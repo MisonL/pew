@@ -7,6 +7,8 @@ export const POST = createIngestHandler({
   entityName: "accounting details",
   maxBodyBytes: MAX_ACCOUNTING_BODY_BYTES,
   maxBatchSize: MAX_ACCOUNTING_BATCH_SIZE,
+  // Accounting bodies are the largest in the product; bound how many are in memory.
+  maxConcurrent: 2,
   acknowledgment: accountingAcknowledgment,
   retiredAcknowledgment: retiredAccountingAcknowledgment,
 });

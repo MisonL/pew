@@ -95,10 +95,19 @@ export async function syncSeasonRosters(
     // where a user is already registered on another team)
     for (const userId of currentUserIds) {
       if (!seasonUserIds.has(userId)) {
+        // The registration is re-checked in this statement: the reads above
+        // and this write are separate round trips, and a captain who withdrew
+        // between them would otherwise get every member re-inserted into a
+        // roster the withdrawal just deleted — orphan seats that block later
+        // registration and keep granting season profile access.
         await dbWrite.execute(
           `INSERT OR IGNORE INTO season_team_members (id, season_id, team_id, user_id)
-           VALUES (?, ?, ?, ?)`,
-          [crypto.randomUUID(), season_id, teamId, userId],
+           SELECT ?, ?, ?, ?
+           WHERE EXISTS (
+            SELECT 1 FROM season_teams
+            WHERE season_id = ? AND team_id = ?
+           )`,
+          [crypto.randomUUID(), season_id, teamId, userId, season_id, teamId],
         );
       }
     }
@@ -157,10 +166,19 @@ export async function syncAllRostersForSeason(
     // Add missing members
     for (const userId of currentUserIds) {
       if (!seasonUserIds.has(userId)) {
+        // The registration is re-checked in this statement: the reads above
+        // and this write are separate round trips, and a captain who withdrew
+        // between them would otherwise get every member re-inserted into a
+        // roster the withdrawal just deleted — orphan seats that block later
+        // registration and keep granting season profile access.
         await dbWrite.execute(
           `INSERT OR IGNORE INTO season_team_members (id, season_id, team_id, user_id)
-           VALUES (?, ?, ?, ?)`,
-          [crypto.randomUUID(), seasonId, team_id, userId],
+           SELECT ?, ?, ?, ?
+           WHERE EXISTS (
+            SELECT 1 FROM season_teams
+            WHERE season_id = ? AND team_id = ?
+           )`,
+          [crypto.randomUUID(), seasonId, team_id, userId, seasonId, team_id],
         );
       }
     }

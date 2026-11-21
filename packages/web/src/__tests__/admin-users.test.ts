@@ -49,6 +49,7 @@ describe("GET /api/admin/users", () => {
     const response = await GET(request);
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     const json = await response.json();
     expect(json.users).toEqual([]);
     expect(mockSearchUsers).not.toHaveBeenCalled();

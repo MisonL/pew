@@ -39,6 +39,19 @@ export function getPublicOrigin(_request: Request): string {
 export async function GET(request: Request) {
   const url = new URL(request.url);
 
+  // Key issuance is a side effect, so a navigation started by another site
+  // must not reach it: a third-party page can navigate the signed-in user
+  // here and have the browser carry the session cookie along. The CLI's own
+  // flow is a direct navigation (Sec-Fetch-Site: none) or a same-origin
+  // one; requests without the header (the CLI's tests) still pass the
+  // localhost-callback validation below.
+  if (request.headers.get("sec-fetch-site") === "cross-site") {
+    return NextResponse.json(
+      { error: "Cross-site navigation is not allowed" },
+      { status: 403 },
+    );
+  }
+
   // The L2 runner's route warmup (scripts/e2e-utils.ts) probes every route
   // module to pay Next's compile cost outside the test clock. On this route
   // the probe would also burn one of the ten per-hour auth-cli slots before

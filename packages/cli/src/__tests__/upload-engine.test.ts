@@ -1741,6 +1741,32 @@ describe("upload-engine server source rejection", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("peels more than three distinct rejected sources instead of wedging", async () => {
+    // Each peel removes at least one record, so the batch length is what
+    // guarantees termination. A fixed three-peel cap left a batch carrying a
+    // fourth rejected source unprocessable, and the queue retried the same
+    // prefix on every run.
+    const queue = new BaseQueue<SourcedRecord>(dir, "test.jsonl", "test.state.json");
+    await new ConfigManager(dir).save({ token: "pk_test" });
+    await queue.appendBatch([
+      sourced(1, "old-a"), sourced(2, "old-b"), sourced(3, "old-c"),
+      sourced(4, "old-d"), sourced(5, "claude-code"),
+    ]);
+    const { fetchFn, calls } = createMockFetch([
+      { status:400, body: { error: 'record[0]: invalid source "old-a"' } },
+      { status:400, body: { error: 'record[0]: invalid source "old-b"' } },
+      { status:400, body: { error: 'record[0]: invalid source "old-c"' } },
+      { status:400, body: { error: 'record[0]: invalid source "old-d"' } },
+      { status:200, body: { ingested:1 } },
+    ]);
+    const result = await engineFor(queue).execute({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn });
+    expect(result.success).toBe(true);
+    expect(result.uploaded).toBe(1);
+    expect(result.warning).toContain("old-a");
+    expect(result.warning).toContain("old-d");
+    expect(calls).toHaveLength(5);
+    expect(await queue.loadOffset()).toBeGreaterThan(0);
+  });
   it("still fails on a 400 that is not a source rejection", async () => {
     // Peeling is narrow on purpose: any other rejection may be a real defect
     // in the record or a version mismatch in a bound, and dropping those

@@ -85,6 +85,15 @@ export interface IngestHandlerConfig<T> {
   entityName: string;
   maxBodyBytes?: number;
   maxBatchSize?: number;
+  /**
+   * Per-process cap on how many of these uploads may be in flight.
+   *
+   * The accounting route accepts 24 MB bodies; each one is buffered, parsed
+   * and re-serialized before the forward, so an unbounded number of them is
+   * hundreds of MB on one process. Excess requests are refused with 503 so
+   * the client retries instead of queueing more bodies into memory.
+   */
+  maxConcurrent?: number;
   /** A versioned route can project an explicit receipt instead of legacy {ingested}. */
   acknowledgment?: (body: unknown, records: T[]) => { details_version: 1; acknowledgments: AccountingAck[] } | null;
   retiredAcknowledgment?: (record: unknown) => AccountingAck | null;
@@ -115,7 +124,7 @@ export function createIngestHandler<T>(
   // Named `handlePost`, not `POST`: biome's noComponentHookFactories rule reads
   // a capitalized inner function name as a React component factory. The
   // exported route name is supplied by the caller (`export const POST = ...`).
-  return async function handlePost(request: Request): Promise<Response> {
+  const handlePostInner = async function handlePost(request: Request): Promise<Response> {
     // 1. Authenticate
     const authResult = await resolveUser(request);
     if (!authResult) {
@@ -275,6 +284,27 @@ export function createIngestHandler<T>(
     }
 
     return NextResponse.json(counts);
+  };
+
+  const limit = config.maxConcurrent;
+  if (limit === undefined) return handlePostInner;
+
+  let inFlight = 0;
+  return async function handlePost(request: Request): Promise<Response> {
+    if (inFlight >= limit) {
+      // Refuse rather than queue: the queue would be the memory this cap
+      // exists to bound. The client's upload loop retries a 503.
+      return NextResponse.json(
+        { error: "Too many concurrent uploads; retry shortly" },
+        { status: 503, headers: { "Retry-After": "1" } },
+      );
+    }
+    inFlight++;
+    try {
+      return await handlePostInner(request);
+    } finally {
+      inFlight--;
+    }
   };
 }
 

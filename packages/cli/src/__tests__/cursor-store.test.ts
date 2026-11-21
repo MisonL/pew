@@ -189,6 +189,70 @@ describe("CursorStore", () => {
     expect(await store.load()).toEqual({ version: 1, files: {}, updatedAt: null });
   });
 
+  it("drops a per-file entry whose resume fields are not numbers", async () => {
+    // A string offset/size becomes NaN in comparisons and in
+    // createReadStream's start option; a non-numeric lastTotals turns the
+    // cumulative diff into NaN, which reaches the server after the cursor
+    // already moved past the bytes.
+    const { writeFile } = await import("node:fs/promises");
+    const good = { inode:1, offset:10, size:20, mtimeMs:30, updatedAt: "x" };
+    await writeFile(
+      join(tempDir, "cursors.json"),
+      JSON.stringify({
+        version:1,
+        files: {
+          "/good": good,
+          "/offset": { ...good, offset: "10" },
+          "/size": { ...good, size: "20" },
+          "/totals": { ...good, lastTotals: { inputTokens: "1", cachedInputTokens:0, outputTokens:0, reasoningOutputTokens:0 } },
+          "/anchors": { ...good, continuityAnchors: [{ sha256: "a", length: "1" }] },
+          "/ctx": { ...good, accountingContext: { provider:5 } },
+        },
+        knownFilePaths: { "/good": true, "/offset": true, "/size": true, "/totals": true, "/anchors": true, "/ctx": true },
+      }),
+    );
+    const state = await new CursorStore(tempDir).load();
+    expect(Object.keys(state.files)).toEqual(["/good"]);
+  });
+
+  it("discards the state when a DB cursor carries non-numeric epochs", async () => {
+    // lastTimeCreated / lastSessionUpdated / dbCount are compared against
+    // every row of the incremental query; a string reads as NaN and the
+    // source either re-reads everything or skips it forever.
+    const { writeFile } = await import("node:fs/promises");
+    const variants: Array<Record<string, unknown>> = [
+      { openCodeSqlite: { lastTimeCreated: "x", lastSessionUpdated:1, inode:1, updatedAt: "x" } },
+      { antigravity: { dbCount: "1", updatedAt: "x" } },
+      { hermesSqlite: { default: { inode:1, updatedAt: "x", sessionTotals: { s: { input: "1", output:1, cacheRead:1, cacheWrite:1, reasoning:1 } } } } },
+      { dirMtimes: { "/dir": "x" } },
+      { codexScopes: { s: { totals: { inputTokens: "1" }, usageKeys: [] } } },
+    ];
+    const store = new CursorStore(tempDir);
+    for (const extra of variants) {
+      await writeFile(
+        join(tempDir, "cursors.json"),
+        JSON.stringify({ version:1, files: {}, updatedAt: "x", ...extra }),
+      );
+      expect(await store.load(), JSON.stringify(extra)).toEqual({ version:1, files: {}, updatedAt: null });
+    }
+  });
+  it("keeps a pre-multi-profile flat hermes cursor", async () => {
+    // sync.ts detects this shape and migrates it to { default: cursor } on
+    // first access; rejecting it here would silently reset every Hermes
+    // baseline and re-count its session totals.
+    const { writeFile } = await import("node:fs/promises");
+    const flat = {
+      inode:1,
+      updatedAt: "x",
+      sessionTotals: { s: { input:1, output:2, cacheRead:3, cacheWrite:4, reasoning:5 } },
+    };
+    await writeFile(
+      join(tempDir, "cursors.json"),
+      JSON.stringify({ version:1, files: {}, updatedAt: "x", hermesSqlite: flat }),
+    );
+    const state = await new CursorStore(tempDir).load();
+    expect(state.hermesSqlite).toEqual(flat);
+  });
   it("should get a specific file cursor", async () => {
     const store = new CursorStore(tempDir);
     const cursor: ByteOffsetCursor = {
