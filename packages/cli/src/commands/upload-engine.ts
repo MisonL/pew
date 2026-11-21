@@ -191,6 +191,38 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 // freeze every other pew command for hours.
 const MAX_RETRY_AFTER_MS = 120_000;
 
+/**
+ * How many distinct sources one batch may lose to `invalid source` rejections
+ * before the run gives up. Each peel removes one named source, so this only
+ * bounds a pathological server answer; a real drift names one identity.
+ */
+const MAX_SOURCE_PEELS = 3;
+
+/** The server's per-record rejection for a source its validator does not know. */
+const INVALID_SOURCE_RE = /invalid source "([^"]+)"/;
+
+/**
+ * Split a batch by the source a 400 named as invalid.
+ *
+ * The message is produced by core's own validators (`record[N]: invalid source
+ * "X"`), so this matches an identity rather than a version string. Records
+ * without a matching `source` stay in `kept`: a message that names nothing
+ * this batch carries is answered like any other 400.
+ */
+function splitSourceRejection<T>(error: string, batch: T[]): { kept: T[]; dropped: T[] } {
+  const match = INVALID_SOURCE_RE.exec(error);
+  if (!match) return { kept: batch, dropped: [] };
+  const source = match[1];
+  const dropped = batch.filter((record) => (record as { source?: unknown }).source === source);
+  if (dropped.length === 0) return { kept: batch, dropped: [] };
+  return { kept: batch.filter((record) => !dropped.includes(record)), dropped };
+}
+
+function sourceRejectionWarning(count: number, sources: ReadonlySet<string>, entityName: string): string | undefined {
+  if (count === 0) return undefined;
+  return `Skipped ${count} ${entityName} whose source this server does not accept (${[...sources].join(", ")}); the source logs are untouched, so \`pew reset && pew sync\` rebuilds them.`;
+}
+
 // ---------------------------------------------------------------------------
 // Engine factory
 // ---------------------------------------------------------------------------
@@ -362,6 +394,10 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
     // the warning, never persisted as pending.
     const discardedKeys = new Set<string>();
     let refusalReason = "";
+    // Sources this server answered "invalid source" for. The matching records
+    // were skipped (see the peel loop below) and are reported, never persisted.
+    const rejectedSources = new Set<string>();
+    let sourceRejectedCount = 0;
 
     for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
       const batch = batches[batchIdx];
@@ -374,10 +410,11 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
         message: `Uploading ${entityName} batch ${batchIdx + 1}/${batches.length} (${batch.length} records)...`,
       });
 
-      const result = await sendBatchWithRetry({
+      let pendingBatch = batch;
+      let result = await sendBatchWithRetry({
         endpoint: fullEndpoint,
         token: cfg.token,
-        batch,
+        batch: pendingBatch,
         fetchFn,
         maxRetries,
         retryDelayMs,
@@ -386,13 +423,50 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
         validateResponse: config.validateResponse,
       });
 
+      // A server that does not know a source answers 400 with
+      // `record[N]: invalid source "X"` for the whole batch. The local
+      // contract is a mirror of the server's, so this only appears when the
+      // two lists drift — and a plain 4xx failure wedges the queue: the offset
+      // never advances and every later batch fails with the same answer. Peel
+      // the rejected source out, re-send the rest, and say what was skipped.
+      // Strictly narrower than the generic 4xx path: other rejections keep
+      // failing, because dropping those records would hide a real defect.
+      for (let peel = 0; !result.ok && peel < MAX_SOURCE_PEELS; peel++) {
+        const split = splitSourceRejection(result.error, pendingBatch);
+        if (split.dropped.length === 0) break;
+        for (const record of split.dropped) {
+          rejectedSources.add(String((record as { source?: unknown }).source));
+          sourceRejectedCount++;
+        }
+        pendingBatch = split.kept;
+        if (pendingBatch.length === 0) {
+          // Everything in this batch named a rejected source; there is nothing
+          // left to send and the batch is accounted for.
+          result = { ok: true };
+          break;
+        }
+        result = await sendBatchWithRetry({
+          endpoint: fullEndpoint,
+          token: cfg.token,
+          batch: pendingBatch,
+          fetchFn,
+          maxRetries,
+          retryDelayMs,
+          clientVersion,
+          requestTimeoutMs,
+          validateResponse: config.validateResponse,
+        });
+      }
+
       if (!result.ok) {
         return {
           success: false,
           uploaded: totalUploaded,
           batches: batchesCompleted,
           error: result.error,
-          ...(rejectionWarning ? { warning: rejectionWarning } : {}),
+          ...(rejectionWarning || sourceRejectionWarning(sourceRejectedCount, rejectedSources, entityName)
+            ? { warning: [rejectionWarning, sourceRejectionWarning(sourceRejectedCount, rejectedSources, entityName)].filter(Boolean).join(" ") }
+            : {}),
         };
       }
 
@@ -407,7 +481,7 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
         if (!recordKey) {
           return { success: false, uploaded: totalUploaded, batches: batchesCompleted, error: reason };
         }
-        const sent = new Set(batch.map(recordKey));
+        const sent = new Set(pendingBatch.map(recordKey));
         const discardable = new Set(config.discardRevoked ? revokedKeys ?? [] : []);
         for (const key of keys) {
           // A receipt naming a record this batch never carried is a protocol
@@ -429,7 +503,7 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
         if (refusedKeys.size > 0) gainedPendingSet = true;
       }
 
-      totalUploaded += batch.length - (result.refused?.keys.length ?? 0);
+      totalUploaded += pendingBatch.length - (result.refused?.keys.length ?? 0);
       batchesCompleted++;
     }
 
@@ -461,6 +535,7 @@ export function createUploadEngine<T>(config: UploadEngineConfig<T>) {
 
     const warnings = [
       rejectionWarning,
+      sourceRejectionWarning(sourceRejectedCount, rejectedSources, entityName),
       refusedKeys.size > 0
         ? `Server refused ${refusedKeys.size} ${entityName} and left them pending: ${refusalReason}`
         : undefined,

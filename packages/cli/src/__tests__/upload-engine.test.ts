@@ -1645,6 +1645,122 @@ describe("upload-engine", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Server-side source rejection
+// ---------------------------------------------------------------------------
+
+describe("upload-engine server source rejection", () => {
+  interface SourcedRecord {
+    id: number;
+    source: string;
+  }
+
+  const sourced = (id: number, source: string): SourcedRecord => ({ id, source });
+
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "pew-upload-engine-source-"));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function engineFor(queue: BaseQueue<SourcedRecord>) {
+    const config: UploadEngineConfig<SourcedRecord> = {
+      queue, endpoint: "/api/test-ingest", entityName: "test records",
+      preprocess: (records) => records,
+      recordKey: (r) => `src-${r.id}`,
+    };
+    return createUploadEngine<SourcedRecord>(config);
+  }
+
+  it("drops only the records whose source the server rejects, and uploads the rest", async () => {
+    // The local contract is a mirror of the server's, so a 400 naming an
+    // invalid source only appears when the two lists drift (one side knows a
+    // source the other does not). Left as a plain 4xx failure it wedges the
+    // queue forever: the offset never advances and every later batch fails
+    // with the same answer. The rejected records are skipped with a warning
+    // and the rest of the batch is re-sent.
+    const queue = new BaseQueue<SourcedRecord>(dir, "test.jsonl", "test.state.json");
+    await new ConfigManager(dir).save({ token: "pk_test" });
+    await queue.appendBatch([sourced(1, "workbuddy"), sourced(2, "claude-code")]);
+
+    const { fetchFn, calls } = createMockFetch([
+      { status: 400, body: { error: 'record[0]: invalid source "workbuddy"' } },
+      { status: 200, body: { ingested: 1 } },
+    ]);
+    const result = await engineFor(queue).execute({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn });
+
+    expect(result.success).toBe(true);
+    expect(result.uploaded).toBe(1);
+    expect(result.warning).toContain("workbuddy");
+    expect(result.warning).toContain("reset");
+    expect(calls).toHaveLength(2);
+    const retried = JSON.parse(String(calls[1]?.init.body)) as Array<{ id: number }>;
+    expect(retried.map((r) => r.id)).toEqual([2]);
+    // Skipped records are not left pending behind the advanced offset.
+    expect(await queue.loadDirtyKeys()).toBeUndefined();
+  });
+
+  it("peels more than one rejected source before sending what the server accepts", async () => {
+    const queue = new BaseQueue<SourcedRecord>(dir, "test.jsonl", "test.state.json");
+    await new ConfigManager(dir).save({ token: "pk_test" });
+    await queue.appendBatch([
+      sourced(1, "workbuddy"), sourced(2, "legacy-tool"), sourced(3, "claude-code"),
+    ]);
+
+    const { fetchFn, calls } = createMockFetch([
+      { status: 400, body: { error: 'record[0]: invalid source "workbuddy"' } },
+      { status: 400, body: { error: 'record[0]: invalid source "legacy-tool"' } },
+      { status: 200, body: { ingested: 1 } },
+    ]);
+    const result = await engineFor(queue).execute({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn });
+
+    expect(result.success).toBe(true);
+    expect(result.uploaded).toBe(1);
+    expect(result.warning).toContain("workbuddy");
+    expect(result.warning).toContain("legacy-tool");
+    expect(JSON.parse(String(calls[2]?.init.body))).toEqual([{ id: 3, source: "claude-code" }]);
+  });
+
+  it("succeeds with nothing uploaded when every record names a rejected source", async () => {
+    const queue = new BaseQueue<SourcedRecord>(dir, "test.jsonl", "test.state.json");
+    await new ConfigManager(dir).save({ token: "pk_test" });
+    await queue.appendBatch([sourced(1, "workbuddy")]);
+
+    const { fetchFn, calls } = createMockFetch([
+      { status: 400, body: { error: 'record[0]: invalid source "workbuddy"' } },
+    ]);
+    const result = await engineFor(queue).execute({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn });
+
+    expect(result.success).toBe(true);
+    expect(result.uploaded).toBe(0);
+    expect(result.warning).toContain("workbuddy");
+    // No empty batch is ever sent.
+    expect(calls).toHaveLength(1);
+  });
+
+  it("still fails on a 400 that is not a source rejection", async () => {
+    // Peeling is narrow on purpose: any other rejection may be a real defect
+    // in the record or a version mismatch in a bound, and dropping those
+    // records would hide it.
+    const queue = new BaseQueue<SourcedRecord>(dir, "test.jsonl", "test.state.json");
+    await new ConfigManager(dir).save({ token: "pk_test" });
+    await queue.appendBatch([sourced(1, "claude-code")]);
+
+    const { fetchFn, calls } = createMockFetch([
+      { status: 400, body: { error: "record[0]: invalid hour_start format (ISO 8601 required)" } },
+    ]);
+    const result = await engineFor(queue).execute({ stateDir: dir, apiUrl: DEFAULT_HOST, fetch: fetchFn });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("invalid hour_start");
+    expect(calls).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Per-record byte limit
 // ---------------------------------------------------------------------------
 
