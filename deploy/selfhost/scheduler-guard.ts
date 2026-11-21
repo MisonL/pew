@@ -12,6 +12,8 @@
 
 export const DEFAULT_DAILY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const MAX_TIMER_DELAY_MS = 2_147_483_647;
+/** One minute: below this the daily sync stops being daily and starts polling. */
+export const MIN_DAILY_INTERVAL_MS = 60_000;
 
 export interface ResolvedInterval {
   intervalMs: number;
@@ -25,7 +27,7 @@ export function resolveDailyIntervalMs(raw: string | undefined): ResolvedInterva
   // empty must mean "use the default", not "0 ms".
   if (raw === undefined || raw.trim() === "") return { intervalMs: DEFAULT_DAILY_INTERVAL_MS, error: null };
   const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1 || value > MAX_TIMER_DELAY_MS) {
+  if (!Number.isInteger(value) || value < MIN_DAILY_INTERVAL_MS || value > MAX_TIMER_DELAY_MS) {
     return {
       intervalMs: DEFAULT_DAILY_INTERVAL_MS,
       error: `invalid DAILY_INTERVAL_MS "${raw}", falling back to 24h`,
