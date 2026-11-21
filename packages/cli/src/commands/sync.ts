@@ -528,6 +528,7 @@ async function executeSyncScan(opts: InternalSyncOptions & {
   const collectedPaths = new Set<string>();
   for (const driver of fileDrivers) {
     const key = sourceKey(driver.source);
+    let skippedNoTimestamp = 0;
 
     onProgress?.({
       source: driver.source,
@@ -854,12 +855,21 @@ async function executeSyncScan(opts: InternalSyncOptions & {
       // Collect deltas
       appendAll(allDeltas, result.deltas);
       sourceCounts[key] += result.deltas.length;
+      skippedNoTimestamp += result.skippedNoTimestamp ?? 0;
 
       onProgress?.({
         source: driver.source,
         phase: "parse",
         current: i + 1,
         total: files.length,
+      });
+    }
+
+    if (skippedNoTimestamp > 0) {
+      onProgress?.({
+        source: driver.source,
+        phase: "warn",
+        message: `Skipped ${skippedNoTimestamp} ${driver.source} token events whose timestamp is missing; the raw logs are untouched`,
       });
     }
 

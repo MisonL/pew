@@ -250,6 +250,7 @@ describe("parseClaudeFile", () => {
 
     const result = await parseClaudeFile({ filePath, startOffset: 0 });
     expect(result.deltas).toHaveLength(1);
+    expect(result.skippedNoTimestamp).toBe(1);
   });
 
   it("should parse multiple usage events from different models", async () => {

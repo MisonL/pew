@@ -159,6 +159,8 @@ export interface DiscoverOpts {
  */
 export interface TokenParseResult {
   deltas: ParsedDelta[];
+  /** Token-bearing rows dropped because their timestamp was missing. */
+  skippedNoTimestamp?: number;
 }
 
 // ---------------------------------------------------------------------------

@@ -123,7 +123,8 @@ export const claudeTokenDriver: FileTokenDriver<ClaudeCursor> = {
     return {
       deltas: result.deltas,
       endOffset: result.endOffset,
-      emittedIds: result.emittedIds,
+        emittedIds: result.emittedIds,
+      skippedNoTimestamp: result.skippedNoTimestamp,
     };
   },
 

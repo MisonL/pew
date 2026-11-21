@@ -12,6 +12,7 @@ import { piAccounting } from "../utils/accounting.js";
 export interface PiFileResult {
   deltas: ParsedDelta[];
   endOffset: number;
+  skippedNoTimestamp?: number;
 }
 
 /**
@@ -91,11 +92,12 @@ export async function parsePiFile(opts: {
   const { filePath, startOffset } = opts;
   const source = "pi";
   const deltas: ParsedDelta[] = [];
+  let skippedNoTimestamp = 0;
 
   const st = await stat(filePath).catch(() => null);
-  if (!st?.isFile()) return { deltas, endOffset: startOffset };
+  if (!st?.isFile()) return { deltas, endOffset: startOffset, skippedNoTimestamp };
   const bound = jsonlStreamBound(st.size, opts.endBound);
-  if (startOffset >= bound) return { deltas, endOffset: bound };
+  if (startOffset >= bound) return { deltas, endOffset: bound, skippedNoTimestamp };
 
   // `end` is inclusive — pin the read to the snapshot bound so bytes appended
   // mid-parse stay unread (and unaccounted) until the next run.
@@ -212,13 +214,17 @@ export async function parsePiFile(opts: {
         currentModel = usageLabel(model);
         if (beforeCursor) continue;
 
-        // Extract timestamp from the outer JSONL entry
-        const timestamp = canonicalInstant(obj.timestamp);
-        if (!timestamp) continue;
-
-        // Normalize and filter zero deltas
+        // Normalize and filter zero deltas first: a zero-usage stub must not be
+        // reported as a lost timestamp event.
         const delta = normalizePiUsage(usage);
         if (isAllZero(delta)) continue;
+
+        // Extract timestamp from the outer JSONL entry
+        const timestamp = canonicalInstant(obj.timestamp);
+        if (!timestamp) {
+          skippedNoTimestamp++;
+          continue;
+        }
 
         deltas.push({ source, model, timestamp, tokens: delta,
           ...(opts.includeAccounting ? { accounting: piAccounting(delta, usage, model, msg.provider ?? currentProvider) } : {}),
@@ -233,5 +239,5 @@ export async function parsePiFile(opts: {
   }
 
   // Trailing partial line is NOT counted in endOffset
-  return { deltas, endOffset: clampedJsonlEndOffset(readStart, bound, completeBytes) };
+  return { deltas, endOffset: clampedJsonlEndOffset(readStart, bound, completeBytes), skippedNoTimestamp };
 }

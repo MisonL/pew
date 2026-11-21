@@ -74,7 +74,7 @@ export const copilotCliTokenDriver: FileTokenDriver<ByteOffsetCursor> = {
           startOffset: r.startOffset,
           endBound: r.endBound,
         });
-    return { deltas: result.deltas, endOffset: result.endOffset };
+    return { deltas: result.deltas, endOffset: result.endOffset, skippedNoTimestamp: result.skippedNoTimestamp };
   },
 
   buildCursor(

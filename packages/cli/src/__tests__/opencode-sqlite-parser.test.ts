@@ -355,7 +355,7 @@ describe("processOpenCodeMessages", () => {
     expect(ts).toBe(1771120822000);
   });
 
-  it("should track max time_created even for non-assistant rows", () => {
+  it("counts token-bearing rows whose times cannot be read instead of dropping them silently", () => {
     const rows: MessageRow[] = [
       msgRow("msg_user", "ses_001", 9999999999999, JSON.stringify({
         role: "user",

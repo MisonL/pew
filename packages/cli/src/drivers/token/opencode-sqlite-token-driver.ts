@@ -144,6 +144,9 @@ export function createOpenCodeSqliteTokenDriver(
             updatedAt: new Date().toISOString(),
           },
           rowCount: rawRows.length,
+          warnings: (result.skippedNoTimestamp ?? 0) > 0
+            ? [`Skipped ${result.skippedNoTimestamp} OpenCode messages whose timestamps are missing; their usage is not included and the database is untouched`]
+                       : undefined,
         };
       } finally {
         handle.close();

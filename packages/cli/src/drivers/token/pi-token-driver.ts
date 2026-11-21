@@ -52,7 +52,7 @@ export const piTokenDriver: FileTokenDriver<ByteOffsetCursor> = {
       endBound: r.endBound,
       ...(_ctx.collectAccounting ? { includeAccounting: true } : {}),
     });
-    return { deltas: result.deltas, endOffset: result.endOffset };
+    return { deltas: result.deltas, endOffset: result.endOffset, skippedNoTimestamp: result.skippedNoTimestamp };
   },
 
   buildCursor(
