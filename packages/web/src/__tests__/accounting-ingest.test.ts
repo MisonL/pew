@@ -20,4 +20,21 @@ describe("accounting proxy receipts", () => {
     const response = await POST(request()); expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ details_version: 1, acknowledgments: [receipt] });
   });
+  it("bounds concurrent accounting uploads instead of queueing their buffers", async () => {
+    // Two in flight is the cap; a third is refused with a retryable 503.
+    const receipt = { key: JSON.stringify([r.device_id, r.source, r.model, r.hour_start, r.event_id]), source_revision: 1, parser_revision: 1, detail_revision: 1, status: "applied" };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async () => { await gate; return Response.json({ details_version:1, acknowledgments: [receipt] }); }));
+
+    const first = POST(request());
+    const second = POST(request());
+    const third = await POST(request());
+
+    expect(third.status).toBe(503);
+    expect(third.headers.get("Retry-After")).not.toBeNull();
+    release();
+    const settled = await Promise.all([first, second]);
+    expect(settled.map((res) => res.status)).toEqual([200, 200]);
+  });
 });
