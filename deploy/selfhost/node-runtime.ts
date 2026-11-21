@@ -5,11 +5,31 @@
  * runtime emulation is needed.
  */
 
+import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 export interface WorkerLike {
   fetch(request: Request, env: never): Promise<Response>;
   scheduled?: (event: unknown, env: never) => Promise<void>;
+}
+
+/**
+ * A transport-level Authorization check, run before the body is buffered.
+ *
+ * The worker itself authenticates, but only after its caller has buffered the
+ * whole body: a request without a valid secret could make the process hold
+ * the ingest cap per connection without ever passing a credential. The guard
+ * is belt and braces — the worker still enforces — it only moves the refusal
+ * ahead of the read.
+ */
+export function bearerGuard(secret: string): (req: IncomingMessage) => boolean {
+  const expected = Buffer.from(`Bearer ${secret}`);
+  return (req) => {
+    const raw = req.headers.authorization;
+    if (typeof raw !== "string") return false;
+    const got = Buffer.from(raw);
+    return got.length === expected.length && timingSafeEqual(got, expected);
+  };
 }
 
 export interface WorkerServerOptions<E> {
@@ -25,6 +45,8 @@ export interface WorkerServerOptions<E> {
    * supervisor's restart policy decides, rather than exiting silently.
    */
   onServerError?: (error: unknown) => void;
+  /** Optional transport-level auth, run before the body is read. */
+  authorize?: (req: IncomingMessage) => boolean;
 }
 
 export interface WorkerServerHandle {
@@ -108,6 +130,15 @@ export function createWorkerServer<E>(options: WorkerServerOptions<E>) {
       const server = createServer((req, res) => {
         void (async () => {
           try {
+            if (options.authorize && !options.authorize(req)) {
+              // Do not buffer the body of an unauthenticated request: that is the
+              // memory the guard exists to withhold. Close the connection so the
+              // unread remainder is not parsed as a second request.
+              res.setHeader("Connection", "close");
+              res.writeHead(401, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: "Unauthorized" }), () => req.destroy());
+              return;
+            }
             const body = await readBody(req, options.maxBodyBytes ?? MAX_BODY_BYTES);
             const response = await options.worker.fetch(toRequest(req, body), options.env);
             await sendResponse(res, response);

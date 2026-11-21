@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { createWorkerServer, registerShutdownSignals, requireSecret, runScheduled } from "./node-runtime";
+import { bearerGuard, createWorkerServer, registerShutdownSignals, requireSecret, runScheduled } from "./node-runtime";
 
 describe("createWorkerServer", () => {
   it("bridges node:http requests into the worker fetch handler", async () => {
@@ -104,6 +104,64 @@ describe("createWorkerServer", () => {
   });
 });
 
+describe("bearerGuard", () => {
+  const guard = bearerGuard("s3cr3t");
+  const req = (value?: string) => ({ headers: value === undefined ? {} : { authorization: value } }) as never;
+
+  it("accepts exactly the transport bearer for the secret", () => {
+    expect(guard(req("Bearer s3cr3t"))).toBe(true);
+  });
+
+  it("rejects a missing, differently cased or padded header", () => {
+    // The worker compares the same value; the guard only moves the refusal
+    // ahead of the body read, so it must not be looser than it.
+    expect(guard(req())).toBe(false);
+    expect(guard(req("Bearer other"))).toBe(false);
+    expect(guard(req("bearer s3cr3t"))).toBe(false);
+    expect(guard(req("Bearer s3cr3t "))).toBe(false);
+  });
+});
+
+describe("createWorkerServer authorize guard", () => {
+  it("refuses an unauthenticated body before the worker sees it", async () => {
+    // Buffering first let an anonymous caller hold the ingest cap per
+    // connection without ever presenting a credential.
+    const worker = { fetch: vi.fn(async () => Response.json({ ok: true })) };
+    const server = createWorkerServer({ worker, env: {}, port:0, authorize: bearerGuard("s3cr3t") });
+    const handle = await server.listen();
+    try {
+      const res = await fetch(`http://127.0.0.1:${handle.port}/ingest/tokens`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pad: "a".repeat(4096) }),
+      });
+
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: "Unauthorized" });
+      expect(worker.fetch).not.toHaveBeenCalled();
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("still reaches the worker when the guard accepts the request", async () => {
+    const worker = { fetch: vi.fn(async () => Response.json({ ok: true })) };
+    const server = createWorkerServer({ worker, env: {}, port:0, authorize: bearerGuard("s3cr3t") });
+    const handle = await server.listen();
+    try {
+      const res = await fetch(`http://127.0.0.1:${handle.port}/ingest/tokens`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer s3cr3t" },
+        body: JSON.stringify({ ok: true }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(worker.fetch).toHaveBeenCalledOnce();
+    } finally {
+      await handle.close();
+    }
+  });
+});
 describe("runScheduled", () => {
   it("runs once immediately at startup, before the first interval elapses", async () => {
     // setInterval does not fire until one full period has elapsed. With the
