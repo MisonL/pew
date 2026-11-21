@@ -51,7 +51,7 @@ export function parseSourceInstant(value: string): number | null {
     const parsed = Date.parse(value.trim());
     return Number.isFinite(parsed) ? parsed : null;
   }
-  const fraction = (match[7] ?? "") + "000";
+  const fraction = `${match[7] ?? ""}000`;
   const millis = Number(fraction.slice(0,3));
   const date = new Date(0);
   date.setUTCFullYear(year, month - 1, day);
