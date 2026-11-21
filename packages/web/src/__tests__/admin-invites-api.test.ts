@@ -65,6 +65,7 @@ describe("GET /api/admin/invites", () => {
 
     const res = await GET(makeJsonRequest("GET", "/api/admin/invites"));
     expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
     const json = await res.json();
     expect(json.rows).toEqual([]);
   });

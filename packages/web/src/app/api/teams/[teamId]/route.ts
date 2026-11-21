@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 
 import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
+import { privateJson } from "@/lib/private-json";
 
 import { getDbRead, getDbWrite } from "@/lib/db";
 import { seasonSeatReassignmentSql } from "@/lib/season-roster";
@@ -80,7 +81,7 @@ export async function GET(
       ? { ...teamWithoutSensitive, invite_code }
       : teamWithoutSensitive;
 
-    return NextResponse.json({
+    return privateJson({
       ...sanitizedTeam,
       logoUrl: logo_url ?? null,
       auto_register_season: !!team.auto_register_season,
@@ -201,7 +202,7 @@ export async function PATCH(
     if (name !== undefined) response.name = name;
     if (autoRegisterSeason !== undefined) response.auto_register_season = autoRegisterSeason;
     if (newInviteCode !== undefined) response.invite_code = newInviteCode;
-    return NextResponse.json(response);
+    return privateJson(response);
   } catch (err) {
     console.error("Failed to rename team:", err);
     return NextResponse.json({ error: "Failed to rename team" }, { status: 500 });
@@ -305,7 +306,7 @@ export async function DELETE(
     // this key; without it the list served a deleted team for up to 10 minutes.
     await dbRead.invalidateCacheKey("seasons:list").catch(() => undefined);
 
-    return NextResponse.json({ ok: true });
+    return privateJson({ ok: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     if (msg.includes("no such table")) {

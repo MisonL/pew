@@ -85,6 +85,7 @@ describe("GET /api/admin/storage", () => {
     const response = await GET(createRequest());
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     const data = await response.json();
     expect(data.users).toHaveLength(2);
     expect(data.summary.total_users).toBe(2);

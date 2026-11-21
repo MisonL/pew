@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import { sumCounts } from "@pew/core";
 import { resolveAdmin } from "@/lib/admin";
+import { privateJson } from "@/lib/private-json";
 import { getDbRead } from "@/lib/db";
 
 // ---------------------------------------------------------------------------
@@ -51,11 +52,11 @@ export async function GET(request: Request) {
       total_duration_seconds: users.reduce((total, user) => sumCounts(total, user.total_duration_seconds), 0),
     };
 
-    return NextResponse.json({ users, summary });
+    return privateJson({ users, summary });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     if (msg.includes("no such table")) {
-      return NextResponse.json({
+      return privateJson({
         users: [],
         summary: { total_users: 0, total_tokens: 0, total_sessions: 0, total_usage_rows: 0, total_messages: 0, total_duration_seconds: 0 },
       });

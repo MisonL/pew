@@ -8,6 +8,7 @@
 
 import { NextResponse } from "next/server";
 import { resolveAdmin } from "@/lib/admin";
+import { privateJson } from "@/lib/private-json";
 import { getDbRead } from "@/lib/db";
 
 export async function GET(request: Request) {
@@ -29,7 +30,7 @@ export async function GET(request: Request) {
   }
 
   if (!query.trim()) {
-    return NextResponse.json({ users: [] });
+    return privateJson({ users: [] });
   }
 
   const dbRead = await getDbRead();
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
   try {
     const results = await dbRead.searchUsers(query.trim(), limit);
 
-    return NextResponse.json({ users: results });
+    return privateJson({ users: results });
   } catch (err) {
     console.error("Failed to search users:", err);
     return NextResponse.json(

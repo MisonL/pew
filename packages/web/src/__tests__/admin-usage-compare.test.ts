@@ -133,6 +133,7 @@ describe("GET /api/admin/usage/compare", () => {
 
     const res = await GET(makeGetRequest(BASE_PATH, { userIds: "u1,u2" }));
     expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
     const body = await res.json();
     expect(body.users).toHaveLength(2);
     expect(body.users[0].id).toBe("u1");
