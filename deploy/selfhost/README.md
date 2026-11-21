@@ -291,7 +291,7 @@ shell 里残留的 `PEW_HOST`。
 | `d1-http` | 把 D1 REST 形状翻译成 rqlite 调用 |
 | `read` | worker-read（读路径 + `/api/live`） |
 | `ingest` | worker（写入路径） |
-| `scheduler` | 定价同步定时器（固定 1 副本；默认每 24h，`DAILY_INTERVAL_MS` 可调。间隔从容器启动起算，重启会重置计时——flapping 主机可能反复顺延同步） |
+| `scheduler` | 定价同步定时器（固定 1 副本；默认每 24h，`DAILY_INTERVAL_MS` 可调（60000–2147483647ms，越界回退 24h）。间隔从容器启动起算，重启会重置计时——flapping 主机可能反复顺延同步） |
 | `web` | Next.js 前端，唯一对外端口 |
 
 只有 `web` 发布宿主端口，其余仅在 compose 网络内可达。
