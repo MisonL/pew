@@ -224,36 +224,51 @@ async function readDatabase(path: string, opener: (path: string) => SqliteDb, sn
     let userMessages = 0;
     let assistantMessages = 0;
     let lastModel: string | null = null;
+    const skipped = { steps: 0, sessions: 0 };
     for (const step of steps) {
-      if (!Number.isSafeInteger(step.idx) || step.idx < 0 || !Number.isInteger(step.step_type) || !Number.isInteger(step.status)) throw new Error("Invalid Antigravity step row");
-      const decoded = step.metadata === null ? { timestamp: null, usage: null } : decodeAntigravityMetadata(step.metadata);
-      if (decoded.timestamp) times.push(new Date(decoded.timestamp).getTime());
-      if (step.step_type === 14) userMessages++;
-      if (step.step_type === 15) assistantMessages++;
-      if (models.has(step.idx)) lastModel = models.get(step.idx) as string;
-      if (step.status !== 3 || !decoded.usage) continue;
-      const usage = decoded.usage;
-      const tokens = { inputTokens: usage.input, cachedInputTokens: usage.read,
-        outputTokens: usage.visible, reasoningOutputTokens: usage.reasoning };
-      if (isAllZero(tokens)) continue;
-      const model = models.get(step.idx);
-      if (!model) throw new Error("Missing Antigravity usage model attribution");
-      if (!decoded.timestamp) throw new Error("Missing Antigravity usage timestamp");
-      deltas.push({ source: "antigravity", model, timestamp: decoded.timestamp, tokens,
-        accounting: inclusiveAccounting(tokens, { input: usage.input + usage.read, read: usage.read,
-          write: usage.write, output: usage.output, reasoning: usage.reasoning }, { origin: "antigravity:step", model }) });
+      try {
+        if (!Number.isSafeInteger(step.idx) || step.idx < 0 || !Number.isInteger(step.step_type) || !Number.isInteger(step.status)) throw new Error("Invalid Antigravity step row");
+        const decoded = step.metadata === null ? { timestamp: null, usage: null } : decodeAntigravityMetadata(step.metadata);
+        if (decoded.timestamp) times.push(new Date(decoded.timestamp).getTime());
+        if (step.step_type === 14) userMessages++;
+        if (step.step_type === 15) assistantMessages++;
+        if (models.has(step.idx)) lastModel = models.get(step.idx) as string;
+        if (step.status !== 3 || !decoded.usage) continue;
+        const usage = decoded.usage;
+        const tokens = { inputTokens: usage.input, cachedInputTokens: usage.read,
+          outputTokens: usage.visible, reasoningOutputTokens: usage.reasoning };
+        if (isAllZero(tokens)) continue;
+        const model = models.get(step.idx);
+        if (!model) throw new Error("Missing Antigravity usage model attribution");
+        if (!decoded.timestamp) throw new Error("Missing Antigravity usage timestamp");
+        deltas.push({ source: "antigravity", model, timestamp: decoded.timestamp, tokens,
+          accounting: inclusiveAccounting(tokens, { input: usage.input + usage.read, read: usage.read,
+            write: usage.write, output: usage.output, reasoning: usage.reasoning }, { origin: "antigravity:step", model }) });
+      } catch {
+        // One corrupt step must cost one step, not the whole database: a stray
+        // epoch-default timestamp, an unmapped generation or an unsafe counter
+        // used to fail the source on every sync. The raw rows stay untouched.
+        skipped.steps++;
+      }
     }
     const snapshots: SessionSnapshot[] = [];
     if (times.length) {
       const start = times.reduce((a, b) => Math.min(a, b));
       const end = times.reduce((a, b) => Math.max(a, b));
-      snapshots.push(validateAntigravitySession({ sessionKey: `antigravity:${basename(path, ".db")}`, source: "antigravity", kind: "human",
-        startedAt: new Date(start).toISOString(), lastMessageAt: new Date(end).toISOString(),
-        durationSeconds: Math.floor((end - start) / 1000), userMessages, assistantMessages, totalMessages: userMessages + assistantMessages,
-        projectRef, model: lastModel, snapshotAt }));
+      try {
+        snapshots.push(validateAntigravitySession({ sessionKey: `antigravity:${basename(path, ".db")}`, source: "antigravity", kind: "human",
+          startedAt: new Date(start).toISOString(), lastMessageAt: new Date(end).toISOString(),
+          durationSeconds: Math.floor((end - start) / 1000), userMessages, assistantMessages, totalMessages: userMessages + assistantMessages,
+          projectRef, model: lastModel, snapshotAt }));
+      } catch {
+        // A span outside the ingest contract (a stray epoch-default timestamp
+        // beside real ones) used to fail the whole source. Keep the tokens and
+        // drop just this session.
+        skipped.sessions++;
+      }
     }
     await verify();
-    return { deltas, snapshots, signatures: original };
+    return { deltas, snapshots, signatures: original, skipped };
   } finally {
     try { db?.close(); } finally { await rm(dir, { recursive: true, force: true }); }
   }
@@ -262,10 +277,11 @@ async function readDatabase(path: string, opener: (path: string) => SqliteDb, sn
 export async function readAntigravitySource(
   rootDir: string,
   opener: (path: string) => SqliteDb = openSqlite,
-): Promise<{ deltas: ParsedDelta[]; snapshots: SessionSnapshot[]; dbCount: number }> {
+): Promise<{ deltas: ParsedDelta[]; snapshots: SessionSnapshot[]; dbCount: number; skipped: { steps: number; sessions: number } }> {
   const names = (await readdir(rootDir)).filter((name) => name.endsWith(".db")).sort();
   const deltas: ParsedDelta[] = [];
   const snapshots: SessionSnapshot[] = [];
+  const skipped = { steps: 0, sessions: 0 };
   const signatures = new Map<string, Array<string | null>>();
   const snapshotAt = new Date().toISOString();
   for (const name of names) {
@@ -275,6 +291,8 @@ export async function readAntigravitySource(
     const result = await readDatabase(join(rootDir, name), opener, snapshotAt, signatures.get(name) as Array<string | null>);
     appendAll(deltas, result.deltas);
     appendAll(snapshots, result.snapshots);
+    skipped.steps += result.skipped.steps;
+    skipped.sessions += result.skipped.sessions;
   }
   const current = (await readdir(rootDir)).filter((name) => name.endsWith(".db")).sort();
   if (JSON.stringify(current) !== JSON.stringify(names)) throw new Error("Unstable Antigravity source discovery");
@@ -284,5 +302,5 @@ export async function readAntigravitySource(
       if (file !== signatures.get(name)?.[index]) throw new Error("Unstable Antigravity source snapshot");
     }
   }
-  return { deltas, snapshots, dbCount: names.length };
+  return { deltas, snapshots, dbCount: names.length, skipped };
 }
