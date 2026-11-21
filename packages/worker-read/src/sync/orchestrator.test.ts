@@ -431,4 +431,121 @@ describe("syncDynamicPricing", () => {
     // Should not have used the cached OpenRouter data; entry count should be only models.dev + baseline.
     // We don't pin exact counts (depends on baseline), just verify it's not throwing on the cache path.
   });
+  it("treats an empty OpenRouter catalogue as that source failing, not a wipe", async () => {
+    await kv.put(KEY_DYNAMIC, JSON.stringify([
+      { model: "vendor/only-on-openrouter", provider: "vendor", displayName: null,
+        inputPerMillion:1, outputPerMillion:2, cachedPerMillion: null, contextWindow:1000,
+        origin: "openrouter", updatedAt: "2026-04-29T00:00:00.000Z", aliases: [] },
+    ]));
+    // A good document from yesterday: an empty200 must not replace it.
+    kv.store.set(
+      KEY_LAST_FETCH_OPENROUTER,
+      JSON.stringify({ json: OPENROUTER_OK, fetchedAt: "2026-04-29T00:00:00.000Z" }),
+    );
+    const fetchImpl = mockFetch({
+      [OPENROUTER_URL]: { status:200, body: { data: [] } },
+      [MODELS_DEV_URL]: { status:200, body: MODELS_DEV_OK },
+    });
+    const r = await syncDynamicPricing({ db, kv, fetchImpl }, NOW);
+    expect(r.ok).toBe(false);
+    expect(r.errors.find((e) => e.source === "openrouter")).toBeDefined();
+    const stored = JSON.parse(kv.store.get(KEY_DYNAMIC)!) as DynamicPricingEntry[];
+    expect(stored.some((e) => e.model === "vendor/only-on-openrouter")).toBe(true);
+    const cached = JSON.parse(kv.store.get(KEY_LAST_FETCH_OPENROUTER)!) as { fetchedAt: string };
+    expect(cached.fetchedAt).toBe("2026-04-29T00:00:00.000Z");
+  });
+
+  it("treats a models.dev catalogue whose entries carry no cost as that source failing", async () => {
+    await kv.put(KEY_DYNAMIC, JSON.stringify([
+      { model: "vendor/only-on-modelsdev", provider: "vendor", displayName: null,
+        inputPerMillion:3, outputPerMillion:4, cachedPerMillion: null, contextWindow:2000,
+        origin: "models.dev", updatedAt: "2026-04-29T00:00:00.000Z", aliases: [] },
+    ]));
+    const fetchImpl = mockFetch({
+      [OPENROUTER_URL]: { status:200, body: OPENROUTER_OK },
+      [MODELS_DEV_URL]: { status:200, body: { openai: { models: { x: {} } } } },
+    });
+    const r = await syncDynamicPricing({ db, kv, fetchImpl }, NOW);
+    expect(r.ok).toBe(false);
+    expect(r.errors.find((e) => e.source === "models.dev")).toBeDefined();
+    const stored = JSON.parse(kv.store.get(KEY_DYNAMIC)!) as DynamicPricingEntry[];
+    expect(stored.some((e) => e.model === "vendor/only-on-modelsdev")).toBe(true);
+  });
+
+  it("a discarded run does not overwrite the last-fetch cache a newer run wrote", async () => {
+    await kv.put(KEY_DYNAMIC_META, JSON.stringify({
+      lastSyncedAt: "2026-04-30T00:05:00.000Z", modelCount:1, baselineCount:0,
+      openRouterCount:1, modelsDevCount:0, lastErrors: null,
+    }));
+    kv.store.set(
+      KEY_LAST_FETCH_OPENROUTER,
+      JSON.stringify({ json: OPENROUTER_OK, fetchedAt: "2026-04-29T00:00:00.000Z" }),
+    );
+    kv.store.set(
+      KEY_LAST_FETCH_MODELS_DEV,
+      JSON.stringify({ json: MODELS_DEV_OK, fetchedAt: "2026-04-29T00:00:00.000Z" }),
+    );
+    const fetchImpl = mockFetch({
+      [OPENROUTER_URL]: { status:200, body: { data: [{ ...OPENROUTER_OK.data[0],
+        pricing: { prompt: "0.000009", completion: "0.000009" } }] } },
+      [MODELS_DEV_URL]: { status:200, body: MODELS_DEV_OK },
+    });
+    const r = await syncDynamicPricing({ db, kv, fetchImpl }, NOW);
+    expect(r.skippedReason).toMatch(/newer/i);
+    const orCached = JSON.parse(kv.store.get(KEY_LAST_FETCH_OPENROUTER)!) as { fetchedAt: string };
+    expect(orCached.fetchedAt).toBe("2026-04-29T00:00:00.000Z");
+  });
+
+  it("restores the published alternate-route price over a stale cache fallback", async () => {
+    await kv.put(KEY_DYNAMIC, JSON.stringify([
+      { model: "openai/only-via-route", provider: "openai", displayName: null,
+        inputPerMillion:3, outputPerMillion:6, cachedPerMillion: null, contextWindow:1000,
+        origin: "models.dev", updatedAt: "2026-04-29T00:00:00.000Z", aliases: [],
+        route: "direct",
+        routePrices: { openrouter: { inputPerMillion:1, outputPerMillion:2, cachedPerMillion: null,
+          origin: "openrouter", updatedAt: "2026-04-29T00:00:00.000Z" } } },
+    ]));
+    // The cache holds an OLDER fetch; the published route price is3 (input).
+    kv.store.set(
+      KEY_LAST_FETCH_OPENROUTER,
+      JSON.stringify({ json: { data: [{ id: "openai/only-via-route",
+        pricing: { prompt: "0.000002", completion: "0.000003" } }] },
+        fetchedAt: "2026-04-29T00:00:00.000Z" }),
+    );
+    const fetchImpl = mockFetch({
+      [OPENROUTER_URL]: { status:500 },
+      [MODELS_DEV_URL]: { status:200, body: { openai: { models: { "only-via-route": {
+        name: "Only", cost: { input:3, output:6 }, limit: { context:1000 } } } } } },
+    });
+    const r = await syncDynamicPricing({ db, kv, fetchImpl }, NOW);
+    expect(r.ok).toBe(false);
+    const stored = JSON.parse(kv.store.get(KEY_DYNAMIC)!) as DynamicPricingEntry[];
+    const entry = stored.find((e) => e.model === "openai/only-via-route");
+    expect(entry?.routePrices?.openrouter?.inputPerMillion).toBe(1);
+  });
+
+  it("does not advance meta when the dynamic entry write failed", async () => {
+    const previousMeta = {
+      lastSyncedAt: "2026-04-29T00:00:00.000Z", modelCount:1, baselineCount:0,
+      openRouterCount:1, modelsDevCount:0, lastErrors: null,
+    };
+    await kv.put(KEY_DYNAMIC_META, JSON.stringify(previousMeta));
+    const failingKv = {
+      ...kv,
+      get: kv.get,
+      put: vi.fn(async (key: string) => {
+        if (key === KEY_DYNAMIC) throw new Error("kv dynamic write failed");
+        kv.store.set(key, "");
+      }),
+      store: kv.store,
+    } as unknown as typeof kv;
+    const fetchImpl = mockFetch({
+      [OPENROUTER_URL]: { status:200, body: OPENROUTER_OK },
+      [MODELS_DEV_URL]: { status:200, body: MODELS_DEV_OK },
+    });
+    const r = await syncDynamicPricing({ db, kv: failingKv, fetchImpl }, NOW);
+    expect(r.ok).toBe(false);
+    expect(r.entriesWritten).toBe(0);
+    expect(r.meta.lastSyncedAt).toBe(previousMeta.lastSyncedAt);
+  });
 });
