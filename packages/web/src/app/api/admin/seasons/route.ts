@@ -12,6 +12,7 @@ import { getDbRead, getDbWrite } from "@/lib/db";
 import { hasRealCalendarDay } from "@/lib/date-params";
 import { deriveSeasonStatus } from "@/lib/seasons";
 import { autoRegisterTeamsForSeason } from "@/lib/auto-register";
+import { privateJson } from "@/lib/private-json";
 
 // ---------------------------------------------------------------------------
 // Validation helpers
@@ -61,7 +62,7 @@ export async function GET(request: Request) {
       allow_late_withdrawal: !!r.allow_late_withdrawal,
     }));
 
-    return NextResponse.json({ seasons });
+    return privateJson({ seasons });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     if (msg.includes("no such table")) {

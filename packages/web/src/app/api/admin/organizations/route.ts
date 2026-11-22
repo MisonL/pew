@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { resolveAdmin } from "@/lib/admin";
 import { readJsonBody } from "@/lib/request-json";
 import { getDbRead, getDbWrite } from "@/lib/db";
+import { privateJson } from "@/lib/private-json";
 
 // ---------------------------------------------------------------------------
 // Validation helpers
@@ -42,7 +43,7 @@ export async function GET(request: Request) {
       memberCount: r.member_count,
     }));
 
-    return NextResponse.json({ organizations });
+    return privateJson({ organizations });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     if (msg.includes("no such table")) {

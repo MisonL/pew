@@ -51,6 +51,7 @@ describe("GET /api/admin/check", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
     expect(body.isAdmin).toBe(false);
   });
 

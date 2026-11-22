@@ -65,6 +65,7 @@ describe("GET /api/admin/settings", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
     expect(body.settings).toHaveLength(1);
     expect(body.settings[0].key).toBe("max_team_members");
   });
