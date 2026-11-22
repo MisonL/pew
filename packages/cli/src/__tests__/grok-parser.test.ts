@@ -76,6 +76,19 @@ function inferenceLine(overrides: {
   return JSON.stringify(obj);
 }
 
+describe("grok missing timestamps", () => {
+  it("counts inference_done events whose ts is absent", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pew-grok-notimestamp-"));
+    const file = join(dir, "unified.jsonl");
+    const good = JSON.stringify({msg:"shell.turn.inference_done",ts:"2026-01-01T00:00:00Z",sid:"s",ctx:{prompt_tokens:10,completion_tokens:5}});
+    const bad = JSON.stringify({msg:"shell.turn.inference_done",sid:"s",ctx:{prompt_tokens:9,completion_tokens:3}});
+    await writeFile(file, good+"\n"+bad+"\n");
+    const result = await parseGrokLogFile({ filePath: file, startOffset: 0 });
+    expect(result.deltas).toHaveLength(1);
+    expect(result.skippedNoTimestamp).toBe(1);
+    });
+});
+
 describe("normalizeGrokUsage", () => {
   it("maps fields with disjoint input/cached and output/reasoning", () => {
     const delta = normalizeGrokUsage({

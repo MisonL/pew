@@ -71,7 +71,7 @@ export const grokTokenDriver: FileTokenDriver<ByteOffsetCursor> = {
       sidPrimaryModel: maps.sidPrimaryModel,
       ...(ctx.collectAccounting ? { includeAccounting: true } : {}),
     });
-    return { deltas: result.deltas, endOffset: result.endOffset };
+    return { deltas: result.deltas, endOffset: result.endOffset, skippedNoTimestamp: result.skippedNoTimestamp };
   },
 
   buildCursor(

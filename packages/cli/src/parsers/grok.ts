@@ -23,6 +23,10 @@ import { inclusiveAccounting } from "../utils/accounting.js";
 export interface GrokFileResult {
   deltas: ParsedDelta[];
   endOffset: number;
+  /** inference_done events carrying real usage but no ts: they cannot be
+   * bucketed, and unlike the cumulative sources no later event inherits
+   * them — counted so the sync warns instead of dropping silently. */
+  skippedNoTimestamp: number;
 }
 
 export type GrokTurnTimeline = Array<{ ts: string; modelId: string }>;
@@ -119,11 +123,12 @@ export async function parseGrokLogFile(opts: {
     sidPrimaryModel = new Map(),
   } = opts;
   const deltas: ParsedDelta[] = [];
+  let skippedNoTimestamp = 0;
 
   const st = await stat(filePath).catch(() => null);
-  if (!st?.isFile()) return { deltas, endOffset: startOffset };
+  if (!st?.isFile()) return { deltas, endOffset: startOffset, skippedNoTimestamp };
   const bound = jsonlStreamBound(st.size, opts.endBound);
-  if (startOffset >= bound) return { deltas, endOffset: bound };
+  if (startOffset >= bound) return { deltas, endOffset: bound, skippedNoTimestamp };
 
   // `end` is inclusive — pin the read to the snapshot bound.
   const stream = createReadStream(filePath, { start: startOffset, end: bound - 1 });
@@ -169,9 +174,6 @@ export async function parseGrokLogFile(opts: {
 
         if (obj.msg !== "shell.turn.inference_done") continue;
 
-        const ts = typeof obj.ts === "string" ? obj.ts : null;
-        if (!ts) continue;
-
         const sid = typeof obj.sid === "string" ? obj.sid : "";
         const ctx =
           obj.ctx && typeof obj.ctx === "object"
@@ -189,6 +191,8 @@ export async function parseGrokLogFile(opts: {
 
         const tokens = normalizeGrokUsage(ctx);
         if (isAllZero(tokens)) continue;
+        const ts = typeof obj.ts === "string" ? obj.ts : null;
+        if (!ts) { skippedNoTimestamp++; continue; }
 
         const model = resolveGrokModel({
           sid,
@@ -218,7 +222,7 @@ export async function parseGrokLogFile(opts: {
   }
 
   // Trailing partial line is NOT counted in endOffset
-  return { deltas, endOffset: clampedJsonlEndOffset(startOffset, bound, completeBytes) };
+  return { deltas, endOffset: clampedJsonlEndOffset(startOffset, bound, completeBytes), skippedNoTimestamp };
 }
 
 // ---------------------------------------------------------------------------
