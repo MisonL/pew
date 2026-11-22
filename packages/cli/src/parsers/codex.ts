@@ -24,6 +24,8 @@ import { accountingLabel, inclusiveAccounting, type AccountingContext } from "..
 export interface CodexFileResult {
   deltas: ParsedDelta[];
   endOffset: number;
+  /** token_count rows with real usage but no usable timestamp. */
+  skippedNoTimestamp?: number;
   /** Last seen cumulative totals (for resuming incremental parsing) */
   lastTotals: TokenDelta | null;
   /** Last seen model identifier */
@@ -146,6 +148,7 @@ export async function parseCodexFile(opts: {
 }): Promise<CodexFileResult> {
   const { filePath, startOffset } = opts;
   const deltas: ParsedDelta[] = [];
+  let skippedNoTimestamp = 0;
   let lastTotals = opts.lastTotals;
   let lastModel = opts.lastModel;
   const accountingContext: AccountingContext = { ...opts.lastAccountingContext };
@@ -156,7 +159,7 @@ export async function parseCodexFile(opts: {
 
   const st = await stat(filePath).catch(() => null);
   if (!st?.isFile()) {
-    return { deltas, endOffset: startOffset, lastTotals, lastModel, highWaterTotals, usageKeys };
+    return { deltas, endOffset: startOffset, lastTotals, lastModel, highWaterTotals, usageKeys, skippedNoTimestamp };
   }
 
   const endOffset = await jsonlCompleteBound(
@@ -168,6 +171,7 @@ export async function parseCodexFile(opts: {
   if (endOffset === 0 || startOffset >= endOffset) {
     return {
       deltas,
+      skippedNoTimestamp,
       endOffset: endOffset === 0 ? 0 : endOffset,
       lastTotals,
       lastModel,
@@ -216,7 +220,16 @@ export async function parseCodexFile(opts: {
       }
 
       // Extract token counts from event_msg with type=token_count
-      if (type === "event_msg" && payload?.type === "token_count" && timestamp) {
+      if (type === "event_msg" && payload?.type === "token_count") {
+        if (!timestamp) {
+          // A ts-less token_count used to vanish without a trace. Cumulative roll-in
+          // usually carries its tokens into the next valid row, but the last
+          // row of a finished rollout would not, so count the skip. Totals
+          // stay untouched: processing the row here would change the next
+          // diff and silently drop the tokens the old gate preserved.
+          if (payload.info && typeof payload.info === "object") skippedNoTimestamp++;
+          continue;
+        }
         const info = payload.info as Record<string, unknown> | undefined;
         if (!info) continue;
 
@@ -289,7 +302,7 @@ export async function parseCodexFile(opts: {
     stream.destroy();
   }
 
-  return { deltas, endOffset, lastTotals, lastModel, highWaterTotals, usageKeys,
+  return { deltas, endOffset, lastTotals, lastModel, highWaterTotals, usageKeys, skippedNoTimestamp,
     ...(opts.includeAccounting ? { lastAccountingContext: accountingContext } : {}),
   };
 }
