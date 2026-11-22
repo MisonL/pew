@@ -20,6 +20,31 @@ async function readJson(path: string): Promise<Record<string, unknown> | null> {
 }
 
 /**
+ * Read signals.json distinguishing "absent" from "present but unreadable".
+ * An absent file is Grok's own pre-signals state — report zeros now and the
+ * real values on the next activity. A present-but-corrupt file means the
+ * truth exists and we cannot see it; uploading zeros then would overwrite
+ * stored history through the session upsert.
+ */
+async function readSignals(
+  path: string,
+): Promise<{ state: "ok"; value: Record<string, unknown> | null } | { state: "unreadable" }> {
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return { state: "ok", value: null };
+    return { state: "unreadable" };
+  }
+  try {
+    return { state: "ok", value: JSON.parse(raw) as Record<string, unknown> };
+  } catch {
+    return { state: "unreadable" };
+  }
+}
+
+/**
  * Parse a single Grok session directory into a SessionSnapshot.
  *
  * Returns null on missing/corrupt summary or missing session id.
@@ -30,12 +55,14 @@ async function readJson(path: string): Promise<Record<string, unknown> | null> {
 export async function parseGrokSession(
   sessionDir: string,
 ): Promise<SessionSnapshot | null> {
-  const [summary, signals] = await Promise.all([
+  const [summary, signalsResult] = await Promise.all([
     readJson(join(sessionDir, "summary.json")),
-    readJson(join(sessionDir, "signals.json")),
+    readSignals(join(sessionDir, "signals.json")),
   ]);
 
   if (!summary) return null;
+  if (signalsResult.state === "unreadable") return null;
+  const signals = signalsResult.value;
 
   const info =
     summary.info && typeof summary.info === "object"

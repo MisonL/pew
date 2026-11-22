@@ -94,6 +94,27 @@ describe("parseGrokSession", () => {
     expect(snap!.durationSeconds).toBe(0);
   });
 
+  it("returns null when signals.json exists but is corrupt, instead of zeroing counts", async () => {
+    // A half-written signals.json must not become a snapshot of zeros:
+    // the server upserts snapshots by key, so zeroing on a transient
+    // corrupt read overwrites the real history already stored there.
+    // A missing signals.json keeps its contract (report zeros now, real
+    // values on the next activity) — only a present-but-unparseable one
+    // counts as "cannot read truth" and skips this round.
+    await writeFile(
+      join(sessionDir, "summary.json"),
+      JSON.stringify({
+        info: { id: "sid-corrupt", cwd: "/tmp/x" },
+        created_at: "2026-07-10T00:00:00Z",
+        last_active_at: "2026-07-10T01:00:00Z",
+        num_chat_messages: 42,
+      })
+    );
+    await writeFile(join(sessionDir, "signals.json"), "{truncated");
+    const snap = await parseGrokSession(sessionDir);
+    expect(snap).toBeNull();
+  });
+  
   it("sets model null when current_model_id is missing", async () => {
     await writeFile(
       join(sessionDir, "summary.json"),
