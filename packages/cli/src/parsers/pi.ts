@@ -171,8 +171,15 @@ export async function parsePiFile(opts: {
           // toISOString() spelling of the instant.
           const compactionAt = canonicalInstant(obj.timestamp);
           if (!sessionId || typeof obj.id !== "string" || !obj.id ||
-            compactionAt === null ||
             !obj.usage || typeof obj.usage !== "object") continue;
+          if (compactionAt === null) {
+            // Same honesty as the message branch: a billed compaction whose
+            // instant cannot be read is a counted skip, not a silent drop.
+            if (!isAllZero(normalizePiUsage(obj.usage as Record<string, unknown>))) {
+              skippedNoTimestamp++;
+            }
+            continue;
+          }
           // Pi copies entry IDs and timestamps when forking into a NEW session
           // header. Scope by the immutable entry tuple, not pathname/header.
           // The timestamp also separates reused short entry IDs in new calls.
