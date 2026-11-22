@@ -12,6 +12,11 @@ export interface OpenCodeFileResult {
   messageKey: string | null;
   lastTotals: TokenDelta | null;
   lastCacheWrite?: number | null;
+  /** True when this message carried a real token increment but no readable
+   * time.completed/time.created. The increment is not lost — lastTotals stays
+   * behind so the next timestamped message inherits it — but the event cannot
+ * be bucketed as written, so the sync warns. */
+  skippedNoTimestamp?: boolean;
 }
 
 export function openCodeAccounting(tokens: TokenDelta, msg: Record<string, unknown>, model: string,
@@ -118,7 +123,7 @@ export async function parseOpenCodeFile(opts: {
   const timestampMs =
     coerceEpochMs(time?.completed) || coerceEpochMs(time?.created);
   if (!timestampMs) {
-    return { delta: null, messageKey, lastTotals };
+    return { delta: null, messageKey, lastTotals, skippedNoTimestamp: true };
   }
 
   // Extract model
