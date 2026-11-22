@@ -11,6 +11,8 @@ import { inclusiveAccounting, decimalCost, accountingLabel } from "../utils/acco
 export interface OpenClawFileResult {
   deltas: ParsedDelta[];
   endOffset: number;
+  /** Messages carrying real usage but no timestamp — counted for the sync warning. */
+  skippedNoTimestamp: number;
 }
 
 /**
@@ -39,9 +41,10 @@ export async function parseOpenClawFile(opts: {
 }): Promise<OpenClawFileResult> {
   const { filePath, startOffset } = opts;
   const deltas: ParsedDelta[] = [];
+  let skippedNoTimestamp = 0;
 
   const st = await stat(filePath).catch(() => null);
-  if (!st?.isFile()) return { deltas, endOffset: startOffset };
+  if (!st?.isFile()) return { deltas, endOffset: startOffset, skippedNoTimestamp };
 
   const endOffset = await jsonlCompleteBound(
     filePath,
@@ -49,7 +52,7 @@ export async function parseOpenClawFile(opts: {
     st.size,
     opts.endBound,
   );
-  if (startOffset >= endOffset) return { deltas, endOffset };
+  if (startOffset >= endOffset) return { deltas, endOffset, skippedNoTimestamp };
 
   const stream = createReadStream(filePath, {
     encoding: "utf8",
@@ -81,7 +84,14 @@ export async function parseOpenClawFile(opts: {
 
       const timestamp =
         typeof obj?.timestamp === "string" ? obj.timestamp : null;
-      if (!timestamp) continue;
+      if (!timestamp) {
+        // Count only a message that carries real usage: a usage-less or
+        // zero-usage event without a timestamp was never a token record.
+        const usageTokens = toNonNegInt(usage.input) + toNonNegInt(usage.cacheWrite) +
+          toNonNegInt(usage.cacheRead) + toNonNegInt(usage.output);
+        if (usageTokens > 0) skippedNoTimestamp++;
+        continue;
+      }
 
       const model =
         typeof msg.model === "string" ? msg.model.trim() : "unknown";
@@ -117,5 +127,5 @@ export async function parseOpenClawFile(opts: {
     stream.destroy();
   }
 
-  return { deltas, endOffset };
+  return { deltas, endOffset, skippedNoTimestamp };
 }

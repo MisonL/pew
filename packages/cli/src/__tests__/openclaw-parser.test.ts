@@ -178,6 +178,7 @@ describe("parseOpenClawFile", () => {
 
     const result = await parseOpenClawFile({ filePath, startOffset: 0 });
     expect(result.deltas).toHaveLength(1);
+    expect(result.skippedNoTimestamp).toBe(1);
   });
 
   it("should handle malformed JSON gracefully", async () => {
