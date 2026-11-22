@@ -63,6 +63,31 @@ describe("parseCopilotOtelFile", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
+  it("counts a usage-bearing span whose timestamp cannot be read", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pew-otel-nots-"));
+    const file = join(dir, "otel.jsonl");
+    await writeFile(file,
+      [otelSpan({ traceId: "t1", spanId: "s1", startTime: undefined }),
+      otelSpan({ traceId: "t2", spanId: "s2" }),
+      otelSpan({ traceId: "t3", spanId: "s3", startTime: "1773657600959000000" }),
+    ].join("\n") + "\n");
+    const result = await parseCopilotOtelFile({ filePath: file, startOffset: 0 });
+    expect(result.deltas).toHaveLength(1);
+    expect(result.deltas[0]!.timestamp).toBe("2026-03-16T10:40:00.959Z");
+    expect(result.skippedNoTimestamp).toBe(2);
+    });
+    
+  it("does not count a zero-usage span without timestamp", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pew-otel-zero-"));
+    const file = join(dir, "otel.jsonl");
+    await writeFile(file, otelSpan({
+      startTime: undefined,
+      attributes: { "gen_ai.provider.name": "github", "gen_ai.usage.input_tokens": 0, "gen_ai.usage.output_tokens": 0 },
+    }) + "\n");
+    const result = await parseCopilotOtelFile({ filePath: file, startOffset: 0 });
+    expect(result.skippedNoTimestamp).toBe(0);
+    });
+  
   it("parses GitHub Copilot GenAI spans with disjoint token fields", async () => {
     const filePath = join(tempDir, "otel.jsonl");
     await writeFile(filePath, `${otelSpan()}\n`);
@@ -275,6 +300,7 @@ describe("parseCopilotOtelFile", () => {
     expect(await parseCopilotOtelFile({ filePath: missing, startOffset: 7 })).toEqual({
       deltas: [],
       endOffset: 7,
+      skippedNoTimestamp: 0,
     });
 
     const filePath = join(tempDir, "otel.jsonl");
@@ -284,6 +310,7 @@ describe("parseCopilotOtelFile", () => {
     expect(await parseCopilotOtelFile({ filePath, startOffset: size })).toEqual({
       deltas: [],
       endOffset: size,
+      skippedNoTimestamp: 0,
     });
   });
 
