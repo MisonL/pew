@@ -129,6 +129,44 @@ describe("openCodeSqliteSessionDriver", () => {
     expect(result.cursor.lastTimeUpdated).toBe(1735689700000);
   });
 
+  it("re-emits a session whose time_updated advanced past the watermark", async () => {
+    // session.time_updated is mutable: an active session is the row at the
+    // previous max, so `time_updated >= ?` re-fetches it every run. Dedup by
+    // id alone dropped it even when messages had been appended, freezing the
+    // session at its first snapshot forever. Only the unchanged boundary row
+    // (same id, time_updated <= watermark) may be skipped.
+    const dbPath = join(tempDir, "opencode.db");
+    await writeFile(dbPath, "fake-sqlite-content");
+    const { ino: dbInode } = await import("node:fs/promises").then((fs) => fs.stat(dbPath));
+    
+    const sessions: SessionRow[] = [
+      { id: "ses-1", project_id: null, title: "Active", time_created: 1735689600000, time_updated: 1735689800000 },
+    ];
+    
+    const driver = createOpenCodeSqliteSessionDriver({
+      dbPath,
+      openSessionDb: () => ({
+        querySessions: () => sessions,
+        querySessionMessages: () => [
+          { session_id: "ses-1", role: "user", time_created: 1735689800000, data: JSON.stringify({ time: { created: 1735689800000 } }) },
+        ],
+        close: () => {},
+      }),
+    });
+    
+    const prevCursor: OpenCodeSqliteSessionCursor = {
+      lastTimeUpdated: 1735689700000,
+      lastProcessedIds: ["ses-1"],
+      inode: dbInode,
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    
+    const result = await driver.run(prevCursor, ctx);
+    expect(result.snapshots).toHaveLength(1);
+    expect(result.snapshots[0].sessionKey).toBe("opencode:ses-1");
+    expect(result.cursor.lastTimeUpdated).toBe(1735689800000);
+  });
+  
   it("resets cursor when inode changes", async () => {
     const dbPath = join(tempDir, "opencode.db");
     await writeFile(dbPath, "fake-sqlite-content");
