@@ -193,7 +193,9 @@ describe("CursorStore", () => {
     // A string offset/size becomes NaN in comparisons and in
     // createReadStream's start option; a non-numeric lastTotals turns the
     // cumulative diff into NaN, which reaches the server after the cursor
-    // already moved past the bytes.
+    // already moved past the bytes. A negative or fractional byte offset is
+    // corruption too: the continuity resolver parks such a cursor at EOF
+    // and the file's new increments are skipped every round.
     const { writeFile } = await import("node:fs/promises");
     const good = { inode:1, offset:10, size:20, mtimeMs:30, updatedAt: "x" };
     await writeFile(
@@ -204,11 +206,13 @@ describe("CursorStore", () => {
           "/good": good,
           "/offset": { ...good, offset: "10" },
           "/size": { ...good, size: "20" },
+          "/negative": { ...good, offset: -1 },
+          "/fractional": { ...good, offset: 10.5 },
           "/totals": { ...good, lastTotals: { inputTokens: "1", cachedInputTokens:0, outputTokens:0, reasoningOutputTokens:0 } },
           "/anchors": { ...good, continuityAnchors: [{ sha256: "a", length: "1" }] },
           "/ctx": { ...good, accountingContext: { provider:5 } },
         },
-        knownFilePaths: { "/good": true, "/offset": true, "/size": true, "/totals": true, "/anchors": true, "/ctx": true },
+        knownFilePaths: { "/good": true, "/offset": true, "/size": true, "/negative": true, "/fractional": true, "/totals": true, "/anchors": true, "/ctx": true },
       }),
     );
     const state = await new CursorStore(tempDir).load();
