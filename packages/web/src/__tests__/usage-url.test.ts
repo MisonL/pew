@@ -45,4 +45,25 @@ describe("buildUsageUrl", () => {
     expect(q.get("includeAccounting")).toBe("project");
     expect(q.get("summaryOnly")).toBe("1");
   });
+
+  it("sends includeAccounting=0 when annotations are switched off", () => {
+    const q = params(buildUsageUrl({
+      days: 7, granularity: "day", tzOffset: 0, includeAccounting: false,
+    }));
+    expect(q.get("includeAccounting")).toBe("0");
+    // The default (undefined) must not send the flag at all: the API
+    // treats an absent param as "full annotations".
+    const plain = params(buildUsageUrl({ days: 7, granularity: "day", tzOffset: 0 }));
+    expect(plain.has("includeAccounting")).toBe(false);
+  });
+
+  it("keeps an explicit to over the days window", () => {
+    // manage-devices passes only days; dashboard's yearData passes
+    // from+to; a to without from must still win over the computed end.
+    const q = params(buildUsageUrl({
+      days: 14, granularity: "half-hour", tzOffset: -480, to: "2026-11-01T00:00:00Z",
+    }));
+    expect(q.get("to")).toBe("2026-11-01T00:00:00Z");
+    expect(q.get("from")).toContain("T");
+  });
 });
