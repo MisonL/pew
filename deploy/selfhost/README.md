@@ -605,10 +605,10 @@ compose up -d`（不带 `--build`）会让运行时 cookie 决策与镜像里的
   DML（如 029 的种子 `INSERT`）必须**不带** norw——带 norw 时各副本独立求值会**分叉**（实测两副本得到
   不同 randomblob），不带时 rqlite 把它改写成字面量再复制，各副本一致。详见 Task 5 的 `isDdlStatement`。
 - 排行榜 revision 用计数器（`leaderboard_revision_seq`）而非随机数，保证副本间收敛。
-- 读的默认一致性是 `?level=weak`（业务读路径）。rqlite 会把 weak 读转发给 leader，因此读
-  一致性等价强一致；`none` 会读到陈旧数据，禁止使用。**两处例外走强读**：KV 缓存的
-  `get()`（`kv-adapter.ts` 的 read-after-write 契约）与迁移账本（`migrate.ts`——读到
-  陈旧账本会重跑不幂等迁移），各自注释里写了理由。
+- 读的默认一致性是 `?level=weak`（业务读路径）：rqlite 会把 weak 读转发给 leader，但按 rqlite 语义仍可能
+  短暂陈旧（选举窗口内），`none` 才是纯本地陈旧读，禁止使用。**迁移账本走强读**（`migrate.ts`——读到
+  陈旧账本会重跑不幂等迁移）。KV 缓存 `get()` 自 2026-11-07 起同为弱读（`kv-adapter.ts`：强读会把每次
+  缓存命中变成一次 Raft 复制写；缓存新鲜度由写后 invalidate()/clear() 与 TTL 保证，陈旧窗口有界）。
 
 ## 验证
 
@@ -679,7 +679,7 @@ bash deploy/selfhost/backup.sh
 # 指定路径（父目录不存在会自动创建）
 bash deploy/selfhost/backup.sh /var/backups/pew/pew.db
 # cron（每天 03:17，失败退出码非零，可接告警）
-17 3 * * * cd /path/to/pew && bash deploy/selfhost/backup.sh /var/backups/pew/backup-$(date +\%F).db
+17 3 * * * cd /path/to/pew && flock -n /tmp/pew-backup.lock bash deploy/selfhost/backup.sh /var/backups/pew/backup-$(date +\%F).db
 ```
 
 注意事项：

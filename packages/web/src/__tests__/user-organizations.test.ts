@@ -237,6 +237,7 @@ describe("GET /api/organizations/[orgId]/members", () => {
       params: Promise.resolve({ orgId: "org-1" }),
     });
     expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
     const json = await res.json();
     expect(json.members).toHaveLength(2);
     expect(json.members[0]).toEqual({

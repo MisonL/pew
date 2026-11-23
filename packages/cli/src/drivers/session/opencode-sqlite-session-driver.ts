@@ -78,12 +78,18 @@ export function createOpenCodeSqliteSessionDriver(
       }
 
       try {
-        // Query uses >= to avoid missing same-millisecond rows.
-        // We dedup previously-processed IDs from the prior batch.
+        // Query uses >= so rows written in the watermark millisecond are not
+        // missed. `time_updated` is mutable: an active session stays the row
+        // at the previous max, so it is re-fetched every run. Dedup by id
+        // alone would freeze it at its first snapshot; skip only the
+        // unchanged boundary row (same id, time_updated not past the
+        // watermark). A newer time_updated means new messages and must emit.
         const rawSessions = handle.querySessions(lastTimeUpdated);
         const sessions =
           prevProcessedIds.size > 0
-            ? rawSessions.filter((s) => !prevProcessedIds.has(s.id))
+            ? rawSessions.filter(
+                (s) => !(prevProcessedIds.has(s.id) && s.time_updated <= lastTimeUpdated),
+              )
             : rawSessions;
 
         let snapshots: import("@pew/core").SessionSnapshot[] = [];

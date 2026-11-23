@@ -17,7 +17,7 @@
 - **rqlite 版本 ≥ v10.3.3**。v10.3.3 才修复「事务请求中某条语句 **prepare** 失败时不回滚」（CHANGELOG PR #2792，2026-09-13）。实测 10.3.2 下两条 INSERT 夹一条缺表语句，前两条仍提交；10.3.3 正确回滚为 0 行。compose 固定 `rqlite/rqlite:10.5.3`（≥ 下限）。
 - **参数编码必须是扁平数组** `[sql, p1, p2]`，不是嵌套 `[sql, [p1,p2]]`。嵌套形式在 `/db/query` 下静默返回空结果。
 - **batch 必须走 `/db/request?transaction=true&associative&timings`**，不能用 `/db/execute`（普通 SELECT 的行会静默丢失）。
-- **业务读显式 `?level=weak`**（rqlite 会把 weak 读转发给 leader，等价强一致）。**禁止用 `none`**。KV 缓存 `get()` 与迁移账本两处走 `?level=strong`（read-after-write 契约与迁移幂等，见交付代码注释）。
+- **业务读显式 `?level=weak`**（rqlite 会把 weak 读转发给 leader）。**禁止用 `none`**。迁移账本走 `?level=strong`（迁移幂等，`migrate.ts`）；KV 缓存 `get()` 自 2026-11-07（4aaad80a）起同为弱读——强读会把每次缓存命中变成一次 Raft 复制写，新鲜度由 invalidate()/clear() 与 TTL 保证（`kv-adapter.ts` 注释）。
 - **DDL 一律带 `?norwtime&norwrandom`**；**业务 DML 与迁移里的 DML 一律不带**（走默认改写，保证跨副本确定）。关键：**迁移文件里的 DDL 与 DML 绝不能放进同一个 `?norw*` 请求**——否则 DML 的各副本独立求值会分叉（实测 029 种子 `INSERT ... randomblob(16)` 在两副本得到不同值）。Task 5 的 `applyMigrations` 用 `isDdlStatement` 按语句分流。
 - **rqlite 必须带 `-fk`**（外键默认关闭，schema 有 12 处 `ON DELETE CASCADE`）。
 - **不改上游文件**：`packages/worker/**`、`packages/worker-read/**`、`lib/invite.ts`、`lib/r2.ts`、`next.config.ts`、`bun.lock`、根 `package.json`、`biome.json`、`lib/rate-limit.ts`。本计划只改两个上游文件：`lib/d1.ts` 与 `vitest.config.ts`。（实现更正 2026-10-17：原清单还列了 `Dockerfile` 与 `cli.ts`——两者已被 Plan 1/Plan 2 实际改动，见 docs 52 §3.2；本句的"只改两个"仅指**本计划（Plan 1）**范围内的 Web 侧改动，不含后续计划的 `auth.ts`/`proxy.ts` 等。）
@@ -3323,7 +3323,7 @@ voter/reachable，且新节点能读到扩容前写入的数据。若要走 comp
   DML（如 029 的种子 `INSERT`）必须**不带** norw——带 norw 时各副本独立求值会**分叉**（实测两副本得到
   不同 randomblob），不带时 rqlite 把它改写成字面量再复制，各副本一致。详见 Task 5 的 `isDdlStatement`。
 - 排行榜 revision 用计数器（`leaderboard_revision_seq`）而非随机数，保证副本间收敛。
-- 读的默认一致性是 `?level=weak`（业务读路径）。rqlite 会把 weak 读转发给 leader，因此读一致性等价强一致；`none` 会读到陈旧数据，禁止使用。KV 缓存 `get()` 与迁移账本走 `?level=strong`（read-after-write 契约 / 迁移幂等，见交付代码注释）。
+- 读的默认一致性是 `?level=weak`（业务读路径）。rqlite 会把 weak 读转发给 leader；`none` 会读到陈旧数据，禁止使用。迁移账本走 `?level=strong`（迁移幂等）。KV 缓存 `get()` 自 2026-11-07（4aaad80a）起同为弱读，理由见 `kv-adapter.ts` 注释（强读让每次缓存命中付一次 Raft 写；invalidate/clear + TTL 已给出有界的陈旧窗口）。
 
 ## 验证
 

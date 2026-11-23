@@ -545,8 +545,8 @@ export default function AdminStoragePage() {
                 </div>
               )}
 
-              {/* User table */}
-              {filteredUsers.length === 0 ? (
+                           {/* User table — a failed load is not "no users" (banner above) */}
+              {error !== null ? null : filteredUsers.length === 0 ? (
                 <Empty
                   title={search ? "No users match your filter." : "No users found."}
                   className="rounded-basalt-card bg-basalt-secondary p-8"

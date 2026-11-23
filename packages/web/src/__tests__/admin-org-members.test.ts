@@ -122,6 +122,7 @@ describe("admin organization member management", () => {
       const res = await GET(makeJsonRequest("GET"), makeParams("org-1"));
       expect(res.status).toBe(200);
       expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+      expect(res.headers.get("Cache-Control")).toBe("private, no-store");
       const json = await res.json();
       expect(json.members).toHaveLength(1);
       expect(json.members[0].user.name).toBe("Alice");

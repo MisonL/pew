@@ -7,6 +7,7 @@ import type { UsageRow, UsageSummary } from "@/lib/usage-transforms";
 import type { DailyPoint, SourceAggregate, ModelAggregate } from "@/lib/usage-transforms";
 import { useFetchData } from "@/hooks/use-fetch-data";
 import { useTzOffset } from "@/hooks/use-tz-offset";
+import { buildUsageUrl } from "@/lib/usage-url";
 
 // ---------------------------------------------------------------------------
 // Re-export types and helpers for backward compatibility
@@ -85,31 +86,17 @@ export function useUsageData(
 
   const url = useMemo(() => {
     if (!enabled) return null;
-    // When explicit `from` is provided, use it directly; otherwise compute from `days`
-    let fromStr: string;
-    if (fromDate) {
-      fromStr = fromDate;
-    } else {
-      const d = new Date();
-      d.setUTCDate(d.getUTCDate() - days);
-      fromStr = d.toISOString().slice(0, 10);
-    }
-
-    const params = new URLSearchParams({
-      from: fromStr,
+    return buildUsageUrl({
+      days,
+      ...(fromDate !== undefined ? { from: fromDate } : {}),
+      ...(toDate !== undefined ? { to: toDate } : {}),
       granularity,
+      tzOffset,
+      ...(source !== undefined ? { source } : {}),
+      ...(deviceId !== undefined ? { deviceId } : {}),
+      includeAccounting,
+      summaryOnly,
     });
-    if (toDate) params.set("to", toDate);
-    if (source) params.set("source", source);
-    if (deviceId) params.set("deviceId", deviceId);
-    if (granularity === "day") {
-      params.set("tzOffset", String(tzOffset));
-    }
-    if (includeAccounting === false) params.set("includeAccounting", "0");
-    else if (includeAccounting === "project") params.set("includeAccounting", "project");
-    if (summaryOnly) params.set("summaryOnly", "1");
-
-    return `/api/usage?${params.toString()}`;
   }, [days, fromDate, toDate, source, deviceId, granularity, tzOffset, enabled, includeAccounting, summaryOnly]);
 
   const { data, loading, error, refetch } = useFetchData<UsageData>(url, { enabled });

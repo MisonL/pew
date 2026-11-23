@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { fetcher } from "@/lib/fetcher";
 import { Building2, Users, Check, Loader2, X } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ErrorBanner } from "@/components/ui/error-banner";
 import { Button } from "@nocoo/basalt/components/button";
 import {
   Dialog,
@@ -94,6 +95,7 @@ export default function OrganizationsPage() {
   }
   wasMembersOpenRef.current = membersModalOrg !== null;
   const [loadingMembers, setLoadingMembers] = useState(false);
+  const [membersError, setMembersError] = useState<string | null>(null);
 
   // ---------------------------------------------------------------------------
   // Join / Leave
@@ -162,14 +164,27 @@ export default function OrganizationsPage() {
 
   const openMembersModal = async (org: Organization) => {
     setMembersModalOrg(org);
+    setMembersError(null);
     setMembers([]);
     setLoadingMembers(true);
     membersOrgRef.current = org.id;
     try {
       const res = await fetch(`/api/organizations/${org.id}/members`);
-      if (res.ok && membersOrgRef.current === org.id) {
+      if (!res.ok) {
+        // Without this the dialog showed "No members yet." for an
+        // organization whose member list merely failed to load — the same
+        // guard the admin page's dialog already has.
+        throw new Error(String(res.status));
+      }
+      if (membersOrgRef.current === org.id) {
         const data = await res.json();
         setMembers(data.members || []);
+      }
+    } catch (err) {
+      // A fetch rejection (offline/DNS) is a failure too; letting it fall
+      // through left an unhandled rejection and still rendered "No members".
+      if (membersOrgRef.current === org.id) {
+        setMembersError(err instanceof Error ? err.message : "Failed to list members");
       }
     } finally {
       if (membersOrgRef.current === org.id) setLoadingMembers(false);
@@ -179,6 +194,7 @@ export default function OrganizationsPage() {
   const closeMembersModal = () => {
     setMembersModalOrg(null);
     setMembers([]);
+    setMembersError(null);
     membersOrgRef.current = null;
   };
 
@@ -348,6 +364,8 @@ export default function OrganizationsPage() {
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                   </div>
+                ) : membersError !== null ? (
+                  <ErrorBanner messagePrefix="Failed to list members" error={membersError} />
                 ) : members.length === 0 ? (
                   <Empty title="No members yet." />
                 ) : (

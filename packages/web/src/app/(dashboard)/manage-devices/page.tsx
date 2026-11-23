@@ -36,6 +36,7 @@ import { useRestoreDialogFocus } from "@/lib/restore-dialog-focus";
 import { DevicesEmptyState } from "@/components/dashboard/empty-state";
 import type { DeviceSummary } from "@pew/core";
 import { ConfirmDialog } from "@nocoo/basalt/components/confirm-dialog";
+import { failedToLoad } from "@/lib/fetch-state";
 import {
   Tooltip,
   TooltipContent,
@@ -687,8 +688,9 @@ export default function ManageDevicesPage() {
         <Banner variant="error" description={error} />
       )}
 
-      {/* Empty state */}
-      {devices.length === 0 && (
+      {/* Empty state — failed load ≠ no devices: the banner above already
+          said so; "pair a device" under it lied about devices that exist. */}
+      {devices.length === 0 && !failedToLoad(data, error) && (
         <DevicesEmptyState />
       )}
 

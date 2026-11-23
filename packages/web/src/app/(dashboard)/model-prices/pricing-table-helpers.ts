@@ -110,6 +110,20 @@ export function formatPrice(value: number | null): string {
   return `$${value.toFixed(2)}`;
 }
 
+/**
+ * "Updated" column: render the local calendar day of a UTC instant.
+ *
+ * The stored value is an ISO string with millisecond precision (the pricing
+ * sync writes toISOString()). Slicing the first 10 characters shows the UTC
+ * day, which is the *previous* day for anyone east of UTC after 16:00 — the
+ * row for a price that updated "tonight" read as yesterday.
+ */
+export function formatUpdatedDay(updatedAt: string): string {
+  const d = new Date(updatedAt);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 export function formatContext(value: number | null): string {
   if (value == null) return "—";
   if (value >= 1_000_000) return `${value / 1_000_000}M`;

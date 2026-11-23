@@ -58,7 +58,7 @@ function timestampFromSpan(span: Record<string, unknown>): string | null {
   return null;
 }
 
-function extractUsageDelta(span: Record<string, unknown>): ParsedDelta | null {
+function extractUsageDelta(span: Record<string, unknown>): ParsedDelta | { missingTimestamp: true } | null {
   if (span.type !== "span") return null;
   const attrs = span.attributes as Record<string, unknown> | undefined;
   if (!attrs) return null;
@@ -85,7 +85,9 @@ function extractUsageDelta(span: Record<string, unknown>): ParsedDelta | null {
   if (isAllZero(tokens)) return null;
 
   const timestamp = timestampFromSpan(span);
-  if (!timestamp) return null;
+  // Real usage the envelope cannot timestamp: distinct from a
+  // non-usage span so the caller can count it instead of losing it.
+  if (!timestamp) return { missingTimestamp: true };
   const fallbackName = typeof span.name === "string"
     ? span.name.replace(/^chat\s+/i, "")
     : "unknown";
@@ -122,13 +124,14 @@ export async function parseCopilotOtelFile(opts: {
 }): Promise<CopilotOtelFileResult> {
   const { filePath, startOffset } = opts;
   const deltas: ParsedDelta[] = [];
+  let skippedNoTimestamp = 0;
   const st = await stat(filePath).catch(() => null);
   if (!st?.isFile()) {
-    return { deltas, endOffset: startOffset };
+    return { deltas, endOffset: startOffset, skippedNoTimestamp };
   }
   const bound = jsonlStreamBound(st.size, opts.endBound);
   if (startOffset >= bound) {
-    return { deltas, endOffset: bound };
+    return { deltas, endOffset: bound, skippedNoTimestamp };
   }
 
   // `end` is inclusive — pin the read to the snapshot bound.
@@ -151,8 +154,11 @@ export async function parseCopilotOtelFile(opts: {
     const traceId = typeof span.traceId === "string" ? span.traceId : "";
     const spanId = typeof span.spanId === "string" ? span.spanId : "";
     const id = traceId || spanId ? `${traceId}:${spanId}` : null;
-    const delta = extractUsageDelta(span);
-    // Register the span only when it actually produced usage. Registering
+    const extracted = extractUsageDelta(span);
+    const missingTimestamp = extracted !== null && "missingTimestamp" in extracted;
+    const delta: ParsedDelta | null =
+      extracted !== null && !missingTimestamp ? extracted : null;
+    if (missingTimestamp) skippedNoTimestamp++;
     // every span meant a non-usage span that shares an id with a later usage
     // span (same trace/span pair, different export batch) silently dropped the
     // usage; and within one parse only usage-bearing spans can double-count.
@@ -203,5 +209,5 @@ export async function parseCopilotOtelFile(opts: {
   }
 
   // Trailing partial line is NOT counted in endOffset
-  return { deltas, endOffset: clampedJsonlEndOffset(startOffset, bound, completeBytes) };
+  return { deltas, endOffset: clampedJsonlEndOffset(startOffset, bound, completeBytes), skippedNoTimestamp };
 }

@@ -88,6 +88,17 @@ function responseItem(role: string): string {
 // Tests
 // ---------------------------------------------------------------------------
 
+describe("codex missing timestamps", () => {
+  it("counts token_count rows whose timestamp is absent", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pew-codex-nots-"));
+    const file = join(dir, "rollout.jsonl");
+    const row = JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } } } });
+    await writeFile(file, sessionMeta() + "\n" + turnContext("gpt-5") + "\n" + row + "\n");
+    const result = await parseCodexFile({ filePath: file, startOffset: 0 });
+    expect(result.skippedNoTimestamp).toBe(1);
+  });
+});
+
 describe("parseCodexFile", () => {
   let tempDir: string;
 

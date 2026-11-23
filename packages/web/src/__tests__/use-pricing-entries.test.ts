@@ -150,4 +150,48 @@ describe("usePricingEntries — module cache behaviour", () => {
     });
     expect(updatedFetch).toHaveBeenCalledTimes(1);
   });
+
+  it("invalidate does not swallow the refetch behind an in-flight load", async () => {
+    // Force-sync lands while the original load is still on the wire. The
+    // old code only set cachedAt=0: with inflight still non-null no new
+    // request started, and the pre-sync response then "refreshed" the
+    // cache with the stale payload. A fresh force-sync could not show the
+    // new prices until the next subscriber remount — the user pressed
+    // sync and kept seeing yesterday's prices.
+    let resolveOld!: (v: unknown) => void;
+    let resolveNew!: (v: unknown) => void;
+    const oldP = new Promise((resolve) => { resolveOld = resolve; });
+    const newP = new Promise((resolve) => { resolveNew = resolve; });
+    const stalePayload = {
+      entries: [],
+      meta: { lastSync: "2020-01-01T00:00:00.000Z", entryCount: 0 },
+    };
+    const fetchMock = vi.fn()
+      .mockReturnValueOnce(oldP)
+      .mockReturnValue(newP);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { __triggerLoadForTests, __getCacheForTests } = await import(
+      "@/hooks/use-pricing-entries"
+    );
+    const first = __triggerLoadForTests();
+
+    invalidatePricingEntries();
+
+    // Invalidate must have started its own request despite the in-flight one.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // The pre-invalidate response arrives with the stale payload: it may
+    // resolve its own caller, but it must not populate the cache.
+    resolveOld({ ok: true, json: () => Promise.resolve(stalePayload) });
+    await first;
+    expect(__getCacheForTests().data).toBeNull();
+
+    // The invalidating response does land.
+    resolveNew(mockFetchSuccess()());
+    await vi.waitFor(() => {
+      expect(__getCacheForTests().data).not.toBeNull();
+    });
+    expect(__getCacheForTests().data!.entries[0]!.model).toBe("test-model");
+  });
 });

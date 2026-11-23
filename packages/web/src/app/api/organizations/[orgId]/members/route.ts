@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
 import { unauthorizedResponse } from "@/lib/api-responses";
 import { getDbRead } from "@/lib/db";
+import { privateJson } from "@/lib/private-json";
 
 export async function GET(
   request: Request,
@@ -45,7 +46,7 @@ export async function GET(
       },
     }));
 
-    return NextResponse.json({ members });
+    return privateJson({ members });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     if (msg.includes("no such table")) {

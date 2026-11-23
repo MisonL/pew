@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { resolveAdmin } from "@/lib/admin";
 import { readJsonBody } from "@/lib/request-json";
 import { getDbRead, getDbWrite } from "@/lib/db";
+import { privateJson } from "@/lib/private-json";
 
 // ---------------------------------------------------------------------------
 // Validation helpers
@@ -43,7 +44,7 @@ export async function GET(
     // Get member count
     const countResult = await dbRead.countOrgMembers(orgId);
 
-    return NextResponse.json({
+    return privateJson({
       id: org.id,
       name: org.name,
       slug: org.slug,
@@ -182,7 +183,7 @@ export async function PATCH(
     // Get member count
     const countResult = await dbRead.countOrgMembers(orgId);
 
-    return NextResponse.json({
+    return privateJson({
       id: updated.id,
       name: updated.name,
       slug: updated.slug,
@@ -236,7 +237,7 @@ export async function DELETE(
     // Delete organization (CASCADE will remove memberships)
     await dbWrite.execute("DELETE FROM organizations WHERE id = ?", [orgId]);
 
-    return NextResponse.json({ success: true });
+    return privateJson({ success: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     if (msg.includes("no such table")) {

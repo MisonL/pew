@@ -8,6 +8,7 @@ import {
   formatContext,
   providerIconPath,
   OPENROUTER_FALLBACK_ICON,
+  formatUpdatedDay,
 } from "../pricing-table-helpers";
 import type { DynamicPricingEntryDto } from "@/lib/rpc-types";
 
@@ -369,6 +370,23 @@ describe("pricing-table-helpers", () => {
       // Sort by displayName (both null) → primary 0 → fall to provider compareString (both null → 0) → model.
       const sorted = sortEntries(data, "displayName", "asc");
       expect(sorted.map((e) => e.model)).toEqual(["aaa-model", "zzz-model"]);
+    });
+  });
+
+  describe("formatUpdatedDay", () => {
+    it("renders the LOCAL calendar day, not the UTC slice", () => {
+      // 2026-11-21T23:30Z is already the 22nd for UTC+8 users; the old
+      // updatedAt.slice(0,10) showed "2026-11-21" — yesterday's date for a
+      // price that updated tonight.
+      const rendered = formatUpdatedDay("2026-11-21T23:30:00.000Z");
+      const expectLocal = new Date("2026-11-21T23:30:00.000Z").toLocaleDateString("en-US", {
+        month: "short", day: "numeric", year: "numeric",
+      });
+      expect(rendered).toBe(expectLocal);
+    });
+
+    it("returns an em dash for an unparseable timestamp", () => {
+      expect(formatUpdatedDay("not-a-date")).toBe("—");
     });
   });
 

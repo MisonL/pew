@@ -71,6 +71,7 @@ export const openCodeJsonTokenDriver: FileTokenDriver<OpenCodeCursor> = {
       ...(_ctx.collectAccounting ? { includeAccounting: true, lastCacheWrite: r.lastCacheWrite } : {}) });
     return {
       deltas: result.delta ? [result.delta] : [],
+      skippedNoTimestamp: result.skippedNoTimestamp ? 1 : 0,
       messageKey: result.messageKey,
       lastTotals: result.lastTotals,
       ...(result.lastCacheWrite !== undefined ? { lastCacheWrite: result.lastCacheWrite } :

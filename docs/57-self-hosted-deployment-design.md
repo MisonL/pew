@@ -224,7 +224,7 @@ rqlite 用 statement-based replication（语句复制到各副本各自执行）
 
 **读一致性（实测修正）**：原以为 rqlite 默认 `weak` 可能读到陈旧数据，**实测不成立**——`weak`/`strong` 在 follower 上都**转发给 leader** 应答（`X-Rqlite-Served-By` 实证），只有 `level=none` 才是本地读。因此规定：
 
-- 适配层统一显式 `?level=weak`（读始终来自 leader，一致性等价 strong；写从 follower 也自动转发 leader，d1-http 可连地址池中任一节点）。（实现更正 2026-10-17：**两处例外走 strong**——KV 缓存 `get()`（`kv-adapter.ts:53-57`，read-after-write 契约）与迁移账本（`migrate.ts:171-172`，读陈旧账本会重跑不幂等迁移）。）
+- 适配层统一显式 `?level=weak`（读始终来自 leader，一致性等价 strong；写从 follower 也自动转发 leader，d1-http 可连地址池中任一节点）。（实现更正 2026-10-17：**两处例外走 strong**——KV 缓存 `get()`（`kv-adapter.ts:53-57`，read-after-write 契约）与迁移账本（`migrate.ts:171-172`，读陈旧账本会重跑不幂等迁移）。）（再更正 2026-11-22：KV 缓存 `get()` 自 4aaad80a 起改回 weak——强读让每次缓存命中付一次 Raft 复制写；例外只剩迁移账本。）
 - **不使用 `none`**：排行榜「读 revision → 构建 → 再读 revision」（`leaderboard-snapshot.ts:123/143`）与 web 授权比对（`route.ts:145,185`）都依赖 revision 相等判断，本地陈旧读会反复触发 "Leaderboard changed during read"。
 - 代价：任何节点都是「转发器」，读延迟 = 本地读 + 转发；无本地读横向扩展。未来若需读扩展，须先改造 revision 一致性逻辑——列为远期方向，不在本设计内。
 - 副作用（正面）：follower 上的写与读都自动转发，**地址池轮换无需区分读写端点**；故障切换沿用已实测的 1.85s 自动切换。
@@ -277,7 +277,7 @@ CREATE TABLE kv_cache (
 - **读服务要能水平扩**：多个 read 实例必须共享同一份缓存，否则同一 key 在多实例间各存一份、缓存失效把它们一起清空时行为不一致；放主库后 read 容器完全无状态，随便加副本。
 - **备份单点**：缓存随 rqlite 一起进出快照，无第二个备份面。
 - 代价：缓存写走 Raft 共识。但 KV 写只在**刷新时**发生（定价同步、seasons 列表刷新、快照重建），不是每请求，量级低；`cache.clear` 最多 10000 条删除需**压测**（可整批一个事务提交，减少 Raft 轮次）。
-- 缓存读（`get`）默认走 `weak`（读 leader），与 §4.1 读一致性规定一致。（实现更正 2026-10-17：交付实现为 **strong**——`kv-adapter.ts:53-57` 为 read-after-write 契约显式 `.strong()`，与 §4.1 的例外说明一致。）
+- 缓存读（`get`）默认走 `weak`（读 leader），与 §4.1 读一致性规定一致。（实现更正 2026-10-17：交付实现为 **strong**——`kv-adapter.ts:53-57` 为 read-after-write 契约显式 `.strong()`，与 §4.1 的例外说明一致。）（再更正 2026-11-22：现实现为 weak，见上方 §4.1 再更正。）
 
 **读侧过期过滤**：`kv_cache.expires_at` 必须在 `get` 时过滤，否则 TTL 形同虚设。写入时把 `expirationTtl`（秒）换算为绝对时间戳。
 

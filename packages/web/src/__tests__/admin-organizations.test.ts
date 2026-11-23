@@ -91,6 +91,7 @@ describe("GET /api/admin/organizations", () => {
 
     const res = await GET(makeJsonRequest("GET", "/api/admin/organizations"));
     expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
     const json = await res.json();
     expect(json.organizations).toHaveLength(2);
     expect(json.organizations[0]).toEqual({

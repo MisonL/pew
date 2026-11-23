@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { resolveAdmin } from "@/lib/admin";
 import { readJsonBody } from "@/lib/request-json";
 import { getDbRead, getDbWrite } from "@/lib/db";
+import { privateJson } from "@/lib/private-json";
 
 // ---------------------------------------------------------------------------
 // GET — list all settings
@@ -24,7 +25,7 @@ export async function GET(request: Request) {
 
   try {
     const results = await dbRead.getAllAppSettings();
-    return NextResponse.json({ settings: results });
+    return privateJson({ settings: results });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     if (msg.includes("no such table")) {
@@ -96,7 +97,7 @@ export async function PUT(request: Request) {
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
       [key, value],
     );
-    return NextResponse.json({ key, value });
+    return privateJson({ key, value });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     if (msg.includes("no such table")) {

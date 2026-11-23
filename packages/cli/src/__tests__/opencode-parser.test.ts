@@ -204,6 +204,7 @@ describe("parseOpenCodeFile", () => {
     const result = await parseOpenCodeFile({ filePath, lastTotals: null });
     expect(result.delta).toBeNull();
     expect(result.messageKey).toBe("ses_001|msg_001");
+    expect(result.skippedNoTimestamp).toBe(true);
   });
 
   it("should return null delta when time object is missing entirely", async () => {

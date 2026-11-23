@@ -171,6 +171,11 @@ services:
       CF_D1_API_TOKEN: ${CF_D1_API_TOKEN}
       RQLITE_USERNAME: ${RQLITE_USERNAME:-}
       RQLITE_PASSWORD: ${RQLITE_PASSWORD:-}
+    # Same race as the scheduler: node-runtime.ts forces exit at 10 s and
+    # Docker's default stop timeout is 10 s, so a drain finishing near the
+    # bound raced SIGKILL (an in-flight request got a connection reset and
+    # the exit code was unreadable). Give the app's bound room.
+    stop_grace_period: 20s
     depends_on:
       rqlite: { condition: service_healthy, required: false }
       rqlite-1: { condition: service_healthy, required: false }
@@ -205,6 +210,11 @@ services:
       RQLITE_USERNAME: ${RQLITE_USERNAME:-}
       RQLITE_PASSWORD: ${RQLITE_PASSWORD:-}
       WORKER_READ_SECRET: ${WORKER_READ_SECRET}
+    # Same race as the scheduler: node-runtime.ts forces exit at 10 s and
+    # Docker's default stop timeout is 10 s, so a drain finishing near the
+    # bound raced SIGKILL (an in-flight request got a connection reset and
+    # the exit code was unreadable). Give the app's bound room.
+    stop_grace_period: 20s
     depends_on:
       migrate: { condition: service_completed_successfully }
     healthcheck:
@@ -232,6 +242,11 @@ services:
       RQLITE_USERNAME: ${RQLITE_USERNAME:-}
       RQLITE_PASSWORD: ${RQLITE_PASSWORD:-}
       WORKER_SECRET: ${WORKER_SECRET}
+    # Same race as the scheduler: node-runtime.ts forces exit at 10 s and
+    # Docker's default stop timeout is 10 s, so a drain finishing near the
+    # bound raced SIGKILL (an in-flight request got a connection reset and
+    # the exit code was unreadable). Give the app's bound room.
+    stop_grace_period: 20s
     depends_on:
       migrate: { condition: service_completed_successfully }
     healthcheck:

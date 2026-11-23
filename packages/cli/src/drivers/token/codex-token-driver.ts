@@ -244,6 +244,7 @@ export const codexTokenDriver: FileTokenDriver<CodexCursor> = {
     return {
       deltas: result.deltas,
       endOffset: result.endOffset,
+      skippedNoTimestamp: result.skippedNoTimestamp,
       lastTotals: result.lastTotals,
       lastModel: result.lastModel,
       scopeId,

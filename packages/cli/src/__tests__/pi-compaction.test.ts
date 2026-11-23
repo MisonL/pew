@@ -26,6 +26,22 @@ describe("Pi compaction accounting", () => {
     await writeFile(filePath, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
   }
 
+  it("counts a compaction with real usage but no parsable timestamp", async () => {
+    // The message branch counts skippedNoTimestamp; the compaction branch
+    // used to drop the same shape silently, so a billed compaction event
+    // with a corrupt ts vanished without a warning.
+    await fixture([header, model, { ...compact, id: "compact-no-ts", timestamp: "not-a-date" }]);
+    const result = await parsePiFile({ filePath, startOffset: 0 });
+    expect(result.deltas).toHaveLength(0);
+    expect(result.skippedNoTimestamp).toBe(1);
+  });
+  
+  it("does not count a zero-usage compaction without timestamp", async () => {
+    await fixture([header, model, { ...compact, id: "zero-no-ts", usage: { input: 0, output: 0 }, timestamp: undefined }]);
+    const result = await parsePiFile({ filePath, startOffset: 0 });
+    expect(result.skippedNoTimestamp).toBe(0);
+  });
+  
   it("captures top-level usage at compaction completion without changing the token convention", async () => {
     await fixture([header, model, compact]);
     const result = await parsePiFile({ filePath, startOffset: 0 });

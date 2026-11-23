@@ -844,6 +844,10 @@ export default function AdminOrganizationsPage() {
 
       {/* Table */}
       {!loading && (
+        // Failed load ≠ empty list (same guard as teams; the banner above
+        // already reported it) — the create form under "No organizations
+        // yet" invited duplicate creates against a live server.
+        error !== null ? null :
         rows.length === 0 ? (
             <Empty
               title="No organizations yet. Create one to get started."

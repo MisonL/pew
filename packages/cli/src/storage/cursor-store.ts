@@ -47,9 +47,17 @@ function isFileCursor(value: unknown): value is FileCursor {
   }
   // Resume arithmetic: a non-numeric offset becomes NaN in comparisons and
   // inside createReadStream's start option, and a string offset or size
-  // silently skips or replays the file.
+  // silently skips or replays the file. Byte positions and sizes must also
+  // be non-negative integers: a corrupted negative/fractional offset makes
+  // the continuity resolver park the file at EOF every round, silently
+  // skipping new increments — dropping the entry instead routes recovery
+  // through the cursor-loss branch (knownFilePaths → full rescan), which
+  // re-reads the file without losing the append window.
   for (const key of ["mtimeMs", "size", "offset", "lastCacheWrite"]) {
     if (value[key] !== undefined && value[key] !== null && !isFiniteNumber(value[key])) return false;
+  }
+  for (const key of ["size", "offset"]) {
+    if (typeof value[key] === "number" && (!Number.isInteger(value[key]) || (value[key] as number) < 0)) return false;
   }
   if (value.updatedAt !== undefined && typeof value.updatedAt !== "string") return false;
   if (value.continuityBroken !== undefined && typeof value.continuityBroken !== "boolean") return false;
@@ -57,6 +65,7 @@ function isFileCursor(value: unknown): value is FileCursor {
     if (!Array.isArray(value.continuityAnchors)) return false;
     for (const anchor of value.continuityAnchors) {
       if (!isRecord(anchor) || typeof anchor.sha256 !== "string" || !isFiniteNumber(anchor.length)) return false;
+      if (typeof anchor.length === "number" && (!Number.isInteger(anchor.length) || anchor.length < 0)) return false;
     }
   }
   if (!isTokenTotals(value.lastTotals)) return false;
