@@ -31,6 +31,11 @@ const STALE_MS = 5 * 60 * 1000;
 
 let cache: CacheState = { data: null, loading: false, error: null, cachedAt: 0 };
 let inflight: Promise<PricingEntriesPayload> | null = null;
+// Every invalidation bumps this. An in-flight response from before the bump
+// may resolve its own caller but must not populate the cache — otherwise a
+// force-sync whose refetch raced the pre-sync response shows stale prices
+// as if they were fresh.
+let generation = 0;
 const subscribers = new Set<() => void>();
 
 function notify() {
@@ -41,28 +46,36 @@ function notify() {
 
 async function loadOnce(): Promise<PricingEntriesPayload> {
   if (inflight) return inflight;
+  const myGen = generation;
   cache = { ...cache, loading: true, error: null };
   notify();
 
-  inflight = (async () => {
+  const promise = (async () => {
     try {
       const res = await fetch("/api/pricing/models");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as PricingEntriesPayload;
-      cache = { data: json, loading: false, error: null, cachedAt: Date.now() };
-      notify();
+      if (myGen === generation) {
+        cache = { data: json, loading: false, error: null, cachedAt: Date.now() };
+        notify();
+      }
       return json;
     } catch (err) {
-      const message = toErrorMessage(err);
-      cache = { ...cache, loading: false, error: message };
-      notify();
+      if (myGen === generation) {
+        const message = toErrorMessage(err);
+        cache = { ...cache, loading: false, error: message };
+        notify();
+      }
       throw err;
     } finally {
-      inflight = null;
+      // Only the current generation's request owns the slot; an invalidated
+      // response clearing it would race the refetch that replaced it.
+      if (myGen === generation) inflight = null;
     }
   })();
 
-  return inflight;
+  inflight = promise;
+  return promise;
 }
 
 interface UsePricingEntriesResult {
@@ -79,11 +92,15 @@ interface UsePricingEntriesResult {
  */
 export function invalidatePricingEntries(): void {
   cache = { ...cache, cachedAt: 0 };
-  if (!inflight) {
-    void loadOnce().catch(() => {
-      // Errors are surfaced via loadOnce's own state update; ignore here.
-    });
-  }
+  generation++;
+  // Start the refetch even when a load is in flight: that response predates
+  // this invalidation and (per the generation check in loadOnce) can no
+  // longer fill the cache. Skipping here let a force-sync landing during a
+  // slow fetch silently keep showing the pre-sync prices.
+  inflight = null;
+  void loadOnce().catch(() => {
+    // Errors are surfaced via loadOnce's own state update; ignore here.
+  });
 }
 
 /**
@@ -124,6 +141,7 @@ export function usePricingEntries(): UsePricingEntriesResult {
 export function __resetPricingEntriesCacheForTests(): void {
   cache = { data: null, loading: false, error: null, cachedAt: 0 };
   inflight = null;
+  generation++;
   subscribers.clear();
 }
 
