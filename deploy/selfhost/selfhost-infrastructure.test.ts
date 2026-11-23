@@ -43,12 +43,20 @@ describe("rqlite auth wiring (spec Plan 3 §3.1.2)", () => {
   // pattern as deterministic-revision.test.ts and render-auth.test.ts.
   const compose = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "docker-compose.yml"), "utf8");
 
-  it("gives the scheduler a stop window longer than its own forced-exit bound", () => {
+  it("gives every node-runtime service a stop window longer than the forced-exit bound", () => {
     // node-runtime.ts forces exit after 10 s. Docker's default stop
     // timeout is the same 10 s, so a drain that finished at the edge raced
-    // SIGKILL and the app never reported its exit code.
+    // SIGKILL and the app never reported its exit code. The scheduler got
+    // 20s first; read/ingest/d1-http share the same runtime and the same
+    // race, so the window has to cover them too.
     const sched = compose.slice(compose.indexOf(" scheduler:"), compose.indexOf(" web:"));
     expect(sched).toMatch(/stop_grace_period:\s+20s/);
+    for (const name of ["d1-http", "read", "ingest"]) {
+      const i = compose.indexOf(`  ${name}:`);
+      expect(i, name).toBeGreaterThan(-1);
+      const block = compose.slice(i, i + 2500);
+      expect(block, name).toMatch(/stop_grace_period:\s+20s/);
+    }
   });
   it("wraps every rqlite service with the entrypoint script and auth mount", () => {
     expect(compose).toContain('entrypoint: ["sh", "/entrypoint.sh"]');
