@@ -786,6 +786,10 @@ export default function AdminSeasonsPage() {
 
       {/* Table */}
       {!loading && (
+        // A failed load is not an empty table: with the banner above already
+        // naming the failure, the empty state below told the admin "create a
+        // season" while their seasons sat unreachable behind the 500.
+        error !== null ? null :
         rows.length === 0 ? (
             <Empty
               title="No seasons yet. Create one to get started."

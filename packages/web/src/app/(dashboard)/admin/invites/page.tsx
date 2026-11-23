@@ -430,6 +430,9 @@ export default function AdminInvitesPage() {
 
       {/* Table */}
       {!loading && (
+        // Failed load ≠ no codes: "No invite codes yet. / Generate some"
+        // rendered beside the failure banner (see teams/page guard).
+        error !== null ? null :
         filteredRows.length === 0 ? (
             <Empty
               title={
