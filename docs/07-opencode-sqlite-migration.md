@@ -201,3 +201,21 @@ tokens, completed zero-token row) and
 `drivers/token/opencode-sqlite-token-driver.test.ts` (late write recovered,
 pending across syncs, recovery below the watermark, deleted row dropped,
 watermark monotonic, boundary dedup intact).
+
+## Active-session unfreeze (2026-11-22)
+
+Commit 9's session-side dedup assumed a processed id could simply be skipped on
+the next run. It cannot: `time_updated` moves while a session is live, and the
+watermark query is `>=`, so that session is re-listed on every sync — and the
+id-only filter dropped it every time, freezing its snapshot at the values seen
+on the first run until the session ended.
+
+Fix (`1081aff4`): the skip applies only to the boundary row that has not moved
+— same id **and** `time_updated <= lastTimeUpdated`. A newer `time_updated`
+means new messages, so the session emits again. The token driver is unaffected:
+its cursor carries `pendingIds` and a `max()` watermark for the same class of
+problem.
+
+Tests: `drivers/session/opencode-sqlite-session-driver.test.ts` ("re-emits a
+session whose `time_updated` advanced past the watermark", "deduplicates
+previously processed sessions").
