@@ -328,25 +328,54 @@ export async function parseGrokLogFile(opts: {
 ```typescript
 // packages/cli/src/parsers/grok-session.ts
 export async function parseGrokSession(sessionDir: string): Promise<SessionSnapshot | null> {
-  // Read summary.json + signals.json in parallel
-  const [summary, signals] = await Promise.all([
+  // Absent ≠ unreadable: an absent signals.json is Grok's own pre-signals
+  // state, so zeros are the truth. A present-but-corrupt one means the truth
+  // exists and we cannot see it; uploading zeros would overwrite history.
+  const [summary, signalsResult] = await Promise.all([
     readJson(join(sessionDir, "summary.json")),
-    readJson(join(sessionDir, "signals.json")),
+    readSignals(join(sessionDir, "signals.json")),
   ]);
-  if (!summary?.info?.id) return null;
+  if (!summary) return null;
+  if (signalsResult.state === "unreadable") return null;
+  const signals = signalsResult.value;
+
+  const info =
+    summary.info && typeof summary.info === "object"
+      ? (summary.info as Record<string, unknown>)
+      : null;
+  const sessionId = typeof info?.id === "string" ? info.id : null;
+  if (!sessionId) return null;
+  // summary.created_at is canonicalized (microsecond precision is real);
+  // no parseable start → null.
+  const startedAt = canonicalInstant(summary.created_at);
+  if (!startedAt) return null;
+
+  const projectRef =
+    typeof summary.git_root_dir === "string"
+      ? summary.git_root_dir
+      : typeof info?.cwd === "string"
+        ? info.cwd
+        : null;
+  const model =
+    typeof summary.current_model_id === "string"
+      ? summary.current_model_id.trim()
+      : null;
 
   return {
-    sessionKey: summary.info.id,
+    sessionKey: sessionId,
     source: "grok",
     kind: "human",
-    startedAt: summary.created_at,
-    lastMessageAt: summary.last_active_at ?? summary.updated_at,
-    durationSeconds: signals?.sessionDurationSeconds ?? 0,
-    userMessages: signals?.userMessageCount ?? 0,
-    assistantMessages: signals?.assistantMessageCount ?? 0,
-    totalMessages: summary.num_chat_messages ?? 0,   // NOT num_messages
-    projectRef: summary.git_root_dir ?? summary.info.cwd ?? null,
-    model: summary.current_model_id ?? null,
+    startedAt,
+    lastMessageAt:
+      canonicalInstant(summary.last_active_at) ??
+      canonicalInstant(summary.updated_at) ??
+      startedAt,
+    durationSeconds: clampDuration(signals?.sessionDurationSeconds ?? 0, startedAt, lastMessageAt),
+    userMessages: toNonNeg(signals?.userMessageCount ?? 0),
+    assistantMessages: toNonNeg(signals?.assistantMessageCount ?? 0),
+    totalMessages: toNonNeg(summary.num_chat_messages ?? 0),   // NOT num_messages
+    projectRef,
+    model,
     snapshotAt: new Date().toISOString(),
   };
 }
@@ -592,6 +621,10 @@ union 加 `"grok"`,这两处 switch 立刻编译失败。同理,driver 依赖 `D
 | 2 | signals.json 缺失 | snapshot 有 startedAt/model,messages 用 summary.num_chat_messages fallback |
 | 3 | summary.json 缺 `current_model_id` | `model = null` |
 | 4 | summary.json 损坏 | 返回 null,不抛异常 |
+| 5 | signals.json 存在但损坏(存在性由 `readSignals` 区分) | 返回 null,不抛异常、不上报全零快照——零值会经 session upsert 覆盖服务器上的真值 |
+
+> 追加 2026-11-23(`ea3eaf3e`):原先缺失与损坏都吞成 `null` 并上报 0。缺失是 Grok 的
+> pre-signals 状态(下次活动自然补真值);损坏则意味着真值存在但读不到,上报 0 会覆盖历史。
 
 **Byte-offset cursor(`grok-token-driver.test.ts`)**:
 
