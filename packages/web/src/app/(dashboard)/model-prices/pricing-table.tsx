@@ -26,6 +26,7 @@ import {
   OPENROUTER_FALLBACK_ICON,
   type SortKey,
   type SortDirection,
+  formatUpdatedDay,
 } from "./pricing-table-helpers";
 
 interface Props {
@@ -265,7 +266,7 @@ export function PricingTable({ entries }: Props) {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap" title={e.updatedAt}>
-                  {e.updatedAt.slice(0, 10)}
+                  {formatUpdatedDay(e.updatedAt)}
                 </td>
               </tr>
             ))}
