@@ -12,7 +12,13 @@
   `deploy/selfhost/tsconfig.json` joins the strict typecheck via project
   references (`scripts/parallel-typecheck.sh`).
 - kv-adapter get() uses a linearizable (strong) read so cache invalidation
-  is visible on lagging cluster followers.
+  is visible on lagging cluster followers. Superseded 2026-11-07 by
+  `4aaad80a`: a strong read appends a Raft-log entry per cache hit, which is
+  consensus work the cache exists to remove, and it fails outright during an
+  election. The cache read is weak now — bounded by invalidate()/clear() plus
+  the entry TTL, and rqlite answers a weak read only after confirming it is
+  the leader. The migration ledger is the one reader that needs
+  linearizability, so it keeps strong().
 - `deploy/selfhost/backup.sh`: cron/systemd-timer-safe rqlite backup that
   forwards credentials through the container environment (not argv), stages the
   copy in a 0700 directory beside the target (so a SIGKILLed run cannot leave a
@@ -32,9 +38,21 @@
   release shipped Node 22.23.3, which carries CVE-2026-111497 (Brotli decoder
   out-of-bounds write permitting remote code execution). A regression test now
   requires an exact patch version so the default cannot drift back.
+  Superseded 2026-11-10 by `e2fe9b00`: the root Dockerfile's `NODE_VERSION`
+  default is now the Node 26 LTS patch `26.12.1`. What the entry still holds
+  is the rule it tested — an exact patch, never a floating major.
 - Move the pinned Bun runtime from 1.4.0 to 1.4.3 in CI, both Dockerfiles and
   the docs, so local development, CI and the images run the same patch. Same
   1.4.x minor: `bun.lock` is unchanged and `--frozen-lockfile` passes.
+  Superseded 2026-11-04 by `81b1e96e`: the pin is `1.4.4` everywhere, and
+  `scripts/__tests__/container-build.test.ts` now fails if either Dockerfile,
+  CI, the admission workflow or the two READMEs drift off it.
+- The read, ingest and d1-http selfhost containers stop with a 20 s grace
+  period, matching the scheduler. All four run `node-runtime.ts`, whose own
+  drain bound is 10 s; Docker's default stop timeout is also 10 s, so a drain
+  finishing near the bound raced SIGKILL (an in-flight request got a
+  connection reset and the exit code was unreadable). The infrastructure test
+  pins the window on all four services.
 
 ### Fixed
 - Ingest timestamps are canonicalized at the trust boundary. `hour_start` and
@@ -230,6 +248,59 @@
   source arrived. The invalid-migration case also scans a private TMPDIR root
   instead of the shared one, where a concurrent lane's `pew-e2e-*` directory
   changed the before/after set.
+- A Grok session whose `signals.json` exists but cannot be read now skips that
+  session for the run instead of uploading an all-zero snapshot. The session
+  upsert replaces stored values, so the zero snapshot overwrote the server's
+  real counts. An *absent* `signals.json` keeps its contract: that is Grok's
+  own pre-signals state, where zeros are the truth.
+- Every file-based token source now counts usage events whose timestamp is
+  missing and reports the count once per run: Grok `inference_done`, Codex
+  `token_count`, OpenClaw messages, Pi compaction events, OpenCode JSON deltas
+  and Copilot OTel spans join Claude, Pi messages, Copilot CLI and OpenCode
+  SQLite in `skippedNoTimestamp`, and `sync` warns per source (the SQLite
+  source reports through the driver warnings channel). They were dropped
+  silently before, so a writer that stops emitting the field lost usage with
+  no signal. Codex deliberately counts without letting such a row join the
+  cumulative diff — a timestamp-less row in the diff stream would shift the
+  next delta — and Grok now checks zero usage before the timestamp gate, like
+  Pi.
+- A cursor entry whose `size`/`offset` (or continuity-anchor `length`) is
+  negative or fractional is discarded when the file is loaded. Those values
+  passed the finite check and then parked the file at an EOF the continuity
+  check could never satisfy, quietly skipping every later increment; dropping
+  the entry routes the file through the known-path full rescan instead.
+- OpenCode SQLite session sync no longer freezes an active session forever.
+  `time_updated` moves while a session is live and the watermark query is
+  inclusive, so the boundary row was re-listed every run and the id-only dedup
+  skipped it each time. The skip now applies only to boundary rows that have
+  not moved.
+- The dashboard's default usage window fetches local-day instants instead of a
+  bare UTC date. A bare `from` date starts at UTC midnight, so east of UTC the
+  oldest day lost its first hours (west of UTC, the window started a day
+  early); `lib/usage-url.ts` now computes the window with
+  `trailingLocalDays(days, tzOffset)`.
+- Six more private read routes answer `Cache-Control: private, no-store` on
+  success: user-side organization members, admin organizations (list and
+  detail), admin seasons, admin settings and admin check. The earlier sweep
+  covered their admin twins; these read membership-scoped data too, and a
+  shared cache could serve one user's rows to another.
+- Six dashboard pages no longer render their "nothing here yet" empty state
+  when the fetch failed. An error fell through to the empty branch because the
+  data was `undefined`; the pages now gate the empty state on an explicit
+  error/failed-to-load check and show the failure instead (organization
+  members dialog, admin seasons, organizations, invites, storage, manage
+  devices).
+- Invalidating the pricing entries cache while a load is in flight no longer
+  loses the refresh. The old code returned early when a request was in flight;
+  the stale response then wrote its payload into the cache and cleared the
+  slot, so an admin edit could stay invisible for the TTL. Invalidation now
+  bumps a generation counter: a load started under an older generation neither
+  writes the cache nor clears the slot.
+- The pricing table's "Updated" column shows the local calendar day of the
+  stored instant instead of `slice(0, 10)` of the UTC ISO string, which read
+  as yesterday for anyone east of UTC after 16:00. The full string stays in
+  the cell's `title`.
+
 ## v3.5.1
 
 ### Changed
