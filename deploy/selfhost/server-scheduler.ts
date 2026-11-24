@@ -36,7 +36,7 @@ const BASIC_AUTH = resolveReadBasicAuth(
 const db = createD1Adapter({ baseUrl: RQLITE_URL, token: D1_TOKEN, ...(BASIC_AUTH ? { basicAuth: BASIC_AUTH } : {}) });
 // The KV adapter keeps expired rows (Cloudflare KV expires them itself), and
 // leaderboard snapshot keys embed the revision — without a sweep the table
-// grows forever. Piggy-back the sweep on the daily tick.
+// grows forever. The sweep runs on its own timer below, not on the daily tick.
 const kv = createKvAdapter({ db });
 // Same narrowing as server-read: the adapters cover the worker's actual call
 // surface, not the full D1Database/KVNamespace interfaces.
