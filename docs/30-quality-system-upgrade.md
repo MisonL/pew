@@ -25,6 +25,14 @@
 > `<3min`；L3 也在同一 pre-push 并联中运行（表中 `CI / manual` 只描述额外触发点）。
 > 触发行的其他条目（pre-commit / pre-push）仍然准确。现状与证据以根 `AGENTS.md` 的
 > 质量契约表为准。
+>
+> **再更正 2026-11-24（`26ffd208`，2026-11-11）**：触发点已整体解耦，上面两句关于
+> pre-push 并联三闸的描述不再成立。pre-commit 只跑索引快照静态门（五包 tsc +
+> Biome `--error-on-warnings` + 三条 AST 门），不再跑 `vitest run --coverage`；
+> pre-push 只跑 G2（数秒）；L1 覆盖率、L2、L3 改由 CI 的 quality/api-e2e/
+> browser-e2e job 强制，本地按需 `bun run verify`。理由与实测（覆盖步骤 131–141s、
+> 解耦前 pre-push 并联实测 10+ 分钟，而两条套件各自都出过「跑过自己的汇总还不退出」）
+> 见该提交与根 `AGENTS.md`。
 
 | Layer | Name | What it validates | Trigger |
 |-------|------|-------------------|---------|
@@ -91,6 +99,10 @@ prerequisites are regenerated from staged sources in the snapshot
 caches snapshot-local). Staged `package.json`/`bun.lock`/workspace manifests
 must match the worktree copies and pass a check-only
 `bun install --frozen-lockfile --dry-run --ignore-scripts`.
+（再更正 2026-11-24：`26ffd208` 起 `vitest run --coverage` 已不在 pre-commit
+内——它正是这段所说「无缓存全量运行」中最慢、且唯一可能卡死提交的一条；覆盖率
+改由 CI 的 quality job 强制。其余静态部分（五包 tsc、Biome、三条 AST 门、
+快照前置重建、清单一致性检查）不受影响，本段对它们的现在时描述依旧成立。）
 
 ---
 
