@@ -54,6 +54,31 @@ describe("production container", () => {
     }
   });
 
+  it("documents the same Node patch the images build with", () => {
+    // The 2026-11 Node 22→26 move left both READMEs recommending "22.23.4
+    // (matching CI and the Dockerfile)" and `engines.node >= 22` long after
+    // ca95136d raised the real floor to >=26. The prose claim is only true
+    // while it tracks the ARG, so pin it the same way the Bun line above is
+    // pinned — a future bump must update the docs in the same breath.
+    const pin = dockerfile.match(/^ARG NODE_VERSION=(.+)$/m)?.[1];
+    expect(pin).toMatch(/^\d+\.\d+\.\d+$/);
+    for (const file of ["README.md", "docs/README.en.md"]) {
+      const text = source(file);
+      const mentioned = [...text.matchAll(/Node(?:\.js)? (\d+\.\d+\.\d+)/g)].map(
+        (match) => match[1],
+      );
+      expect(mentioned.length, `${file} must mention the Node pin`).toBeGreaterThan(0);
+      for (const version of mentioned) {
+        expect(version, `${file} must document Node ${pin} everywhere`).toBe(pin);
+      }
+      const major = Number(pin.split(".")[0]);
+      const engines = text.match(/engines\.node >= (\d+)/);
+      expect(engines?.[1], `${file} must state the engines.node floor`).toBe(
+        String(major),
+      );
+    }
+  });
+
   it("runs CI on the same Bun patch the images build with", () => {
     // The image pin and the CI runtime pin are independent literals. Bumping
     // one leaves the tests running a different Bun than the shipped image.
