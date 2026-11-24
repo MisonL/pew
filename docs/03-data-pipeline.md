@@ -1,32 +1,52 @@
 # Data Pipeline & Token Collection
 
-> Complete reference for pew's token collection pipeline: raw log formats,
-> unified types, aggregation, upload protocol, and database schema.
+> Reference for pew's token collection pipeline: raw log formats, unified
+> types, aggregation, upload protocol and storage.
+>
+> **Status: reference.** §1.1–1.4 document the original four sources as they
+> were when this doc was written; two of those identities are now retired
+> (`gemini-cli`; OpenCode's JSON storage was superseded by its SQLite
+> database). The current source set, per-source parsers and their contracts
+> live in the per-source docs and [49-agent-operations.md](49-agent-operations.md).
+> The pipeline invariants below — half-hour bucketing, client-side
+> aggregation, overwrite upsert — still hold for every active source.
 
 ## Pipeline Overview
 
 ```
 Stage 1          Stage 2           Stage 3          Stage 4           Stage 5
-Raw Logs    -->  ParsedDelta[]  --> QueueRecord[]  --> HTTP Upload  --> D1 Upsert
-(4 formats)      (unified)         (half-hour       (batched)         (overwrite)
-                                    buckets)
+Raw Logs    -->  ParsedDelta[]  --> QueueRecord[]  --> HTTP Upload  --> Database
+(per source)     (unified)         (half-hour       (batched)         (overwrite
+                                    buckets)                           upsert)
 ```
 
-State files:
+Four independent lanes share this shape — token usage (`/api/ingest`),
+sessions (`/api/ingest/sessions`), evidence (`/api/ingest/evidence`) and
+accounting details (`/api/ingest/details`) — each with its own queue and
+upload state files.
+
+State files (full contract: [49-agent-operations.md](49-agent-operations.md)):
+
 | File | Location | Purpose |
 |------|----------|---------|
 | `config.json` | `~/.config/pew/` | Prod API key (`pk_...`) |
 | `config.dev.json` | `~/.config/pew/` | Dev API key |
-| `cursors.json` | `~/.config/pew/` | Per-file parse cursors + directory mtimes |
-| `queue.jsonl` | `~/.config/pew/` | Pending upload records (append-only JSONL) |
-| `queue.state.json` | `~/.config/pew/` | Upload byte-offset (resume point) |
+| `config.<host>.json` | `~/.config/pew/` | Self-hosted instance API key (one file per host) |
+| `cursors.json` / `session-cursors.json` | `~/.config/pew/` | Per-file parse cursors + directory mtimes |
+| `queue.jsonl` / `queue.state.json` | `~/.config/pew/` | Token records + upload offset |
+| `session-queue.jsonl` / `.state.json` | `~/.config/pew/` | Session records |
+| `evidence-queue.jsonl` / `.state.json` | `~/.config/pew/` | Usage evidence (never removed by reset) |
+| `accounting-queue.jsonl` / `.state.json` | `~/.config/pew/` | Accounting details |
+| `sync-commit.json` | `~/.config/pew/` | Crash-recovery journal |
+| `state.lock` | `~/.config/pew/` | Mutation lock (stale PID reclaimed) |
 
 ---
 
 ## Stage 1 — Raw Log Files
 
 Each AI tool writes logs in its own format. pew discovers and parses them
-incrementally using per-file cursors.
+incrementally using per-file cursors. §1.1–1.4 are the four formats this doc
+was written around; §1.5 lists every source active today.
 
 ### 1.1 Claude Code
 
@@ -149,51 +169,58 @@ incrementally using per-file cursors.
   (different from Claude where `cacheWrite` maps to `inputTokens`);
   `reasoningOutputTokens` hardcoded to 0
 
+### 1.5 Current source set
+
+Active sources (`SOURCES` in `packages/core/src/constants.ts`, 9):
+
+| Source | Doc | Storage |
+|--------|-----|---------|
+| `antigravity` | [51](51-antigravity-support.md) | snapshot model (full replace + tombstones) |
+| `claude-code` | this doc §1.1 | JSONL, byte offset + `seenIds` dedup ring |
+| `codex` | — | JSONL, byte offset + cumulative-edge dedup |
+| `copilot-cli` | — | JSONL, byte offset |
+| `grok` | [42](42-grok-support.md) | JSONL `inference_done` events |
+| `hermes` | [35](35-hermes-support.md) | SQLite, per-session diff |
+| `opencode` | [07](07-opencode-sqlite-migration.md) | SQLite `message` table (JSON files are legacy) |
+| `openclaw` | this doc §1.4 | JSONL, byte offset |
+| `pi` | [05](05-token-accounting.md) | JSONL messages + compaction events |
+
+Six identities are retired (`RETIRED_SOURCES`): `gemini-cli`, `kosmos`,
+`omp`, `pmstudio`, `vscode-copilot`, `zcode`. They stay readable and count
+toward historical rankings, but never accept new writes; ingest acknowledges
+and ignores exact retired identities so old mixed-source batches do not block
+active uploads. `VALID_SOURCES` is the union of both lists.
+
+**Skip-and-warn contract:** a usage event dropped for a missing timestamp is
+counted per file-backed source (`skippedNoTimestamp`) and reported as a
+warning once per source at the end of the run; silently dropping it was how
+a writer that stopped emitting the field lost usage with no signal. Events
+with no usage keep their old silent skip, and raw logs are never touched.
+See [49-agent-operations.md](49-agent-operations.md) for the full state and
+warning contract.
+
 ### Cursor Types
 
-```typescript
-// packages/core/src/types.ts
-
-interface FileCursorBase {
-  inode: number;
-  updatedAt: string;
-}
-
-// Used by: Claude Code, OpenClaw (byte-offset JSONL streaming)
-interface ByteOffsetCursor extends FileCursorBase {
-  offset: number;
-}
-
-// Used by: Gemini CLI (array index + cumulative totals)
-interface GeminiCursor extends FileCursorBase {
-  lastIndex: number;
-  lastTotals: TokenDelta | null;
-  lastModel: string | null;
-}
-
-// Used by: OpenCode (file stat + cumulative totals)
-interface OpenCodeCursor extends FileCursorBase {
-  size: number;
-  mtimeMs: number;
-  lastTotals: TokenDelta | null;
-  messageKey: string | null;
-}
-
-type FileCursor = ByteOffsetCursor | GeminiCursor | OpenCodeCursor;
-
-interface CursorState {
-  version: 1;
-  files: Record<string, FileCursor>;
-  dirMtimes?: Record<string, number>;   // OpenCode directory-level optimization
-  updatedAt: string | null;
-}
-```
+One cursor family per incremental strategy, all in
+`packages/core/src/types.ts`: byte-offset (`ByteOffsetCursor`; Claude adds a
+bounded `seenIds` dedup ring, Codex adds cumulative-edge state), file-stat +
+cumulative diff (`OpenCodeCursor`), SQLite watermarks (`OpenCodeSqliteCursor`
+with `pendingIds` + `lastProcessedIds` boundary dedup, `HermesSqliteCursor`),
+and mtime-based `SessionFileCursor` for session collectors. JSONL cursors
+carry `continuityAnchors` (privacy-safe `{sha256, length}` markers) so a
+same-inode trim/rewrite can be rebased instead of double-counted;
+`continuityBroken` parks a file at a stamped offset when replay safety cannot
+be proven. Cursor `size`/`offset`/anchor `length` must be non-negative
+integers — a bad entry is discarded so the file goes through the
+known-path full rescan instead of parking at an unreachable EOF.
 
 ---
 
 ## Stage 2 — Unified ParsedDelta
 
-All four parsers normalize into a common intermediate structure.
+All parsers normalize into a common intermediate structure. The `source`
+union is the 9 active identities of `SOURCES` (retired sources only appear in
+historical data, never in new deltas).
 
 ```typescript
 // packages/core/src/types.ts
@@ -206,14 +233,19 @@ interface TokenDelta {
 
 // packages/cli/src/parsers/claude.ts (shared by all parsers)
 interface ParsedDelta {
-  source: "claude-code" | "gemini-cli" | "opencode" | "openclaw";
+  source: "antigravity" | "claude-code" | "codex" | "copilot-cli" | "grok"
+        | "hermes" | "opencode" | "openclaw" | "pi";
   model: string;           // e.g. "claude-sonnet-4-20250514", "gemini-2.5-pro"
   timestamp: string;       // ISO 8601
   tokens: TokenDelta;
 }
 ```
 
-### Normalization Mapping
+### Normalization Mapping (original four sources)
+
+Gemini CLI and OpenCode-JSON rows are historical formats; the table keeps
+them because old queued records and the `diffTotals()` helper still follow
+these rules.
 
 | Unified Field | Claude Code | Gemini CLI | OpenCode | OpenClaw |
 |---------------|-------------|------------|----------|----------|
@@ -270,9 +302,16 @@ POST /api/ingest
 Content-Type: application/json
 Authorization: Bearer <api_key>
 
-Body: QueueRecord[]  (max 50 per request)
-Response: { "ingested": 50 }
+Body: QueueRecord[]  (max MAX_INGEST_BATCH_SIZE = 50 per request;
+                      accounting details: max 25 and a 24 MiB body cap,
+                      token/session/evidence: 1 MiB body cap)
+Response: { "ingested": 50, "dropped_devices": [] }
 ```
+
+`ingested` counts only rows that actually applied, and `dropped_devices`
+names revoked devices whose records the device guard discarded — the CLI
+keeps exactly those records pending instead of clearing them. Session
+uploads carry no device id and are unaffected.
 
 Pre-upload, `aggregateRecords()` merges any `QueueRecord`s sharing the same
 `(source, model, hour_start)` key by summing all token fields.
@@ -294,15 +333,25 @@ Body: {
 ```
 
 Next.js validates all records before forwarding:
-- Source must be one of the 4 valid values
-- Model must be non-empty string
-- `hour_start` must match ISO 8601 prefix pattern
-- Token fields must be non-negative finite numbers
+- Source must be in `VALID_SOURCES` (the 9 active identities plus the 6
+  retired ones; exact retired identities are acknowledged and ignored, so an
+  old mixed-source batch never blocks active uploads)
+- Model must be a non-empty string (accounting details additionally require
+  an ASCII label of ≤128 chars)
+- `hour_start` must be a canonical ISO 8601 instant
+- Token fields must be non-negative integers, and
+  `total_tokens = input + cached + output + reasoning`
 - **All-or-nothing**: one invalid record rejects the entire batch
 
 ---
 
-## Stage 5 — Database Schema (Cloudflare D1)
+## Stage 5 — Database Schema (D1 / rqlite)
+
+The same schema and upsert SQL run in both deployments: Cloudflare D1 for the
+hosted instance, rqlite behind the Node runtime in `deploy/selfhost/`
+([57–61](57-self-hosted-deployment-design.md)). Web reads do not touch the
+database directly — every read goes through typed `DbRead` RPC methods served
+by the read Worker over `/api/rpc`; there is no generic SQL endpoint.
 
 ### `usage_records` table
 
@@ -365,6 +414,9 @@ CREATE TABLE users (
 
 ## End-to-End Flow Diagram
 
+The diagram follows the four original formats of §1.1–1.4; later sources plug
+into the same stages with their own cursor family (§1.5).
+
 ```
 ~/.claude/projects/**/*.jsonl          ByteOffsetCursor    (absolute tokens)
 ~/.gemini/tmp/*/chats/session-*.json   GeminiCursor        (cumulative -> diffed)
@@ -386,17 +438,20 @@ CREATE TABLE users (
         v  Next.js validates, resolves userId
     POST <Worker URL>  { userId, records }  (Bearer WORKER_SECRET)
         |
-        v  env.DB.batch() -- atomic overwrite upsert
-    D1: usage_records  (UNIQUE on user_id, source, model, hour_start)
+        v  worker batch -- overwrite upsert (atomic on rqlite; the hosted
+    Storage: usage_records   D1 REST path has no cross-statement batch
+     (UNIQUE on user_id,     guarantee, so single-statement guards are used
+      source, model,         where atomicity matters)
+      hour_start)
         |
-        v  Dashboard queries via D1 REST API
+        v  read Worker: typed DbRead RPC via /api/rpc
     Web UI: charts, leaderboard, public profiles
 ```
 
 ### Design Properties
 
-1. **Four incremental strategies** adapt to different log formats (byte offset /
-   array index diff / file stat diff)
+1. **Per-source incremental strategies** adapt to different log formats (byte
+   offset / array index diff / file stat diff / SQLite watermarks)
 2. **Half-hour window aggregation** compresses data volume
 3. **Overwrite upsert + client-side pre-aggregation** = natural idempotency;
    repeated sync is safe
