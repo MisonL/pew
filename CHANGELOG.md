@@ -324,6 +324,362 @@
   as yesterday for anyone east of UTC after 16:00. The full string stays in
   the cell's `title`.
 
+### Backfilled entries (2026-10-26 – 2026-11-23)
+
+Commits that landed between the v3.5.1 merge and this release without a
+changelog entry of their own. Recorded once here, dated, from their commit
+subjects: where a change is already described above, the fuller entry above
+is the one that explains it.
+
+#### Added
+
+- 2026-10-27 — mirror the token/session ingest contract locally
+- 2026-10-28 — compact the session ledger after a full drain
+- 2026-11-04 — add a Content-Security-Policy header
+- 2026-11-05 — narrow the CSP image allowlist and share the HTTPS decision
+- 2026-11-09 — add upgrade.sh to run and verify the deploy in one step
+- 2026-11-09 — add repeatable L1 pre-commit gate self-test
+- 2026-11-20 — add `pew sync --drop-revoked` to discard a revoked device's
+    backlog
+
+#### Changed
+
+- 2026-10-30 — screen the accounting ledger with precomputed key sets
+- 2026-10-30 — stop repeating reads the sync already performed
+- 2026-10-30 — hash only the anchor records, not the whole window
+- 2026-10-30 — append model annotations in place
+- 2026-10-30 — fan out the independent by-device reads
+- 2026-10-30 — count alias collisions once in the pricing merge
+- 2026-10-30 — fan out the independent reads in the team detail route
+- 2026-10-30 — roll back the claude dedup set with a size marker
+- 2026-10-30 — fold the storage-stats buckets once
+- 2026-10-30 — aggregate season tokens over the window, not the view
+- 2026-10-30 — fold the live-stats window once
+- 2026-10-30 — sum the system total over the bases, not the view
+- 2026-10-30 — read the admin usage comparison from the bases
+- 2026-10-30 — skip the unused usage aggregates on record-driven pages
+- 2026-10-30 — memoize the model-evolution chart rows
+- 2026-10-30 — share one admin check across every mount
+- 2026-10-30 — cache the merged pricing map per process
+- 2026-10-30 — skip the accounting join for counter-only callers
+- 2026-10-30 — walk count guards and delete cache pages in batches
+- 2026-10-30 — resolve a public profile in one query
+- 2026-10-30 — fold recent activity off the totals view
+- 2026-10-30 — answer summary-only usage reads with one aggregate
+- 2026-10-30 — assemble the request body once
+- 2026-10-30 — project dropped accounting in the read Worker
+- 2026-11-05 — look the public profile up once per request
+- 2026-11-07 — read the KV cache with a weak rqlite read
+
+#### Fixed
+
+- 2026-10-26 — make reset's retained-state rewrite atomic
+- 2026-10-26 — stop capping the session window that feeds the summary
+- 2026-10-26 — validate and bound the public profile's explicit date range
+- 2026-10-26 — reject non-existent calendar days in the admin usage
+    comparison
+- 2026-10-26 — drop the public profile's range cap that broke long seasons
+- 2026-10-26 — reject non-existent calendar days on admin season dates
+- 2026-10-26 — make the admin comparison honour a bare `to` date
+- 2026-10-27 — align every dashboard window to the viewer's local calendar
+- 2026-10-27 — correct the hourly pattern charts' window and device
+    attribution
+- 2026-10-27 — compute donut shares over all series, not a truncated set
+- 2026-10-27 — stop the leaderboard lying about emptiness and losing members
+- 2026-10-27 — make season registration counts converge and show server
+    errors
+- 2026-10-27 — mirror the fallback pricing status when /api/pricing fails
+- 2026-10-27 — fall back to 7 days when the season tab outlives its season
+- 2026-10-27 — repair dead live queries and harden RPC limits/paging
+- 2026-10-27 — refuse admin privileges to bearer api_keys on every read path
+- 2026-10-27 — emit canonical UTC session timestamps
+- 2026-10-27 — drop contract-violating records instead of wedging the queue
+- 2026-10-27 — stop losing copilot telemetry at EOF and on duplicate spans
+- 2026-10-27 — keep queue cursors inside the file they index
+- 2026-10-27 — reject non-canonical evidence interval timestamps
+- 2026-10-27 — harden the authenticated JSON write routes
+- 2026-10-27 — classify commented DDL, bound the health probe, answer 413
+- 2026-10-27 — stop the Claude hook command from being shell-expanded
+- 2026-10-27 — keep the Codex notify key inside the top-level TOML table
+- 2026-10-27 — stop the OpenClaw uninstaller deleting config it never wrote
+- 2026-10-27 — reclaim stale locks without racing another reclaimer
+- 2026-10-27 — stop answering isAdmin=true for a Bearer api_key
+- 2026-10-28 — answer 409 where a read-then-insert race loses on UNIQUE
+- 2026-10-28 — mark skipped hooks with warnings as "!" instead of "✓"
+- 2026-10-28 — tie-break season orderings by id
+- 2026-10-28 — drop every malformed record in the tolerant baseline read
+- 2026-10-28 — keep the pending queue when a full scan finds no source at
+    all
+- 2026-10-28 — validate dirtyKeys and restart past a stale offset in
+    BaseQueue
+- 2026-10-28 — bound the auth reconciliation probes with timeouts
+- 2026-10-28 — reject a batch whose result count does not match its
+    statements
+- 2026-10-28 — terminate a torn queue tail before appending to it
+- 2026-10-28 — skip TOML comments when scanning the codex notify array
+- 2026-10-28 — stop the claude hook installer from dropping user data
+- 2026-10-29 — stop losing OpenCode SQLite usage written after the first
+    read
+- 2026-10-29 — stop one refused accounting detail from blocking the outbox
+- 2026-10-29 — apply the stale-offset guard to the accounting and evidence
+    ledgers
+- 2026-10-29 — enforce the server's numeric caps in the local accounting
+    gate
+- 2026-10-29 — treat an empty refusal list as a fully accepted batch
+- 2026-10-29 — revoke the CLI api key in the break-glass reset
+- 2026-10-29 — floor half-hour buckets the way the server does
+- 2026-10-29 — bound grok session timestamps to the representable range
+- 2026-10-29 — clamp opencode session durations to the ingest cap
+- 2026-10-29 — give usage evidence the rejection filter it never had
+- 2026-10-29 — skip an unprojectable evidence event instead of failing sync
+- 2026-10-29 — invalidate the cached seasons list when a team is deleted
+- 2026-10-29 — keep priced models a failed upstream refresh would erase
+- 2026-10-29 — answer a concurrent device-alias conflict with 409
+- 2026-10-29 — count copilot-cli log bytes from the data, not a probed EOL
+    width
+- 2026-10-29 — measure the last-fetch size cap in bytes
+- 2026-10-29 — report a failed team fetch instead of showing seasons as
+    unregistered
+- 2026-10-29 — pre-split the by-device drill-down counters like its siblings
+- 2026-10-29 — reject an unknown by-device granularity instead of serving
+    daily data
+- 2026-10-30 — stop spreading parsed rows into call argument lists
+- 2026-10-30 — invalidate the cached seasons list after a snapshot is built
+- 2026-10-30 — extend the remaining parsed-array merges without a spread
+- 2026-10-31 — keep the stored snapshot on a ledger conflict instead of
+    throwing
+- 2026-10-31 — correct Hermes cache-split and Pi compaction attribution
+- 2026-10-31 — hash passwords off the event loop and bound IP rate-limit
+    keys
+- 2026-10-31 — close the infra gaps a restart or a bad secret exposes
+- 2026-10-31 — carry the cookie-security decision into the web image build
+- 2026-10-31 — answer 503 when the password-derivation slot is exhausted
+- 2026-10-31 — surface recovery conflict warnings from reset
+- 2026-10-31 — stop reporting a busy reset as an invalid token
+- 2026-11-01 — match KV prefixes above U+FFFF
+- 2026-11-01 — tie-break session records by id
+- 2026-11-01 — validate device request bodies
+- 2026-11-01 — correct device activity times
+- 2026-11-01 — restore focus after device deletion
+- 2026-11-01 — focus a control after last device deletion
+- 2026-11-02 — keep pending records when an empty scan finds only retired
+    rows
+- 2026-11-02 — reclaim a state lock left unreadable by a crashed write
+- 2026-11-02 — stop reading an unopenable queue file as an empty one
+- 2026-11-02 — stop suppressing host-switch warning by a sibling stage's own
+    warning
+- 2026-11-02 — read a copilot usage block whose closing brace ends the file
+- 2026-11-02 — require the per-run marker before the E2E auth bypass opens
+- 2026-11-02 — reject backslash and whitespace in the login callbackUrl
+- 2026-11-02 — stop the IPv6 rate-limit key from throwing on malformed input
+- 2026-11-02 — keep pricing-rebuild internals out of the 502 body
+- 2026-11-02 — skip an oversized record instead of aborting the upload stage
+- 2026-11-02 — separate the batch budget from the record sendability ceiling
+- 2026-11-03 — name the real blocker when account deletion hits a foreign
+    key
+- 2026-11-03 — add admin season delete route and update account-delete
+    blocker diagnosis
+- 2026-11-03 — stop the account-delete diagnosis offering a withdraw the
+    caller cannot use
+- 2026-11-04 — bound each upload request with a timeout
+- 2026-11-04 — keep one source's discovery failure from aborting the sync
+- 2026-11-04 — stop a corrupt Hermes started_at from wedging the source
+- 2026-11-04 — hold the Hermes high-water mark so a recovered dip is not
+    double-counted
+- 2026-11-05 — keep CSRF cookies out of shared caches
+- 2026-11-05 — retry a response whose body cannot be read
+- 2026-11-05 — isolate a session-sync discovery failure to its source
+- 2026-11-05 — keep the G2 cache untouched when the scan is forced
+- 2026-11-05 — delete a partially created team row when the batch fails
+- 2026-11-05 — return a real 404 for a missing public profile
+- 2026-11-05 — compute Hermes cache deltas per component, not on the sum
+- 2026-11-06 — give every read RPC a transport deadline
+- 2026-11-06 — reject an inverted from/to range in every date-based route
+- 2026-11-06 — three unrecoverable state bugs in non-sync paths
+- 2026-11-06 — forward the read-RPC timeout knobs into the web container
+- 2026-11-06 — claim the CLI api_key atomically
+- 2026-11-06 — answer 400 for a non-object JSON body on the public auth
+    routes
+- 2026-11-06 — require booleans for the admin season toggles
+- 2026-11-06 — keep success when the post-commit cache invalidation fails
+- 2026-11-06 — 404 instead of a dangling reset token for a missing user
+- 2026-11-06 — clamp an explicit session-record limit
+- 2026-11-07 — bound and serialize the scheduler's daily tick
+- 2026-11-07 — truncate and lower-clamp every LIMIT/OFFSET parameter
+- 2026-11-07 — read the duplicate-alias answer from the key worker-read
+    sends
+- 2026-11-07 — derive the admin compare window from local calendar days
+- 2026-11-07 — drive the auto-register toggle from the team state
+- 2026-11-07 — drop stale async responses in three client views
+- 2026-11-07 — stop the queue from silently stranding a backlog
+- 2026-11-07 — refuse a Retry-After longer than the lock can be held
+- 2026-11-07 — verify the state lock still belongs to us before mutating
+- 2026-11-07 — honour the admin invite list's documented bound
+- 2026-11-07 — stop sync-prices from rewriting the baseline on bad input
+- 2026-11-07 — make the AST gates fail closed on an unreadable subtree
+- 2026-11-07 — report release failures, and never leave a half-bumped tree
+- 2026-11-07 — confirm lock ownership on every acquisition path
+- 2026-11-07 — handle a missing gh, and refuse an unverifiable stale-version
+    check
+- 2026-11-08 — count the ledger's autoindex when verifying the merged schema
+- 2026-11-09 — require an existing device before writing a revocation
+- 2026-11-09 — require vitest coverage output on index snapshot
+- 2026-11-10 — enforce coverage summary and threshold probes
+- 2026-11-10 — accept any rejection for missing coverage report probe
+- 2026-11-10 — add WorkBuddy to the upload-contract source whitelist
+- 2026-11-10 — keep the startup override out of the disposal budget
+- 2026-11-10 — hash snapshot files; tolerate inode reuse in local-only tests
+- 2026-11-10 — run S2 lint via bunx biome on PATH-less runners
+- 2026-11-10 — exit the runner deterministically once cleanup has finished
+- 2026-11-11 — remove the build-interrupt abort listener on a normal run
+- 2026-11-11 — keep the G2 cache working in a git worktree
+- 2026-11-11 — prove the index-only probe with a type error
+- 2026-11-13 — name the cache policy on per-user device and settings
+    responses
+- 2026-11-13 — trim team name and nickname before validating
+- 2026-11-13 — apply the API's private-profile rule to /u/[slug]
+- 2026-11-13 — reject non-boolean season flags on create
+- 2026-11-13 — bound the D1 and ingest forward requests
+- 2026-11-13 — stop counting a missing OpenCode database as scanned
+- 2026-11-13 — bound the headless login request
+- 2026-11-13 — advance the leaderboard counter instead of randomblob
+- 2026-11-13 — stop losing batches when sync fails after reading them
+- 2026-11-13 — order truncated queries by a unique key
+- 2026-11-13 — tie-break the remaining list orderings
+- 2026-11-13 — reject malformed TOML string arrays instead of guessing
+- 2026-11-14 — skip out-of-range copilot span timestamps instead of throwing
+- 2026-11-14 — write the credentials file atomically
+- 2026-11-14 — create device.json atomically without rewriting the config
+- 2026-11-14 — cap the RPC request body
+- 2026-11-14 — re-offer a freed season seat to the user's other team
+- 2026-11-14 — rate-limit the public leaderboard endpoint
+- 2026-11-15 — re-offer a freed season seat in the leave transaction
+- 2026-11-15 — give every atomic write its own temp file
+- 2026-11-15 — mint one device id when several processes first-use
+    device.json
+- 2026-11-15 — re-offer the roster a season withdrawal takes away
+- 2026-11-15 — make the bulk roster sync independent of team order
+- 2026-11-15 — rate-limit the public season leaderboard
+- 2026-11-16 — guard first-admin bootstrap inside the statements
+- 2026-11-16 — prove the backup opens before replacing the old one
+- 2026-11-16 — stop the run-log directory from growing without bound
+- 2026-11-16 — sweep expired cache rows on their own timer
+- 2026-11-17 — bound copilot-otel span times by the ingest contract
+- 2026-11-17 — serve read APIs identity-encoded and compress at the edge
+- 2026-11-17 — upgrade next to 16.4.5 for GHSA-mfr8-8qww-v76h
+- 2026-11-17 — log season-leaderboard session-stats failures
+- 2026-11-18 — serialise the upgrade backup with the cron job's lock
+- 2026-11-18 — warn instead of refusing when the host has no flock
+- 2026-11-18 — keep pricing known-good when a refresh is not really one
+- 2026-11-18 — show a failed teams load instead of "you're in no teams"
+- 2026-11-18 — stop reporting a failed member list as an empty one
+- 2026-11-18 — stop showing an empty or silently-unchanged state on failure
+- 2026-11-18 — never publish an older pricing result over a newer one
+- 2026-11-19 — report a discarded pricing run as skipped, not as ok
+- 2026-11-19 — keep a team's leaderboard instead of silently showing the
+    global one
+- 2026-11-19 — stop telling the operator "Prices updated" when nothing
+    changed
+- 2026-11-19 — show failed panel loads instead of empty charts and blank
+    forms
+- 2026-11-19 — report refused admin and device actions instead of doing
+    nothing
+- 2026-11-19 — say when the admin invite and snapshot checks could not run
+- 2026-11-19 — stop reading a damaged cursor file as a fresh state directory
+- 2026-11-19 — reject a cursors.json whose fields do not have the cursor
+    shape
+- 2026-11-19 — reject a session-cursors.json without a usable files map
+- 2026-11-19 — validate the two cursor fields the scan iterates before
+    reading files
+- 2026-11-19 — stop a non-object queue state file from aborting every sync
+- 2026-11-19 — keep an unreadable config from being merged away or read as
+    logged out
+- 2026-11-19 — keep a cursor when the file cannot be examined, not just when
+    it is missing
+- 2026-11-19 — validate the whole commit journal before recovery writes
+    anything
+- 2026-11-19 — wait for the fallback browser log instead of assuming its
+    ordering
+- 2026-11-20 — compare equal lengths before padding, so an early length
+    mismatch cannot mask a byte difference
+- 2026-11-20 — do not count records a revoked device dropped as ingested
+- 2026-11-20 — resolve the web container by compose service, and make
+    NO_RESTART verify the image label
+- 2026-11-20 — fail the password UPDATE when it matches no row instead of
+    printing "updated"
+- 2026-11-20 — replace the one-shot error listener once listen succeeds, so
+    later errors are not swallowed
+- 2026-11-20 — read the revocation set in the same batch as the write, so
+    the receipt cannot come from a weak read
+- 2026-11-20 — rate-limit the public profile API per client
+- 2026-11-20 — insert invite codes in one batch
+- 2026-11-20 — name the revoked-device accounting receipt for what it is
+- 2026-11-20 — record refused keys as pending for legacy offset-mode queues
+    too
+- 2026-11-20 — keep port slices below the operating system ephemeral range
+- 2026-11-20 — raise the profile rate limit to 240 per 60 s
+- 2026-11-20 — revoke unused login codes on password change, and claim a
+    code exactly once
+- 2026-11-20 — stop the page gate from treating an invalidated session as
+    signed in
+- 2026-11-20 — move login-code generation rate limiting after authentication
+    and count per user
+- 2026-11-20 — bound pagination offsets, order live epochs, and revoke login
+    codes on an offline password change
+- 2026-11-21 — stop the failure and skip paths of a sync from losing tokens
+    silently
+- 2026-11-21 — order and compare the Grok timeline by instant, so offsets
+    cannot misattribute a model
+- 2026-11-21 — treat a null or array models block from models.dev as a
+    failed fetch
+- 2026-11-21 — only offer recovery when no journal is actually pending
+- 2026-11-21 — assign port slices by pool worker id instead of hashing
+    workers into the same slice
+- 2026-11-21 — move CLI login rate limiting after authentication and count
+    per user
+- 2026-11-21 — persist the pending set before the offset, so a crash between
+    the writes cannot lose refusals
+- 2026-11-21 — quarantine records the server calls an invalid source instead
+    of wedging the queue
+- 2026-11-21 — do not treat an empty price document as a successful refresh;
+    fix last-fetch write order and recovery precedence
+- 2026-11-21 — bound the invalid-source strip by batch length, so a fourth
+    invalid source cannot stall the queue
+- 2026-11-21 — revoke unused password-reset tokens during a break-glass
+    password change
+- 2026-11-21 — re-check the registration inside the roster insert, so a
+    withdrawal cannot leave a stranded seat
+- 2026-11-21 — isolate a damaged Antigravity step instead of skipping the
+    whole source
+- 2026-11-21 — parse a zone-less timestamp as UTC and refuse an impossible
+    calendar day instead of bucketing it
+- 2026-11-21 — count token events dropped for a missing timestamp and warn
+    instead of losing them silently
+- 2026-11-21 — treat a DAILY_INTERVAL_MS below one minute as a
+    misconfiguration and fall back to 24 h
+- 2026-11-21 — set connection and request timeouts on the R2 client
+- 2026-11-21 — cap NextAuth POST bodies at 16 KiB
+- 2026-11-21 — rate-limit `/api/live` per IP and make the health ping
+    abortable
+- 2026-11-21 — drop unparseable turn timestamps from the Grok timeline
+- 2026-11-21 — floor `hour_start` to the half-hour bucket at the trust
+    boundary
+- 2026-11-21 — validate nested cursor field shapes on recovery
+- 2026-11-21 — give the scheduler a stop window longer than the app's own
+    forced-exit bound
+- 2026-11-21 — check Authorization before reading the request body in the
+    transport layer
+- 2026-11-21 — reject cross-site navigation to `/api/auth/cli`
+- 2026-11-21 — validate RPC array and cache parameters before binding them
+    into SQL
+- 2026-11-21 — cap concurrent accounting-details uploads
+- 2026-11-22 — name `private, no-store` on every private read response
+- 2026-11-22 — rate-limit `login-options` and the seasons list per IP
+- 2026-11-22 — trim organization and season names, and cap a registered
+    display name at 64 characters
+- 2026-11-22 — answer 409, not 500, when an organization slug update loses
+    on UNIQUE
+
 ## v3.5.1
 
 ### Changed

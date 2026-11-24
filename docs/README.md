@@ -7,7 +7,7 @@
 |---|----------|-------------|--------|
 | 01 | [01-plan.md](01-plan.md) | Monorepo skeleton & implementation plan | done |
 | 02 | [02-worker-ingest.md](02-worker-ingest.md) | Cloudflare Worker ingest migration (REST → native D1) | done |
-| 03 | [03-data-pipeline.md](03-data-pipeline.md) | Data pipeline & token collection reference | reference (covers the original four formats; current drivers and per-source skip/warn contracts are in 13 and 49) |
+| 03 | [03-data-pipeline.md](03-data-pipeline.md) | Data pipeline & token collection reference (pipeline invariants; per-source detail in 07/35/42/51 and 49) | reference |
 | 04 | [04-sync-resilience.md](04-sync-resilience.md) | Sync resilience fixes for data loss bugs | done |
 | 05 | [05-token-accounting.md](05-token-accounting.md) | Token counting, aggregation & reporting spec | done |
 | 06 | [06-session-statistics.md](06-session-statistics.md) | Session-level metadata pipeline (duration, messages, hours) | done |
