@@ -868,7 +868,10 @@ docker compose up -d
 - `PEW_UPGRADE_NO_RESTART=1` 只构建不重启（用于提前预热镜像）。该模式仍会校验刚构建镜像的 revision/version 标签，标签不对同样非零退出；它不碰运行中的容器。
 - 需要宿主上 git 与 node 可用（脚本用它们解析 revision 与 version）。
 - E2E 相关（仅在跑本仓库质量门时有用）：`PEW_E2E_BINDINGS_TIMEOUT_MS` 控制
-  `pre-push` 里本地 D1/KV 绑定进程的**启动**上限（默认 900s，足够宽松，一般不需要设）。
+  本地 D1/KV 绑定进程的**启动**上限（默认 1800s，足够宽松，一般不需要设；
+  2026-11-13 从 900s 上调）。自 2026-11-11 的 `26ffd208` 起 pre-push 不再跑
+  E2E 车道，该超时现在作用于 CI 的 api-e2e/browser-e2e job 与本地
+  `bun run verify` / `bun run test:e2e`。
   它只作用于启动：清理阶段的 disposal 上限独立固定为 30s，不受该变量影响，所以设一个很小的
   值不会缩短清理。超时是防挂死而不是性能指标；非整数或非正数会被忽略并回退默认值。
 
