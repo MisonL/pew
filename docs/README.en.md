@@ -30,7 +30,7 @@ The 10 supported token sources are Antigravity CLI, Claude Code, Codex, GitHub C
 
 ## Usage
 
-Node.js 22.23.4 (matching CI and the Dockerfile) or newer is recommended. The npm package declares `engines.node >= 22`, because SQLite sources for Antigravity CLI, OpenCode, and Hermes require built-in SQLite support and cannot be read on older Node.js versions.
+Node.js 26.12.1 (matching CI and the Dockerfile) or newer is recommended. The npm package declares `engines.node >= 26`, because SQLite sources for Antigravity CLI, OpenCode, and Hermes require built-in SQLite support and cannot be read on older Node.js versions.
 
 ```bash
 npm install -g @nocoo/pew
@@ -59,7 +59,7 @@ Antigravity CLI usage and sessions come from `~/.gemini/antigravity-cli/conversa
 
 ## Development
 
-The repository uses Bun workspaces. Use Bun 1.4.4 and Node.js 22.23.4 to match the current CI and Dockerfile.
+The repository uses Bun workspaces. Use Bun 1.4.4 and Node.js 26.12.1 to match the current CI and Dockerfile.
 
 ```bash
 git clone https://github.com/nocoo/pew.git
