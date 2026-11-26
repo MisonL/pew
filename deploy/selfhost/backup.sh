@@ -103,13 +103,33 @@ run_with_timeout() {
   # a background command in a non-interactive shell otherwise reads /dev/null.
   "$@" <&0 &
   pid=$!
-  ( sleep "$seconds"; kill -TERM "$pid" 2>/dev/null || exit 0; sleep 2; kill -KILL "$pid" 2>/dev/null || true ) >/dev/null 2>&1 &
+  # The watcher must not outlive this function. A background subshell's `sleep`
+  # is not killed with its parent and inherits every open descriptor, and cron
+  # and upgrade.sh serialize backups through `flock -n` — an orphaned sleep
+  # would keep that flock held for the rest of BACKUP_TIMEOUT_S after a
+  # SUCCESSFUL backup, failing the next backup or upgrade with a misleading
+  # "another backup may hold the lock". So poll the wrapped pid instead of
+  # sleeping the whole window, and close descriptors 3-9: Bash keeps the
+  # caller's lock fd (and anything else open) across fork otherwise.
+  (
+    exec 9>&- 8>&- 7>&- 6>&- 5>&- 4>&- 3>&-
+    deadline=$(( $(date +%s) + seconds ))
+    while kill -0 "$pid" 2>/dev/null; do
+      if [ "$(date +%s)" -ge "$deadline" ]; then
+        kill -TERM "$pid" 2>/dev/null || exit 0
+        sleep 2
+        kill -KILL "$pid" 2>/dev/null || true
+        exit 0
+      fi
+      sleep 1
+    done
+  ) >/dev/null 2>&1 &
   watcher=$!
   wait "$pid" || status=$?
   kill "$watcher" 2>/dev/null || true
   wait "$watcher" 2>/dev/null || true
   if [ "$status" -eq 143 ] || [ "$status" -eq 137 ]; then
-    echo "backup.sh: rqlite did not answer within ${seconds}s" >&2
+    echo "backup.sh: a docker command did not answer within ${seconds}s" >&2
     return 124
   fi
   return "$status"
@@ -263,7 +283,11 @@ fi
 # — for ANY source path, so cron backups fail with a message that never
 # mentions the remedy. Wrap it: fail closed (set -e would anyway) but say what
 # to do. Recreating the service re-resolves the bind to the rendered file.
-if ! docker compose cp "$SERVICE:/rqlite/file/backup.db" "$TMP"; then
+# Every other docker interaction in this script is bounded; the copy is the
+# last one that could hang forever on a wedged daemon or a stalled volume walk
+# and keep the shared `flock` (cron and upgrade.sh) held. `cp` does not read
+# stdin, so the explicit `<&0` inside run_with_timeout is harmless.
+if ! run_with_timeout "$BACKUP_TIMEOUT_S" docker compose cp "$SERVICE:/rqlite/file/backup.db" "$TMP"; then
   echo "backup.sh: docker cp failed." >&2
   echo "  If the docker error above mentions 'auth/auth.json: is a directory', the" >&2
   echo "  container was created while .rqlite-auth.json did not exist (render must" >&2
