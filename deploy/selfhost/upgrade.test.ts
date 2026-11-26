@@ -41,7 +41,7 @@ function fixture(opts: {
   mkdirSync(bin);
   mkdirSync(selfhost, { recursive: true });
   writeFileSync(join(repo, "package.json"), JSON.stringify({ version: "9.9.9" }));
-  writeFileSync(join(selfhost, "backup.sh"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  writeFileSync(join(selfhost, "backup.sh"), `#!/bin/sh\necho ran >> ${JSON.stringify(join(root, "backup.log"))}\nexit 0\n`, { mode: 0o755 });
   writeFileSync(join(selfhost, "upgrade.sh"), readFileSync(SCRIPT), { mode: 0o755 });
 
   execFileSync("git", ["init", "--quiet", repo]);
@@ -125,6 +125,22 @@ exec "$@"
 }
 
 describe("selfhost upgrade.sh", () => {
+  it("rejects an invalid health timeout before backup, build, or restart", async () => {
+    // Validated after `up -d`, a typo like `300s` replaced the whole stack and
+    // then exited 1 without waiting for health or verifying provenance — the
+    // operation reports failure while the new containers run unverified.
+    for (const bad of ["300s", "0"]) {
+      const f = fixture({});
+      const { code, out } = await f.run([], { PEW_UPGRADE_HEALTH_TIMEOUT_S: bad });
+      expect(code, out).not.toBe(0);
+      expect(out).toContain("must be a positive integer");
+      expect(existsSync(join(f.root, "backup.log"))).toBe(false);
+      const log = existsSync(f.argvLog) ? readFileSync(f.argvLog, "utf8") : "";
+      expect(log).not.toContain("compose build");
+      expect(log).not.toContain("compose up");
+    }
+  });
+
   it("passes PEW_REVISION and PEW_VERSION to the build", async () => {
     const f = fixture({ reportedRevision: "unused", reportedVersion: "9.9.9" });
     const { code, out } = await f.run(["--skip-backup"], { PEW_UPGRADE_NO_RESTART: "1" });
