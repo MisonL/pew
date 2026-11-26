@@ -81,6 +81,24 @@ describe("state mutation lock", () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
+  it("reclaims an empty reclaim mutex left by a crashed reclaimer", async () => {
+    // The reclaimer's own mutex has the same create-then-write window as the
+    // lock it guards: acquireLock creates `state.lock.reclaim` with O_EXCL and
+    // only then writes the owner record, so a crash in between leaves an empty
+    // file. Nothing else ever removes that file, so treating it like a live
+    // holder would fail every later command forever.
+    const dir = await mkdtemp(join(tmpdir(), "pew-state-lock-"));
+    try {
+      const path = join(dir, "state.lock");
+      const dead = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" });
+      await writeFile(path, JSON.stringify({ pid: Number(dead.stdout), startedAt: new Date().toISOString() }));
+      await writeFile(`${path}.reclaim`, "");
+      expect(await withStateLock(dir, async () => "recovered")).toBe("recovered");
+      expect(await exists(path)).toBe(false);
+      expect(await exists(`${path}.reclaim`)).toBe(false);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it("reclaims unreadable content that persists, so a torn lock cannot wedge every command", async () => {
     // A crash or ENOSPC between the O_EXCL create and the write leaves content
     // with no parseable PID. Unlike a live owner it never becomes readable, so
