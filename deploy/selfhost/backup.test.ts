@@ -57,6 +57,8 @@ function run(opts: {
   /** Sleep in the REPL / cp branch so a test can deliver a signal mid-run. */
   delayAt?: "repl" | "cp";
   delaySeconds?: number;
+  /** The REPL never answers (wedged daemon or paused container). */
+  replHangs?: boolean;
   /** Deliver this signal to the script after the given delay. */
   signal?: { name: NodeJS.Signals; afterMs: number };
   profile?: string;
@@ -64,6 +66,8 @@ function run(opts: {
   password?: string | null;
   noEnvFile?: boolean;
   args?: string[];
+  /** Extra environment for the script (e.g. PEW_BACKUP_TIMEOUT_S). */
+  env?: Record<string, string>;
 }) {
   const dir = mkdtempSync(join(tmpdir(), "bk-")); dirs.push(dir);
   // A world-traversable root makes the staging-directory assertion meaningful:
@@ -129,6 +133,11 @@ case " $* " in
     echo "test -s: /rqlite/file/backup.db: No such file" >&2
     exit 1;;
   *" exec "*)
+    if [ "${opts.replHangs ? "1" : "0"}" = "1" ]; then
+      # A wedged daemon or paused container: the client never returns. exec
+      # keeps the pid the script's watchdog kills, so no orphan holds stdout.
+      exec sleep 20
+    fi
     if [ "${opts.replCommandFails ? "1" : "0"}" = "1" ]; then
       # docker itself failed before the REPL could run (daemon down, service
       # not running): no transcript, non-zero status, no archive. Only the
@@ -228,7 +237,7 @@ exit 0
   const out = join(dir, "out.db");
   const child = spawn("bash", [script, ...(opts.args ?? [out])], {
     cwd: dir,
-    env: { PATH: `${bin}:${process.env.PATH}`, HOME: dir, TMPDIR: dir },
+    env: { PATH: `${bin}:${process.env.PATH}`, HOME: dir, TMPDIR: dir, ...opts.env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (opts.signal) {
@@ -270,6 +279,17 @@ function sqliteFile(dir: string, name = "archive.db"): string {
 }
 
 describe("backup.sh", () => {
+  it("times out a hung rqlite REPL so the shared backup lock is released", async () => {
+    // The cron job holds flock for the whole run, and upgrade.sh takes the
+    // same lock non-blocking: a wedged `docker compose exec` would leave the
+    // lock held forever and every later upgrade would fail.
+    const startedAt = Date.now();
+    const r = await run({ replHangs: true, env: { PEW_BACKUP_TIMEOUT_S: "1" } });
+    expect(r.code, r.stderr).not.toBe(0);
+    expect(r.stderr).toContain("did not answer within 1s");
+    expect(Date.now() - startedAt).toBeLessThan(20_000);
+  }, 30_000);
+
   it("backs up via the single-node service and chmods the archive to 0600", async () => {
     const r = await run({});
     expect(r.code, r.stderr).toBe(0);
