@@ -236,4 +236,23 @@ describe("openCodeJsonTokenDriver", () => {
       expect(ctx.messageKeys).toBeUndefined();
     });
   });
+
+  describe("parse", () => {
+    it("rejects an unreadable message file instead of returning an empty result", async () => {
+      // The orchestrator records a cursor whenever parse resolves; resolving
+      // with no deltas would mark the file processed forever. Rejecting keeps
+      // it queued for the next run, like the JSONL sources' parseFailed path.
+      const sessionDir = join(tempDir, "ses-bad");
+      await mkdir(sessionDir, { recursive: true });
+      const filePath = join(sessionDir, "msg-bad.json");
+      await writeFile(filePath, "{truncated");
+      await expect(
+        openCodeJsonTokenDriver.parse(
+          filePath,
+          { kind: "opencode-json", lastTotals: null } as never,
+          {} as never,
+        ),
+      ).rejects.toThrow(/unreadable/i);
+    });
+  });
 });

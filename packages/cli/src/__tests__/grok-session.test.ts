@@ -94,13 +94,16 @@ describe("parseGrokSession", () => {
     expect(snap!.durationSeconds).toBe(0);
   });
 
-  it("returns null when signals.json exists but is corrupt, instead of zeroing counts", async () => {
+  it("defers a session whose signals.json is corrupt instead of zeroing counts", async () => {
     // A half-written signals.json must not become a snapshot of zeros:
     // the server upserts snapshots by key, so zeroing on a transient
     // corrupt read overwrites the real history already stored there.
     // A missing signals.json keeps its contract (report zeros now, real
     // values on the next activity) — only a present-but-unparseable one
-    // counts as "cannot read truth" and skips this round.
+    // counts as "cannot read truth" and defers this round. It must throw,
+    // not return null: the session cursor is keyed by summary.json, whose
+    // mtime and size do not change when signals.json is repaired, so a null
+    // result would let the cursor skip the session forever.
     await writeFile(
       join(sessionDir, "summary.json"),
       JSON.stringify({
@@ -111,8 +114,7 @@ describe("parseGrokSession", () => {
       })
     );
     await writeFile(join(sessionDir, "signals.json"), "{truncated");
-    const snap = await parseGrokSession(sessionDir);
-    expect(snap).toBeNull();
+    await expect(parseGrokSession(sessionDir)).rejects.toThrow(/signals\.json/i);
   });
   
   it("sets model null when current_model_id is missing", async () => {

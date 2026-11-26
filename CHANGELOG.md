@@ -680,6 +680,33 @@ is the one that explains it.
 - 2026-11-22 — answer 409, not 500, when an organization slug update loses
     on UNIQUE
 
+### Review round 58 (2026-11-26)
+- 2026-11-26 — reclaim an empty `state.lock.reclaim` left by a crash between
+    the O_EXCL create and the owner write; previously every later sync,
+    upload and reset stayed busy forever
+- 2026-11-26 — keep a Grok session retryable when `signals.json` is corrupt:
+    the repair does not change the `summary.json` fingerprint, so returning
+    null had made the "skip this round" permanent
+- 2026-11-26 — refuse to advance an OpenCode JSON message cursor when the
+    file cannot be read or parsed, matching the JSONL parse-failed contract
+- 2026-11-26 — drop a damaged OpenCode SQLite session cursor instead of
+    feeding a string watermark into `time_updated >= ?` forever
+- 2026-11-26 — count `pew status` pending records from `dirtyKeys`, not the
+    upload byte offset, so refusals are visible and committed history is not
+    reported as pending
+- 2026-11-26 — reject an invalid selfhost upgrade health timeout before
+    backup/build/restart, so a typo cannot skip health and provenance checks
+- 2026-11-26 — bound every rqlite exec in `backup.sh`; a hung cron backup
+    could otherwise hold the shared flock that upgrade.sh needs
+- 2026-11-26 — compare the transport Bearer with padded constant-time logic,
+    matching both Workers' secureCompare
+- 2026-11-26 — recheck team membership when re-offering a season seat, so a
+    member kicked between read and write cannot reappear on the roster
+- 2026-11-26 — order first/last seen by epoch (`julianday`) in usage, users
+    and admin RPCs, so legacy offset-bearing timestamps cannot invert them
+- 2026-11-26 — clarify the CLI ingest mirror's deliberate `workbuddy` superset
+    and the auth-code route's session-or-Bearer contract
+
 ## v3.5.1
 
 ### Changed

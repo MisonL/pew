@@ -76,6 +76,44 @@ case ",${COMPOSE_PROFILES:-single}," in
 esac
 
 OUT="${1:-backup-$(date +%F).db}"
+
+# Bound every rqlite interaction. The cron job and upgrade.sh serialise through
+# flock, and an exec that never returns would hold that lock forever — every
+# later upgrade then fails with "another backup may hold ..." until someone
+# kills the process. Every other rqlite caller in the stack (d1-adapter,
+# rqlite-client, migrate) carries a 5–30 s bound; this path had none.
+BACKUP_TIMEOUT_S="${PEW_BACKUP_TIMEOUT_S:-600}"
+case "$BACKUP_TIMEOUT_S" in
+  ''|*[!0-9]*) echo "backup.sh: PEW_BACKUP_TIMEOUT_S must be a positive integer" >&2; exit 1 ;;
+esac
+if [ "$BACKUP_TIMEOUT_S" -le 0 ]; then
+  echo "backup.sh: PEW_BACKUP_TIMEOUT_S must be a positive integer" >&2
+  exit 1
+fi
+
+# Run a command with a hard time bound (bash 3.2 has no `timeout` on macOS,
+# and the script must stay runnable there). stdout belongs to the wrapped
+# command — callers capture it — so the watchdog's own streams go to /dev/null;
+# a timeout is reported on stderr here, after the wait.
+run_with_timeout() {
+  local seconds=$1
+  shift
+  local pid watcher status=0
+  # Explicit `<&0` keeps the caller's stdin (the REPL script on a pipe):
+  # a background command in a non-interactive shell otherwise reads /dev/null.
+  "$@" <&0 &
+  pid=$!
+  ( sleep "$seconds"; kill -TERM "$pid" 2>/dev/null || exit 0; sleep 2; kill -KILL "$pid" 2>/dev/null || true ) >/dev/null 2>&1 &
+  watcher=$!
+  wait "$pid" || status=$?
+  kill "$watcher" 2>/dev/null || true
+  wait "$watcher" 2>/dev/null || true
+  if [ "$status" -eq 143 ] || [ "$status" -eq 137 ]; then
+    echo "backup.sh: rqlite did not answer within ${seconds}s" >&2
+    return 124
+  fi
+  return "$status"
+}
 # A path starting with '-' would be parsed as an OPTION by GNU dirname/mv
 # (verified on debian:12-slim: `bash backup.sh --help` printed help, exited 0
 # and silently discarded the archive). Reject it instead of trying to escape.
@@ -119,7 +157,7 @@ TMP="$STAGE/backup.db"
 # shellcheck disable=SC2329  # invoked via trap
 cleanup() {
   rm -rf "$STAGE" 2>/dev/null || true
-  docker compose exec -T "$SERVICE" rm -f /rqlite/file/backup.db >/dev/null 2>&1 || true
+  run_with_timeout "$BACKUP_TIMEOUT_S" docker compose exec -T "$SERVICE" rm -f /rqlite/file/backup.db >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 # Converge catchable signals onto the EXIT trap so the staging directory and
@@ -135,7 +173,8 @@ trap 'exit 129' HUP
 # prints `ERR! unauthorized` and still returns 0 — verified against rqlite
 # 10.5.3). Without this, a failed run could copy and validate a STALE archive
 # from a previous attempt and report success.
-docker compose exec -T "$SERVICE" rm -f /rqlite/file/backup.db
+run_with_timeout "$BACKUP_TIMEOUT_S" docker compose exec -T "$SERVICE" rm -f /rqlite/file/backup.db \
+  || { echo "backup.sh: could not clear the in-container archive (see docker error above)" >&2; exit 1; }
 
 # `set -e` turns a failing `docker compose exec` (daemon error, service not
 # running) into an immediate exit here — fail-closed, but the only output would
@@ -144,11 +183,11 @@ docker compose exec -T "$SERVICE" rm -f /rqlite/file/backup.db
 repl_backup() {
   if [ -n "${RQLITE_USERNAME:-}" ] && [ -n "${RQLITE_PASSWORD:-}" ]; then
     printf '.backup /rqlite/file/backup.db\n.exit\n' | \
-      docker compose exec -T -e RQLITE_USERNAME -e RQLITE_PASSWORD "$SERVICE" \
+      run_with_timeout "$BACKUP_TIMEOUT_S" docker compose exec -T -e RQLITE_USERNAME -e RQLITE_PASSWORD "$SERVICE" \
         sh -c 'exec rqlite -u "$RQLITE_USERNAME:$RQLITE_PASSWORD" -H localhost'
   else
     printf '.backup /rqlite/file/backup.db\n.exit\n' | \
-      docker compose exec -T "$SERVICE" rqlite -H localhost
+      run_with_timeout "$BACKUP_TIMEOUT_S" docker compose exec -T "$SERVICE" rqlite -H localhost
   fi
 }
 REPL_OUT=$(repl_backup) \
@@ -211,7 +250,7 @@ esac
 # Success gate: the REPL's exit status cannot distinguish success from ERR!
 # (see above), so the archive itself is the only trustworthy signal. A failed
 # .backup leaves no file or a zero-byte one.
-if ! docker compose exec -T "$SERVICE" sh -c 'test -s /rqlite/file/backup.db'; then
+if ! run_with_timeout "$BACKUP_TIMEOUT_S" docker compose exec -T "$SERVICE" sh -c 'test -s /rqlite/file/backup.db'; then
   echo "backup.sh: .backup produced no archive — check credentials and rqlite logs above" >&2
   exit 1
 fi

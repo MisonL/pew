@@ -49,6 +49,12 @@ async function readSignals(
  *
  * Returns null on missing/corrupt summary or missing session id.
  *
+ * Throws when signals.json exists but cannot be read. The session cursor is
+ * keyed by summary.json's mtime+size, which a signals.json repair does not
+ * change; returning null would let session-sync record a cursor for it and
+ * fast-skip the session forever. A throw keeps the file retryable, which is
+ * what "skip this round" has to mean.
+ *
  * Note: totalMessages uses summary.num_chat_messages (not num_messages) —
  * num_messages counts system events in updates.jsonl.
  */
@@ -61,7 +67,9 @@ export async function parseGrokSession(
   ]);
 
   if (!summary) return null;
-  if (signalsResult.state === "unreadable") return null;
+  if (signalsResult.state === "unreadable") {
+    throw new Error(`${join(sessionDir, "signals.json")} is unreadable; deferring this session until it can be read`);
+  }
   const signals = signalsResult.value;
 
   const info =

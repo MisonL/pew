@@ -1246,6 +1246,14 @@ async function executeSyncScan(opts: InternalSyncOptions & {
   // dropping whichever rollout happened to observe an edge first. Scopes no
   // longer referenced by any surviving cursor are dropped so the file cannot
   // grow without bound.
+  //
+  // HONEST SCOPE for that bound: dropping a scope whose rollouts were all
+  // deleted means a later rollout forked from that thread invents
+  // `parentThreadId` as a fresh scope with an empty edge set and re-counts the
+  // parent's cumulative rows (the driver's knownThreadScopes cache can only
+  // climb through cursors that still exist). The trigger is narrow — every
+  // rollout of the thread deleted, then a fork — and the alternative is a
+  // state file that never shrinks, which the comment above chose against.
   const liveScopes = new Set(
     Object.values(cursors.files).flatMap((cursor) => {
       const scopeId = (cursor as { scopeId?: string | null }).scopeId;

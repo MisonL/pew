@@ -17,6 +17,14 @@ export interface OpenCodeFileResult {
    * behind so the next timestamped message inherits it — but the event cannot
  * be bucketed as written, so the sync warns. */
   skippedNoTimestamp?: boolean;
+  /**
+   * True when the file could not be read or did not parse. That is not "this
+   * message had no usage": the driver must refuse to record a cursor for it,
+   * or the sync marks the file processed and never looks at it again (an
+   * in-place repair and a released file lock both leave the directory mtime
+   * unchanged).
+   */
+  unreadable?: boolean;
 }
 
 export function openCodeAccounting(tokens: TokenDelta, msg: Record<string, unknown>, model: string,
@@ -79,18 +87,18 @@ export async function parseOpenCodeFile(opts: {
   try {
     raw = await readFile(filePath, "utf8");
   } catch {
-    return { delta: null, messageKey: null, lastTotals };
+    return { delta: null, messageKey: null, lastTotals, unreadable: true };
   }
 
   if (!raw.trim()) {
-    return { delta: null, messageKey: null, lastTotals };
+    return { delta: null, messageKey: null, lastTotals, unreadable: true };
   }
 
   let msg: Record<string, unknown>;
   try {
     msg = JSON.parse(raw);
   } catch {
-    return { delta: null, messageKey: null, lastTotals };
+    return { delta: null, messageKey: null, lastTotals, unreadable: true };
   }
 
   // Only process assistant messages

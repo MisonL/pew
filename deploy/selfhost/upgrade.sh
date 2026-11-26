@@ -58,6 +58,19 @@ REVISION=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) \
 VERSION=$(node -p "require('$REPO_ROOT/package.json').version" 2>/dev/null) \
   || { echo "upgrade.sh: cannot read package.json version" >&2; exit 1; }
 
+# Validate every override before the first side effect (backup, build, up -d).
+# Discovered after `up -d`, a typo leaves the new stack running while the
+# script reports failure and skips the health and provenance checks that
+# justify the restart — the one thing this script exists to verify.
+HEALTH_TIMEOUT_S="${PEW_UPGRADE_HEALTH_TIMEOUT_S:-300}"
+case "$HEALTH_TIMEOUT_S" in
+  ''|*[!0-9]*) echo "upgrade.sh: PEW_UPGRADE_HEALTH_TIMEOUT_S must be a positive integer" >&2; exit 1 ;;
+esac
+if [ "$HEALTH_TIMEOUT_S" -le 0 ]; then
+  echo "upgrade.sh: PEW_UPGRADE_HEALTH_TIMEOUT_S must be a positive integer" >&2
+  exit 1
+fi
+
 if [ "$SKIP_BACKUP" -eq 0 ]; then
   BACKUP_DIR="${PEW_BACKUP_DIR:-$HOME/pew-backups}"
   mkdir -p "$BACKUP_DIR"
@@ -169,11 +182,7 @@ fi
 # Wait for the web container to report healthy. The healthcheck interval is
 # 10s (see docker-compose.yml), so 5 minutes is generous for a normal start
 # without hanging forever on a wedged one. PEW_UPGRADE_HEALTH_TIMEOUT_S
-# overrides it for tests.
-HEALTH_TIMEOUT_S="${PEW_UPGRADE_HEALTH_TIMEOUT_S:-300}"
-case "$HEALTH_TIMEOUT_S" in
-  ''|*[!0-9]*) echo "upgrade.sh: PEW_UPGRADE_HEALTH_TIMEOUT_S must be a positive integer" >&2; exit 1 ;;
-esac
+# overrides it for tests; it was validated before the backup/build/restart.
 echo "==> waiting for the web container to become healthy"
 deadline=$(( $(date +%s) + HEALTH_TIMEOUT_S ))
 while :; do

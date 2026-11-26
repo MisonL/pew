@@ -99,15 +99,22 @@ export async function syncSeasonRosters(
         // and this write are separate round trips, and a captain who withdrew
         // between them would otherwise get every member re-inserted into a
         // roster the withdrawal just deleted — orphan seats that block later
-        // registration and keep granting season profile access.
+        // registration and keep granting season profile access. The member
+        // EXISTS check closes the same window against a concurrent kick: the
+        // kick route deletes team_members and then runs this sync, so a sync
+        // holding the pre-kick member list must not re-insert the user.
         await dbWrite.execute(
           `INSERT OR IGNORE INTO season_team_members (id, season_id, team_id, user_id)
            SELECT ?, ?, ?, ?
            WHERE EXISTS (
             SELECT 1 FROM season_teams
             WHERE season_id = ? AND team_id = ?
+           )
+           AND EXISTS (
+            SELECT 1 FROM team_members
+            WHERE team_id = ? AND user_id = ?
            )`,
-          [crypto.randomUUID(), season_id, teamId, userId, season_id, teamId],
+          [crypto.randomUUID(), season_id, teamId, userId, season_id, teamId, teamId, userId],
         );
       }
     }

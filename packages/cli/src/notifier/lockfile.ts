@@ -156,6 +156,12 @@ export async function readLockOwnerState(
 const RECLAIM_WAIT_MS = 2_000;
 
 /**
+ * How long an ownerless reclaim mutex must stay unreadable before it counts as
+ * a corpse rather than a writer mid-create. Mirrors state-lock's recheck rule.
+ */
+const UNREADABLE_RECHECK_MS = 100;
+
+/**
  * Remove a lockfile whose owner is gone, serialized behind a `<lock>.reclaim`
  * O_EXCL mutex.
  *
@@ -188,6 +194,12 @@ export async function reclaimLock(
   const reclaimPath = `${lockPath}.reclaim`;
   const deadline = now() + RECLAIM_WAIT_MS;
   let backoff = 20;
+  // First time the reclaim mutex was seen without a parseable owner. It is the
+  // same create-then-write window the lock itself has, so a single observation
+  // proves nothing; content that stays unreadable past the recheck delay is a
+  // crash (or ENOSPC) survivor, and leaving it in place would make every later
+  // call fail closed forever.
+  let unreadableSince: number | null = null;
 
   while (true) {
     if (await acquireLock(reclaimPath, { fs: opts.fs, process: opts.process })) {
@@ -213,13 +225,29 @@ export async function reclaimLock(
 
     // A stale reclaim mutex is reclaimed the same way — its owner is a
     // reclaimer, never a lock holder, so this cannot cascade into the race.
-    if ((await readLockOwnerState(reclaimPath, opts)) === "dead") {
+    const reclaimState = await readLockOwnerState(reclaimPath, opts);
+    if (reclaimState === "dead") {
+      unreadableSince = null;
       try {
         await opts.fs.unlink(reclaimPath);
       } catch {
         // Another reclaimer won — retry the mutex acquisition.
       }
       continue;
+    }
+    if (reclaimState === "unreadable") {
+      unreadableSince ??= now();
+      if (now() - unreadableSince >= UNREADABLE_RECHECK_MS) {
+        try {
+          await opts.fs.unlink(reclaimPath);
+        } catch {
+          // Another reclaimer won — retry the mutex acquisition.
+        }
+        unreadableSince = null;
+        continue;
+      }
+    } else {
+      unreadableSince = null;
     }
 
     if (now() >= deadline) return;

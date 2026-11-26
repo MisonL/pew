@@ -55,4 +55,42 @@ describe("SessionCursorStore", () => {
     const state = await new SessionCursorStore(tempDir).load();
     expect(state.files["/dir"]).toEqual({ mtimeMs: 1 });
   });
+
+  it("drops an openCodeSqlite cursor whose nested fields have the wrong type", async () => {
+    // The driver feeds lastTimeUpdated into `WHERE time_updated >= ?` and
+    // rebuilds a Set from lastProcessedIds. A string watermark makes every
+    // comparison false (TEXT sorts above every integer) and is written back
+    // forever, so the source silently collects nothing; a non-iterable id
+    // list throws a TypeError the per-driver catch can only warn about every
+    // run. Either way the damaged cursor never heals without hand-deleting
+    // the state file — the other stores drop damaged entries instead.
+    const cases = [
+      { lastTimeUpdated: "corrupt", lastProcessedIds: [], inode: 1, updatedAt: "t" },
+      { lastTimeUpdated: 1, lastProcessedIds: 42, inode: 1, updatedAt: "t" },
+      { lastTimeUpdated: 1, lastProcessedIds: ["a", 2], inode: 1, updatedAt: "t" },
+      { lastTimeUpdated: 1, lastProcessedIds: [], inode: "x", updatedAt: "t" },
+      { lastTimeUpdated: -1, lastProcessedIds: [], inode: 1, updatedAt: "t" },
+      { lastTimeUpdated: 1, lastProcessedIds: [], inode: 1, updatedAt: 5 },
+    ];
+    for (const openCodeSqlite of cases) {
+      await writeFile(
+        join(tempDir, "session-cursors.json"),
+        JSON.stringify({ version: 1, files: { "/keep": { mtimeMs: 1 } }, openCodeSqlite }),
+      );
+      const state = await new SessionCursorStore(tempDir).load();
+      expect(state.openCodeSqlite, JSON.stringify(openCodeSqlite)).toBeUndefined();
+      // The damage is scoped: valid file cursors still load.
+      expect(Object.keys(state.files)).toEqual(["/keep"]);
+    }
+  });
+
+  it("keeps a well-formed openCodeSqlite cursor", async () => {
+    const cursor = { lastTimeUpdated: 5, lastProcessedIds: ["s1"], inode: 7, updatedAt: "2026-11-26T00:00:00Z" };
+    await writeFile(
+      join(tempDir, "session-cursors.json"),
+      JSON.stringify({ version: 1, files: {}, openCodeSqlite: cursor }),
+    );
+    const state = await new SessionCursorStore(tempDir).load();
+    expect(state.openCodeSqlite).toEqual(cursor);
+  });
 });
