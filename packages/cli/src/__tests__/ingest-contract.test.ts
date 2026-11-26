@@ -55,6 +55,12 @@ describe("the mirror's source set tracks @pew/core", () => {
   // filters those records out and still advances the offset, so the source
   // silently never uploads. Enumerate core's own list instead of listing
   // cases: a new identity in core has to reach the mirror or this fails.
+  //
+  // The mirror is allowed to be a SUPERSET: `workbuddy` is deliberately kept
+  // for queues shared with a WorkBuddy build, and the upload engine peels
+  // records the server answers "invalid source" for. The suite therefore pins
+  // this direction only; the extra is asserted explicitly below so a second
+  // undocumented one cannot slip in.
   const everySource = [...SOURCES, ...RETIRED_SOURCES];
 
   it.each(everySource)("token records from %s pass the local filter", (source) => {
@@ -67,6 +73,17 @@ describe("the mirror's source set tracks @pew/core", () => {
     const record = { ...SESSION, source, session_key: `${source}:ses-1` };
     expect(sessionRecordRejection(record)).toBeNull();
     expect(validateSessionIngestRecord(record, 0).valid).toBe(true);
+  });
+
+  it("accepts exactly one source beyond core's lists, and the server rejects it", () => {
+    // workbuddy: the mirror accepts (shared queues drain through the peel
+    // path), the server rejects. Anything else extra is a real drift.
+    const extra = ["workbuddy"];
+    for (const source of extra) {
+      expect(everySource).not.toContain(source);
+      expect(tokenRecordRejection({ ...TOKEN, source })).toBeNull();
+      expect(validateIngestRecord({ ...TOKEN, source }, 0).valid).toBe(false);
+    }
   });
 });
 

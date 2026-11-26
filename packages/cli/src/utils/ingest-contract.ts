@@ -3,14 +3,19 @@
  *
  * `packages/core/src/validation.ts` is the authority, but `@pew/core` is a
  * type-only devDependency here (the published CLI cannot depend on it), so the
- * checks are restated. They must agree with the server: a record this accepts
- * that the server rejects fails its whole batch with 400, and a 4xx never
- * advances the upload offset — one bad record then blocks the queue forever.
- * `__tests__/ingest-contract.test.ts` pins the agreement against the core
- * validators, so a drift on either side fails the suite.
+ * checks are restated. A record this rejects is dropped locally; a record this
+ * accepts that the server rejects fails its whole batch with 400 — a 4xx never advances the upload offset, so one
+ * bad record then blocks the queue forever.
+ *
+ * The set is intentionally a SUPERSET of core's SOURCES ∪ RETIRED_SOURCES:
+ * `workbuddy` was in core when this mirror was written, was later removed, and
+ * stays here so queues shared with a WorkBuddy build can still be drained. The
+ * upload engine peels records the server answers "invalid source" for, warns,
+ * and sends the rest (00c1439e), so the extra identity never wedges a batch.
+ * `__tests__/ingest-contract.test.ts` pins the core ⊆ mirror direction and
+ * documents the deliberate extra.
  */
-
-/** Active plus retired identities (core SOURCES ∪ RETIRED_SOURCES). */
+/** Active plus retired identities, plus the historical WorkBuddy identity. */
 const VALID_SOURCES = new Set([
   "antigravity", "claude-code", "codex", "copilot-cli", "grok", "hermes",
   "opencode", "openclaw", "pi", "workbuddy",
