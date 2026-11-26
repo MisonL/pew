@@ -203,6 +203,39 @@ describe("syncSeasonRosters", () => {
     expect(db.prepare("SELECT COUNT(*) AS n FROM season_team_members").get()).toEqual({ n:0 });
   });
 
+  it("does not re-insert a member kicked between the reads and the writes", async () => {
+    // The kick route deletes team_members and then runs this same sync. A
+    // concurrent sync that read the roster before the delete would otherwise
+    // re-insert the kicked user from its stale member list — an orphan seat
+    // that keeps granting season profile access and blocks re-registration.
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE seasons (id TEXT PRIMARY KEY, start_date TEXT, end_date TEXT, allow_roster_changes INTEGER DEFAULT 0);
+      CREATE TABLE teams (id TEXT PRIMARY KEY);
+      CREATE TABLE season_teams (id TEXT PRIMARY KEY, season_id TEXT, team_id TEXT);
+      CREATE TABLE team_members (team_id TEXT, user_id TEXT, PRIMARY KEY (team_id, user_id));
+      CREATE TABLE season_team_members (id TEXT PRIMARY KEY, season_id TEXT, team_id TEXT, user_id TEXT,
+        UNIQUE (season_id, user_id));
+    `);
+    db.exec(`
+      INSERT INTO seasons VALUES ('season-1', '2000-01-01T00:00:00Z', '2999-12-31T00:00:00Z', 1);
+      INSERT INTO teams VALUES ('team-1');
+      INSERT INTO season_teams VALUES ('st1','season-1','team-1');
+      INSERT INTO team_members VALUES ('team-1','user-1');
+    `);
+    mockDbRead.listRosterSyncSeasons.mockResolvedValueOnce(["season-1"]);
+    mockDbRead.getTeamMemberUserIds.mockResolvedValueOnce(["user-1"]);
+    mockDbRead.getRosterUserIds.mockResolvedValueOnce([]);
+    await syncSeasonRosters(mockDbRead as never, mockDbWrite as never, "team-1");
+    // The kick lands after the member list was read but before the insert.
+    db.exec("DELETE FROM team_members WHERE team_id = 'team-1' AND user_id = 'user-1'");
+    const calls = mockDbWrite.execute.mock.calls as Array<[string, unknown[]]>;
+    for (const [sql, params] of calls) {
+      db.prepare(sql).run(...(params as Array<string | number | null>));
+    }
+    expect(db.prepare("SELECT COUNT(*) AS n FROM season_team_members").get()).toEqual({ n: 0 });
+  });
+
   it("bulk sync skips a team whose registration disappeared before the write", async () => {
     const db = new DatabaseSync(":memory:");
     db.exec(`
