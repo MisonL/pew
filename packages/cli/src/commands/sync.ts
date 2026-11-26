@@ -1376,17 +1376,47 @@ async function executeSyncScan(opts: InternalSyncOptions & {
   // `retiredRecords` is read back from queue.jsonl, not from this scan, so it
   // must not count as evidence: a queue that happens to hold a retired-source
   // row would otherwise make an empty scan authoritative and drop the active
-  // records sitting next to it.
+  // records sitting next to it. An Antigravity snapshot with no database at
+  // all is the same shape — the directory exists but holds no history — and
+  // must not authorise replacing the queue either.
   const fullScanFoundData =
-    records.length > 0 || opts.antigravitySnapshot != null;
+    records.length > 0 || (opts.antigravitySnapshot != null && opts.antigravitySnapshot.dbCount > 0);
+  // A full scan is authoritative only for the buckets it actually produced.
+  // Cursor pruning can empty `cursors.files` while a source's raw logs are gone
+  // and its queue rows are still the last (possibly un-uploaded) copy of that
+  // usage; another, cursor-less source (Antigravity keeps its cursor outside
+  // `cursors.files`) then makes the scan look non-empty and the old rows were
+  // dropped. Keep every prior active-source bucket this scan did not
+  // reproduce — for sources the scan skipped entirely (their raw data is
+  // unavailable) and for rotated files of a source it did read (absence is
+  // not a removal; corrections arrive as zero-value records, which win here).
+  // Antigravity and retired rows have their own partitions.
+  const scannedKeys = new Set(records.map(tokenRecordKey));
+  const carriedRecords = initialCursorEmpty
+    ? oldRecords.filter((record) => record.source !== "antigravity" &&
+      !isRetiredSource(record.source) && !scannedKeys.has(tokenRecordKey(record))) : [];
   let finalRecords = initialCursorEmpty
-    ? (fullScanFoundData ? [...records, ...retiredRecords] : undefined)
+    ? (fullScanFoundData ? [...records, ...carriedRecords, ...retiredRecords] : undefined)
     : records.length > 0 ? aggregateRecords([...oldRecords, ...records]) : undefined;
   const previousAntigravity = opts.previousAntigravityRecords ?? [];
   const freshAntigravity = opts.antigravitySnapshot
     ? antigravityRecords(opts.antigravitySnapshot.deltas, opts.deviceId) : null;
+  // Antigravity is a snapshot-replacement source: a bucket absent from this
+  // scan is normally a removed step and its queue row must zero out. That
+  // inference is only valid for a complete snapshot. Skipped corrupt steps,
+  // an out-of-contract session and an empty database directory beside real
+  // history all mean "this run did not see everything"; treating the missing
+  // buckets as removed would overwrite already-uploaded usage with zeros.
+  const antigravitySkipped = opts.antigravitySnapshot?.skipped;
+  const antigravityEmptyDir = opts.antigravitySnapshot?.dbCount === 0 && previousAntigravity.length > 0;
+  const allowAntigravityRemovals = !antigravityEmptyDir &&
+    !(antigravitySkipped && (antigravitySkipped.steps > 0 || antigravitySkipped.sessions > 0));
+  if (antigravityEmptyDir && opts.antigravitySnapshot) {
+    onProgress?.({ source: "antigravity", phase: "warn",
+      message: "No Antigravity databases found beside previous usage; keeping the previous totals until the source is reachable again" });
+  }
   const antigravity = replaceAntigravityPartition(previousAntigravity, finalRecords ?? oldRecords,
-    freshAntigravity, opts.deviceId);
+    freshAntigravity, opts.deviceId, { allowRemovals: allowAntigravityRemovals });
   if (finalRecords || antigravity.changedKeys.length || previousAntigravity.length && initialCursorEmpty) {
     finalRecords = antigravity.records;
   }
@@ -1444,10 +1474,9 @@ async function executeSyncScan(opts: InternalSyncOptions & {
    // which records actually need sending, avoiding full re-upload on every sync.
   let dirtyKeys: string[] | undefined;
   if (initialCursorEmpty) {
-    // All records are dirty (fresh full scan)
-    const newKeys = records.map(
-      (r) => `${r.source}|${r.model}|${r.hour_start}|${r.device_id}`,
-    );
+    // All records are dirty (fresh full scan). Carried rows were never
+    // replaced by this scan, so they keep their pending upload intent.
+    const newKeys = [...records, ...carriedRecords].map(tokenRecordKey);
     dirtyKeys = [...new Set(newKeys)];
   } else if (records.length > 0) {
     // Incremental with new data: SUM with existing queue records

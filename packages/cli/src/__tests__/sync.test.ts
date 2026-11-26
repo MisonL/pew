@@ -2165,8 +2165,9 @@ describe("executeSync", () => {
 
   it("should never tombstone non-codex buckets on an accounting rescan", async () => {
     // v2 corrects Codex accounting only. A Claude project whose raw logs the
-    // user has since rotated away must keep its already-uploaded history —
-    // "absent from this scan" is not "this history is wrong".
+    // user has since rotated away must keep its history — "absent from this
+    // scan" is not "this history is wrong". The queue keeps the bucket (it may
+    // still be pending an upload); nothing zero is ever written for it.
     const claudeDir = join(dataDir, ".claude", "projects", "proj-acct-keep");
     const sessionPath = join(claudeDir, "session.jsonl");
     await mkdir(claudeDir, { recursive: true });
@@ -2197,7 +2198,8 @@ describe("executeSync", () => {
 
     const queueRaw = await readFile(join(stateDir, "queue.jsonl"), "utf-8");
     const records = queueRaw.trim().split("\n").map((l) => JSON.parse(l) as QueueRecord);
-    expect(records.some((r) => r.source === "claude-code")).toBe(false);
+    const kept = records.find((r) => r.source === "claude-code");
+    expect(kept).toMatchObject({ total_tokens: 4400, hour_start: "2026-03-07T11:00:00.000Z" });
   });
 
   it("should not tombstone when codex discovered nothing (dir missing or unmounted)", async () => {

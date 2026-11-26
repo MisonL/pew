@@ -223,4 +223,53 @@ describe("Antigravity source-isolated sync", () => {
     expect((await executeSessionSync(opts)).sources.antigravity).toBe(0);
     expect(await readFile(join(dir, "session-queue.jsonl"), "utf8")).toBe(content);
   });
+
+  it("keeps the previous partition when corrupt steps make the snapshot partial", async () => {
+    await sync();
+    const before = await records();
+    const details = await accounting();
+    // The only usage-producing step could not be decoded this run. Absence
+    // from a partial snapshot is not a removal: zeroing here would overwrite
+    // already-uploaded usage the raw database still holds.
+    reader.mockResolvedValue({ deltas: [], snapshots: [], dbCount: 1, skipped: { steps: 1, sessions: 0 } });
+    const warnings: string[] = [];
+    await executeSync({ stateDir: dir, deviceId: "device", antigravityDir: "/synthetic",
+      onProgress: (event) => { if (event.phase === "warn") warnings.push(event.message ?? ""); } });
+    expect(await records()).toEqual(before);
+    expect(await accounting()).toEqual(details);
+    expect(warnings.some((message) => message.includes("Skipped 1 corrupt Antigravity step"))).toBe(true);
+    // A complete snapshot still tombstones removals afterwards.
+    reader.mockResolvedValue({ deltas: [], snapshots: [], dbCount: 1, skipped: { steps: 0, sessions: 0 } });
+    await sync();
+    expect((await records()).every((record) => record.total_tokens === 0)).toBe(true);
+  });
+
+  it("keeps the previous partition when the directory holds no database beside real history", async () => {
+    await sync();
+    const before = await records();
+    reader.mockResolvedValue({ deltas: [], snapshots: [], dbCount: 0, skipped: { steps: 0, sessions: 0 } });
+    const warnings: string[] = [];
+    await executeSync({ stateDir: dir, deviceId: "device", antigravityDir: "/synthetic",
+      onProgress: (event) => { if (event.phase === "warn") warnings.push(event.message ?? ""); } });
+    expect(await records()).toEqual(before);
+    expect(warnings.some((message) => message.includes("No Antigravity databases found"))).toBe(true);
+  });
+
+  it("carries pending rows for a source missing from a full scan", async () => {
+    // A source's raw logs disappeared and its cursor was pruned; another
+    // source's data made the scan look non-empty. The queue row is the last
+    // copy of that usage and must survive the full scan as still-pending work.
+    const queue = new LocalQueue(dir);
+    const pendingRow = { source: "claude-code" as const, device_id: "device", model: "claude-sonnet-4",
+      hour_start: "2026-09-01T00:00:00.000Z", input_tokens: 90, cached_input_tokens: 0,
+      output_tokens: 10, reasoning_output_tokens: 0, total_tokens: 100 };
+    await queue.overwrite([pendingRow]);
+    await queue.saveDirtyKeys(["claude-code|claude-sonnet-4|2026-09-01T00:00:00.000Z|device"]);
+    await sync();
+    expect(await records()).toEqual(expect.arrayContaining([pendingRow]));
+    expect(await queue.loadDirtyKeys()).toEqual(expect.arrayContaining([
+      "claude-code|claude-sonnet-4|2026-09-01T00:00:00.000Z|device",
+      "antigravity|test-model|2026-10-01T12:00:00.000Z|device",
+    ]));
+  });
 });
