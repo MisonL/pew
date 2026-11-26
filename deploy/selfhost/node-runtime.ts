@@ -28,7 +28,19 @@ export function bearerGuard(secret: string): (req: IncomingMessage) => boolean {
     const raw = req.headers.authorization;
     if (typeof raw !== "string") return false;
     const got = Buffer.from(raw);
-    return got.length === expected.length && timingSafeEqual(got, expected);
+    // Pad both sides and fold the length in AFTER the compare. A leading
+    // `got.length === expected.length &&` returns before timingSafeEqual on a
+    // length mismatch, which leaks the secret's byte length — the same oracle
+    // the workers' secureCompare removes by padding (see
+    // packages/worker/src/index.ts). No test can distinguish the two forms;
+    // the guard here is the comment and review, not coverage.
+    const len = Math.max(got.length, expected.length);
+    const paddedGot = Buffer.alloc(len);
+    const paddedExpected = Buffer.alloc(len);
+    got.copy(paddedGot);
+    expected.copy(paddedExpected);
+    const equal = timingSafeEqual(paddedGot, paddedExpected);
+    return got.length === expected.length && equal;
   };
 }
 
