@@ -79,7 +79,15 @@ export async function executeStatus(opts: {
 
   const cursors = await cursorStore.load();
   const offset = await queue.loadOffset();
-  const { records } = await queue.readFromOffset(offset);
+  const queueState = await queue.loadState();
+  // Dirty-key mode is the authoritative pending set: the queue holds the full
+  // aggregated record set and the offset is only bookkeeping. Counting bytes
+  // past the offset reported the whole history as pending after a sync commit
+  // (which rewinds it to 0) and zero while a refused record was still waiting
+  // (the upload had already advanced the offset to EOF).
+  const pendingRecords = queueState.dirtyKeys !== undefined
+    ? new Set(queueState.dirtyKeys).size
+    : (await queue.readFromOffset(offset)).records.length;
 
   // Count files by source using resolved directory paths
   const sources: Record<string, number> = {};
@@ -94,7 +102,7 @@ export async function executeStatus(opts: {
   return {
     trackedFiles: Object.values(sources).reduce((sum, count) => sum + count, 0),
     lastSync: cursors.updatedAt,
-    pendingRecords: records.length,
+    pendingRecords,
     sources,
     notifiers: opts.notifierStatuses ?? {},
   };

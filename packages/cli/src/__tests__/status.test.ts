@@ -387,6 +387,50 @@ describe("executeStatus", () => {
     expect(result.pendingRecords).toBe(0);
   });
 
+  it("counts dirty keys, not bytes, once the queue tracks pending keys", async () => {
+    // A refused record stays pending while the offset has already advanced
+    // past every byte — the old byte-offset count reported 0 and hid the
+    // backlog that the next upload actually retries.
+    const cursorStore = new CursorStore(stateDir);
+    await cursorStore.save({ files: {}, updatedAt: null });
+    const queue = new LocalQueue(stateDir);
+    await queue.appendBatch([{
+      source: "claude-code",
+      model: "glm-5",
+      hour_start: "2026-03-07T10:00:00.000Z",
+      input_tokens: 5000,
+      cached_input_tokens: 0,
+      output_tokens: 800,
+      reasoning_output_tokens: 0,
+      total_tokens: 5800,
+    }]);
+    const { newOffset } = await queue.readFromOffset(await queue.loadOffset());
+    await queue.saveOffset(newOffset);
+    await queue.saveDirtyKeys(["claude-code|glm-5|2026-03-07T10:00:00.000Z"]);
+
+    const result = await executeStatus({ stateDir, sourceDirs: defaultDirs });
+    expect(result.pendingRecords).toBe(1);
+  });
+
+  it("does not report already-uploaded history as pending after a commit rewinds the offset", async () => {
+    // sync writes the aggregated queue and resets the offset to 0 before the
+    // upload runs; counting bytes past the offset then reported the entire
+    // history as pending.
+    const cursorStore = new CursorStore(stateDir);
+    await cursorStore.save({ files: {}, updatedAt: null });
+    const queue = new LocalQueue(stateDir);
+    await queue.appendBatch([
+      { source: "claude-code", model: "a", hour_start: "2026-03-07T10:00:00.000Z", input_tokens: 1, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 1 },
+      { source: "claude-code", model: "b", hour_start: "2026-03-07T10:30:00.000Z", input_tokens: 2, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 2 },
+      { source: "claude-code", model: "c", hour_start: "2026-03-07T11:00:00.000Z", input_tokens: 3, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 3 },
+    ]);
+    await queue.saveOffset(0);
+    await queue.saveDirtyKeys(["claude-code|b|2026-03-07T10:30:00.000Z"]);
+
+    const result = await executeStatus({ stateDir, sourceDirs: defaultDirs });
+    expect(result.pendingRecords).toBe(1);
+  });
+
   it("should handle missing updatedAt as null lastSync", async () => {
     const cursorStore = new CursorStore(stateDir);
     await cursorStore.save({
