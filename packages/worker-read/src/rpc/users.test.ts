@@ -795,10 +795,12 @@ describe("Users RPC handlers", () => {
       expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("FROM usage_records"));
       expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("FROM usage_evidence"));
       expect(db.prepare).not.toHaveBeenCalledWith(expect.stringContaining("usage_totals"));
-      // Epoch-first, so a legacy row carrying +08:00 cannot beat a newer UTC
-      // hour as the profile's "since" date.
-      expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("ORDER BY julianday(hour_start), hour_start LIMIT 1"));
-      expect(db.prepare).not.toHaveBeenCalledWith(expect.stringContaining("ORDER BY hour_start LIMIT 1"));
+      // Offset-bearing legacy rows are compared by epoch, not by text, so a
+      // pre-canonical row cannot beat a newer UTC hour across the two sources.
+      expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("MIN(julianday(first_seen))"));
+      // The inner probes keep their index-ordered text scans: a julianday()
+      // ORDER BY would add a temp b-tree (pinned by d1-query-indexes.test.ts).
+      expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("ORDER BY hour_start LIMIT 1"));
     });
 
     it("should return null when no usage rows", async () => {

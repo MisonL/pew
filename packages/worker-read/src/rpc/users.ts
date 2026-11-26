@@ -352,22 +352,27 @@ async function handleGetUserFirstSeen(
     return Response.json({ error: "Missing userId" }, { status: 400 });
   }
 
+  // Each inner probe stays index-ordered (text ORDER BY hour_start is served by
+  // idx_usage_user_time / idx_evidence_user_time; ordering by julianday() is
+  // not, and the perf contract test pins that). The outer MIN compares the two
+  // candidates' epoch, so a legacy offset-bearing row cannot beat a newer UTC
+  // hour ACROSS sources; within one source the text order is the tie-break,
+  // which can only disagree when that source itself holds pre-canonical rows.
+  // strftime renders the winner in the canonical shape the rest of the
+  // pipeline stores.
   const row = await db
     .prepare(
-      `SELECT first_seen FROM (
+      `SELECT strftime('%Y-%m-%dT%H:%M:%fZ', MIN(julianday(first_seen))) AS first_seen FROM (
          SELECT (
            SELECT hour_start FROM usage_records
-           WHERE user_id = ? ORDER BY julianday(hour_start), hour_start LIMIT 1
+           WHERE user_id = ? ORDER BY hour_start LIMIT 1
          ) AS first_seen
          UNION ALL
          SELECT (
            SELECT hour_start FROM usage_evidence
-           WHERE user_id = ? AND total_tokens > 0 ORDER BY julianday(hour_start), hour_start LIMIT 1
+           WHERE user_id = ? AND total_tokens > 0 ORDER BY hour_start LIMIT 1
          )
-       ) WHERE first_seen IS NOT NULL
-       -- Both sources can carry legacy offset-bearing rows; epoch order picks
-       -- the true earliest, and the text tie-break keeps it deterministic.
-       ORDER BY julianday(first_seen), first_seen LIMIT 1`,
+       )`,
     )
     .bind(req.userId, req.userId)
     .first<{ first_seen: string | null }>();
