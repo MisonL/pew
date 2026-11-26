@@ -308,6 +308,18 @@ describe("usage RPC handlers", () => {
       );
     });
 
+    it("computes first/last seen by epoch so legacy offset rows cannot invert them", async () => {
+      db.all.mockResolvedValue({ results: [] });
+      await handleUsageRpc({
+        method: "usage.getDeviceSummary", userId: "u1",
+        fromDate: "2026-04-01T00:00:00.000Z", toDate: "2026-04-02T00:00:00.000Z",
+      }, db);
+
+      const sql = String(db.prepare.mock.calls.at(-1)?.[0]);
+      expect(sql).toContain("MIN(julianday(ur.hour_start))");
+      expect(sql).toContain("MAX(julianday(ur.hour_start))");
+    });
+
     it("projects the device counters when projectAccounting is set", async () => {
       const basis = { input_tokens: 300, cached_input_tokens: 600, output_tokens: 90, reasoning_output_tokens: 10, total_tokens: 1000 };
       const group = { basis, counts: { input_total_tokens: 900, cache_read_input_tokens: 500, cache_write_input_tokens: 100,

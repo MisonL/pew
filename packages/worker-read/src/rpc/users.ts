@@ -354,17 +354,20 @@ async function handleGetUserFirstSeen(
 
   const row = await db
     .prepare(
-      `SELECT MIN(first_seen) AS first_seen FROM (
+      `SELECT first_seen FROM (
          SELECT (
            SELECT hour_start FROM usage_records
-           WHERE user_id = ? ORDER BY hour_start LIMIT 1
+           WHERE user_id = ? ORDER BY julianday(hour_start), hour_start LIMIT 1
          ) AS first_seen
          UNION ALL
          SELECT (
            SELECT hour_start FROM usage_evidence
-           WHERE user_id = ? AND total_tokens > 0 ORDER BY hour_start LIMIT 1
+           WHERE user_id = ? AND total_tokens > 0 ORDER BY julianday(hour_start), hour_start LIMIT 1
          )
-       )`,
+       ) WHERE first_seen IS NOT NULL
+       -- Both sources can carry legacy offset-bearing rows; epoch order picks
+       -- the true earliest, and the text tie-break keeps it deterministic.
+       ORDER BY julianday(first_seen), first_seen LIMIT 1`,
     )
     .bind(req.userId, req.userId)
     .first<{ first_seen: string | null }>();

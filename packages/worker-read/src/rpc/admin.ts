@@ -278,8 +278,10 @@ async function handleGetStorageStats(db: D1Database): Promise<Response> {
         user_id,
         SUM(total_tokens)              AS total_tokens,
         COUNT(*)                        AS usage_row_count,
-        MIN(hour_start)                AS first_seen,
-        MAX(hour_start)                AS last_seen
+        -- Epoch-first: legacy rows can carry a non-UTC offset, where a text
+        -- MIN/MAX reports the wrong first/last seen (see rpc/live.ts).
+        strftime('%Y-%m-%dT%H:%M:%fZ', MIN(julianday(hour_start))) AS first_seen,
+        strftime('%Y-%m-%dT%H:%M:%fZ', MAX(julianday(hour_start))) AS last_seen
       FROM bucket
       GROUP BY user_id
     ) tok ON tok.user_id = u.id

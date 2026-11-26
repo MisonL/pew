@@ -339,8 +339,11 @@ async function handleGetDeviceSummary(
       `SELECT
         ur.device_id,
         da.alias,
-        MIN(ur.hour_start) AS first_seen,
-        MAX(ur.hour_start) AS last_seen,
+        -- Epoch-first: pre-canonicalization rows may carry a non-UTC offset
+        -- (live.ts already orders by julianday for the same reason), and a
+        -- text MIN/MAX would call '...+08:00' later than a newer UTC hour.
+        strftime('%Y-%m-%dT%H:%M:%fZ', MIN(julianday(ur.hour_start))) AS first_seen,
+        strftime('%Y-%m-%dT%H:%M:%fZ', MAX(julianday(ur.hour_start))) AS last_seen,
         SUM(ur.total_tokens) AS total_tokens,
         SUM(ur.input_tokens) AS input_tokens,
         SUM(ur.output_tokens) AS output_tokens,

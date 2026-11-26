@@ -343,6 +343,17 @@ describe("admin RPC handlers", () => {
       const sql = String(db.prepare.mock.calls.at(-1)?.[0]);
       expect(sql).toContain("ORDER BY total_tokens DESC, u.id");
     });
+
+    it("computes first/last seen by epoch, not by raw text", async () => {
+      // Legacy rows can carry a non-UTC offset; text MIN/MAX would report the
+      // wrong first/last seen for the admin table.
+      db.all.mockResolvedValue({ results: [] });
+      await handleAdminRpc({ method: "admin.getStorageStats" }, db);
+
+      const sql = String(db.prepare.mock.calls.at(-1)?.[0]);
+      expect(sql).toContain("MIN(julianday(hour_start))");
+      expect(sql).toContain("MAX(julianday(hour_start))");
+    });
   });
 
   // -------------------------------------------------------------------------
