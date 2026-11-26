@@ -75,15 +75,16 @@ describe("the mirror's source set tracks @pew/core", () => {
     expect(validateSessionIngestRecord(record, 0).valid).toBe(true);
   });
 
-  it("accepts exactly one source beyond core's lists, and the server rejects it", () => {
-    // workbuddy: the mirror accepts (shared queues drain through the peel
-    // path), the server rejects. Anything else extra is a real drift.
-    const extra = ["workbuddy"];
-    for (const source of extra) {
-      expect(everySource).not.toContain(source);
-      expect(tokenRecordRejection({ ...TOKEN, source })).toBeNull();
-      expect(validateIngestRecord({ ...TOKEN, source }, 0).valid).toBe(false);
-    }
+  it("always accepts workbuddy locally; the server's answer follows core's list", () => {
+    // The one historical identity the mirror may carry beyond core. On a tree
+    // whose core no longer lists it (self-hosted line) the mirror keeps it so
+    // queues shared with a WorkBuddy build can still drain through the peel
+    // path, and the server rejects it; on a tree whose core lists it, the
+    // server accepts it. Pin only the local acceptance: it holds in both, and
+    // it still catches a mirror that drops the identity.
+    expect(tokenRecordRejection({ ...TOKEN, source: "workbuddy" })).toBeNull();
+    const inCore = everySource.includes("workbuddy");
+    expect(validateIngestRecord({ ...TOKEN, source: "workbuddy" }, 0).valid).toBe(inCore);
   });
 });
 

@@ -7,13 +7,14 @@
  * accepts that the server rejects fails its whole batch with 400 — a 4xx never advances the upload offset, so one
  * bad record then blocks the queue forever.
  *
- * The set is intentionally a SUPERSET of core's SOURCES ∪ RETIRED_SOURCES:
- * `workbuddy` was in core when this mirror was written, was later removed, and
- * stays here so queues shared with a WorkBuddy build can still be drained. The
- * upload engine peels records the server answers "invalid source" for, warns,
- * and sends the rest (00c1439e), so the extra identity never wedges a batch.
- * `__tests__/ingest-contract.test.ts` pins the core ⊆ mirror direction and
- * documents the deliberate extra.
+ * The set is intentionally a SUPERSET of core's SOURCES ∪ RETIRED_SOURCES on
+ * trees whose core no longer lists `workbuddy`: the identity stays here so
+ * queues shared with a WorkBuddy build can still be drained. The upload engine
+ * peels records the server answers "invalid source" for, warns, and sends the
+ * rest (00c1439e), so the extra identity never wedges a batch. On a tree whose
+ * core does list it, the two sides agree. `__tests__/ingest-contract.test.ts`
+ * pins the core ⊆ mirror direction and the local acceptance of `workbuddy`,
+ * and is written to hold on both trees.
  */
 /** Active plus retired identities, plus the historical WorkBuddy identity. */
 const VALID_SOURCES = new Set([
