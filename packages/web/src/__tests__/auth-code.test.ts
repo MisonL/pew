@@ -120,6 +120,20 @@ describe("POST /api/auth/code", () => {
     expect(diffMinutes).toBeLessThanOrEqual(5);
   });
 
+  it("accepts a Bearer api_key as well as a session, and says so", async () => {
+    // resolveUser composes both paths for every API route, so this route's
+    // own guard only checks identity. Recorded as the documented contract:
+    // a 200 here means the guard accepted a credential, not which kind.
+    mockResolveUser.mockResolvedValue({ userId: "user-123", email: "test@example.com", via: "bearer" });
+    const mockDbWrite = createMockDbWrite();
+    mockDbWrite.execute.mockResolvedValue({ changes: 1 });
+    mockGetDbWrite.mockResolvedValue(mockDbWrite as unknown as DbWrite);
+
+    const response = await POST(new Request("http://localhost/api/auth/code", { method: "POST" }));
+    expect(response.status).toBe(200);
+    expect(mockResolveUser).toHaveBeenCalled();
+  });
+
   it("should NOT invalidate other codes (avoids concurrent request race condition)", async () => {
     mockResolveUser.mockResolvedValue({
       userId: "user-123",

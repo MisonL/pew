@@ -4,7 +4,12 @@
  * The code is 8 characters (XXXX-XXXX format), using a human-readable alphabet
  * that excludes ambiguous characters (0/O/I/L/1). Valid for 5 minutes.
  *
- * Requires session authentication (user must be logged in via browser).
+ * Requires authentication: a browser session or a CLI Bearer api_key. Only the
+ * browser page (manage devices) calls it today, but the Bearer path is what
+ * `resolveUser` composes for every API route, so keeping the guard here just
+ * checks identity — a generated code is answerable only by whoever holds the
+ * session cookie or the code itself, and verifying one never mints a
+ * password-reset token (see auth-helpers.ts on why admin routes differ).
  */
 
 import { NextResponse } from "next/server";
