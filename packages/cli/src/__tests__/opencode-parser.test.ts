@@ -101,6 +101,25 @@ describe("parseOpenCodeFile", () => {
     expect(result.messageKey).toBe("ses_001|msg_001");
   });
 
+  it("flags a file that cannot be read or parsed", async () => {
+    // A read error or a half-written file used to look exactly like "this
+    // message had no usage": the sync recorded the file's inode/mtime/size and
+    // never opened it again (its directory mtime does not change), silently
+    // losing the message. The driver must see the difference and leave the
+    // cursor unwritten so the next run retries.
+    const corrupt = join(tempDir, "msg_bad.json");
+    await writeFile(corrupt, "{truncated");
+    const badJson = await parseOpenCodeFile({ filePath: corrupt, lastTotals: null });
+    expect(badJson.unreadable).toBe(true);
+    expect(badJson.delta).toBeNull();
+
+    const missing = await parseOpenCodeFile({
+      filePath: join(tempDir, "does-not-exist.json"),
+      lastTotals: null,
+    });
+    expect(missing.unreadable).toBe(true);
+  });
+
   it("should compute diff against previous totals", async () => {
     const filePath = join(tempDir, "msg_002.json");
     await writeFile(

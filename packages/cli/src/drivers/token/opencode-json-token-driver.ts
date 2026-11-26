@@ -69,6 +69,13 @@ export const openCodeJsonTokenDriver: FileTokenDriver<OpenCodeCursor> = {
     const r = resume as OpenCodeJsonResumeState;
     const result = await parseOpenCodeFile({ filePath, lastTotals: r.lastTotals,
       ...(_ctx.collectAccounting ? { includeAccounting: true, lastCacheWrite: r.lastCacheWrite } : {}) });
+    if (result.unreadable) {
+      // Resolving with no deltas would let the orchestrator record a cursor
+      // and skip this file forever (fileUnchanged + an unchanged directory
+      // mtime). A throw is the contract's parse-failure signal: warn, keep
+      // the file queued, retry next run.
+      throw new Error(`opencode message file is unreadable: ${filePath}`);
+    }
     return {
       deltas: result.delta ? [result.delta] : [],
       skippedNoTimestamp: result.skippedNoTimestamp ? 1 : 0,
