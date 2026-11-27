@@ -76,10 +76,16 @@ async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
     // damage this command exists to repair, so it must not refuse to run.
     const rows = (await readIdempotentQueueRows<SessionQueueRecord>(opts.stateDir, "session-queue.jsonl"))
       .filter((r) => r && typeof r === "object");
-    sessions = rows.filter((r) => typeof r.source === "string" && isRetiredSource(r.source) &&
+    // One predicate, used for BOTH the rebuild list and the acknowledged-prefix
+    // accounting below. Counting a line as retained when validation drops it
+    // from the rebuilt file advanced the offset past a row that was actually
+    // written, so that row was skipped by every later upload.
+    const isRetained = (r: SessionQueueRecord): boolean =>
+      typeof r.source === "string" && isRetiredSource(r.source) &&
       typeof r.session_key === "string" && !!r.session_key &&
       [r.started_at, r.last_message_at, r.snapshot_at].every((t) => typeof t === "string" && Number.isFinite(Date.parse(t))) &&
-      [r.duration_seconds, r.user_messages, r.assistant_messages, r.total_messages].every((n) => Number.isSafeInteger(n) && n >= 0));
+      [r.duration_seconds, r.user_messages, r.assistant_messages, r.total_messages].every((n) => Number.isSafeInteger(n) && n >= 0);
+    sessions = rows.filter(isRetained);
     if (sessions.length) {
       const state = await readIdempotentQueueState(opts.stateDir, "session-queue.state.json");
       const raw = await readFile(join(opts.stateDir, "session-queue.jsonl"), "utf8");
@@ -94,8 +100,12 @@ async function resetLocked(opts: ResetOptions): Promise<ResetResult> {
         offset += Buffer.byteLength(line) + 1;
         if (!line || offset > acknowledged) continue;
         try {
-          if (isRetiredSource((JSON.parse(line) as SessionQueueRecord).source)) {
-            sessionOffset += Buffer.byteLength(`${JSON.stringify(JSON.parse(line))}\n`);
+          const parsed = JSON.parse(line) as SessionQueueRecord;
+          // Serialize exactly the way `overwrite` will (base-queue's own
+          // JSON.stringify of the parsed row), so the offset lands on a real
+          // line boundary of the rebuilt file.
+          if (isRetained(parsed)) {
+            sessionOffset += Buffer.byteLength(`${JSON.stringify(parsed)}\n`);
           }
         } catch { /* torn line: not a retained record */ }
       }
