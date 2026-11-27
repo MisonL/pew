@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { toQueueRecord } from "../commands/session-sync-helpers.js";
 import { hashProjectRef } from "../utils/hash-project-ref.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, mkdir, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseGrokSession } from "../parsers/grok-session.js";
@@ -192,6 +192,25 @@ describe("parseGrokSession", () => {
     await writeFile(join(sessionDir, "summary.json"), "{not-json");
     const snap = await parseGrokSession(sessionDir);
     expect(snap).toBeNull();
+  });
+
+  it("defers a session whose summary.json exists but cannot be read", async () => {
+    // A chmod 000 summary is not "no session": repairing the permission
+    // changes ctime only, so the mtime+size cursor key would stay identical
+    // and a recorded cursor would skip this session forever. Null is the
+    // contract for a corrupt/absent file (rewriting it does move mtime);
+    // a refused read must throw so session-sync leaves the cursor unwritten.
+    await writeFile(join(sessionDir, "summary.json"), JSON.stringify({
+      info: { id: "sid-blocked" },
+      created_at: "2026-07-10T00:00:00Z",
+      num_chat_messages: 3,
+    }));
+    await chmod(join(sessionDir, "summary.json"), 0o000);
+    try {
+      await expect(parseGrokSession(sessionDir)).rejects.toThrow(/summary\.json is unreadable/i);
+    } finally {
+      await chmod(join(sessionDir, "summary.json"), 0o644);
+    }
   });
 
   it("returns null when summary is missing info.id", async () => {

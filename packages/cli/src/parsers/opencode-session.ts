@@ -5,7 +5,7 @@
  * files to produce a single SessionSnapshot with message counts and duration.
  */
 
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join, basename } from "node:path";
 import type { SessionSnapshot, Source } from "@pew/core";
 import { coerceEpochMs } from "../utils/time.js";
@@ -16,6 +16,13 @@ import { MAX_SESSION_DURATION_SECONDS } from "../utils/session-time.js";
  *
  * Reads all .json files in the directory, counts roles, tracks timestamps
  * and model. Returns 0 or 1 SessionSnapshot.
+ *
+ * A read the OS REFUSES on a regular file throws rather than being skipped.
+ * The session cursor is keyed by the directory's mtime, and repairing a
+ * permission changes only its ctime — so a skipped-but-stamped directory is
+ * never re-read and its counts stay wrong forever. Contents that cannot be
+ * parsed are a different case: rewriting the file moves the mtime, so those
+ * may be dropped with the snapshot still emitted.
  */
 export async function collectOpenCodeSessions(
   sessionDir: string,
@@ -23,8 +30,9 @@ export async function collectOpenCodeSessions(
   let entries: import("node:fs").Dirent[];
   try {
     entries = await readdir(sessionDir, { withFileTypes: true });
-  } catch {
-    return [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new Error(`${sessionDir} is not readable; deferring this session until it can be read`);
   }
 
   // Collect .json files, sorted for deterministic order
@@ -44,10 +52,20 @@ export async function collectOpenCodeSessions(
   let lastModel: string | null = null;
 
   for (const fileName of jsonFiles) {
+    const filePath = join(sessionDir, fileName);
     let raw: string;
     try {
-      raw = await readFile(join(sessionDir, fileName), "utf8");
-    } catch {
+      raw = await readFile(filePath, "utf8");
+    } catch (error) {
+      // A name that readdir reported as a file but that is no longer one (or
+      // never was, on filesystems where a directory link passes `isFile`) is
+      // a stable shape, not a temporary refusal.
+      const code = (error as NodeJS.ErrnoException).code;
+      const stillRegularFile = code !== "ENOENT" && code !== "ENOTDIR" &&
+        await stat(filePath).then((st) => st.isFile()).catch(() => false);
+      if (stillRegularFile) {
+        throw new Error(`${filePath} is unreadable; deferring this session until it can be read`);
+      }
       continue;
     }
 

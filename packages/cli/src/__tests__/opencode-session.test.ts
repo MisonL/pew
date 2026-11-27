@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { collectOpenCodeSessions } from "../parsers/opencode-session.js";
@@ -268,6 +268,24 @@ describe("collectOpenCodeSessions", () => {
     const result = await collectOpenCodeSessions(dir);
     expect(result).toHaveLength(1);
     expect(result[0].totalMessages).toBe(1);
+  });
+
+  it("defers a session whose message file exists but cannot be read", async () => {
+    // The cursor for this collector is the DIRECTORY mtime. A refused read
+    // repaired by a chmod leaves the mtime unchanged, so skipping and
+    // stamping loses the session's counts permanently.
+    const dir = join(tmpDir, "ses_blocked");
+    await mkdir(dir);
+    const blocked = join(dir, "msg_blocked.json");
+    await writeFile(blocked, opencodeMsg({ id: "msg_blocked", time: { created: 1771120700.0 } }));
+    await chmod(blocked, 0o000);
+    try {
+      await expect(collectOpenCodeSessions(dir)).rejects.toThrow(/unreadable/i);
+    } finally {
+      await chmod(blocked, 0o644);
+    }
+    const result = await collectOpenCodeSessions(dir);
+    expect(result).toHaveLength(1);
   });
 
   it("should return empty when all messages lack timestamps", async () => {

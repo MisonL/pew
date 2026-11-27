@@ -10,12 +10,33 @@ import type { SessionSnapshot, Source } from "@pew/core";
 import { hashProjectRef } from "../utils/hash-project-ref.js";
 import { canonicalInstant, durationSeconds } from "../utils/session-time.js";
 
-async function readJson(path: string): Promise<Record<string, unknown> | null> {
+/**
+ * Read summary.json distinguishing "absent/unparseable" from "present but
+ * not readable".
+ *
+ * The session cursor is keyed by summary.json's own mtime+size. A file that
+ * is later rewritten (a repair, new activity) changes that key and gets
+ * re-parsed, so a missing or corrupt summary may resolve to null and have
+ * its cursor recorded. A read REFUSED by the OS (EACCES/EIO) is different:
+ * fixing the permission changes neither mtime nor size, so recording the
+ * cursor would skip this session forever with its snapshot never taken.
+ * Callers must retry those instead.
+ */
+async function readSummary(
+  path: string,
+): Promise<{ state: "ok"; value: Record<string, unknown> | null } | { state: "unreadable" }> {
+  let raw: string;
   try {
-    const raw = await readFile(path, "utf8");
-    return JSON.parse(raw) as Record<string, unknown>;
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return { state: "ok", value: null };
+    return { state: "unreadable" };
+  }
+  try {
+    return { state: "ok", value: JSON.parse(raw) as Record<string, unknown> };
   } catch {
-    return null;
+    return { state: "ok", value: null };
   }
 }
 
@@ -42,9 +63,7 @@ async function readSignals(
   } catch {
     return { state: "unreadable" };
   }
-}
-
-/**
+}/**
  * Parse a single Grok session directory into a SessionSnapshot.
  *
  * Returns null on missing/corrupt summary or missing session id.
@@ -61,11 +80,15 @@ async function readSignals(
 export async function parseGrokSession(
   sessionDir: string,
 ): Promise<SessionSnapshot | null> {
-  const [summary, signalsResult] = await Promise.all([
-    readJson(join(sessionDir, "summary.json")),
+  const [summaryResult, signalsResult] = await Promise.all([
+    readSummary(join(sessionDir, "summary.json")),
     readSignals(join(sessionDir, "signals.json")),
   ]);
 
+  if (summaryResult.state === "unreadable") {
+    throw new Error(`${join(sessionDir, "summary.json")} is unreadable; deferring this session until it can be read`);
+  }
+  const summary = summaryResult.value;
   if (!summary) return null;
   if (signalsResult.state === "unreadable") {
     throw new Error(`${join(sessionDir, "signals.json")} is unreadable; deferring this session until it can be read`);
