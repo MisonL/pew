@@ -313,6 +313,38 @@ describe("POST /api/ingest", () => {
       expect(body.error).toContain("ingest");
     });
 
+    it("forwards a Worker 400 so the CLI can peel the source the server rejects", async () => {
+      // The web layer validates with the same core rules as the Worker, so a
+      // Worker-only 400 means the two source lists drifted. Flattening that to
+      // 500 hid the `invalid source "X"` identity the CLI matches to drop the
+      // rejected source and keep the rest moving — the queue then wedged on
+      // the same prefix every sync.
+      stubWorkerError(400, 'record[1]: invalid source "workbuddy"');
+
+      const res = await POST(makeRequest([VALID_RECORD], undefined, VALID_VERSION));
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toContain('invalid source "workbuddy"');
+    });
+
+    it("maps a Worker 413 to 413 so the CLI does not retry the same bytes", async () => {
+      stubWorkerError(413, "Request body too large");
+
+      const res = await POST(makeRequest([VALID_RECORD], undefined, VALID_VERSION));
+
+      expect(res.status).toBe(413);
+    });
+
+    it("answers 503 when the Worker reports itself unavailable", async () => {
+      // WORKER_SECRET missing on the Worker is an operator fix, but 503 is
+      // the status that says "not now, retry" instead of "you broke it".
+      stubWorkerError(503, "Service unavailable");
+
+      const res = await POST(makeRequest([VALID_RECORD], undefined, VALID_VERSION));
+
+      expect(res.status).toBe(503);
+    });
+
     it("should return 500 when fetch itself throws", async () => {
       mockFetch.mockRejectedValueOnce(new Error("Network error"));
 

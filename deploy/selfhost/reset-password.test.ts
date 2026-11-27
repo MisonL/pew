@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { scryptSync, timingSafeEqual } from "node:crypto";
-import { applyPasswordReset, hashPasswordForReset, parseArg, resolvePassword } from "./reset-password";
+import { applyPasswordReset, hashPasswordForReset, normalizeEmail, parseArg, resolvePassword } from "./reset-password";
 
 /**
  * Re-implements the web app's verifyPassword() against the storage format.
@@ -84,6 +84,17 @@ describe("applyPasswordReset revokes the CLI credential", () => {
     const db = recordingDb(0);
     await expect(applyPasswordReset(db, "user-gone", "a-long-enough-password"))
       .rejects.toThrow(/matched no user/);
+  });
+});
+
+describe("normalizeEmail", () => {
+  it("matches the registration route's trim + lowercase", () => {
+    // users.email is stored trim().toLowerCase() by /api/auth/register; the
+    // break-glass lookup must compare the same shape or the exact
+    // "admin@corp.local" row is missed when the operator types
+    // " Admin@Corp.Local".
+    expect(normalizeEmail("  Admin@Corp.Local ")).toBe("admin@corp.local");
+    expect(normalizeEmail("admin@corp.local")).toBe("admin@corp.local");
   });
 });
 

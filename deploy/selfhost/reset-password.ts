@@ -47,6 +47,16 @@ export function parseArg(argv: string[], flag: string): string | undefined {
 }
 
 /**
+ * users.email is stored trim().toLowerCase() by /api/auth/register, so the
+ * break-glass lookup must query the same shape: the operator typing
+ * " Admin@Corp.Local" is the same failure this script exists to recover from,
+ * and it must not fail on case alone.
+ */
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+/**
  * Resolve the new password by source priority: env (safest — invisible to
  * `ps` and shell history), then --password-stdin, then the legacy argv
  * channel. Exported for tests; `readStdin` is injectable.
@@ -145,7 +155,7 @@ async function main(): Promise<void> {
 
   const existing = await db
     .prepare("SELECT id FROM users WHERE email = ?")
-    .bind(email)
+    .bind(normalizeEmail(email))
     .first<{ id: string }>();
   if (!existing) {
     console.error(`no user with email ${email}`);
