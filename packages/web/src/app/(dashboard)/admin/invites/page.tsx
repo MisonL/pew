@@ -97,6 +97,11 @@ export default function AdminInvitesPage() {
   } = useSWR<{ settings: Array<{ key: string; value: string }> }>(
     isAdmin ? "/api/admin/settings" : null,
     fetcher,
+    // Same reason as settings/general: a focus revalidation started before
+    // the PUT finishes can carry the pre-PUT value, and the sync block below
+    // would then flip the switch back while the server already holds the new
+    // one. The PUT's own mutateSettings() keeps the cache fresh instead.
+    { revalidateOnFocus: false },
   );
   // When the settings request fails the switch keeps its default (on) and the
   // page claims registration is gated when nobody has read the real value.
