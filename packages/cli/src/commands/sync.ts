@@ -1357,6 +1357,29 @@ async function executeSyncScan(opts: InternalSyncOptions & {
       currentKeys.add(key);
     }
   }
+  // A zeroed token bucket without a matching zero accounting snapshot leaves
+  // the server's stored basis non-zero while the token side says 0, and every
+  // later replay of that annotation is answered `base_mismatch` — permanently.
+  // The antigravity path gets its tombstones from the partition; the codex
+  // reconciliation above only rewrites `records`, so its zeroed buckets get
+  // their own zero-value deltas here (no evidence identity → aggregate group).
+  const codexReconcileDeltas: ParsedDelta[] = [];
+  if (initialCursorEmpty && opts.reconcilePreviousQueueRecords && codexFullyRescanned) {
+    const zeroed = new Set(records.filter((record) => record.total_tokens === 0 && record.source === "codex")
+      .map(tokenRecordKey));
+    const seen = new Set<string>();
+    for (const previous of opts.reconcilePreviousQueueRecords) {
+      if (previous.source !== "codex" || previous.device_id !== opts.deviceId) continue;
+      const key = tokenRecordKey(previous);
+      if (!zeroed.has(key) || seen.has(key) || previous.total_tokens === 0) continue;
+      seen.add(key);
+      codexReconcileDeltas.push({ source: "codex", model: previous.model, timestamp: previous.hour_start,
+        tokens: emptyTokenDelta(),
+        accounting: inclusiveAccounting(emptyTokenDelta(),
+          { input: 0, read: 0, write: 0, output: 0, reasoning: 0 },
+          { origin: "codex:reconcile", model: previous.model, aggregate: true }) });
+    }
+  }
 
   // Project only the evidence events the wire contract can express. The
   // projection throws on counters outside the server's bounds, and it runs
@@ -1457,6 +1480,11 @@ async function executeSyncScan(opts: InternalSyncOptions & {
     const current = [...new Map([...priorAccounting, ...accounting].map((r) => [accountingKey(r), r])).values()];
     appendAll(accounting, planAccountingUpdates({ previous: current, before: [], after: finalRecords ?? oldRecords,
       deltas: ctx.accountingSnapshots, replay: true, deviceId: opts.deviceId, onWarning: onAccountingWarning, onVerified }));
+  }
+  if (codexReconcileDeltas.length) {
+    const current = [...new Map([...priorAccounting, ...accounting].map((r) => [accountingKey(r), r])).values()];
+    appendAll(accounting, planAccountingUpdates({ previous: current, before: [], after: finalRecords ?? oldRecords,
+      deltas: codexReconcileDeltas, replay: true, deviceId: opts.deviceId, onWarning: onAccountingWarning, onVerified }));
   }
   if (opts.antigravitySnapshot) {
     const tombstoneDeltas: ParsedDelta[] = antigravity.tombstones.map((r) => {

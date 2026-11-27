@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile, mkdir, readFile, rename, symlink, chmod, stat }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeSync } from "../commands/sync.js";
+import { AccountingQueue } from "../storage/accounting-queue.js";
 import { LocalQueue } from "../storage/local-queue.js";
 import type { QueueRecord } from "@pew/core";
 
@@ -2187,6 +2188,13 @@ describe("executeSync", () => {
       reasoning_output_tokens: 0,
       total_tokens: 0,
     });
+    // The zeroed token bucket needs a matching zero accounting snapshot: the
+    // ledger still holds the v1 basis, and replaying it against a server whose
+    // usage base is now 0 is answered `base_mismatch` forever (a permanently
+    // pending annotation that cannot self-heal).
+    const details = (await new AccountingQueue(stateDir).readFromOffset(0)).records;
+    const detailTombstone = details.find((r) => r.hour_start.startsWith("2026-03-07T11"));
+    expect(detailTombstone).toMatchObject({ source: "codex", basis: { total_tokens: 0 } });
   });
 
   it("should never tombstone non-codex buckets on an accounting rescan", async () => {
