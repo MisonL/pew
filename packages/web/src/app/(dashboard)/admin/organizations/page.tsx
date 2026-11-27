@@ -402,6 +402,7 @@ function MembersModal({
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<{ id: string; name: string | null; email: string; image: string | null }[]>([]);
   const [searching, setSearching] = useState(false);
+  const searchIdRef = useRef(0);
   const [showAddForm, setShowAddForm] = useState(false);
   const { confirm, dialogProps } = useConfirm();
   const restoreFocusRef = useRef<HTMLElement | null>(
@@ -464,12 +465,20 @@ function MembersModal({
   // Search for users to add
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
+    // Enter fires even while a search is in flight (only the Button is
+    // disabled), and two requests can land out of order: searching "a" then
+    // "ab" used to show "a"'s results under "ab" in the box. Same
+    // request-id discipline as use-leaderboard: only the newest response may
+    // write the list.
+    const searchId = ++searchIdRef.current;
     setSearching(true);
     setActionError(null);
     try {
       const res = await fetch(`/api/admin/users?q=${encodeURIComponent(searchQuery.trim())}&limit=10`);
+      if (searchId !== searchIdRef.current) return;
       if (res.ok) {
         const data = (await res.json()) as { users: { id: string; name: string | null; email: string; image: string | null }[] };
+        if (searchId !== searchIdRef.current) return;
         // Filter out users who are already members
         const memberIds = new Set(members.map((m) => m.userId));
         setSearchResults(data.users.filter((u) => !memberIds.has(u.id)));
@@ -479,10 +488,11 @@ function MembersModal({
         setActionError(await readActionError(res, "Could not search users"));
       }
     } catch {
+      if (searchId !== searchIdRef.current) return;
       setSearchResults([]);
       setActionError("Could not reach the server while searching users.");
     } finally {
-      setSearching(false);
+      if (searchId === searchIdRef.current) setSearching(false);
     }
   };
 
