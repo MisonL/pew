@@ -684,6 +684,104 @@ is the one that explains it.
 - 2026-11-26 — clarify the CLI ingest mirror's deliberate `workbuddy` superset
     and the auth-code route's session-or-Bearer contract
 
+### Review round 59 (2026-11-27)
+- 2026-11-26 — a partial Antigravity snapshot no longer zeroes history: a
+    corrupt step or out-of-range session dropped keys from the fresh set, and
+    the partition replace wrote all-zero tombstones over uploaded usage.
+    Corrupt steps are quarantined, an incomplete snapshot degrades to
+    add-only, and a full scan's authority is limited to the buckets it
+    actually saw — a missing source no longer wipes its pending rows.
+- 2026-11-26 — `backup.sh`'s timeout watchdog no longer leaves an orphan
+    `sleep` holding the shared flock: the child inherited the fd and kept the
+    lock until `PEW_BACKUP_TIMEOUT_S` after every successful backup, failing
+    cron and `upgrade.sh`'s `flock -n`. `docker compose cp` gains the one
+    missing timeout.
+- 2026-11-27 — OpenCode directory mtimes are stamped only after a successful
+    read/parse (a failed directory used to be fast-skipped forever, since a
+    fix in place does not change its mtime), and a parse failure restores the
+    previous mtime so round 58's retry promise holds.
+- 2026-11-27 — OpenCode session collection defers on read refusal instead of
+    advancing the watermark over a file it could not read; SQLite rows with
+    corrupt `data` JSON are counted and warned (`skippedCorrupt`).
+- 2026-11-27 — Grok `summary.json` read refusal defers the session (the
+    cursor key is the summary's mtime+size, which a permission fix never
+    changes); the sessions tree no longer swallows read errors that
+    mislabelled every `inference_done` into `grok-unknown`.
+- 2026-11-27 — Codex v2 migration writes zero-value accounting details when
+    it zeroes token buckets; without the matching tombstone the old non-zero
+    basis replayed forever as `base_mismatch`.
+- 2026-11-27 — `state.lock` only treats positive safe integers as PIDs (`0`,
+    negatives and non-integers permanently "proved" liveness and wedged every
+    command), non-ENOENT read errors fail closed instead of looking like a
+    corpse, and a structurally corrupt `sync-commit.json` is quarantined and
+    warned instead of failing every run until deleted by hand.
+- 2026-11-27 — `pew reset`'s retired-session offset counts only the lines the
+    rebuild keeps; a parseable-but-rejected line shifted the offset past
+    pending rows, skipping them on every later upload.
+- 2026-11-27 — `pew status` reports OpenCode directories skipped this round,
+    not the whole persisted dirMtimes map.
+- 2026-11-27 — evidence events over the upload contract's bounds (1e9 tokens
+    / 1e8 calls) are dropped at the projection site with a warning; the
+    durable ledger is never cleared by reset, so such a row used to be an
+    unclearable leftover whose warning repeated every drain.
+- 2026-11-27 — the ponytail audit gate rejects a reset that drops either
+    durable ledger, with negative probes for evidence and accounting.
+- 2026-11-27 — selfhost upgrade validates the rendered rqlite credentials
+    before the backup block (it used to stop containers and copy the database
+    only to fail afterwards), and the guard also matches `export`/indented
+    forms; the d1-http transport authorizes before buffering the body, so an
+    unauthenticated connection cannot make the process read up to 8MB.
+- 2026-11-27 — worker-read validates window/filter parameters by type (an
+    object became a 500, a number compared against a TEXT column silently
+    cleared the filter), bounds `leaderboard.getSnapshot` to its five known
+    filter keys, and reports a failed pricing-KV read separately from a cold
+    start.
+- 2026-11-27 — `devices.list` and the session side of `admin.getStorageStats`
+    aggregate first/last seen by epoch like `df354c53` did for the token
+    side; legacy offset-bearing timestamps inverted them in text order.
+- 2026-11-27 — Web ingest passes the Worker's 400/413/429/503 through instead
+    of flattening them to 500: the CLI matches on the Worker's
+    `invalid source "X"` text to strip a rejected source, and 413 bytes are
+    never valid on retry. `reset-password --email` trims and lowercases like
+    the registration route.
+- 2026-11-27 — admin Compare's Daily Avg divides by window days
+    (`windowDays`) instead of days with data (a mostly-idle window was
+    inflated ~3×), and a duplicate email on the invite path returns 409
+    instead of 500.
+- 2026-11-27 — batch roster sync, the `allow_roster_changes` backfill and
+    season auto-registration gained the in-statement `team_members` EXISTS
+    guard (a captain kicked between read and write could be reseated); a
+    failed backfill in PATCH /api/admin/seasons answers 200 + warning and
+    stays retryable instead of committing and then 500-ing.
+- 2026-11-27 — `/api/pricing` is rate limited per IP (own bucket, 240/min)
+    like the public leaderboards: it is anonymous, ~0.5MB per response, and
+    loaded by every dashboard page.
+- 2026-11-27 — `/api/users/[slug]` bumps a bare `to` by one day (the RPC
+    compares `hour_start < to`, so the last day was silently cut) and `days`
+    uses `trailingLocalDays` like `/api/usage` and `/api/sessions`.
+- 2026-11-27 — useAdmin caches only authoritative answers; a network blip
+    used to be cached as "not admin" for five minutes, hiding admin pages and
+    navigation with no explanation.
+- 2026-11-27 — /devices "All Devices" aggregates every device instead of
+    silently snapping back to the first one.
+- 2026-11-27 — hourly-usage's "last 72 hours" window advances with the clock
+    (half-hour anchored so SWR keys stay stable) instead of freezing at mount.
+- 2026-11-27 — admin compare/storage no longer render "No users found" /
+    "No cached entries" beneath a failure banner; the empty claim appears
+    only when the load succeeded.
+- 2026-11-27 — teams create/join ignore a second Enter while the request is
+    in flight, org member search discards stale responses by request id, and
+    useLeaderboard no longer calls setState from inside a setState updater.
+- 2026-11-27 — the pricing tooltip says prices may be stale when a background
+    refresh fails with cached rows on screen.
+- 2026-11-27 — the profile dialog surfaces a failed seasons fetch (the season
+    tab used to vanish exactly as if no season existed), season team
+    expansion treats a 200 without a member list as "could not load" instead
+    of "no members", and the admin invite-code switch is no longer re-derived
+    from a focus revalidation that can carry the pre-PUT value.
+- 2026-11-27 — removed `useFetchData`'s `initialLoading` option, documented
+    but never read.
+
 ## v3.5.1
 
 ### Changed
