@@ -50,7 +50,7 @@ import {
   restoreJsonlSharedState,
   snapshotJsonlSharedState,
 } from "../utils/jsonl-shared-state.js";
-import { isValidIsoInstant } from "../utils/ingest-contract.js";
+import { evidenceRecordRejection, isValidIsoInstant } from "../utils/ingest-contract.js";
 import { aggregateRecords } from "./upload.js";
 import { readAntigravitySource } from "../parsers/antigravity.js";
 import { antigravityRecords, readAntigravityBaseline, replaceAntigravityPartition, tokenRecordKey } from "../utils/antigravity-snapshot.js";
@@ -1385,18 +1385,31 @@ async function executeSyncScan(opts: InternalSyncOptions & {
     }
   }
 
-  // Project only the evidence events the wire contract can express. The
-  // projection throws on counters outside the server's bounds, and it runs
-  // here — before any queue or cursor write — so an uncaught throw discarded
-  // every source's results for the run, and because the cursor never advanced
-  // it did so again on every later sync. One corrupt log line must cost one
-  // event, not the whole tool: the event is dropped with a warning and the
-  // cursor moves past it (the raw log is untouched).
+  // Project only the evidence events the wire contract can express, and do it
+  // here — before any queue or cursor write — so one corrupt log line costs one
+  // event instead of the whole tool: the event is dropped with a warning and
+  // the cursor moves past it (the raw log is untouched).
+  //
+  // Two gates, deliberately in this order. `toEvidenceRecord` throws on shapes
+  // the ledger cannot hold at all, and an uncaught throw here used to discard
+  // every source's results for the run while the cursor never advanced, so it
+  // repeated forever. `evidenceRecordRejection` then applies the *upload*
+  // bounds, which the projection intentionally does not: it keeps whatever the
+  // raw log said (a saved row above the bound must not wedge the ledger's own
+  // read path for someone who already has one). Without this second gate an
+  // over-bound counter becomes durable state that can never upload — the
+  // upload filter drops it and advances past it, but `pew reset` never clears
+  // this ledger, so the same row warned on every drain for the life of the
+  // machine. Refusing it at scan time is the only point that can.
   const evidenceRecords: EvidenceRecord[] = [];
   let unprojectableEvidence = 0;
   for (const delta of allDeltas) {
     if (!delta.evidence) continue;
-    try { evidenceRecords.push(toEvidenceRecord(delta, opts.deviceId)); }
+    try {
+      const record = toEvidenceRecord(delta, opts.deviceId);
+      if (evidenceRecordRejection(record) !== null) { unprojectableEvidence++; continue; }
+      evidenceRecords.push(record);
+    }
     catch { unprojectableEvidence++; }
   }
   if (unprojectableEvidence > 0) {

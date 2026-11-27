@@ -48,6 +48,21 @@ describe("supplemental evidence sync", () => {
     }]);
   });
 
+  it("drops an event over the upload contract's bounds instead of stranding it in the durable ledger", async () => {
+    // 2e9 input tokens is a safe integer, so the ledger's own projection keeps
+    // it, but the wire contract caps counters at 1e9. A row like that can never
+    // upload, and `pew reset` deliberately never clears this ledger, so it
+    // would be dropped (with a warning) again at every drain. Refuse it at scan
+    // time instead: one warned event, the cursor still advances past the raw
+    // line, the raw log stays untouched.
+    await writeFile(file, jsonl([header, model, { ...compaction, usage: { input: 2_000_000_000, output: 20 } }]));
+    const warnings: string[] = [];
+    await executeSync({ stateDir, deviceId: "test-device", piSessionsDir: source,
+      onProgress: (e) => { if (e.phase === "warn") warnings.push(e.message ?? ""); } });
+    expect(await readFile(join(stateDir, "evidence-queue.jsonl"), "utf8").catch(() => "")).toBe("");
+    expect(warnings.join(" ")).toContain("Skipped 1 usage evidence");
+  });
+
   it("is idempotent across replay, cursor reset, rotation and offline source loss", async () => {
     await writeFile(file, jsonl([header, model, compaction]));
     await sync();
