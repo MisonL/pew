@@ -230,6 +230,20 @@ describe("processOpenCodeMessages", () => {
     expect(result.maxTimeCreated).toBe(created);
   });
 
+  it("reports rows whose data blob is not valid JSON instead of silently skipping them", () => {
+    // The watermark advances past these rows, so an unreported loss is
+    // permanent. A corrupt blob also yields role=NULL from the SQL
+    // pre-extraction, so both shapes have to be counted.
+    const rows: MessageRow[] = [
+      msgRow("msg_corrupt", "ses_001", 1771120749059, "{not json", null),
+      { id: "msg_trunc", session_id: "ses_001", time_created: 1771120750000, role: "assistant", data: '{"role":"assistant"' },
+      msgRow("msg_ok", "ses_001", 1771120751000, assistantData()),
+    ];
+    const result = processOpenCodeMessages(rows);
+    expect(result.skippedCorrupt).toBe(2);
+    expect(result.deltas).toHaveLength(1);
+  });
+
   it("should not mark a completed zero-token message pending", () => {
     const rows: MessageRow[] = [
       msgRow("msg_done", "ses_001", 1771120749059, assistantData({

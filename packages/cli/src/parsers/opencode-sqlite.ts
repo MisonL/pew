@@ -21,6 +21,8 @@ export interface OpenCodeSqliteResult {
   pendingIds: string[];
   /** Token-bearing rows dropped because neither time.completed nor time.created parsed */
   skippedNoTimestamp?: number;
+  /** Rows whose `data` blob is not valid JSON: their usage cannot be read at all */
+  skippedCorrupt?: number;
   /** DB file inode (for detecting replacement/recreation) */
   inode: number;
 }
@@ -90,6 +92,7 @@ export function processOpenCodeMessages(
   const messageKeys = new Set<string>();
   const pendingIds: string[] = [];
   let skippedNoTimestamp = 0;
+  let skippedCorrupt = 0;
   let maxTimeCreated = 0;
 
   for (const row of rows) {
@@ -99,13 +102,25 @@ export function processOpenCodeMessages(
     }
 
     // Only process assistant messages (role is pre-extracted at SQL level)
-    if (row.role !== "assistant") continue;
+    if (row.role !== "assistant") {
+      // A row whose data blob is not valid JSON comes back with role=NULL,
+      // because the SQL pre-extraction is `json_extract(data, '$.role')` and
+      // that yields NULL for a corrupt blob. It cannot be told apart from a
+      // non-assistant row without parsing, and silently skipping it let the
+      // watermark advance past an unreadable record of usage with nothing
+      // reported. Counting it makes the loss visible instead.
+      if (row.role === null) {
+        try { JSON.parse(row.data); } catch { skippedCorrupt++; }
+      }
+      continue;
+    }
 
     // Parse data JSON
     let msg: Record<string, unknown>;
     try {
       msg = JSON.parse(row.data);
     } catch {
+      skippedCorrupt++;
       continue;
     }
 
@@ -161,7 +176,7 @@ export function processOpenCodeMessages(
     });
   }
 
-  return { deltas, messageKeys, maxTimeCreated, pendingIds, skippedNoTimestamp };
+  return { deltas, messageKeys, maxTimeCreated, pendingIds, skippedNoTimestamp, skippedCorrupt };
 }
 
 /**
