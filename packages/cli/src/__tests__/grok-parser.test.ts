@@ -28,7 +28,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { mkdtemp, writeFile, appendFile, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, writeFile, appendFile, rm, mkdir, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -501,6 +501,95 @@ describe("buildGrokModelMaps", () => {
     });
     const maps = await buildGrokModelMaps(sessionsDir);
     expect(maps.sidTurnTimeline.get("sid-omit")?.[0]?.modelId).toBe("e");
+  });
+
+  it("treats a sessions path that is a regular file as an empty tree", async () => {
+    // ENOTDIR, not a refusal: a path that is not a directory holds no
+    // sessions to attribute from, and failing here would park the token
+    // cursor on a shape no retry can change.
+    const filePath = join(root, "sessions-file");
+    await writeFile(filePath, "");
+    const maps = await buildGrokModelMaps(filePath);
+    expect(maps.sidTurnTimeline.size).toBe(0);
+    expect(maps.sidPrimaryModel.size).toBe(0);
+  });
+
+  it("fails when the sessions tree refuses to be read", async () => {
+    // The token cursor is keyed by unified.jsonl, whose mtime a permission
+    // fix does not touch — reading a refusal as "no sessions" would
+    // misattribute every inference_done of this cycle permanently.
+    await mkdir(sessionsDir, { recursive: true });
+    await chmod(sessionsDir, 0o000);
+    try {
+      await expect(buildGrokModelMaps(sessionsDir)).rejects.toThrow(
+        /deferring Grok model attribution/,
+      );
+    } finally {
+      await chmod(sessionsDir, 0o755);
+    }
+  });
+
+  it("slow path: a session without signals.json still attributes from events", async () => {
+    const dir = join(sessionsDir, "%2Ftmp", "sid-nosignals");
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, "events.jsonl"),
+      `${JSON.stringify({ ts: "2026-07-10T00:01:00.000Z", type: "turn_started", model_id: "from-events" })}\n`,
+    );
+    const maps = await buildGrokModelMaps(sessionsDir);
+    expect(maps.sidTurnTimeline.get("sid-nosignals")?.[0]?.modelId).toBe("from-events");
+    expect(maps.sidPrimaryModel.has("sid-nosignals")).toBe(false);
+  });
+
+  it("slow path: a session missing both signals.json and events.jsonl contributes nothing", async () => {
+    await mkdir(join(sessionsDir, "%2Ftmp", "sid-bare"), { recursive: true });
+    const maps = await buildGrokModelMaps(sessionsDir);
+    expect(maps.sidTurnTimeline.size).toBe(0);
+    expect(maps.sidPrimaryModel.size).toBe(0);
+  });
+
+  it("fails when a session's signals.json refuses to be read", async () => {
+    const dir = join(sessionsDir, "%2Ftmp", "sid-locked");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "signals.json"), JSON.stringify({ modelsUsed: ["grok-4.5"] }));
+    await chmod(dir, 0o000);
+    try {
+      await expect(buildGrokModelMaps(sessionsDir)).rejects.toThrow(/unreadable/);
+    } finally {
+      await chmod(dir, 0o755);
+    }
+  });
+
+  it("skips a cwd entry that vanishes between stat and readdir", async () => {
+    const cwdDir = join(sessionsDir, "%2Ftmp");
+    await mkdir(cwdDir, { recursive: true });
+    statGate.afterStat = () => rm(cwdDir, { recursive: true, force: true });
+    const maps = await buildGrokModelMaps(sessionsDir);
+    expect(maps.sidTurnTimeline.size).toBe(0);
+    expect(maps.sidPrimaryModel.size).toBe(0);
+  });
+
+  it("skips a cwd entry replaced by a file between stat and readdir", async () => {
+    const cwdDir = join(sessionsDir, "%2Ftmp");
+    await mkdir(cwdDir, { recursive: true });
+    statGate.afterStat = async () => {
+      await rm(cwdDir, { recursive: true, force: true });
+      await writeFile(cwdDir, "");
+    };
+    const maps = await buildGrokModelMaps(sessionsDir);
+    expect(maps.sidTurnTimeline.size).toBe(0);
+    expect(maps.sidPrimaryModel.size).toBe(0);
+  });
+
+  it("fails when a cwd directory refuses to be listed", async () => {
+    const cwdDir = join(sessionsDir, "%2Ftmp");
+    await mkdir(cwdDir, { recursive: true });
+    statGate.afterStat = () => chmod(cwdDir, 0o000);
+    try {
+      await expect(buildGrokModelMaps(sessionsDir)).rejects.toThrow(/unreadable/);
+    } finally {
+      await chmod(cwdDir, 0o755);
+    }
   });
 
   it("parseGrokTurnTimeline skips malformed lines", async () => {
