@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import { dirname } from "node:path";
 import type {
   CodexScopeState,
   ContinuityAnchor,
@@ -871,6 +872,24 @@ async function executeSyncScan(opts: InternalSyncOptions & {
         phase: "warn",
         message: `Skipped ${skippedNoTimestamp} ${driver.source} token events whose timestamp is missing; the raw logs are untouched`,
       });
+    }
+
+    // A driver that failed to parse a discovered file must not stamp the
+    // directory whose mtime gates discovery. Without this, the file cursor
+    // stays unwritten but the directory mtime is persisted, so an in-place
+    // repair never re-discovers the file and its usage is lost. Restore the
+    // prior mtimes for directories holding this driver's failed paths; the
+    // next sync re-enters them. Only files this driver listed can fail here,
+    // so the un-stamp never reaches another source's directories.
+    if (driver.source === "opencode" && ctx.dirMtimes && parseFailedPaths.size > 0) {
+      const priorDirMtimes = (cursors.dirMtimes ?? {}) as Record<string, number>;
+      const failedDirs = new Set(files.filter((f) => parseFailedPaths.has(f)).map((f) => dirname(f)));
+      for (const dir of failedDirs) {
+        if (!(dir in ctx.dirMtimes)) continue;
+        const prior = priorDirMtimes[dir];
+        if (prior !== undefined) ctx.dirMtimes[dir] = prior;
+        else ctx.dirMtimes = Object.fromEntries(Object.entries(ctx.dirMtimes).filter(([key]) => key !== dir));
+      }
     }
 
     // Post-parse hook (e.g. OpenCode JSON deposits messageKeys into ctx)

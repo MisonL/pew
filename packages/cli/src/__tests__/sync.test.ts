@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile, mkdir, readFile, rename, symlink, chmod, stat }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeSync } from "../commands/sync.js";
+import { LocalQueue } from "../storage/local-queue.js";
 import type { QueueRecord } from "@pew/core";
 
 /**
@@ -675,6 +676,31 @@ describe("executeSync", () => {
     expect(r2.totalDeltas).toBe(0);
     expect(r2.totalRecords).toBe(0);
     expect(r2.sources.opencode).toBe(0);
+  });
+
+  it("retries an unreadable OpenCode file in an unchanged directory", async () => {
+    // The JSON driver throws when a message file is unreadable so the file
+    // cursor stays unwritten. The directory-level mtime fast path must not
+    // stamp that directory at the same time, or an in-place repair (a chmod
+    // back, or rewritten bytes) would never be seen again: the file stays
+    // undiscovered, so its usage is lost while the raw log is intact.
+    const ocDir = join(dataDir, "opencode", "message", "ses_retry");
+    await mkdir(ocDir, { recursive: true });
+    const file = join(ocDir, "msg_001.json");
+    await writeFile(file, opencodeMsg(1771120749059, 500, 50));
+    await chmod(file, 0o000);
+    const opts = { stateDir, deviceId: "dev-1", openCodeMessageDir: join(dataDir, "opencode", "message") };
+    const warnings: string[] = [];
+    await executeSync({ ...opts, onProgress: (event) => { if (event.phase === "warn") warnings.push(event.message ?? ""); } });
+    expect(warnings.some((message) => message.includes("unreadable"))).toBe(true);
+    expect((await new LocalQueue(stateDir).readFromOffset(0)).records).toEqual([]);
+
+    // Repair in place: the file's own metadata changes, the DIRECTORY's does not.
+    await chmod(file, 0o644);
+    const result = await executeSync(opts);
+    expect(result.totalDeltas).toBe(1);
+    const rows = (await readFile(join(stateDir, "queue.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    expect(rows).toHaveLength(1);
   });
 
   it("should detect new OpenCode file added to existing session directory", async () => {
