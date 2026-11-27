@@ -90,6 +90,17 @@ export function ModelInfoTooltip({ model, className }: Props) {
           />
         )}
 
+        {error && matches.length > 0 && (
+          // A failed background refresh keeps the last cached entries (the
+          // hook does not clear data on error), so the rows below may be an
+          // older catalogue. Say so instead of presenting them as current.
+          <Banner
+            variant="error"
+            size="sm"
+            description={`Could not refresh pricing (${error}); showing possibly outdated prices.`}
+          />
+        )}
+
         {matches.length > 0 && (
           <div className="space-y-2">
             {matches.map((entry) => (
