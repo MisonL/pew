@@ -369,7 +369,26 @@ describe("GET /api/users/[slug]", () => {
 
       const [, fromDate, toDate] = mockDbRead.getUsageRecords.mock.calls[0]!;
       expect(fromDate).toContain("2026-03-01");
-      expect(toDate).toContain("2026-03-10");
+      // A bare `to` names an inclusive calendar day, like every sibling
+      // usage route: the RPC compares `hour_start < toDate`, so without the
+      // +1-day bump the whole final day (2026-03-10) silently dropped out.
+      expect(toDate).toBe("2026-03-11T00:00:00.000Z");
+    });
+
+    it("keeps an explicit time-of-day in 'to' exact", async () => {
+      // The bump applies to bare dates only; a full ISO instant is already
+      // the precise exclusive boundary the season tab relies on.
+      mockDbRead.getPublicUserBySlugOrId.mockResolvedValueOnce(testUser);
+      mockDbRead.getUsageRecords.mockResolvedValueOnce([]);
+
+      const [req, ctx] = makeRequest("testuser", {
+        from: "2026-03-01T00:00:00.000Z",
+        to: "2026-03-10T16:30:00.000Z",
+      });
+      await GET(req, ctx);
+
+      const [, , toDate] = mockDbRead.getUsageRecords.mock.calls[0]!;
+      expect(toDate).toBe("2026-03-10T16:30:00.000Z");
     });
 
     it("should use day granularity", async () => {
@@ -411,9 +430,33 @@ describe("GET /api/users/[slug]", () => {
       const [req, ctx] = makeRequest("testuser", { days: "10" });
       await GET(req, ctx);
 
+      // The days window is aligned to the viewer's local calendar like every
+      // other usage surface (trailingLocalDays): "10 days" for a UTC viewer
+      // means [2026-03-31, 2026-04-11) — local midnights, not "now minus
+      // 10×24h", which used to count only part of the oldest local day.
       const [, fromDate, toDate] = mockDbRead.getUsageRecords.mock.calls[0]!;
-      expect(fromDate).toBe("2026-03-31T12:34:56.000Z");
-      expect(toDate).toBe("2026-04-10T12:34:56.000Z");
+      expect(fromDate).toBe("2026-03-31T00:00:00.000Z");
+      expect(toDate).toBe("2026-04-11T00:00:00.000Z");
+
+      vi.useRealTimers();
+    });
+
+    it("aligns the days window to the caller's local midnights", async () => {
+      vi.useFakeTimers();
+      // 2026-04-10T12:34:56Z is 2026-04-10 20:34 at UTC+8 — the local day is
+      // still the 10th, and the window must start at local midnight.
+      vi.setSystemTime(new Date("2026-04-10T12:34:56.000Z"));
+
+      mockDbRead.getPublicUserBySlugOrId.mockResolvedValueOnce(testUser);
+      mockDbRead.getUsageRecords.mockResolvedValueOnce([]);
+
+      const [req, ctx] = makeRequest("testuser", { days: "10", tzOffset: "-480" });
+      await GET(req, ctx);
+
+      const [, fromDate, toDate] = mockDbRead.getUsageRecords.mock.calls[0]!;
+      // Local 2026-03-31 00:00 = 2026-03-30T16:00Z; local 2026-04-11 00:00 = 2026-04-10T16:00Z.
+      expect(fromDate).toBe("2026-03-30T16:00:00.000Z");
+      expect(toDate).toBe("2026-04-10T16:00:00.000Z");
 
       vi.useRealTimers();
     });
