@@ -5,7 +5,25 @@
  */
 
 import type { D1Database } from "@cloudflare/workers-types";
+import { isValidOptionalFilter, isWindowDate } from "./filters";
 import { clampedLimit, clampedOffset } from "./pagination";
+
+/** A userId is bound straight into SQL: it must be a string, not just truthy. */
+function isValidUserId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+/**
+ * Optional window filters: absent is fine, but a present value must be a
+ * date string — a number would bind against the TEXT column and match
+ * nothing, silently emptying the window.
+ */
+function badOptionalWindow(req: { fromDate?: unknown; toDate?: unknown }): boolean {
+  return (
+    (req.fromDate !== undefined && req.fromDate !== null && !isWindowDate(req.fromDate)) ||
+    (req.toDate !== undefined && req.toDate !== null && !isWindowDate(req.toDate))
+  );
+}
 
 /** Upper bound for an explicit `sessions.getRecords` limit. */
 const GET_SESSION_RECORDS_MAX_LIMIT = 5000;
@@ -106,7 +124,7 @@ async function handleListSessions(
   req: ListSessionsRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.userId) {
+  if (!isValidUserId(req.userId) || !isValidOptionalFilter(req.source) || badOptionalWindow(req)) {
     return Response.json({ error: "userId is required" }, { status: 400 });
   }
 
@@ -153,7 +171,7 @@ async function handleGetSessionStats(
   req: GetSessionStatsRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.userId) {
+  if (!isValidUserId(req.userId) || badOptionalWindow(req)) {
     return Response.json({ error: "userId is required" }, { status: 400 });
   }
 
@@ -187,7 +205,7 @@ async function handleCountSessions(
   req: CountSessionsRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.userId) {
+  if (!isValidUserId(req.userId) || !isValidOptionalFilter(req.source) || badOptionalWindow(req)) {
     return Response.json({ error: "userId is required" }, { status: 400 });
   }
 
@@ -220,7 +238,8 @@ async function handleGetSessionRecords(
   req: GetSessionRecordsRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.userId || !req.fromDate || !req.toDate) {
+  if (!isValidUserId(req.userId) || !isWindowDate(req.fromDate) || !isWindowDate(req.toDate) ||
+      !isValidOptionalFilter(req.source) || !isValidOptionalFilter(req.kind)) {
     return Response.json(
       { error: "userId, fromDate, and toDate are required" },
       { status: 400 }

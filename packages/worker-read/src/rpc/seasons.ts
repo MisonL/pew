@@ -6,6 +6,7 @@
 
 import type { D1Database, KVNamespace } from "@cloudflare/workers-types";
 import { withCache, TTL_10M } from "../cache";
+import { isWindowDate } from "./filters";
 
 // ---------------------------------------------------------------------------
 // Cache Keys
@@ -485,7 +486,7 @@ async function handleGetSeasonTeamTokens(
   req: GetSeasonTeamTokensRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.seasonId || !req.fromDate || !req.toDate) {
+  if (!isId(req.seasonId) || !isWindowDate(req.fromDate) || !isWindowDate(req.toDate)) {
     return Response.json(
       { error: "seasonId, fromDate, and toDate are required" },
       { status: 400 }
@@ -522,7 +523,7 @@ async function handleGetSeasonMemberTokens(
   req: GetSeasonMemberTokensRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.seasonId || !isIdList(req.teamIds) || !req.fromDate || !req.toDate) {
+  if (!isId(req.seasonId) || !isIdList(req.teamIds) || !isWindowDate(req.fromDate) || !isWindowDate(req.toDate)) {
     return Response.json(
       { error: "seasonId, teamIds, fromDate, and toDate are required" },
       { status: 400 }
@@ -566,7 +567,7 @@ async function handleGetSeasonTeamSessionStats(
   req: GetSeasonTeamSessionStatsRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.seasonId || !isIdList(req.teamIds) || !req.fromDate || !req.toDate) {
+  if (!isId(req.seasonId) || !isIdList(req.teamIds) || !isWindowDate(req.fromDate) || !isWindowDate(req.toDate)) {
     return Response.json(
       { error: "seasonId, teamIds, fromDate, and toDate are required" },
       { status: 400 }
@@ -596,7 +597,7 @@ async function handleGetSeasonMemberSessionStats(
   req: GetSeasonMemberSessionStatsRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.seasonId || !isIdList(req.teamIds) || !req.fromDate || !req.toDate) {
+  if (!isId(req.seasonId) || !isIdList(req.teamIds) || !isWindowDate(req.fromDate) || !isWindowDate(req.toDate)) {
     return Response.json(
       { error: "seasonId, teamIds, fromDate, and toDate are required" },
       { status: 400 }
@@ -643,7 +644,7 @@ async function handleAggregateTeamTokens(
   req: AggregateTeamTokensRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.seasonId || !req.fromDate || !req.toDate) {
+  if (!isId(req.seasonId) || !isWindowDate(req.fromDate) || !isWindowDate(req.toDate)) {
     return Response.json(
       { error: "seasonId, fromDate, and toDate are required" },
       { status: 400 }
@@ -676,7 +677,7 @@ async function handleAggregateMemberTokens(
   req: AggregateMemberTokensRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.seasonId || !req.fromDate || !req.toDate || !isIdList(req.teamIds)) {
+  if (!isId(req.seasonId) || !isWindowDate(req.fromDate) || !isWindowDate(req.toDate) || !isIdList(req.teamIds)) {
     return Response.json(
       { error: "seasonId, fromDate, toDate, and teamIds are required" },
       { status: 400 }
@@ -721,6 +722,11 @@ function isIdList(value: unknown): value is string[] {
     value.length <= MAX_ID_LIST &&
     value.every((id) => typeof id === "string" && id.length > 0 && id.length <= 100)
   );
+}
+
+/** A single identifier bound into SQL: same shape as one isIdList element. */
+function isId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 100;
 }
 
 export async function handleSeasonsRpc(
