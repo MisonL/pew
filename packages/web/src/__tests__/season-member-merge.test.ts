@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeSeasonMembers } from "@/lib/season-leaderboard";
+import { mergeSeasonMembers, readTeamMembers } from "@/lib/season-leaderboard";
 
 interface Entry {
   rank: number;
@@ -45,3 +45,37 @@ describe("mergeSeasonMembers", () => {
     expect(mergeSeasonMembers(entries, new Map())).toBe(entries);
   });
 });
+
+describe("readTeamMembers", () => {
+  it("returns the member list for the requested team", () => {
+    const json = {
+      entries: [
+        { team: { id: "t1" }, members: [{ user_id: "u1" }] },
+        { team: { id: "t2" }, members: [{ user_id: "u2" }] },
+      ],
+    };
+    expect(readTeamMembers(json, "t2")).toEqual([{ user_id: "u2" }]);
+  });
+
+  it("keeps a genuinely empty member list distinct from a missing one", () => {
+    // An empty array is the API's answer for a team with no public members;
+    // rendering "No members to display" for it is correct.
+    const json = { entries: [{ team: { id: "t1" }, members: [] }] };
+    expect(readTeamMembers(json, "t1")).toEqual([]);
+  });
+
+  it("returns null when the team is absent from the response", () => {
+    // A 200 whose entries no longer include the team (dropped from the
+    // standings between page load and expand) says nothing about its members.
+    const json = { entries: [{ team: { id: "t9" }, members: [] }] };
+    expect(readTeamMembers(json, "t1")).toBeNull();
+  });
+
+  it("returns null when the entry carries no members field", () => {
+    // expand=members was lost somewhere upstream; the response is not an
+    // answer to "who is on this team".
+    const json = { entries: [{ team: { id: "t1" } }] };
+    expect(readTeamMembers(json, "t1")).toBeNull();
+  });
+});
+
