@@ -387,13 +387,17 @@ function ComparePageContent() {
         {/* Loading */}
         {loading && <SelectionSkeleton />}
 
-        {/* Table */}
+        {/* Table — a failed load must not render as "No users found."; the
+            banner above already says what happened. Stale rows from a failed
+            revalidation stay visible. */}
         {!loading && (
           filteredUsers.length === 0 ? (
-              <Empty
-                title={search ? "No users match your filter." : "No users found."}
-                className="rounded-basalt-card bg-basalt-secondary p-8"
-              />
+              error === null ? (
+                <Empty
+                  title={search ? "No users match your filter." : "No users found."}
+                  className="rounded-basalt-card bg-basalt-secondary p-8"
+                />
+              ) : null
             ) : (
               <div className="rounded-xl bg-secondary p-1 overflow-x-auto">
                 <table className="w-full">
