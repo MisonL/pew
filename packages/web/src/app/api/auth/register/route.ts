@@ -15,7 +15,7 @@ import { NextResponse } from "next/server";
 import { BodyTooLargeError, MAX_AUTH_BODY_BYTES, readBoundedJson } from "@pew/core";
 import { isJsonObject } from "@/lib/request-json";
 import { getD1Client } from "@/lib/d1";
-import { bootstrapAdmin, DERIVATION_BUSY_ERROR, registerWithInvite } from "@/lib/credentials";
+import { bootstrapAdmin, DERIVATION_BUSY_ERROR, EMAIL_ALREADY_REGISTERED, registerWithInvite } from "@/lib/credentials";
 import {
   AUTH_REGISTER_RATE_LIMIT,
   clientIpKey,
@@ -37,6 +37,14 @@ const CLIENT_FACING_REGISTRATION_ERRORS = new Set([
   "Instance is already set up",
   "This email address is reserved",
 ]);
+
+/**
+ * Messages that mean "this address is taken". Answered 409, not 400: the
+ * request was well formed, and the client should offer to sign in rather than
+ * "fix" its input. Same text for both invite holders and anonymous callers, so
+ * it reveals nothing beyond what registering already reveals.
+ */
+const REGISTRATION_CONFLICTS = new Set([EMAIL_ALREADY_REGISTERED]);
 
 async function instanceIsEmpty(): Promise<boolean> {
   const { results } = await getD1Client().query<{ n: number }>(
@@ -136,6 +144,12 @@ export async function POST(request: Request) {
     // those words through — e.g. "no such table: invite_codes" from an
     // unmigrated database, which leaks schema details to an unauthenticated
     // caller. Anything else is a server fault: log it, do not echo internals.
+    // A registration attempt for an existing address is the caller's situation
+    // to resolve (sign in instead), not a server fault: 409, and the same text
+    // whether or not the caller holds a valid invite.
+    if (err instanceof Error && REGISTRATION_CONFLICTS.has(err.message)) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
     const clientMessage = err instanceof Error && CLIENT_FACING_REGISTRATION_ERRORS.has(err.message)
       ? err.message : null;
     if (clientMessage !== null) {

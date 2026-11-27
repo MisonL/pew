@@ -150,6 +150,21 @@ describe("pricing RPC handlers", () => {
       expect(body.result.lastErrors?.[0]?.source).toBe("kv");
       expect(body.result.lastErrors?.[0]?.message).toContain("cold start");
     });
+
+    it("reports a KV outage as a storage error, not a cold start", async () => {
+      // An instance that HAS synced but whose KV is momentarily unreadable
+      // used to be told "KV empty (cold start)" — the same text a genuine
+      // first run gets, so the outage read as normal.
+      kv.get.mockImplementation(async () => {
+        throw new Error("kv unavailable");
+      });
+      const req: GetDynamicPricingMetaRequest = { method: "pricing.getDynamicPricingMeta" };
+      const res = await handlePricingRpc(req, db, kv);
+      const body = (await res.json()) as { result: DynamicPricingMeta };
+      expect(res.status).toBe(200);
+      expect(body.result.lastErrors?.[0]?.message).toMatch(/unreadable/i);
+      expect(body.result.lastErrors?.[0]?.message).not.toMatch(/cold start/i);
+    });
   });
 
   // -------------------------------------------------------------------------

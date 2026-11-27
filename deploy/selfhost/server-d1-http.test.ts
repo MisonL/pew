@@ -98,6 +98,38 @@ describe("server-d1-http transport", () => {
     });
     expect(res.status).toBe(401);
   });
+
+  it("rejects an unauthenticated request before buffering its body", async () => {
+    // The transport used to buffer up to 8MB and only then let d1.handle()
+    // check the token, so an unauthenticated caller could make the process
+    // read megabytes per connection. The 401 must arrive without the body
+    // being read: send headers announcing 8MB, never send the body.
+    const { connect } = await import("node:net");
+    const port = await startServer(vi.fn() as never);
+    const socket = connect(port, "127.0.0.1");
+    try {
+      const response = await new Promise<string>((resolve, reject) => {
+        let data = "";
+        const timer = setTimeout(() => reject(new Error(`no response before timeout; got ${JSON.stringify(data)}`)), 3000);
+        socket.on("data", (chunk) => {
+          data += chunk.toString();
+          if (data.includes("\r\n\r\n")) { clearTimeout(timer); resolve(data); }
+        });
+        socket.on("error", (err) => { clearTimeout(timer); reject(err); });
+        socket.write(
+          "POST /query HTTP/1.1\r\n" +
+          "Host: localhost\r\n" +
+          "Authorization: Bearer wrong\r\n" +
+          "Content-Type: application/json\r\n" +
+          "Content-Length: 8388608\r\n\r\n"
+          // no body: the server must answer without waiting for it
+        );
+      });
+      expect(response).toContain(" 401 ");
+    } finally {
+      socket.destroy();
+    }
+  });
 });
 
 describe("server-d1-http /health probe", () => {

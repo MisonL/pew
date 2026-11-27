@@ -252,8 +252,11 @@ describe("autoRegisterTeamsForSeason", () => {
     try {
       sqlite.exec(`CREATE TABLE seasons(id TEXT PRIMARY KEY, start_date TEXT);
         CREATE TABLE season_teams(id TEXT PRIMARY KEY, season_id TEXT, team_id TEXT, registered_by TEXT);
-        CREATE TABLE season_team_members(id TEXT PRIMARY KEY, season_id TEXT, team_id TEXT, user_id TEXT);
-        INSERT INTO seasons VALUES ('season-1', '2099-01-01T00:00:00Z');`);
+        CREATE TABLE season_team_members(id TEXT PRIMARY KEY, season_id TEXT, team_id TEXT, user_id TEXT,
+          UNIQUE(season_id, user_id));
+        CREATE TABLE team_members(team_id TEXT, user_id TEXT, PRIMARY KEY(team_id, user_id));
+        INSERT INTO seasons VALUES ('season-1', '2099-01-01T00:00:00Z');
+        INSERT INTO team_members VALUES ('team-1','u1'), ('team-1','u2');`);
       mockDbRead.getSeasonById.mockResolvedValueOnce(mockUpcomingSeason());
       mockDbRead.listAutoRegisterTeams.mockResolvedValueOnce([{ id: "team-1", created_by: "owner-1" }]);
       mockDbRead.getTeamMemberUserIds.mockResolvedValueOnce(["u1", "u2"]);
@@ -275,6 +278,44 @@ describe("autoRegisterTeamsForSeason", () => {
       expect(result.skipped).toBe(crossedStart ? 1 : 0);
       expect(sqlite.prepare("SELECT COUNT(*) AS n FROM season_teams").get()?.n).toBe(crossedStart ? 0 : 1);
       expect(sqlite.prepare("SELECT COUNT(*) AS n FROM season_team_members").get()?.n).toBe(crossedStart ? 0 : 2);
+    } finally { sqlite.close(); }
+  });
+
+  it("does not seat a member kicked between the roster read and the batch", async () => {
+    // Auto-registration reads the member list in an earlier round trip. A
+    // captain's kick landing in between must not be undone by the freeze:
+    // the resurrected seat keeps season profile access and, because
+    // season_team_members is UNIQUE(season_id, user_id), it also blocks the
+    // user from registering with another team.
+    const sqlite = new DatabaseSync(":memory:");
+    try {
+      sqlite.exec(`CREATE TABLE seasons(id TEXT PRIMARY KEY, start_date TEXT);
+        CREATE TABLE season_teams(id TEXT PRIMARY KEY, season_id TEXT, team_id TEXT, registered_by TEXT);
+        CREATE TABLE season_team_members(id TEXT PRIMARY KEY, season_id TEXT, team_id TEXT, user_id TEXT,
+          UNIQUE(season_id, user_id));
+        CREATE TABLE team_members(team_id TEXT, user_id TEXT, PRIMARY KEY(team_id, user_id));
+        INSERT INTO seasons VALUES ('season-1', '2099-01-01T00:00:00Z');
+        INSERT INTO team_members VALUES ('team-1','u1'), ('team-1','u2');`);
+      mockDbRead.getSeasonById.mockResolvedValueOnce(mockUpcomingSeason());
+      mockDbRead.listAutoRegisterTeams.mockResolvedValueOnce([{ id: "team-1", created_by: "owner-1" }]);
+      mockDbRead.getTeamMemberUserIds.mockResolvedValueOnce(["u1", "u2"]);
+      mockDbRead.getTeamOwner.mockImplementationOnce(async () => {
+        sqlite.exec("DELETE FROM team_members WHERE team_id='team-1' AND user_id='u2'");
+        return "owner-1";
+      });
+      mockDbWrite.batch.mockImplementationOnce(async (statements) => {
+        sqlite.exec("BEGIN");
+        const results = statements.map(({ sql, params = [] }: { sql: string; params?: unknown[] }) => {
+          const result = sqlite.prepare(sql).run(...params as never[]);
+          return { results: [], meta: { changes: Number(result.changes), duration: 0 } };
+        });
+        sqlite.exec("COMMIT");
+        return results;
+      });
+      const result = await autoRegisterTeamsForSeason(mockDbRead, mockDbWrite, "season-1");
+      expect(result.registered).toBe(1);
+      expect(sqlite.prepare("SELECT user_id FROM season_team_members ORDER BY user_id").all())
+        .toEqual([{ user_id: "u1" }]);
     } finally { sqlite.close(); }
   });
 

@@ -386,6 +386,38 @@ describe("syncAllRostersForSeason", () => {
       .toEqual([{ team_id: "team-2", user_id: "user-1" }]);
   });
 
+  it("bulk sync does not re-insert a member kicked between the reads and the writes", async () => {
+    // The admin "Sync Rosters" button and the allow_roster_changes backfill
+    // both run this path. A kick that lands after the member list was read
+    // must not be undone: the resurrected seat keeps granting season profile
+    // access and blocks the user's next registration (UNIQUE season+user).
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE seasons (id TEXT PRIMARY KEY, start_date TEXT, end_date TEXT, allow_roster_changes INTEGER DEFAULT 0);
+      CREATE TABLE teams (id TEXT PRIMARY KEY);
+      CREATE TABLE season_teams (id TEXT PRIMARY KEY, season_id TEXT, team_id TEXT);
+      CREATE TABLE team_members (team_id TEXT, user_id TEXT, PRIMARY KEY (team_id, user_id));
+      CREATE TABLE season_team_members (id TEXT PRIMARY KEY, season_id TEXT, team_id TEXT, user_id TEXT,
+        UNIQUE (season_id, user_id));
+    `);
+    db.exec(`
+      INSERT INTO seasons VALUES ('season-1', '2000-01-01T00:00:00Z', '2999-12-31T00:00:00Z', 1);
+      INSERT INTO teams VALUES ('team-1');
+      INSERT INTO season_teams VALUES ('st1','season-1','team-1');
+      INSERT INTO team_members VALUES ('team-1','user-1');
+    `);
+    mockDbRead.getRegisteredTeamIds.mockResolvedValueOnce(["team-1"]);
+    mockDbRead.getTeamMemberUserIds.mockResolvedValueOnce(["user-1"]);
+    mockDbRead.getRosterUserIds.mockResolvedValueOnce([]);
+    await syncAllRostersForSeason(mockDbRead as never, mockDbWrite as never, "season-1");
+    db.exec("DELETE FROM team_members WHERE team_id = 'team-1' AND user_id = 'user-1'");
+    const calls = mockDbWrite.execute.mock.calls as Array<[string, unknown[]]>;
+    for (const [sql, params] of calls) {
+      db.prepare(sql).run(...(params as Array<string | number | null>));
+    }
+    expect(db.prepare("SELECT COUNT(*) AS n FROM season_team_members").get()).toEqual({ n: 0 });
+  });
+
   it("should handle multiple teams", async () => {
     mockDbRead.getRegisteredTeamIds.mockResolvedValueOnce(["team-1", "team-2"]);
     mockDbRead.getTeamMemberUserIds.mockResolvedValueOnce(["user-1"]);

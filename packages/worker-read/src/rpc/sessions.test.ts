@@ -406,6 +406,77 @@ describe("sessions RPC handlers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Filter parameter types
+  // -------------------------------------------------------------------------
+
+  describe("filter parameter types", () => {
+    // Truthiness (`if (req.source)`) let a number or object through to the
+    // SQL bind: D1 throws on the object (500) and compares a number against
+    // a text column as "never equal", silently emptying the filter.
+    it("list rejects a non-string source with 400", async () => {
+      const request = {
+        method: "sessions.list",
+        userId: "u1",
+        source: 123,
+      } as unknown as ListSessionsRequest;
+      const response = await handleSessionsRpc(request, db);
+      expect(response.status).toBe(400);
+    });
+
+    it("list rejects a non-string date with 400", async () => {
+      const request = {
+        method: "sessions.list",
+        userId: "u1",
+        fromDate: { evil: true },
+      } as unknown as ListSessionsRequest;
+      const response = await handleSessionsRpc(request, db);
+      expect(response.status).toBe(400);
+    });
+
+    it("getStats rejects a non-string date with 400", async () => {
+      const request = {
+        method: "sessions.getStats",
+        userId: "u1",
+        toDate: 123,
+      } as unknown as GetSessionStatsRequest;
+      const response = await handleSessionsRpc(request, db);
+      expect(response.status).toBe(400);
+    });
+
+    it("count rejects a non-string source with 400", async () => {
+      const request = {
+        method: "sessions.count",
+        userId: "u1",
+        source: ["claude-code"],
+      } as unknown as CountSessionsRequest;
+      const response = await handleSessionsRpc(request, db);
+      expect(response.status).toBe(400);
+    });
+
+    it("getRecords rejects a non-string window with 400", async () => {
+      const request = {
+        method: "sessions.getRecords",
+        userId: "u1",
+        fromDate: 1700000000000,
+        toDate: "2026-04-01T00:00:00.000Z",
+      } as unknown as GetSessionRecordsRequest;
+      const response = await handleSessionsRpc(request, db);
+      expect(response.status).toBe(400);
+    });
+
+    it("getRecords rejects an unparseable window date with 400", async () => {
+      const request = {
+        method: "sessions.getRecords",
+        userId: "u1",
+        fromDate: "yesterday",
+        toDate: "2026-04-01T00:00:00.000Z",
+      } as unknown as GetSessionRecordsRequest;
+      const response = await handleSessionsRpc(request, db);
+      expect(response.status).toBe(400);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Unknown method
   // -------------------------------------------------------------------------
 

@@ -11,11 +11,13 @@
 # one entry point removes the "read the README correctly" dependency.
 #
 # Steps, in order:
-#   1. rqlite backup into ~/pew-backups (skipped with --skip-backup)
-#   2. docker compose build with PEW_REVISION/PEW_VERSION
-#   3. docker compose up -d
-#   4. wait for web to report healthy
-#   5. verify the running image carries the revision label, and exit non-zero
+#   1. precondition checks (.env permissions, rendered rqlite auth file) —
+#      these abort before any side effect
+#   2. rqlite backup into ~/pew-backups (skipped with --skip-backup)
+#   3. docker compose build with PEW_REVISION/PEW_VERSION
+#   4. docker compose up -d
+#   5. wait for web to report healthy
+#   6. verify the running image carries the revision label, and exit non-zero
 #      if it does not — a build that lost its build args must not be treated
 #      as a successful deploy.
 #
@@ -71,6 +73,27 @@ if [ "$HEALTH_TIMEOUT_S" -le 0 ]; then
   exit 1
 fi
 
+# The two preconditions the manual procedure documents. Both are warnings or
+# hard stops rather than silent conditions, because each one has produced a
+# broken deploy: a missing .rqlite-auth.json makes rqlite start without auth,
+# and a world-readable .env exposes every secret on the host. These run BEFORE
+# the backup: an unrendered auth file aborts the upgrade anyway, and the
+# backup's side effects (pause, container copy, resume) must not be paid for a
+# run that was going to fail at this check.
+if [ -f .env ]; then
+  perms=$(stat -c '%a' .env 2>/dev/null || stat -f '%Lp' .env)
+  [ "$perms" = "600" ] || echo "WARNING: .env is $perms, expected 600 — chmod 600 .env" >&2
+fi
+# A shell-sourced .env can carry `export RQLITE_USERNAME=...` or an indented
+# continuation; anchoring on `^RQLITE_` missed both spellings and the stack
+# came up unauthenticated — the exact failure this guard exists to stop.
+if grep -qE '^[[:space:]]*(export[[:space:]]+)?RQLITE_USERNAME=.+' .env 2>/dev/null && [ ! -f .rqlite-auth.json ]; then
+  echo "upgrade.sh: RQLITE_USERNAME is set but .rqlite-auth.json is missing." >&2
+  echo "  Re-render it first (see the Quickstart sequence in README.md), or rqlite" >&2
+  echo "  will start without authentication." >&2
+  exit 1
+fi
+
 if [ "$SKIP_BACKUP" -eq 0 ]; then
   BACKUP_DIR="${PEW_BACKUP_DIR:-$HOME/pew-backups}"
   mkdir -p "$BACKUP_DIR"
@@ -104,21 +127,6 @@ if [ "$SKIP_BACKUP" -eq 0 ]; then
     echo "upgrade.sh: the backup did not run or failed (another backup may hold $BACKUP_LOCK — wait for it, or pass --skip-backup to upgrade without one)" >&2
     exit 1
   fi
-fi
-
-# The two preconditions the manual procedure documents. Both are warnings or
-# hard stops rather than silent conditions, because each one has produced a
-# broken deploy: a missing .rqlite-auth.json makes rqlite start without auth,
-# and a world-readable .env exposes every secret on the host.
-if [ -f .env ]; then
-  perms=$(stat -c '%a' .env 2>/dev/null || stat -f '%Lp' .env)
-  [ "$perms" = "600" ] || echo "WARNING: .env is $perms, expected 600 — chmod 600 .env" >&2
-fi
-if grep -qE '^RQLITE_USERNAME=.+' .env 2>/dev/null && [ ! -f .rqlite-auth.json ]; then
-  echo "upgrade.sh: RQLITE_USERNAME is set but .rqlite-auth.json is missing." >&2
-  echo "  Re-render it first (see the Quickstart sequence in README.md), or rqlite" >&2
-  echo "  will start without authentication." >&2
-  exit 1
 fi
 
 echo "==> building images (revision $REVISION, version $VERSION)"

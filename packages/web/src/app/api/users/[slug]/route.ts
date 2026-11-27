@@ -8,9 +8,10 @@
  *   - a participant in the same season as the target user
  *
  * Query params:
- *   days   — number of days to look back (default: 30, max: 365)
- *   from   — start datetime (ISO 8601, exclusive of days param if provided)
- *   to     — end datetime (ISO 8601, exclusive of days param if provided)
+ *   days   — number of trailing local days (default:30, max: 365)
+ *   from   — start datetime (ISO 8601; takes precedence over days, with `to`)
+ *   to     — end datetime (ISO 8601 exclusive; a bare date is inclusive of
+ *            that calendar day, like the other usage routes)
  *   source — filter by source (optional)
  *
  * Returns { user, records, summary }.
@@ -22,7 +23,8 @@ import { getDbRead } from "@/lib/db";
 import { resolveUser } from "@/lib/auth-helpers";
 import { canBypassPublic } from "@/lib/profile-access";
 import { jsonResponse } from "@/lib/json-response";
-import { isDateParam } from "@/lib/date-params";
+import { isBareDate, isDateParam } from "@/lib/date-params";
+import { trailingLocalDays } from "@/lib/date-helpers";
 import { PUBLIC_PROFILE_RATE_LIMIT, clientIpKey, inMemoryRateLimiter } from "@/lib/rate-limit";
 
 // ---------------------------------------------------------------------------
@@ -123,6 +125,14 @@ export async function GET(
     }
     fromDate = new Date(fromParam);
     toDate = new Date(toParam);
+    // A bare `to` names an inclusive calendar day, like on /api/usage,
+    // /api/sessions and /api/usage/by-device: the RPC compares
+    // `hour_start < toDate`, so the raw UTC-midnight read of "2026-03-10"
+    // silently dropped that entire day — a caller asking for a window ending
+    // today saw yesterday's totals.
+    if (isBareDate(toParam)) {
+      toDate.setUTCDate(toDate.getUTCDate() + 1);
+    }
     // No span cap here, deliberately. A wide explicit range does not return
     // more than `days=365` already does — the payload is bounded by what the
     // profile owns, not by the requested window (measured: 7.1 MB either way)
@@ -149,9 +159,15 @@ export async function GET(
       }
       days = parsed;
     }
-    fromDate = new Date();
-    fromDate.setUTCDate(fromDate.getUTCDate() - days);
-    toDate = new Date(); // Default to now
+    // The days window is built from the caller's local calendar like every
+    // other usage surface (lib/usage-url.ts): "7 Days" at UTC+8 20:00 means
+    // seven local days ending at the instant local tomorrow begins, not
+    // "now minus 7×24h" — which left a partial oldest day and, because the
+    // day buckets are local, made the first and last bars read as full days
+    // when they were not.
+    const window = trailingLocalDays(days, tzOffset);
+    fromDate = new Date(window.from);
+    toDate = new Date(window.to);
   }
 
   if (sourceFilter && !VALID_SOURCES.has(sourceFilter)) {

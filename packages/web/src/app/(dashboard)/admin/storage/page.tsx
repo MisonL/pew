@@ -752,11 +752,18 @@ export default function AdminStoragePage() {
                   <Skeleton className="h-12 w-full" />
                 </div>
               ) : cacheKeys.length === 0 ? (
+                // A failed cache list must not claim "No cached entries." —
+                // that reads as "the cache was emptied" to whoever is
+                // triaging. Same guard as the user table above; a mutation
+                // error alone (cacheError) keeps the list, since the data
+                // itself loaded.
+                cacheSwrError ? null : (
                 <Empty
                   title="No cached entries."
                   description="Cache will be populated as users access pricing, seasons, and leaderboards."
                   className="rounded-basalt-card bg-basalt-secondary p-8"
                 />
+                )
               ) : (
                 <div className="rounded-xl bg-secondary p-1 space-y-1 flex-1 lg:overflow-y-auto min-h-0">
                   {cacheKeys.map((key) => {

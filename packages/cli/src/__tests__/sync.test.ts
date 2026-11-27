@@ -3,6 +3,8 @@ import { mkdtemp, rm, writeFile, mkdir, readFile, rename, symlink, chmod, utimes
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeSync } from "../commands/sync.js";
+import { AccountingQueue } from "../storage/accounting-queue.js";
+import { LocalQueue } from "../storage/local-queue.js";
 import type { QueueRecord } from "@pew/core";
 
 /**
@@ -833,6 +835,31 @@ describe("executeSync", () => {
     expect(r2.sources.opencode).toBe(0);
   });
 
+  it("retries an unreadable OpenCode file in an unchanged directory", async () => {
+    // The JSON driver throws when a message file is unreadable so the file
+    // cursor stays unwritten. The directory-level mtime fast path must not
+    // stamp that directory at the same time, or an in-place repair (a chmod
+    // back, or rewritten bytes) would never be seen again: the file stays
+    // undiscovered, so its usage is lost while the raw log is intact.
+    const ocDir = join(dataDir, "opencode", "message", "ses_retry");
+    await mkdir(ocDir, { recursive: true });
+    const file = join(ocDir, "msg_001.json");
+    await writeFile(file, opencodeMsg(1771120749059, 500, 50));
+    await chmod(file, 0o000);
+    const opts = { stateDir, deviceId: "dev-1", openCodeMessageDir: join(dataDir, "opencode", "message") };
+    const warnings: string[] = [];
+    await executeSync({ ...opts, onProgress: (event) => { if (event.phase === "warn") warnings.push(event.message ?? ""); } });
+    expect(warnings.some((message) => message.includes("unreadable"))).toBe(true);
+    expect((await new LocalQueue(stateDir).readFromOffset(0)).records).toEqual([]);
+
+    // Repair in place: the file's own metadata changes, the DIRECTORY's does not.
+    await chmod(file, 0o644);
+    const result = await executeSync(opts);
+    expect(result.totalDeltas).toBe(1);
+    const rows = (await readFile(join(stateDir, "queue.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    expect(rows).toHaveLength(1);
+  });
+
   it("should detect new OpenCode file added to existing session directory", async () => {
     // OpenCode message files are immutable — new messages create new files.
     // Directory mtime changes when a new file is created, triggering re-scan.
@@ -967,6 +994,32 @@ describe("executeSync", () => {
     // With dir-level mtime optimization, total files should be 0 (entire dir skipped)
     const parseEvent = events.find((e) => e.source === "opencode" && e.phase === "parse" && e.total !== undefined);
     expect(parseEvent?.total).toBe(0);
+    expect(parseEvent?.message).toContain("1 dirs skipped");
+  });
+
+  it("reports only the directories skipped this run, not every tracked one", async () => {
+    // The metric used Object.keys(ctx.dirMtimes).length, i.e. the persisted
+    // directory map — so a heavy install that skipped one directory of sixty
+    // announced "60 dirs skipped" on every sync.
+    const skippedDir = join(dataDir, "opencode", "message", "ses_001");
+    const activeDir = join(dataDir, "opencode", "message", "ses_002");
+    await mkdir(skippedDir, { recursive: true });
+    await mkdir(activeDir, { recursive: true });
+    await writeFile(join(skippedDir, "msg_001.json"), opencodeMsg(1771120749059, 14967, 437));
+    await writeFile(join(activeDir, "msg_001.json"), opencodeMsg(1771120749060, 100, 10));
+
+    await executeSync({ stateDir, openCodeMessageDir: join(dataDir, "opencode", "message") });
+    // Touch only the second directory so it is re-entered on the next run.
+    await writeFile(join(activeDir, "msg_002.json"), opencodeMsg(1771120749061, 200, 20));
+
+    const events: Array<{ source: string; phase: string; message?: string }> = [];
+    await executeSync({
+      stateDir,
+      openCodeMessageDir: join(dataDir, "opencode", "message"),
+      onProgress: (e) => events.push({ source: e.source, phase: e.phase, message: e.message }),
+    });
+
+    const parseEvent = events.find((e) => e.source === "opencode" && e.phase === "parse" && e.message?.includes("dirs skipped"));
     expect(parseEvent?.message).toContain("1 dirs skipped");
   });
 
@@ -2317,12 +2370,20 @@ describe("executeSync", () => {
       reasoning_output_tokens: 0,
       total_tokens: 0,
     });
+    // The zeroed token bucket needs a matching zero accounting snapshot: the
+    // ledger still holds the v1 basis, and replaying it against a server whose
+    // usage base is now 0 is answered `base_mismatch` forever (a permanently
+    // pending annotation that cannot self-heal).
+    const details = (await new AccountingQueue(stateDir).readFromOffset(0)).records;
+    const detailTombstone = details.find((r) => r.hour_start.startsWith("2026-03-07T11"));
+    expect(detailTombstone).toMatchObject({ source: "codex", basis: { total_tokens: 0 } });
   });
 
   it("should never tombstone non-codex buckets on an accounting rescan", async () => {
     // v2 corrects Codex accounting only. A Claude project whose raw logs the
-    // user has since rotated away must keep its already-uploaded history —
-    // "absent from this scan" is not "this history is wrong".
+    // user has since rotated away must keep its history — "absent from this
+    // scan" is not "this history is wrong". The queue keeps the bucket (it may
+    // still be pending an upload); nothing zero is ever written for it.
     const claudeDir = join(dataDir, ".claude", "projects", "proj-acct-keep");
     const sessionPath = join(claudeDir, "session.jsonl");
     await mkdir(claudeDir, { recursive: true });
@@ -2353,7 +2414,8 @@ describe("executeSync", () => {
 
     const queueRaw = await readFile(join(stateDir, "queue.jsonl"), "utf-8");
     const records = queueRaw.trim().split("\n").map((l) => JSON.parse(l) as QueueRecord);
-    expect(records.some((r) => r.source === "claude-code")).toBe(false);
+    const kept = records.find((r) => r.source === "claude-code");
+    expect(kept).toMatchObject({ total_tokens: 4400, hour_start: "2026-03-07T11:00:00.000Z" });
   });
 
   it("should not tombstone when codex discovered nothing (dir missing or unmounted)", async () => {

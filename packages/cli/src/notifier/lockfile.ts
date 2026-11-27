@@ -111,11 +111,13 @@ export async function readLockPid(
  * Who currently holds the lock.
  *
  * - `missing` — no lockfile; acquisition should simply succeed.
- * - `alive` — the recorded PID exists (or is our own). Never reclaim.
+ * - `alive` — the recorded PID exists (or is our own), or the file could not
+ *   be read for a reason other than ENOENT (unknowable, so fail closed).
+ *   Never reclaim.
  * - `dead` — the recorded PID is gone (ESRCH). Safe to reclaim.
- * - `unreadable` — the file exists but has no parseable PID. This is also the
- *   shape of a lock another process just created and is still writing, so it
- *   must not be treated as dead on sight.
+ * - `unreadable` — the file exists but has no parseable positive-integer PID.
+ *   This is also the shape of a lock another process just created and is
+ *   still writing, so it must not be treated as dead on sight.
  */
 export type LockOwnerState = "missing" | "alive" | "dead" | "unreadable";
 
@@ -127,7 +129,13 @@ export async function readLockOwnerState(
   try {
     content = await opts.fs.readFile(lockPath);
   } catch (err) {
-    return (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT" ? "missing" : "unreadable";
+    // ENOENT is the only error that proves absence. Any other read failure
+    // (EIO, EACCES, EMFILE) says nothing about the owner — the file may hold
+    // a live PID we merely cannot read right now — and "unreadable" is
+    // reclaimable after the recheck, so mapping those here would let the
+    // lock be deleted out from under its holder. A lock we cannot read is
+    // treated as someone's.
+    return (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT" ? "missing" : "alive";
   }
 
   let pid: unknown;
@@ -136,7 +144,12 @@ export async function readLockOwnerState(
   } catch {
     return "unreadable";
   }
-  if (typeof pid !== "number") return "unreadable";
+  // A number is not the same as a PID. kill(0, 0) signals the caller's whole
+  // process group — it always succeeds for its owner, so `pid: 0` would read
+  // as alive forever and wedge every command; negative pids address process
+  // groups, and a non-integer makes kill() throw ERR_OUT_OF_RANGE (not ESRCH,
+  // so also "alive"). Only positive safe integers name a process.
+  if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0) return "unreadable";
   if (pid === opts.process.pid) return "alive";
 
   try {

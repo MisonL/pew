@@ -354,6 +354,19 @@ describe("admin RPC handlers", () => {
       expect(sql).toContain("MIN(julianday(hour_start))");
       expect(sql).toContain("MAX(julianday(hour_start))");
     });
+
+    it("computes the session side of first/last seen by epoch too", async () => {
+      // session_records timestamps pre-dating canonicalUtcTimestamp carry the
+      // same offset hazard as usage rows; the token-side fix must not be the
+      // only one.
+      db.all.mockResolvedValue({ results: [] });
+      await handleAdminRpc({ method: "admin.getStorageStats" }, db);
+
+      const sql = String(db.prepare.mock.calls.at(-1)?.[0]);
+      expect(sql).toContain("MIN(julianday(started_at))");
+      expect(sql).toContain("MAX(julianday(last_message_at))");
+      expect(sql).not.toMatch(/MIN\(started_at\)|MAX\(last_message_at\)/);
+    });
   });
 
   // -------------------------------------------------------------------------

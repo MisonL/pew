@@ -225,11 +225,24 @@ async function readDatabase(path: string, opener: (path: string) => SqliteDb, sn
     let assistantMessages = 0;
     let lastModel: string | null = null;
     const skipped = { steps: 0, sessions: 0 };
+    // The protobuf epoch default (an empty Timestamp submessage) decodes to
+    // 1970, and a corrupted seconds field can point anywhere. A timestamp
+    // outside the tool's plausible lifetime is a corrupt row, not history: its
+    // usage would otherwise land in a 1970/2035 bucket and — because
+    // Antigravity is a snapshot-replacement source — tombstone the correct
+    // bucket for the same step. Skipping the step keeps the source usable and
+    // its real history intact.
+    const minTimestampMs = Date.UTC(2000, 0, 1);
+    const maxTimestampMs = Date.parse(snapshotAt) + 72 * 60 * 60 * 1000;
     for (const step of steps) {
       try {
         if (!Number.isSafeInteger(step.idx) || step.idx < 0 || !Number.isInteger(step.step_type) || !Number.isInteger(step.status)) throw new Error("Invalid Antigravity step row");
         const decoded = step.metadata === null ? { timestamp: null, usage: null } : decodeAntigravityMetadata(step.metadata);
-        if (decoded.timestamp) times.push(new Date(decoded.timestamp).getTime());
+        if (decoded.timestamp) {
+          const ms = Date.parse(decoded.timestamp);
+          if (!Number.isFinite(ms) || ms < minTimestampMs || ms > maxTimestampMs) throw new Error("Implausible Antigravity step timestamp");
+          times.push(ms);
+        }
         if (step.step_type === 14) userMessages++;
         if (step.step_type === 15) assistantMessages++;
         if (models.has(step.idx)) lastModel = models.get(step.idx) as string;

@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import { dirname } from "node:path";
 import type {
   CodexScopeState,
   ContinuityAnchor,
@@ -49,7 +50,7 @@ import {
   restoreJsonlSharedState,
   snapshotJsonlSharedState,
 } from "../utils/jsonl-shared-state.js";
-import { isValidIsoInstant } from "../utils/ingest-contract.js";
+import { evidenceRecordRejection, isValidIsoInstant } from "../utils/ingest-contract.js";
 import { aggregateRecords } from "./upload.js";
 import { readAntigravitySource } from "../parsers/antigravity.js";
 import { antigravityRecords, readAntigravityBaseline, replaceAntigravityPartition, tokenRecordKey } from "../utils/antigravity-snapshot.js";
@@ -613,9 +614,13 @@ async function executeSyncScan(opts: InternalSyncOptions & {
       if (replayDetected) break;
     }
 
-    // Build discover message with skipped dirs info from context
-    const skippedDirs = driver.source === "opencode" && ctx.dirMtimes
-      ? Object.keys(ctx.dirMtimes).length
+    // Build the discover message from what THIS run skipped. The old metric
+    // was Object.keys(ctx.dirMtimes).length — the persisted map of every
+    // tracked directory — so a heavy install that skipped one directory of
+    // sixty announced "60 dirs skipped" every sync. ctx.mtimeSkippedDirs is
+    // exactly what the driver's discovery did not enter this round.
+    const skippedDirs = driver.source === "opencode"
+      ? ctx.mtimeSkippedDirs?.length ?? 0
       : 0;
     const parseMsg = driver.source === "opencode" && skippedDirs > 0
       ? `Parsing ${files.length} ${driver.source} files (${skippedDirs} dirs skipped)...`
@@ -915,6 +920,24 @@ async function executeSyncScan(opts: InternalSyncOptions & {
         phase: "warn",
         message: `Skipped ${skippedNoTimestamp} ${driver.source} token events whose timestamp is missing; the raw logs are untouched`,
       });
+    }
+
+    // A driver that failed to parse a discovered file must not stamp the
+    // directory whose mtime gates discovery. Without this, the file cursor
+    // stays unwritten but the directory mtime is persisted, so an in-place
+    // repair never re-discovers the file and its usage is lost. Restore the
+    // prior mtimes for directories holding this driver's failed paths; the
+    // next sync re-enters them. Only files this driver listed can fail here,
+    // so the un-stamp never reaches another source's directories.
+    if (driver.source === "opencode" && ctx.dirMtimes && parseFailedPaths.size > 0) {
+      const priorDirMtimes = (cursors.dirMtimes ?? {}) as Record<string, number>;
+      const failedDirs = new Set(files.filter((f) => parseFailedPaths.has(f)).map((f) => dirname(f)));
+      for (const dir of failedDirs) {
+        if (!(dir in ctx.dirMtimes)) continue;
+        const prior = priorDirMtimes[dir];
+        if (prior !== undefined) ctx.dirMtimes[dir] = prior;
+        else ctx.dirMtimes = Object.fromEntries(Object.entries(ctx.dirMtimes).filter(([key]) => key !== dir));
+      }
     }
 
     // Post-parse hook (e.g. OpenCode JSON deposits messageKeys into ctx)
@@ -1382,19 +1405,55 @@ async function executeSyncScan(opts: InternalSyncOptions & {
       currentKeys.add(key);
     }
   }
+  // A zeroed token bucket without a matching zero accounting snapshot leaves
+  // the server's stored basis non-zero while the token side says 0, and every
+  // later replay of that annotation is answered `base_mismatch` — permanently.
+  // The antigravity path gets its tombstones from the partition; the codex
+  // reconciliation above only rewrites `records`, so its zeroed buckets get
+  // their own zero-value deltas here (no evidence identity → aggregate group).
+  const codexReconcileDeltas: ParsedDelta[] = [];
+  if (initialCursorEmpty && opts.reconcilePreviousQueueRecords && codexFullyRescanned) {
+    const zeroed = new Set(records.filter((record) => record.total_tokens === 0 && record.source === "codex")
+      .map(tokenRecordKey));
+    const seen = new Set<string>();
+    for (const previous of opts.reconcilePreviousQueueRecords) {
+      if (previous.source !== "codex" || previous.device_id !== opts.deviceId) continue;
+      const key = tokenRecordKey(previous);
+      if (!zeroed.has(key) || seen.has(key) || previous.total_tokens === 0) continue;
+      seen.add(key);
+      codexReconcileDeltas.push({ source: "codex", model: previous.model, timestamp: previous.hour_start,
+        tokens: emptyTokenDelta(),
+        accounting: inclusiveAccounting(emptyTokenDelta(),
+          { input: 0, read: 0, write: 0, output: 0, reasoning: 0 },
+          { origin: "codex:reconcile", model: previous.model, aggregate: true }) });
+    }
+  }
 
-  // Project only the evidence events the wire contract can express. The
-  // projection throws on counters outside the server's bounds, and it runs
-  // here — before any queue or cursor write — so an uncaught throw discarded
-  // every source's results for the run, and because the cursor never advanced
-  // it did so again on every later sync. One corrupt log line must cost one
-  // event, not the whole tool: the event is dropped with a warning and the
-  // cursor moves past it (the raw log is untouched).
+  // Project only the evidence events the wire contract can express, and do it
+  // here — before any queue or cursor write — so one corrupt log line costs one
+  // event instead of the whole tool: the event is dropped with a warning and
+  // the cursor moves past it (the raw log is untouched).
+  //
+  // Two gates, deliberately in this order. `toEvidenceRecord` throws on shapes
+  // the ledger cannot hold at all, and an uncaught throw here used to discard
+  // every source's results for the run while the cursor never advanced, so it
+  // repeated forever. `evidenceRecordRejection` then applies the *upload*
+  // bounds, which the projection intentionally does not: it keeps whatever the
+  // raw log said (a saved row above the bound must not wedge the ledger's own
+  // read path for someone who already has one). Without this second gate an
+  // over-bound counter becomes durable state that can never upload — the
+  // upload filter drops it and advances past it, but `pew reset` never clears
+  // this ledger, so the same row warned on every drain for the life of the
+  // machine. Refusing it at scan time is the only point that can.
   const evidenceRecords: EvidenceRecord[] = [];
   let unprojectableEvidence = 0;
   for (const delta of allDeltas) {
     if (!delta.evidence) continue;
-    try { evidenceRecords.push(toEvidenceRecord(delta, opts.deviceId)); }
+    try {
+      const record = toEvidenceRecord(delta, opts.deviceId);
+      if (evidenceRecordRejection(record) !== null) { unprojectableEvidence++; continue; }
+      evidenceRecords.push(record);
+    }
     catch { unprojectableEvidence++; }
   }
   if (unprojectableEvidence > 0) {
@@ -1420,17 +1479,47 @@ async function executeSyncScan(opts: InternalSyncOptions & {
   // `retiredRecords` is read back from queue.jsonl, not from this scan, so it
   // must not count as evidence: a queue that happens to hold a retired-source
   // row would otherwise make an empty scan authoritative and drop the active
-  // records sitting next to it.
+  // records sitting next to it. An Antigravity snapshot with no database at
+  // all is the same shape — the directory exists but holds no history — and
+  // must not authorise replacing the queue either.
   const fullScanFoundData =
-    records.length > 0 || opts.antigravitySnapshot != null;
+    records.length > 0 || (opts.antigravitySnapshot != null && opts.antigravitySnapshot.dbCount > 0);
+  // A full scan is authoritative only for the buckets it actually produced.
+  // Cursor pruning can empty `cursors.files` while a source's raw logs are gone
+  // and its queue rows are still the last (possibly un-uploaded) copy of that
+  // usage; another, cursor-less source (Antigravity keeps its cursor outside
+  // `cursors.files`) then makes the scan look non-empty and the old rows were
+  // dropped. Keep every prior active-source bucket this scan did not
+  // reproduce — for sources the scan skipped entirely (their raw data is
+  // unavailable) and for rotated files of a source it did read (absence is
+  // not a removal; corrections arrive as zero-value records, which win here).
+  // Antigravity and retired rows have their own partitions.
+  const scannedKeys = new Set(records.map(tokenRecordKey));
+  const carriedRecords = initialCursorEmpty
+    ? oldRecords.filter((record) => record.source !== "antigravity" &&
+      !isRetiredSource(record.source) && !scannedKeys.has(tokenRecordKey(record))) : [];
   let finalRecords = initialCursorEmpty
-    ? (fullScanFoundData ? [...records, ...retiredRecords] : undefined)
+    ? (fullScanFoundData ? [...records, ...carriedRecords, ...retiredRecords] : undefined)
     : records.length > 0 ? aggregateRecords([...oldRecords, ...records]) : undefined;
   const previousAntigravity = opts.previousAntigravityRecords ?? [];
   const freshAntigravity = opts.antigravitySnapshot
     ? antigravityRecords(opts.antigravitySnapshot.deltas, opts.deviceId) : null;
+  // Antigravity is a snapshot-replacement source: a bucket absent from this
+  // scan is normally a removed step and its queue row must zero out. That
+  // inference is only valid for a complete snapshot. Skipped corrupt steps,
+  // an out-of-contract session and an empty database directory beside real
+  // history all mean "this run did not see everything"; treating the missing
+  // buckets as removed would overwrite already-uploaded usage with zeros.
+  const antigravitySkipped = opts.antigravitySnapshot?.skipped;
+  const antigravityEmptyDir = opts.antigravitySnapshot?.dbCount === 0 && previousAntigravity.length > 0;
+  const allowAntigravityRemovals = !antigravityEmptyDir &&
+    !(antigravitySkipped && (antigravitySkipped.steps > 0 || antigravitySkipped.sessions > 0));
+  if (antigravityEmptyDir && opts.antigravitySnapshot) {
+    onProgress?.({ source: "antigravity", phase: "warn",
+      message: "No Antigravity databases found beside previous usage; keeping the previous totals until the source is reachable again" });
+  }
   const antigravity = replaceAntigravityPartition(previousAntigravity, finalRecords ?? oldRecords,
-    freshAntigravity, opts.deviceId);
+    freshAntigravity, opts.deviceId, { allowRemovals: allowAntigravityRemovals });
   if (finalRecords || antigravity.changedKeys.length || previousAntigravity.length && initialCursorEmpty) {
     finalRecords = antigravity.records;
   }
@@ -1452,6 +1541,11 @@ async function executeSyncScan(opts: InternalSyncOptions & {
     const current = [...new Map([...priorAccounting, ...accounting].map((r) => [accountingKey(r), r])).values()];
     appendAll(accounting, planAccountingUpdates({ previous: current, before: [], after: finalRecords ?? oldRecords,
       deltas: ctx.accountingSnapshots, replay: true, deviceId: opts.deviceId, onWarning: onAccountingWarning, onVerified }));
+  }
+  if (codexReconcileDeltas.length) {
+    const current = [...new Map([...priorAccounting, ...accounting].map((r) => [accountingKey(r), r])).values()];
+    appendAll(accounting, planAccountingUpdates({ previous: current, before: [], after: finalRecords ?? oldRecords,
+      deltas: codexReconcileDeltas, replay: true, deviceId: opts.deviceId, onWarning: onAccountingWarning, onVerified }));
   }
   if (opts.antigravitySnapshot) {
     const tombstoneDeltas: ParsedDelta[] = antigravity.tombstones.map((r) => {
@@ -1488,10 +1582,9 @@ async function executeSyncScan(opts: InternalSyncOptions & {
    // which records actually need sending, avoiding full re-upload on every sync.
   let dirtyKeys: string[] | undefined;
   if (initialCursorEmpty) {
-    // All records are dirty (fresh full scan)
-    const newKeys = records.map(
-      (r) => `${r.source}|${r.model}|${r.hour_start}|${r.device_id}`,
-    );
+    // All records are dirty (fresh full scan). Carried rows were never
+    // replaced by this scan, so they keep their pending upload intent.
+    const newKeys = [...records, ...carriedRecords].map(tokenRecordKey);
     dirtyKeys = [...new Set(newKeys)];
   } else if (records.length > 0) {
     // Incremental with new data: SUM with existing queue records

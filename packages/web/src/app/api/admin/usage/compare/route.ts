@@ -36,6 +36,13 @@ export interface DailyUsage {
 export interface CompareResponse {
   users: CompareUser[];
   daily: DailyUsage[];
+  /**
+   * Length of the requested window in days. `daily` only carries dates that
+   * have rows, so a per-user average over `daily.length` inflates for anyone
+   * who was idle part of the period (10 active days of a 31-day window reads
+   * as ~3x their real daily average).
+   */
+  windowDays: number;
   sources: string[];
   models: string[];
 }
@@ -198,9 +205,26 @@ export async function GET(request: Request) {
       .map(([date, usersData]) => ({ date, users: usersData }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
+    // Denominator for per-user daily averages: the number of local calendar
+    // days the window spans (the same local day keys the query groups by),
+    // not daily.length — days with no rows for a user are absent from
+    // `daily`, and averaging over only the days that produced data reads as
+    // several times the user's real daily average.
+    const localDay = (instant: Date) =>
+      new Date(instant.getTime() - tzOffset * 60_000).toISOString().slice(0, 10);
+    // `toDate` is an exclusive bound (and already bumped a day for bare
+    // dates), so step back 1ms to land on the last included day.
+    const firstLocalDay = localDay(fromDate);
+    const lastLocalDay = localDay(new Date(Math.max(toDate.getTime() - 1, fromDate.getTime())));
+    const windowDays = Math.max(
+      1,
+      Math.round((Date.parse(lastLocalDay) - Date.parse(firstLocalDay)) / 86_400_000) + 1,
+    );
+
     const response: CompareResponse = {
       users,
       daily,
+      windowDays,
       sources: Array.from(sourcesSet).sort(),
       models: Array.from(modelsSet).sort(),
     };

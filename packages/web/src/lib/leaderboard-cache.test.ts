@@ -375,12 +375,16 @@ describe("disabled leaderboard state", () => {
       .mockReturnValueOnce(requestId)
       .mockReturnValueOnce({ current: controller })
       .mockReturnValueOnce(snapshot)
+      .mockReturnValueOnce({ current: [] }) // entries mirror (see useLeaderboard)
       .mockReturnValueOnce(lastFilter);
     vi.spyOn(React, "useCallback").mockImplementation((callback) => callback);
     const effect = vi.spyOn(React, "useEffect").mockImplementation(() => {});
 
     useLeaderboard({ enabled: false, teamId: "old-team" });
-    effect.mock.calls[0]![0]();
+    // Effects in hook order: entries mirror, the filter-change effect (the
+    // disabled branch under test), and the unmount cleanup. Run them all;
+    // only the middle one writes state here.
+    for (const [callback] of effect.mock.calls) callback();
 
     // Disabled means "cannot query yet" (session/scope resolving), so the
     // loading state must stay set — otherwise the page renders its

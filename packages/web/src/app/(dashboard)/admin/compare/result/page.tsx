@@ -250,7 +250,11 @@ function CompareResultContent() {
       }
     }
 
-    const dayCount = data.daily.length || 1;
+    // Window length comes from the API (days the requested range spans), not
+    // daily.length: days with no rows are missing from `daily`, and averaging
+    // over only the days a user happened to produce data inflates their
+    // "Daily Avg" several-fold for an idle part of the period.
+    const dayCount = data.windowDays || data.daily.length || 1;
 
     return data.users
       .map((user) => ({

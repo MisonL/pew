@@ -809,8 +809,8 @@ describe("seasons RPC handlers", () => {
       const req: AggregateTeamTokensRequest = {
         method: "seasons.aggregateTeamTokens",
         seasonId: "s1",
-        fromDate: "a",
-        toDate: "b",
+        fromDate: "2026-01-01T00:00:00Z",
+        toDate: "2026-04-01T00:00:00Z",
       };
       expect(await (await handleSeasonsRpc(req, db, kv)).json()).toEqual({ result: [] });
     });
@@ -866,8 +866,8 @@ describe("seasons RPC handlers", () => {
       const req: AggregateMemberTokensRequest = {
         method: "seasons.aggregateMemberTokens",
         seasonId: "s1",
-        fromDate: "a",
-        toDate: "b",
+        fromDate: "2026-01-01T00:00:00Z",
+        toDate: "2026-04-01T00:00:00Z",
         teamIds: ["t1", "t2"],
       };
       const res = await handleSeasonsRpc(req, db, kv);
@@ -876,7 +876,7 @@ describe("seasons RPC handlers", () => {
       // Identifier lists use one JSON parameter regardless of cardinality.
       const sql = (db.prepare as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string;
       expect(sql).toContain("IN (SELECT value FROM json_each(?))");
-      expect(db.bind).toHaveBeenCalledWith("a", "b", "s1", JSON.stringify(["t1", "t2"]));
+      expect(db.bind).toHaveBeenCalledWith("2026-01-01T00:00:00Z", "2026-04-01T00:00:00Z", "s1", JSON.stringify(["t1", "t2"]));
     });
 
     it("should return 400 when teamIds is empty array", async () => {
@@ -932,6 +932,62 @@ describe("seasons RPC handlers", () => {
       };
       expect((await handleSeasonsRpc(req, db, kv)).status).toBe(400);
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // Window parameter validation
+  // -------------------------------------------------------------------------
+
+  describe("window parameter types", () => {
+    // `!req.fromDate` only rules out falsy values: a number or object passed a
+    // truthiness check, reached the SQL bind, and either threw inside D1
+    // (500) or compared as a non-text type and silently emptied the window.
+    const cases = [
+      ["seasons.getTeamTokens", undefined],
+      ["seasons.getMemberTokens", ["t1"]],
+      ["seasons.getTeamSessionStats", ["t1"]],
+      ["seasons.getMemberSessionStats", ["t1"]],
+      ["seasons.aggregateTeamTokens", undefined],
+      ["seasons.aggregateMemberTokens", ["t1"]],
+    ];
+
+    for (const [method, teamIds] of cases) {
+      it(`${method} rejects a non-string fromDate with 400`, async () => {
+        const req = {
+          method,
+          seasonId: "s1",
+          fromDate: 123,
+          toDate: "2026-04-01T00:00:00.000Z",
+          ...(teamIds ? { teamIds } : {}),
+        };
+        const response = await handleSeasonsRpc(req as never, db, kv);
+        expect(response.status).toBe(400);
+      });
+
+      it(`${method} rejects an unparseable date string with 400`, async () => {
+        const req = {
+          method,
+          seasonId: "s1",
+          fromDate: "not-a-date",
+          toDate: "2026-04-01T00:00:00.000Z",
+          ...(teamIds ? { teamIds } : {}),
+        };
+        const response = await handleSeasonsRpc(req as never, db, kv);
+        expect(response.status).toBe(400);
+      });
+
+      it(`${method} rejects a non-string seasonId with 400`, async () => {
+        const req = {
+          method,
+          seasonId: { evil: true },
+          fromDate: "2026-01-01T00:00:00.000Z",
+          toDate: "2026-04-01T00:00:00.000Z",
+          ...(teamIds ? { teamIds } : {}),
+        };
+        const response = await handleSeasonsRpc(req as never, db, kv);
+        expect(response.status).toBe(400);
+      });
+    }
   });
 
   // -------------------------------------------------------------------------

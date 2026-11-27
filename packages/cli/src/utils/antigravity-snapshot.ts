@@ -82,15 +82,23 @@ export function antigravityRecords(deltas: ParsedDelta[], deviceId: string): Que
 
 export function replaceAntigravityPartition(
   previous: QueueRecord[], afterOtherSources: QueueRecord[], fresh: QueueRecord[] | null, deviceId: string,
+  opts: { allowRemovals?: boolean } = {},
 ): { records: QueueRecord[]; tombstones: QueueRecord[]; changedKeys: string[] } {
   const owned = (r: QueueRecord) => r.source === "antigravity" && r.device_id === deviceId;
   const prior = previous.filter(owned);
   const incoming = fresh ?? prior;
+  // A partial snapshot (skipped steps, an out-of-contract session, an empty
+  // database directory beside real history) is not evidence that a bucket was
+  // removed. Interpreting "absent from this scan" as "zero this bucket" would
+  // overwrite already-uploaded usage the raw database still holds, so no
+  // removals are emitted and prior buckets survive untouched.
+  const allowRemovals = fresh !== null && opts.allowRemovals !== false;
   const keys = new Set(incoming.map(tokenRecordKey));
-  const tombstones = fresh === null ? [] : prior.filter((r) => !keys.has(tokenRecordKey(r))).map((r) => ({
+  const tombstones = !allowRemovals ? [] : prior.filter((r) => !keys.has(tokenRecordKey(r))).map((r) => ({
     ...r, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0,
   }));
-  const snapshots = [...incoming, ...tombstones];
+  const carried = allowRemovals ? incoming : [...incoming, ...prior.filter((r) => !keys.has(tokenRecordKey(r)))];
+  const snapshots = [...carried, ...tombstones];
   const old = new Map(prior.map((r) => [tokenRecordKey(r), r]));
   const fields = ["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"] as const;
   return {

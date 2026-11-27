@@ -163,7 +163,11 @@ function StatGrid({ devices }: { devices: DeviceAggregate[] }) {
 
 export default function ByDevicePage() {
   const [period, setPeriod] = useState<Period>("all");
-  const [selectedDevice, setSelectedDevice] = useState("");
+  // `null` = no explicit choice yet: auto-select the first device so the Deep
+  // Dive opens with content. `""` = the user picked "All Devices", which must
+  // aggregate across devices rather than silently snap back to the first one
+  // (the old fallback did exactly that, so "All" was a dead option).
+  const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
   const tzOffset = useTzOffset();
   const { from, to } = periodToDateRange(period, tzOffset);
   const { pricingMap, loading: pricingLoading } = usePricingMap();
@@ -216,22 +220,25 @@ export default function ByDevicePage() {
     [devices],
   );
 
-  // Auto-select first device when data loads (and clear stale selection)
+  // Auto-select first device when data loads (and drop a stale selection).
+  // An explicit "" means All Devices and is preserved.
   const effectiveDevice = useMemo(() => {
+    if (selectedDevice === "") return "";
     if (selectedDevice && devices.some((d) => d.device_id === selectedDevice)) {
       return selectedDevice;
     }
     return devices.length > 0 ? (devices[0] as DeviceAggregate).device_id : "";
   }, [selectedDevice, devices]);
 
-  // Deep Dive: filter + aggregate detail rows for selected device
+  // Deep Dive: filter + aggregate detail rows for selected device (all
+  // devices when "All Devices" is chosen).
   const deviceDetails = useMemo(() => data?.deviceDetails ?? [], [data]);
 
   const filteredDetails = useMemo(
     () =>
       effectiveDevice
         ? deviceDetails.filter((d) => d.device_id === effectiveDevice)
-        : [],
+        : deviceDetails,
     [deviceDetails, effectiveDevice],
   );
 
@@ -245,20 +252,21 @@ export default function ByDevicePage() {
     [filteredDetails],
   );
 
-  // Deep Dive: time-series data for selected device (reuse usage.get with deviceId filter).
-  // Gated on a selection: until devices load there is nothing to filter by, and
-  // the unfiltered fetch this used to fire first was a duplicate multi-MB
-  // download discarded the moment the device arrived. "project" drops the
-  // annotations: both consumers here rank by accountedTotal(), and the
-  // server-side displayCounters() projection returns exactly those numbers,
-  // so every rendered value stays the same on a payload ~98% smaller.
+  // Deep Dive: time-series data for the selected device, or the whole account
+  // when "All Devices" is chosen (no deviceId filter). Gated until devices
+  // load: there is nothing to filter by before then, and the unfiltered fetch
+  // this used to fire first was a duplicate multi-MB download discarded the
+  // moment the device arrived. "project" drops the annotations: both consumers
+  // here rank by accountedTotal(), and the server-side displayCounters()
+  // projection returns exactly those numbers, so every rendered value stays
+  // the same on a payload ~98% smaller.
   const { data: deviceUsage, error: deviceUsageError } = useUsageData({
     from,
     ...(to ? { to } : {}),
     ...(effectiveDevice ? { deviceId: effectiveDevice } : {}),
     granularity: "day",
     includeAccounting: "project",
-    enabled: Boolean(effectiveDevice),
+    enabled: devices.length > 0,
     derived: false,
   });
 

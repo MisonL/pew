@@ -103,13 +103,26 @@ run_with_timeout() {
   # a background command in a non-interactive shell otherwise reads /dev/null.
   "$@" <&0 &
   pid=$!
-  ( sleep "$seconds"; kill -TERM "$pid" 2>/dev/null || exit 0; sleep 2; kill -KILL "$pid" 2>/dev/null || true ) >/dev/null 2>&1 &
+  # The watchdog must be an EXTERNAL `sh`, never a `( )` subshell: bash
+  # executes an inherited EXIT trap in a background subshell that ends on its
+  # own, and the poll loop below used to end right after `wait` whenever the
+  # command finished before the caller's `kill` landed (observed on bash 5.2
+  # under load) — the inherited trap then ran cleanup() in that subshell,
+  # deleting the staging directory and the in-container archive in the MIDDLE
+  # of the run, so the later copy died with "Could not find the file". A
+  # fresh sh has no traps to inherit. Descriptors 3-9 are closed on the
+  # invocation so the watchdog's `sleep` never holds the caller's flock fd:
+  # cron and upgrade.sh serialize backups through `flock -n`, and an orphan
+  # holding it would fail the next backup or upgrade with a misleading
+  # "another backup may hold the lock" for the rest of BACKUP_TIMEOUT_S.
+  sh -c 'sleep "$1" || exit 0; kill -TERM "$2" 2>/dev/null || exit 0; sleep 2; kill -KILL "$2" 2>/dev/null || true' \
+    _ "$seconds" "$pid" </dev/null >/dev/null 2>&1 9>&- 8>&- 7>&- 6>&- 5>&- 4>&- 3>&- &
   watcher=$!
   wait "$pid" || status=$?
   kill "$watcher" 2>/dev/null || true
   wait "$watcher" 2>/dev/null || true
   if [ "$status" -eq 143 ] || [ "$status" -eq 137 ]; then
-    echo "backup.sh: rqlite did not answer within ${seconds}s" >&2
+    echo "backup.sh: a docker command did not answer within ${seconds}s" >&2
     return 124
   fi
   return "$status"
@@ -149,27 +162,43 @@ mkdir -p "$OUT_DIR"
 STAGE=$(mktemp -d "$OUT_DIR/.pew-backup.XXXXXX")
 TMP="$STAGE/backup.db"
 
-# Best-effort cleanup on ANY exit: the staging directory and the in-container
-# archive (same volume as the live db). The final OUT path is deliberately not
+# Best-effort cleanup: the staging directory and the in-container archive
+# (same volume as the live db). The final OUT path is deliberately not
 # touched here — validation below decides whether it may be replaced. Both
 # commands are `|| true` so a failure here cannot abort the function and skip
 # the in-container cleanup that follows.
-# shellcheck disable=SC2329  # invoked via trap
+#
+# Only the parent shell ever calls this. The run body below executes in a
+# child and carries no EXIT trap at all: bash executes an inherited EXIT
+# trap in background subshells that end on their own, and while the run is
+# still in flight such a trap deleted the staging directory and the
+# in-container archive mid-run (observed on bash 5.2 under load: the copy
+# then died with "Could not find the file"). Keeping the cleanup in the
+# parent removes the whole class — there is no trap for any child to inherit.
 cleanup() {
   rm -rf "$STAGE" 2>/dev/null || true
   run_with_timeout "$BACKUP_TIMEOUT_S" docker compose exec -T "$SERVICE" rm -f /rqlite/file/backup.db >/dev/null 2>&1 || true
 }
-trap cleanup EXIT
-# Converge catchable signals onto the EXIT trap so the staging directory and
-# the in-container copy are cleaned on Ctrl-C / systemd stop, not just on a
-# normal exit. SIGKILL is uncatchable — the 0700 staging dir is what protects
-# the archive in that case.
-trap 'exit 130' INT
-trap 'exit 143' TERM
-trap 'exit 129' HUP
+# Converge catchable signals onto cleanup in the parent, then stop the body.
+# SIGKILL is uncatchable — the 0700 staging dir is what protects the archive
+# in that case.
+BODY_PID=
+on_signal() {
+  [ -z "$BODY_PID" ] || kill -TERM "$BODY_PID" 2>/dev/null || true
+  cleanup
+  exit "$1"
+}
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+trap 'on_signal 129' HUP
 
-# Clear any archive left behind by an interrupted earlier run: SIGKILL skips
-# the cleanup trap, and the rqlite REPL exits 0 even when .backup fails (it
+# The run body: everything from clearing a stale in-container archive through
+# the atomic replace. Runs as a background child (see the tail of this file)
+# so the parent stays free to clean up exactly once, on every path.
+run_body() {
+set -eu
+# Clear any archive left behind by an interrupted earlier run: SIGKILL leaves
+# it in place, and the rqlite REPL exits 0 even when .backup fails (it
 # prints `ERR! unauthorized` and still returns 0 — verified against rqlite
 # 10.5.3). Without this, a failed run could copy and validate a STALE archive
 # from a previous attempt and report success.
@@ -263,7 +292,11 @@ fi
 # — for ANY source path, so cron backups fail with a message that never
 # mentions the remedy. Wrap it: fail closed (set -e would anyway) but say what
 # to do. Recreating the service re-resolves the bind to the rendered file.
-if ! docker compose cp "$SERVICE:/rqlite/file/backup.db" "$TMP"; then
+# Every other docker interaction in this script is bounded; the copy is the
+# last one that could hang forever on a wedged daemon or a stalled volume walk
+# and keep the shared `flock` (cron and upgrade.sh) held. `cp` does not read
+# stdin, so the explicit `<&0` inside run_with_timeout is harmless.
+if ! run_with_timeout "$BACKUP_TIMEOUT_S" docker compose cp "$SERVICE:/rqlite/file/backup.db" "$TMP"; then
   echo "backup.sh: docker cp failed." >&2
   echo "  If the docker error above mentions 'auth/auth.json: is a directory', the" >&2
   echo "  container was created while .rqlite-auth.json did not exist (render must" >&2
@@ -314,3 +347,14 @@ fi
 # archive was chmod 0600 right after the copy and `mv` preserves the mode.
 mv "$TMP" "$OUT"
 echo "backup written to $OUT"
+}
+
+# Run the body as a child shell and clean up exactly once in the parent. The
+# child's `exit` — success, an explicit failure, or a `set -e` abort — ends
+# only the child; the parent sees the status, cleans up, and mirrors it.
+run_body <&0 &
+BODY_PID=$!
+rc=0
+wait "$BODY_PID" || rc=$?
+cleanup
+exit "$rc"

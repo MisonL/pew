@@ -300,30 +300,33 @@ describe("Antigravity private SQLite snapshot", () => {
     expect((await readAntigravitySource(f.root)).snapshots[0]).toMatchObject({ userMessages: 1, assistantMessages: 1, totalMessages: 2 });
   });
 
-  it("drops a session beyond the ingest limit but keeps its token candidates", async () => {
+  it("isolates a step stamped years in the future instead of moving its usage there", async () => {
+    // Antigravity is a snapshot-replacement source: emitting the usage under a
+    // 2033 bucket would tombstones the correct bucket for the same step. A
+    // corrupted seconds field is a corrupt row, so the step is isolated.
     const f = await fixture();
-    f.step(1, metadata(1), 14);
-    f.step(2, metadata(315_576_002, { 2: 10, 3: 5 }));
+    f.step(1, metadata(1_700_000_000), 14);
+    f.step(2, metadata(1_700_000_000 + 315_576_002, { 2: 10, 3: 5 }));
     f.gen(3, [2]);
     const result = await readAntigravitySource(f.root);
-    expect(result.deltas).toHaveLength(1);
-    expect(result.snapshots).toEqual([]);
-    expect(result.skipped.sessions).toBe(1);
+    expect(result.deltas).toEqual([]);
+    expect(result.skipped.steps).toBe(1);
   });
 
-  it("keeps token data when a step carries an empty Timestamp submessage", async () => {
+  it("isolates a step whose timestamp lies outside the tool's lifetime but keeps the session", async () => {
     // An empty Timestamp message decodes to the protobuf epoch default. Beside
     // real timestamps it used to stretch the session span past the ingest limit
-    // and fail the whole source on every sync; one corrupt step must cost one
-    // step instead.
+    // and fail the whole source on every sync. A 1970 stamp is a corrupt row,
+    // not history: the step is isolated and the remaining session survives.
     const f = await fixture();
     f.step(0, bytes(1, Buffer.alloc(0)),14);
     f.step(1, metadata(1_700_000_000, {2:10,3:5 }));
     f.gen(2, [1]);
     const result = await readAntigravitySource(f.root);
     expect(result.deltas).toHaveLength(1);
-    expect(result.snapshots).toEqual([]);
-    expect(result.skipped.sessions).toBe(1);
+    expect(result.snapshots).toHaveLength(1);
+    expect(result.skipped.steps).toBe(1);
+    expect(result.skipped.sessions).toBe(0);
   });
   it("enforces session key, date, duration and message bounds", async () => {
     const f = await fixture();

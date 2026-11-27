@@ -24,7 +24,12 @@ vi.mock("@/auth", () => ({
   shouldUseSecureCookies: () => false,
 }));
 
-import { findCredentialUser, registerWithInvite, setScryptSlotForced } from "@/lib/credentials";
+import {
+  EMAIL_ALREADY_REGISTERED,
+  findCredentialUser,
+  registerWithInvite,
+  setScryptSlotForced,
+} from "@/lib/credentials";
 import { getDbRead, getDbWrite } from "@/lib/db";
 
 const mockGetDbWrite = getDbWrite as unknown as ReturnType<typeof vi.fn>;
@@ -178,12 +183,26 @@ describe("registerWithInvite", () => {
       .mockRejectedValueOnce(new Error("UNIQUE constraint failed: users.email")) // insert
       .mockResolvedValueOnce({ changes: 1, duration: 0 }); // release
 
+    // A duplicate email is a named, non-faulty outcome (the route answers
+    // 409, not 500); the raw SQLite text must not surface.
     await expect(
       registerWithInvite({ email: "dup@x.y", name: "D", password: "password123", inviteCode: "ABCD2345" })
-    ).rejects.toThrow(/UNIQUE/);
+    ).rejects.toThrow(EMAIL_ALREADY_REGISTERED);
 
     const releaseSql = dbWrite.execute.mock.calls[2]![0] as string;
     expect(releaseSql).toMatch(/UPDATE invite_codes SET used_by = NULL/);
+  });
+
+  it("propagates a non-unique INSERT failure unchanged after releasing the invite", async () => {
+    dbWrite.execute
+      .mockResolvedValueOnce({ changes: 1, duration: 0 }) // consume
+      .mockRejectedValueOnce(new Error("disk I/O error")) // insert
+      .mockResolvedValueOnce({ changes: 1, duration: 0 }); // release
+
+    await expect(
+      registerWithInvite({ email: "io@x.y", name: "I", password: "password123", inviteCode: "ABCD2345" })
+    ).rejects.toThrow(/disk I\/O error/);
+    expect((dbWrite.execute.mock.calls[2]![0] as string)).toMatch(/UPDATE invite_codes SET used_by = NULL/);
   });
   it("refuses without touching the database when the derivation slot is exhausted", async () => {
     dbRead.getAppSetting.mockResolvedValue("false");

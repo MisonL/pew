@@ -150,7 +150,9 @@ describe("POST /api/auth/register", () => {
 
   it("does not relabel an invite-path UNIQUE failure as already set up", async () => {
     // On the invite path a UNIQUE failure is a duplicate email, not a setup
-    // race; the bootstrap-only mapping must not leak into it.
+    // race; the bootstrap-only mapping must not leak into it. It also is not
+    // a server fault: registering an address that exists is a normal outcome
+    // (sign in instead), so the answer is 409 with a named cause.
     mockQuery.mockResolvedValueOnce({ results: [{ n: 1 }] });
     dbWrite.execute
       .mockResolvedValueOnce({ changes: 1, duration: 0 }) // consume invite
@@ -158,8 +160,8 @@ describe("POST /api/auth/register", () => {
       .mockResolvedValueOnce({ changes: 1, duration: 0 }); // release invite (best-effort)
 
     const res = await post({ email: "n@x.y", password: "password123", inviteCode: "ABCD2345" });
-    expect(res.status).toBe(500);
-    expect((await res.json()).error).toBe("Registration failed");
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/already registered/i);
   });
 
   it("does not echo internal text that merely contains an allowlisted word", async () => {

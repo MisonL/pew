@@ -233,6 +233,22 @@ export const PUBLIC_PROFILE_RATE_LIMIT: RateLimitConfig = {
   windowSeconds: 60,
 };
 
+/**
+ * Public pricing catalogue (`/api/pricing`). No auth, ~0.5 MB of JSON per
+ * response, and every dashboard page load fetches it (`usePricingMap`), so an
+ * anonymous loop otherwise repeats the serialization for free.
+ *
+ * 240/min rather than the leaderboard's 60: the caller is the whole office
+ * behind one NAT address (each page view issues one call), and the L3 browser
+ * suite loads dozens of dashboard pages a minute from a single loopback
+ * address. The limit exists to bound a flood of 0.5 MB bodies, not to shape
+ * normal browsing — four a second leaves both use cases untouched.
+ */
+export const PRICING_RATE_LIMIT: RateLimitConfig = {
+  maxRequests: 240,
+  windowSeconds: 60,
+};
+
 export const INGEST_RATE_LIMIT: RateLimitConfig = {
   maxRequests: 300,
   windowSeconds: 60,

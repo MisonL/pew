@@ -262,6 +262,33 @@ describe("retired sources", () => {
     expect((await queue.readFromOffset(await queue.loadOffset())).records).toEqual([pending]);
   });
 
+  it("computes the retained prefix from the rows it actually keeps", async () => {
+    // The prefix offset was summed over every parseable retired line in the
+    // acknowledged range, then `overwrite` wrote only the lines that pass the
+    // retention validation. A retired line that parses but fails validation
+    // (here: an unparseable started_at) contributed bytes it would never
+    // occupy, so the offset landed past the pending row and the row was
+    // dropped on every upload from then on.
+    const queue = new SessionQueue(stateDir);
+    const record = (session_key: string, started_at = "2026-01-01T00:00:00Z") => ({
+      session_key, source: "omp" as const, kind: "human" as const,
+      started_at, last_message_at: "2026-01-01T00:01:00Z", snapshot_at: "2026-01-01T00:02:00Z",
+      duration_seconds: 60, user_messages: 1, assistant_messages: 1, total_messages: 2, project_ref: null, model: null,
+    });
+    const bad = record("omp:bad", "not-a-date");
+    const acked = record("omp:acked");
+    const pending = record("omp:pending");
+    await queue.overwrite([bad, acked, pending]);
+    await queue.saveOffset(Buffer.byteLength([bad, acked].map((r) => `${JSON.stringify(r)}\n`).join("")));
+
+    await executeReset({ stateDir });
+
+    // The damaged row is dropped from the rebuild; the offset must point at
+    // the start of the pending row in the NEW file.
+    expect((await queue.readFromOffset(0)).records).toEqual([acked, pending]);
+    expect((await queue.readFromOffset(await queue.loadOffset())).records).toEqual([pending]);
+  });
+
   it("replays a retained backlog when the saved offset runs past the end of the file", async () => {
     // compact() overwrites the file and only then saves the new offset, so a
     // crash in between (or a restored older backup) leaves an offset past EOF.

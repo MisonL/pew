@@ -230,8 +230,19 @@ export async function parseGrokLogFile(opts: {
 // ---------------------------------------------------------------------------
 
 async function readJsonFile(path: string): Promise<Record<string, unknown> | null> {
+  let raw: string;
   try {
-    const raw = await readFile(path, "utf8");
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    // Missing is normal (a session without signals). A refusal is not: this
+    // map is the only model attribution source for those turns, and the
+    // token cursor is keyed by unified.jsonl, which a permission fix does
+    // not move. Failing the parse keeps that cursor unwritten for a retry.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return null;
+    throw new Error(`${path} is unreadable; deferring Grok model attribution until it can be read`);
+  }
+  try {
     return JSON.parse(raw) as Record<string, unknown>;
   } catch {
     return null;
@@ -247,8 +258,16 @@ export async function parseGrokTurnTimeline(
   let raw: string;
   try {
     raw = await readFile(eventsPath, "utf8");
-  } catch {
-    return [];
+  } catch (error) {
+    // A session without events.jsonl is normal (the fast path covers it).
+    // A refusal must not be read as "no turns": every inference_done of that
+    // session would fall back to the primary model and stay there, because
+    // the token cursor is keyed by unified.jsonl, which a permission fix
+    // does not touch. The caller propagates this as a parse failure so the
+    // log offset cursor stays unwritten and the next run re-attributes.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return [];
+    throw new Error(`${eventsPath} is unreadable; deferring Grok model attribution until it can be read`);
   }
   const timeline: GrokTurnTimeline = [];
   for (const line of raw.split("\n")) {
@@ -298,8 +317,19 @@ export async function buildGrokModelMaps(
   let cwdEntries: string[];
   try {
     cwdEntries = await readdir(sessionsDir);
-  } catch {
-    return { sidTurnTimeline, sidPrimaryModel };
+  } catch (error) {
+    // A Grok install without a sessions tree is a legitimate shape. A tree
+    // that exists but refuses to be read is not: the caller would attribute
+    // every inference_done to the primary model or grok-unknown, and because
+    // the token cursor is keyed by unified.jsonl (whose mtime a permission
+    // fix does not touch), that misattribution would never be corrected.
+    // Throwing keeps the log's offset cursor unwritten so the next run
+    // rebuilds the map.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return { sidTurnTimeline, sidPrimaryModel };
+    }
+    throw new Error(`${sessionsDir} is unreadable; deferring Grok model attribution until it can be read`);
   }
 
   for (const cwdEnc of cwdEntries) {
@@ -309,8 +339,13 @@ export async function buildGrokModelMaps(
       const st = await stat(cwdPath);
       if (!st.isDirectory()) continue;
       sidEntries = await readdir(cwdPath);
-    } catch {
-      continue;
+    } catch (error) {
+      // Same rule as the root: a vanished entry is normal, a refusal means
+      // the sessions under this directory would be misattributed with no
+      // event ever moving the unified.jsonl cursor.
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") continue;
+      throw new Error(`${cwdPath} is unreadable; deferring Grok model attribution until it can be read`);
     }
 
     for (const sid of sidEntries) {

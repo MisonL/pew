@@ -112,10 +112,10 @@ export async function discoverOpenCodeFiles(
     }
 
     const currentMtime = dirStat.mtimeMs;
-    newDirMtimes[dirPath] = currentMtime;
 
     // Skip directory if mtime unchanged
     if (known[dirPath] === currentMtime) {
+      newDirMtimes[dirPath] = currentMtime;
       skippedDirs++;
       skippedDirPaths.push(dirPath);
       continue;
@@ -126,8 +126,12 @@ export async function discoverOpenCodeFiles(
     try {
       dirEntries = await readdir(dirPath, { withFileTypes: true });
     } catch {
+      // Do NOT stamp the mtime of a directory we could not read. A later
+      // permission fix leaves the directory mtime untouched, and a stamp
+      // here would fast-skip it forever with its files never listed.
       continue;
     }
+    newDirMtimes[dirPath] = currentMtime;
 
     for (const fileEntry of dirEntries) {
       if (fileEntry.isFile() && fileEntry.name.endsWith(".json")) {

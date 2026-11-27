@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { useRestoreDialogFocus } from "@/lib/restore-dialog-focus";
+import { Banner } from "@nocoo/basalt/components/banner";
 import { Button } from "@nocoo/basalt/components/button";
 import { chromeIconClassName } from "@/components/ui/button";
 import {
@@ -232,7 +233,11 @@ export function UserProfileDialog({
   const { isAdmin, loading: adminLoading } = useAdmin();
 
   // Fetch active season (always fires; result ignored when season props exist)
-  const { data: seasonsData, loading: seasonsLoading } = useSeasons({
+  const {
+    data: seasonsData,
+    loading: seasonsLoading,
+    error: seasonsError,
+  } = useSeasons({
     status: "active",
   });
 
@@ -284,6 +289,19 @@ export function UserProfileDialog({
               user={profileUser}
               loading={profileLoading}
             />
+            {seasonFromProps === null && seasonsError !== null && (
+              // A failed seasons fetch renders exactly like "no active
+              // season": ProfileContent only offers the season tab when a
+              // season resolved, so the tab silently disappears. Say the
+              // season view may be missing instead of letting its absence
+              // pass for an answer.
+              <Banner
+                variant="error"
+                size="sm"
+                className="mb-4"
+                description={`Could not load season info (${seasonsError}); a season tab may be missing.`}
+              />
+            )}
             <ProfileContent
               key={`content-${slug}-${defaultTab}`}
               slug={slug ?? ""}

@@ -90,9 +90,18 @@ export async function autoRegisterTeamsForSeason(
           params: [regId, seasonId, team.id, registeredBy, seasonId],
         },
         ...members.map((m, i) => ({
+          // The membership is re-checked in the statement: the member list was
+          // read in an earlier round trip, and a kick that lands between the
+          // two must not be undone by re-seating the user. `season_team_members`
+          // has UNIQUE(season_id, user_id), so an orphan seat also blocks the
+          // user's later registration on another team. INSERT (not
+          // OR IGNORE) is kept deliberately: a real conflict against another
+          // team's seat must still surface as a failed batch → skipped team,
+          // not a silently partial roster.
           sql: `INSERT INTO season_team_members (id, season_id, team_id, user_id)
-                SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM season_teams WHERE id = ?)`,
-          params: [memberIds[i] as string, seasonId, team.id, m, regId],
+                SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM season_teams WHERE id = ?)
+                  AND EXISTS (SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ?)`,
+          params: [memberIds[i] as string, seasonId, team.id, m, regId, team.id, m],
         })),
       ];
 

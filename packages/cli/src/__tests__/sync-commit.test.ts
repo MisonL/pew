@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -18,8 +18,6 @@ async function temp() {
   return dir;
 }
 afterEach(async () => { await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true }))); });
-
-const INVALID = /Invalid pending sync commit; preserve Pew state for recovery/;
 
 /** A queue row as `aggregateRecords` writes it: counters already summed. */
 const queueRow = (model = "glm-5", hour = "2026-03-07T10:00:00.000Z"): QueueRecord => ({
@@ -60,7 +58,15 @@ async function journal(dir: string, body: unknown): Promise<string> {
   return path;
 }
 
-describe("recoverSyncCommit rejects a structurally damaged journal before writing anything", () => {
+describe("recoverSyncCommit quarantines a structurally damaged journal before writing anything", () => {
+  /** Recover and return the quarantine file name (or null on a clean replay). */
+  async function recover(dir: string) {
+    const warnings: string[] = [];
+    await recoverSyncCommit(dir, (m) => warnings.push(m));
+    const quarantined = (await readdir(dir)).filter((n) => n.startsWith("sync-commit.corrupt-"));
+    expect(quarantined.length).toBeLessThanOrEqual(1);
+    return { warnings, quarantined };
+  }
   it("recovers a well-formed journal", async () => {
     const dir = await temp();
     await journal(dir, validCommit());
@@ -84,12 +90,14 @@ describe("recoverSyncCommit rejects a structurally damaged journal before writin
     await queue.saveDirtyKeys(["claude-code|gpt-5|2026-03-07T11:00:00.000Z|device-1"]);
     const before = await readFile(join(dir, "queue.jsonl"), "utf8");
     const stateBefore = await readFile(join(dir, "queue.state.json"), "utf8");
-    const path = await journal(dir, { ...validCommit(), records: { a: 1 } });
+    await journal(dir, { ...validCommit(), records: { a: 1 } });
 
-    await expect(recoverSyncCommit(dir)).rejects.toThrow(INVALID);
+    const { quarantined, warnings } = await recover(dir);
+    expect(quarantined).toHaveLength(1);
+    expect(warnings.join(" ")).toContain(quarantined[0]);
     expect(await readFile(join(dir, "queue.jsonl"), "utf8")).toBe(before);
     expect(await readFile(join(dir, "queue.state.json"), "utf8")).toBe(stateBefore);
-    expect(await readFile(path, "utf8")).not.toBe("");
+    expect(JSON.parse(await readFile(join(dir, quarantined[0]!), "utf8"))).toMatchObject({ records: { a: 1 } });
   });
 
   it("leaves the queue intact when records holds non-record entries", async () => {
@@ -100,7 +108,7 @@ describe("recoverSyncCommit rejects a structurally damaged journal before writin
     const before = await readFile(join(dir, "queue.jsonl"), "utf8");
     await journal(dir, { ...validCommit(), records: [1, 2] });
 
-    await expect(recoverSyncCommit(dir)).rejects.toThrow(INVALID);
+    expect((await recover(dir)).quarantined).toHaveLength(1);
     expect(await readFile(join(dir, "queue.jsonl"), "utf8")).toBe(before);
   });
 
@@ -116,11 +124,10 @@ describe("recoverSyncCommit rejects a structurally damaged journal before writin
     const store = new CursorStore(dir);
     const before = { version: 1 as const, files: { "/kept": { inode: 1, offset: 10, updatedAt: "x" } }, updatedAt: "x" };
     await store.save(before);
-    const path = await journal(dir, { ...validCommit(), cursors });
+    await journal(dir, { ...validCommit(), cursors });
 
-    await expect(recoverSyncCommit(dir)).rejects.toThrow(INVALID);
+    expect((await recover(dir)).quarantined).toHaveLength(1);
     expect(await store.load()).toEqual(before);
-    expect(await readFile(path, "utf8")).not.toBe("");
   });
 
   it("validates every payload before the first write", async () => {
@@ -128,18 +135,17 @@ describe("recoverSyncCommit rejects a structurally damaged journal before writin
     // batch used to merge evidence first and throw afterwards, so the ledger
     // grew while the journal stayed — the same batch would then merge again.
     const dir = await temp();
-    const path = await journal(dir, {
+    await journal(dir, {
       ...validCommit(),
       evidence: [evidenceRow()],
       accounting: [{ source_revision: 1 }],
     });
 
-    await expect(recoverSyncCommit(dir)).rejects.toThrow(INVALID);
+    expect((await recover(dir)).quarantined).toHaveLength(1);
     await expect(readFile(join(dir, "evidence-queue.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(readFile(join(dir, "accounting-queue.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(readFile(join(dir, "queue.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(readFile(join(dir, "cursors.json"))).rejects.toMatchObject({ code: "ENOENT" });
-    expect(await readFile(path, "utf8")).not.toBe("");
   });
 
   it.each([
@@ -149,11 +155,10 @@ describe("recoverSyncCommit rejects a structurally damaged journal before writin
     ["evidence is not an array", { evidence: {} }],
     ["replay is not a boolean", { replay: "yes" }],
     ["preserveAccountingSources is not a list", { preserveAccountingSources: "antigravity" }],
-  ])("rejects a journal whose %s", async (_label, patch) => {
+  ])("quarantines a journal whose %s", async (_label, patch) => {
     const dir = await temp();
-    const path = await journal(dir, { ...validCommit(), ...patch });
-    await expect(recoverSyncCommit(dir)).rejects.toThrow(INVALID);
-    expect(await readFile(path, "utf8")).not.toBe("");
+    await journal(dir, { ...validCommit(), ...patch });
+    expect((await recover(dir)).quarantined).toHaveLength(1);
   });
 
   it("keeps a queue row this build does not understand", async () => {
@@ -171,6 +176,30 @@ describe("recoverSyncCommit rejects a structurally damaged journal before writin
   it("still treats a missing journal as a no-op", async () => {
     const dir = await temp();
     await expect(recoverSyncCommit(dir)).resolves.toBeUndefined();
+  });
+
+  it("quarantines a damaged journal instead of wedging every later command", async () => {
+    // Throwing INVALID made every sync/upload/reset fail before doing any
+    // work, forever: the only fix was an operator hand-deleting the file.
+    // Nothing durable is applied from an unreadable journal anyway, and the
+    // sync that would follow re-reads the raw logs from the cursors — the
+    // same rebuild the "no journal" path relies on. So: keep the damaged
+    // file for inspection under a corrupt-* name, warn with its path, and
+    // let the command proceed.
+    const dir = await temp();
+    const path = await journal(dir, { ...validCommit(), records: { a: 1 } });
+    const warnings: string[] = [];
+
+    await expect(recoverSyncCommit(dir, (m) => warnings.push(m))).resolves.toBeUndefined();
+
+    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+    const entries = await readdir(dir);
+    const quarantined = entries.filter((name) => name.startsWith("sync-commit.corrupt-"));
+    expect(quarantined).toHaveLength(1);
+    expect(JSON.parse(await readFile(join(dir, quarantined[0]!), "utf8"))).toMatchObject({ records: { a: 1 } });
+    expect(warnings.join(" ")).toContain(quarantined[0]);
+    // Nothing from the journal was applied.
+    await expect(readFile(join(dir, "queue.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("keeps accepting retired sources in records, evidence and accounting", async () => {

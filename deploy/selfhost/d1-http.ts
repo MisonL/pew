@@ -72,6 +72,16 @@ export function createD1HttpServer(options: D1HttpOptions) {
   }
 
   return {
+    /**
+     * Header-only authorization check, exposed so the node transport can
+     * reject an unauthenticated connection BEFORE buffering (up to 8MB) of
+     * its body. `handle` still enforces the same check itself; this exists
+     * purely to shrink the pre-auth memory an attacker can force the process
+     * to read per connection.
+     */
+    isAuthorized(authorizationHeader: string | null): boolean {
+      return secureEqual(authorizationHeader ?? "", expectedAuth);
+    },
     async handle(request: Request): Promise<Response> {
       if (!secureEqual(request.headers.get("Authorization") ?? "", expectedAuth)) {
         return Response.json(

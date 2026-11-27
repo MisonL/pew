@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import type { SeasonStatus } from "@pew/core";
 import { fetcher } from "@/lib/fetcher";
-import { mergeSeasonMembers } from "@/lib/season-leaderboard";
+import { mergeSeasonMembers, readTeamMembers } from "@/lib/season-leaderboard";
 
 export interface SeasonTeamEntry {
   rank: number;
@@ -84,10 +84,14 @@ export function useSeasonLeaderboard(
 
   // Reset the lazy-member cache when the season changes: team IDs fetched in
   // season A must not satisfy season B (and must not pin A's member data).
+  // Failures reset with it — a team row keeps its expanded state across the
+  // slug change (same key), so a stale "could not load" would outlive the
+  // season whose request produced it.
   useEffect(() => {
     setMembersByTeam(new Map());
     loadingTeamIdsRef.current = new Set();
     setLoadingTeamIds(new Set());
+    setFailedTeamIds(new Set());
     // The season key is the reset trigger; it is intentionally not read in
     // the body, so reference it to keep the dependency honest.
     void seasonIdOrSlug;
@@ -125,9 +129,8 @@ export function useSeasonLeaderboard(
         const json = (await res.json()) as SeasonLeaderboardData;
 
         if (requestedSeasonRef.current === requestedSeason) {
-          const teamWithMembers = json.entries.find((e) => e.team.id === teamId);
-          if (teamWithMembers?.members) {
-            const members = teamWithMembers.members;
+          const members = readTeamMembers(json, teamId);
+          if (members) {
             setMembersByTeam((prev) => new Map(prev).set(teamId, members));
             setFailedTeamIds((prev) => {
               if (!prev.has(teamId)) return prev;
@@ -135,6 +138,14 @@ export function useSeasonLeaderboard(
               next.delete(teamId);
               return next;
             });
+          } else {
+            // A 200 that says nothing about this team's members (team no
+            // longer in the standings, expand=members lost upstream) is not
+            // "the team has no members". Leaving it neither loaded nor failed
+            // made the row claim "No members to display" for a question the
+            // server never answered; mark it failed so the row says so and
+            // offers a retry.
+            setFailedTeamIds((prev) => new Set(prev).add(teamId));
           }
         }
       } catch {

@@ -124,6 +124,26 @@ describe("discoverOpenCodeFiles", () => {
       await chmod(sesDir, 0o755);
     }
   });
+
+  it("re-lists a directory whose read failed once, after a permissions fix", async () => {
+    // chmod updates ctime, not mtime: a directory stamped after its readdir
+    // failed would be fast-skipped forever and its files never discovered.
+    const messageDir = join(tempDir, "storage", "message");
+    const sesDir = join(messageDir, "ses_blocked");
+    await mkdir(sesDir, { recursive: true });
+    await writeFile(join(sesDir, "msg.json"), "{}");
+    await chmod(sesDir, 0o000);
+    try {
+      const blocked = await discoverOpenCodeFiles(messageDir);
+      expect(blocked.files).toEqual([]);
+      expect(blocked.dirMtimes).not.toHaveProperty(sesDir);
+      await chmod(sesDir, 0o755);
+      const r2 = await discoverOpenCodeFiles(messageDir, blocked.dirMtimes);
+      expect(r2.files).toEqual([join(sesDir, "msg.json")]);
+    } finally {
+      await chmod(sesDir, 0o755);
+    }
+  });
 });
 
 describe("discoverOpenClawFiles", () => {

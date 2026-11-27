@@ -244,11 +244,34 @@ export function createIngestHandler<T>(
 
       if (!res.ok) {
         // Upstream bodies/exceptions can include credentials or submitted
-        // values. A fixed category and HTTP status are sufficient here.
+        // values, so the response text is not echoed wholesale. The STATUS,
+        // however, is load-bearing:
+        //  - a Worker 400 means the two validators drifted (the web layer ran
+        //    the same core rules before forwarding). Its message names the
+        //    rejected source/record, which is what lets the CLI peel that
+        //    source out and keep the queue moving instead of retrying the
+        //    whole batch every sync — that message is derived from the
+        //    caller's own submission, so echoing it leaks nothing new;
+        //  - 413 is permanent for the same bytes: retrying cannot help;
+        //  - 503 is the Worker saying "not configured / not now".
         console.error(`Worker ${entityName} ingest failed (${res.status})`);
+        const upstreamError = res.status === 400
+          ? ((await res.json().catch(() => null)) as { error?: unknown } | null)?.error
+          : undefined;
+        const message = typeof upstreamError === "string" && upstreamError.length > 0 && upstreamError.length <= 500
+          ? upstreamError
+          : `Failed to ingest ${entityName}`;
+        const status = res.status === 400 || res.status === 413 || res.status === 503
+          ? res.status
+          : res.status === 429
+            ? 429
+            : 500;
         return NextResponse.json(
-          { error: `Failed to ingest ${entityName}` },
-          { status: 500 },
+          { error: message },
+          {
+            status,
+            ...(status === 503 || status === 429 ? { headers: { "Retry-After": "1" } } : {}),
+          },
         );
       }
       if (config.acknowledgment) {

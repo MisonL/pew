@@ -270,6 +270,20 @@ describe("readLockOwnerState", () => {
     expect(await readLockOwnerState("/tmp/sync.lock", { fs, process: proc })).toBe("missing");
   });
 
+  it("fails closed on a non-ENOENT read error", async () => {
+    // EIO/EACCES says nothing about the owner: the file may hold a live
+    // PID we just cannot read right now. Reporting "unreadable" instead let
+    // the two-observation rule reclaim it — deleting a lock its holder still
+    // believes it owns, which is exactly the concurrent-mutation window the
+    // lock exists to close. A lock we cannot read is treated as someone's.
+    const err = new Error("EACCES") as NodeJS.ErrnoException;
+    err.code = "EACCES";
+    const fs = createFakeFs({ readThrows: err });
+    const proc = createFakeProcess();
+
+    expect(await readLockOwnerState("/tmp/sync.lock", { fs, process: proc })).toBe("alive");
+  });
+
   it("reports unreadable — not dead — for corrupt content", async () => {
     // A just-created lockfile is briefly empty: O_EXCL creates it before the
     // owner's content lands. Treating that as dead deletes a live lock.
@@ -285,6 +299,21 @@ describe("readLockOwnerState", () => {
 
     expect(await readLockOwnerState("/tmp/sync.lock", { fs, process: proc })).toBe("alive");
   });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.Infinity])(
+    "treats pid %s as unreadable, never alive",
+    async (pid) => {
+      // kill(0,0) signals the caller's whole process group (always succeeds
+      // for its owner), negative pids address process groups, and a non-integer
+      // throws ERR_OUT_OF_RANGE — which is not ESRCH, so every one of these
+      // read as "alive" and the lock wedged every later command forever. A
+      // number is not a valid PID; only positive safe integers get a kill().
+      const fs = createFakeFs({ lockContent: lockContent(pid) });
+      const proc = createFakeProcess({ pid: 9999 });
+
+      expect(await readLockOwnerState("/tmp/sync.lock", { fs, process: proc })).toBe("unreadable");
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------

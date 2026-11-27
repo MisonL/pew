@@ -70,4 +70,30 @@ describe("useAdmin — module cache behaviour", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     await expect(__loadIsAdminForTests()).resolves.toBe(false);
   });
+
+  it("does not cache a transient failure as 'not admin'", async () => {
+    // One network blip used to be cached as `false` for 5 minutes: admin
+    // pages redirect home (client-side router.replace keeps module state),
+    // the sidebar drops its admin entries, and nothing says why. A failure
+    // is "could not confirm", not a denial — the next load must ask again.
+    const offline = vi.fn().mockRejectedValue(new Error("offline"));
+    vi.stubGlobal("fetch", offline);
+    await expect(__loadIsAdminForTests()).resolves.toBe(false);
+
+    const online = mockAdminCheck({ isAdmin: true });
+    vi.stubGlobal("fetch", online);
+    await expect(__loadIsAdminForTests()).resolves.toBe(true);
+    expect(online).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not cache a non-ok answer as 'not admin'", async () => {
+    // Same distinction for an error status: a 5xx from the check endpoint is
+    // a failure to answer, not an authoritative "you are not an admin".
+    vi.stubGlobal("fetch", mockAdminCheck({ error: "Internal error" }, false));
+    await expect(__loadIsAdminForTests()).resolves.toBe(false);
+
+    const ok = mockAdminCheck({ isAdmin: true });
+    vi.stubGlobal("fetch", ok);
+    await expect(__loadIsAdminForTests()).resolves.toBe(true);
+  });
 });

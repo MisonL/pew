@@ -39,13 +39,33 @@ function lastFetchKey(source: LastFetchSource): string {
 }
 
 async function readJson<T>(kv: KVNamespace, key: string): Promise<T | null> {
+  const r = await readJsonResult<T>(kv, key);
+  return r.value;
+}
+
+/**
+ * Three-state read: a caller that must tell "nothing stored yet" apart from
+ * "the store could not answer" uses this. `readJson` collapses both to null,
+ * which is right for the baseline fallback but wrong for reporting — a KV
+ * outage was described to admins as "KV empty (cold start)", the same
+ * message an instance genuinely sees on its first run.
+ */
+export interface JsonReadResult<T> {
+  status: "ok" | "missing" | "error";
+  value: T | null;
+}
+
+export async function readJsonResult<T>(
+  kv: KVNamespace,
+  key: string
+): Promise<JsonReadResult<T>> {
   try {
     const v = await kv.get(key, "json");
-    if (v === null) return null;
-    return v as T;
+    if (v === null || v === undefined) return { status: "missing", value: null };
+    return { status: "ok", value: v as T };
   } catch (err) {
     console.error(`dynamic pricing kv read error key=${key}:`, err);
-    return null;
+    return { status: "error", value: null };
   }
 }
 
@@ -71,6 +91,17 @@ export async function writeDynamicOrThrow(
 
 export async function readMeta(kv: KVNamespace): Promise<DynamicPricingMeta | null> {
   return readJson<DynamicPricingMeta>(kv, KEY_DYNAMIC_META);
+}
+
+/**
+ * Meta read that keeps "never published" and "KV did not answer" apart. Both
+ * are null for the null-tolerant callers; the admin-facing RPC must not call
+ * a KV outage a cold start.
+ */
+export async function readMetaResult(
+  kv: KVNamespace
+): Promise<JsonReadResult<DynamicPricingMeta>> {
+  return readJsonResult<DynamicPricingMeta>(kv, KEY_DYNAMIC_META);
 }
 
 export async function writeMeta(kv: KVNamespace, meta: DynamicPricingMeta): Promise<void> {

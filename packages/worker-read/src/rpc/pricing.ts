@@ -6,7 +6,7 @@
 
 import type { D1Database, KVNamespace } from "@cloudflare/workers-types";
 import baseline from "../data/model-prices.json";
-import { readDynamic, readMeta } from "../sync/kv-store";
+import { readDynamic, readMetaResult } from "../sync/kv-store";
 import { syncDynamicPricing, type SyncOutcome } from "../sync/orchestrator";
 import type { DynamicPricingEntry, DynamicPricingMeta } from "../sync/types";
 
@@ -49,10 +49,13 @@ async function handleGetDynamicPricing(kv: KVNamespace): Promise<Response> {
 }
 
 async function handleGetDynamicPricingMeta(kv: KVNamespace): Promise<Response> {
-  const stored = await readMeta(kv);
-  if (stored) {
-    return Response.json({ result: stored });
+  const read = await readMetaResult(kv);
+  if (read.status === "ok" && read.value) {
+    return Response.json({ result: read.value });
   }
+  // "missing" is an instance that has never synced; "error" is KV being
+  // unreadable right now, which the old collapsed-null path reported with the
+  // same cold-start text — an admin saw the benign message during an outage.
   const synthesized: DynamicPricingMeta = {
     lastSyncedAt: "1970-01-01T00:00:00.000Z",
     modelCount: BASELINE_ENTRIES.length,
@@ -63,7 +66,9 @@ async function handleGetDynamicPricingMeta(kv: KVNamespace): Promise<Response> {
       {
         source: "kv",
         at: new Date().toISOString(),
-        message: "KV empty (cold start)",
+        message: read.status === "error"
+          ? "KV unreadable (storage error)"
+          : "KV empty (cold start)",
       },
     ],
   };

@@ -84,12 +84,39 @@ function readCommit(raw: string): SyncCommit {
 }
 
 /** Recover absolute writes BEFORE reading a source cursor or uploading any queue. */
-export async function recoverSyncCommit(stateDir: string, onWarning?: (message: string) => void): Promise<void> {
+export async function recoverSyncCommit(
+  stateDir: string,
+  onWarning?: (message: string) => void,
+  /**
+   * `commitSync` replays the journal it just wrote; quarantining there would
+   * report success for a commit that applied nothing, so it disables this.
+   * Startup recovery quarantines: otherwise one damaged journal makes every
+   * sync/upload/reset fail forever until an operator hand-deletes the file.
+   */
+  opts: { quarantineInvalidJournal?: boolean } = {},
+): Promise<void> {
   const path = join(stateDir, "sync-commit.json");
   let raw: string;
   try { raw = await readFile(path, "utf8"); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-  const commit = readCommit(raw);
+  let commit: SyncCommit;
+  try {
+    commit = readCommit(raw);
+  } catch (error) {
+    if (opts.quarantineInvalidJournal === false || !(error instanceof Error) || error.message !== INVALID) throw error;
+    // Keep the damaged file for inspection, but under a name no recovery path
+    // reads, so the commands that follow can make progress. Its staged writes
+    // are skipped — the next sync re-reads the same raw bytes from the
+    // still-unchanged cursors and rebuilds them, the same recovery a crash
+    // before the journal was staged gets.
+    const quarantinePath = join(stateDir, `sync-commit.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+    await rename(path, quarantinePath);
+    onWarning?.(
+      `A damaged sync-commit journal was moved to ${quarantinePath.slice(stateDir.length + 1)} and its staged changes were skipped; ` +
+      "the next sync re-reads the source logs. If totals look incomplete afterwards, run `pew reset && pew sync`.",
+    );
+    return;
+  }
   await new EvidenceQueue(stateDir).merge(commit.evidence, commit.replay, onWarning);
   await new AccountingQueue(stateDir).merge(commit.accounting, commit.replay, commit.preserveAccountingSources, onWarning);
   if (commit.records) {
@@ -125,5 +152,10 @@ export async function commitSync(stateDir: string, commit: SyncCommit, onWarning
   const path = join(stateDir, "sync-commit.json");
   await writeFile(`${path}.tmp`, JSON.stringify(commit), { mode: 0o600 });
   await rename(`${path}.tmp`, path);
-  await recoverSyncCommit(stateDir, onWarning);
+  // Quarantine disabled here: this journal was staged milliseconds ago by the
+  // caller who needs its writes applied. Silently skipping them would report
+  // a successful sync that applied nothing. If it fails validation, the throw
+  // surfaces to the caller; the leftover file is quarantined on the next
+  // command's startup recovery.
+  await recoverSyncCommit(stateDir, onWarning, { quarantineInvalidJournal: false });
 }

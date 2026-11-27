@@ -1,7 +1,7 @@
 "use client";
 
 import { estimateUsageCost, accountedTotal, displayCounters } from "@/lib/accounting";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
   useUsageData,
@@ -30,7 +30,7 @@ import { MODEL_SERIES_LIMIT, groupByDate, toHourlyByAgent, toHourlyByModel, toHo
 import type { DailyGroup } from "@/lib/usage-helpers";
 import { usePricingMap, formatCost } from "@/hooks/use-pricing";
 import type { PricingMap } from "@/hooks/use-pricing";
-import { formatDate, trailingLocalDays } from "@/lib/date-helpers";
+import { formatDate, trailingHoursWindow, trailingLocalDays } from "@/lib/date-helpers";
 import { PageHeader } from "@nocoo/basalt/components/page-header";
 
 // ---------------------------------------------------------------------------
@@ -349,17 +349,22 @@ function RecentSkeleton() {
 // ---------------------------------------------------------------------------
 
 export default function RecentPage() {
-  // Recent: last 72 hours — use full ISO timestamps so the API applies
-  // exact millisecond boundaries instead of bare-date expansion (+1 day
-  // on `to`) which would widen the window to ~96 hours.
-  const recentFrom = useMemo(() => {
-    const d = new Date();
-    d.setTime(d.getTime() - 72 * 60 * 60_000);
-    return d.toISOString();
+  // Recent: last 72 hours — full ISO timestamps so the API applies exact
+  // boundaries instead of bare-date expansion (+1 day on `to`, ~96 hours),
+  // re-anchored every half hour. Computed once at mount, the window used to
+  // freeze: an open tab kept calling a stale period "the last 72 hours", and
+  // focus revalidation just re-fetched the same old window forever. The
+  // boundary anchor keeps the SWR key stable inside each half-hour (the API's
+  // finest bucket) so this advances without turning into a per-render
+  // refetch storm; the 60s tick mirrors admin/seasons.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
   }, []);
-  const recentTo = useMemo(() => {
-    return new Date().toISOString();
-  }, []);
+  const recentWindow = useMemo(() => trailingHoursWindow(72, now), [now]);
+  const recentFrom = recentWindow.from;
+  const recentTo = recentWindow.to;
 
   const { data, loading: usageLoading, error } = useUsageData({
     from: recentFrom,
