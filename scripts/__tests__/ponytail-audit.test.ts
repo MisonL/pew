@@ -111,6 +111,18 @@ describe("Pew ponytail readonly audit", { timeout: 300_000 }, () => {
     }
   });
 
+  it("catches a reset that would delete either durable ledger", () => {
+    // Both ledgers are deliberately retained: rotated source logs cannot
+    // rebuild them, so `pew reset` must never delete or truncate them — but
+    // until accounting got the same gate only the evidence literal was
+    // rejected, and a future edit adding it to STATE_FILES would pass lint.
+    const path = "packages/cli/src/commands/reset.ts";
+    for (const name of ["evidence-queue.jsonl", "accounting-queue.jsonl"]) {
+      const report = run(mutate(path, (s) => s.replace('  "cursors.json",', `  "cursors.json",\n  "${name}",`)));
+      expect(hasError(report, "cursor.reset-preserves-ledgers")).toBe(true);
+    }
+  });
+
   it("catches the evidence cursor committing before its ledger promise completes", () => {
     const journal = "packages/cli/src/storage/sync-commit.ts";
     const sync = "packages/cli/src/commands/sync.ts";

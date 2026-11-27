@@ -144,7 +144,7 @@ export function auditPew(files: ReadonlyMap<string, string>, db: AuditDatabase) 
     "The durable commit must await evidence and accounting before the cursor; recovery must precede source cursor reads.");
   check("cursor.main-isolation", "cursor", nodes(sync).some((n) => n.type === "IfStatement" && member(n.test) === "delta.evidence" && (n.consequent as Node)?.type === "ContinueStatement"), sync, "Supplementary evidence must not also enter legacy summed buckets.");
   const reset = required.cursor[1];
-  check("cursor.reset-preserves-evidence", "cursor", !literals(reset).some((s) => s.startsWith("evidence-queue")) && !nodes(reset).some((n) => n.type === "CallExpression" && /(?:^|\.)(?:rm|rmdir)$/.test(member(n.callee))), reset, "Reset must retain the durable evidence ledger and outbox.");
+  check("cursor.reset-preserves-ledgers", "cursor", !literals(reset).some((s) => s.startsWith("evidence-queue") || s.startsWith("accounting-queue")) && !nodes(reset).some((n) => n.type === "CallExpression" && /(?:^|\.)(?:rm|rmdir)$/.test(member(n.callee))), reset, "Reset must retain the durable evidence and accounting ledgers and outbox.");
   const spool = required.spool[0];
   const dirty = awaited(spool, "this.saveDirtyKeys");
   const overwrite = awaited(spool, "this.overwrite");
