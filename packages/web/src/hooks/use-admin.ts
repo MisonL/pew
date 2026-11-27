@@ -34,14 +34,16 @@ interface CacheState {
 let cache: CacheState | null = null;
 let inflight: Promise<boolean> | null = null;
 
-async function fetchIsAdmin(): Promise<boolean> {
+async function fetchIsAdmin(): Promise<boolean | null> {
   try {
     const res = await fetch("/api/admin/check");
-    if (!res.ok) return false;
+    // null = "could not confirm". A200 with { isAdmin: false } is the
+    // authoritative denial; anything else is a transient failure.
+    if (!res.ok) return null;
     const json = (await res.json()) as { isAdmin: boolean };
     return json.isAdmin;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -50,9 +52,14 @@ function loadIsAdmin(): Promise<boolean> {
     return Promise.resolve(cache.isAdmin);
   }
   inflight ??= fetchIsAdmin().then((isAdmin) => {
-    cache = { isAdmin, at: Date.now() };
+    // Caching a failure as `false` for 5 minutes logged admins out of the
+    // admin UI on one network blip: the redirect home is a client-side
+    // navigation, so the poisoned module cache kept hiding the sidebar
+    // entries and re-redirecting every admin page with no message. Do not
+    // store an unconfirmed answer — the next mount asks again.
+    if (isAdmin !== null) cache = { isAdmin, at: Date.now() };
     inflight = null;
-    return isAdmin;
+    return isAdmin ?? false;
   });
   return inflight;
 }
