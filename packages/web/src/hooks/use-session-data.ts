@@ -58,7 +58,7 @@ export function useSessionData(
 
   const { data, loading, error, refetch } = useFetchData<{ records: SessionRow[] }>(
     enabled ? url : null,
-    { enabled, initialLoading: enabled },
+    { enabled },
   );
 
   const records = useMemo(() => data?.records ?? [], [data]);

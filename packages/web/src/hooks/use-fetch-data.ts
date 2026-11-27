@@ -6,8 +6,6 @@ import { fetcher } from "@/lib/fetcher";
 interface UseFetchDataOptions {
   /** When false, skip fetching entirely. Defaults to true. */
   enabled?: boolean;
-  /** Initial value for `loading` state. Defaults to true. */
-  initialLoading?: boolean;
 }
 
 interface UseFetchDataResult<T> {
