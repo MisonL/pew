@@ -588,9 +588,13 @@ async function executeSyncScan(opts: InternalSyncOptions & {
       if (replayDetected) break;
     }
 
-    // Build discover message with skipped dirs info from context
-    const skippedDirs = driver.source === "opencode" && ctx.dirMtimes
-      ? Object.keys(ctx.dirMtimes).length
+    // Build the discover message from what THIS run skipped. The old metric
+    // was Object.keys(ctx.dirMtimes).length — the persisted map of every
+    // tracked directory — so a heavy install that skipped one directory of
+    // sixty announced "60 dirs skipped" every sync. ctx.mtimeSkippedDirs is
+    // exactly what the driver's discovery did not enter this round.
+    const skippedDirs = driver.source === "opencode"
+      ? ctx.mtimeSkippedDirs?.length ?? 0
       : 0;
     const parseMsg = driver.source === "opencode" && skippedDirs > 0
       ? `Parsing ${files.length} ${driver.source} files (${skippedDirs} dirs skipped)...`

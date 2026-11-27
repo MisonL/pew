@@ -841,6 +841,32 @@ describe("executeSync", () => {
     expect(parseEvent?.message).toContain("1 dirs skipped");
   });
 
+  it("reports only the directories skipped this run, not every tracked one", async () => {
+    // The metric used Object.keys(ctx.dirMtimes).length, i.e. the persisted
+    // directory map — so a heavy install that skipped one directory of sixty
+    // announced "60 dirs skipped" on every sync.
+    const skippedDir = join(dataDir, "opencode", "message", "ses_001");
+    const activeDir = join(dataDir, "opencode", "message", "ses_002");
+    await mkdir(skippedDir, { recursive: true });
+    await mkdir(activeDir, { recursive: true });
+    await writeFile(join(skippedDir, "msg_001.json"), opencodeMsg(1771120749059, 14967, 437));
+    await writeFile(join(activeDir, "msg_001.json"), opencodeMsg(1771120749060, 100, 10));
+
+    await executeSync({ stateDir, openCodeMessageDir: join(dataDir, "opencode", "message") });
+    // Touch only the second directory so it is re-entered on the next run.
+    await writeFile(join(activeDir, "msg_002.json"), opencodeMsg(1771120749061, 200, 20));
+
+    const events: Array<{ source: string; phase: string; message?: string }> = [];
+    await executeSync({
+      stateDir,
+      openCodeMessageDir: join(dataDir, "opencode", "message"),
+      onProgress: (e) => events.push({ source: e.source, phase: e.phase, message: e.message }),
+    });
+
+    const parseEvent = events.find((e) => e.source === "opencode" && e.phase === "parse" && e.message?.includes("dirs skipped"));
+    expect(parseEvent?.message).toContain("1 dirs skipped");
+  });
+
   // ===== All five sources in one run =====
 
   it("should fire progress events for all five sources", async () => {
