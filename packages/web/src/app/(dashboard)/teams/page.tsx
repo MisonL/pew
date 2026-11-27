@@ -228,6 +228,10 @@ export default function TeamsPage() {
   // ---------------------------------------------------------------------------
 
   const handleCreateTeam = async () => {
+    // Enter in the input still fires while the request is in flight (only the
+    // Button renders `disabled`), and the server has no dedupe on team names:
+    // two Enters used to create two identical teams.
+    if (creatingTeam) return;
     if (!newTeamName.trim()) return;
     setCreatingTeam(true);
     setTeamMessage(null);
@@ -263,6 +267,9 @@ export default function TeamsPage() {
   // ---------------------------------------------------------------------------
 
   const handleJoinTeam = async () => {
+    // Same Enter bypass as handleCreateTeam; /api/teams/join is not idempotent
+    // from this side, so the guard has to live here.
+    if (joiningTeam) return;
     if (!inviteCode.trim()) return;
     setJoiningTeam(true);
     setTeamMessage(null);
