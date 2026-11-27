@@ -164,12 +164,22 @@ export async function PATCH(
     // Auto-backfill rosters when allow_roster_changes flips 0→1 on an active season.
     // Use post-update dates so a single PATCH that transitions upcoming→active
     // AND enables roster changes will still trigger backfill.
+    let rosterWarning: string | null = null;
     const wasRosterOff = season.allow_roster_changes === 0;
     const isRosterOn = body.allow_roster_changes === true;
     if (wasRosterOff && isRosterOn) {
       const finalStatus = deriveSeasonStatus(finalStartDate, finalEndDate);
       if (finalStatus === "active") {
-        await syncAllRostersForSeason(dbRead, dbWrite, seasonId);
+        // The toggle is already committed, so a failed backfill must not be
+        // reported as 500: the caller would retry the same PATCH, find the
+        // flag already 1, and the backfill would never run again. The admin
+        // has an explicit re-entry point (POST .../sync-rosters); say so.
+        try {
+          await syncAllRostersForSeason(dbRead, dbWrite, seasonId);
+        } catch (err) {
+          console.error("Roster backfill failed after toggle:", err);
+          rosterWarning = "Roster backfill failed; run Sync Rosters to retry";
+        }
       }
     }
 
@@ -199,6 +209,7 @@ export async function PATCH(
       allow_late_registration: !!updated.allow_late_registration,
       allow_roster_changes: !!updated.allow_roster_changes,
       allow_late_withdrawal: !!updated.allow_late_withdrawal,
+      ...(rosterWarning ? { warning: rosterWarning } : {}),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

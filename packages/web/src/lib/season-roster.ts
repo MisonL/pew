@@ -173,19 +173,24 @@ export async function syncAllRostersForSeason(
     // Add missing members
     for (const userId of currentUserIds) {
       if (!seasonUserIds.has(userId)) {
-        // The registration is re-checked in this statement: the reads above
-        // and this write are separate round trips, and a captain who withdrew
-        // between them would otherwise get every member re-inserted into a
-        // roster the withdrawal just deleted — orphan seats that block later
-        // registration and keep granting season profile access.
+        // Same re-checks as the event-driven sync above: the registration and
+        // the membership are both evaluated in the statement, so a team that
+        // withdrew or a member kicked between these reads and this write is
+        // not re-seated. This bulk path backs the admin "Sync Rosters" and the
+        // allow_roster_changes backfill; without the member check it could
+        // resurrect a seat the kick route had just deleted.
         await dbWrite.execute(
           `INSERT OR IGNORE INTO season_team_members (id, season_id, team_id, user_id)
            SELECT ?, ?, ?, ?
            WHERE EXISTS (
             SELECT 1 FROM season_teams
             WHERE season_id = ? AND team_id = ?
+           )
+           AND EXISTS (
+            SELECT 1 FROM team_members
+            WHERE team_id = ? AND user_id = ?
            )`,
-          [crypto.randomUUID(), seasonId, team_id, userId, seasonId, team_id],
+          [crypto.randomUUID(), seasonId, team_id, userId, seasonId, team_id, team_id, userId],
         );
       }
     }

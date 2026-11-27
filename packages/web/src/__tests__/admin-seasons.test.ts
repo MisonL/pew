@@ -743,6 +743,33 @@ describe("PATCH /api/admin/seasons/[seasonId]", () => {
     expect(syncAllRostersForSeason).toHaveBeenCalledWith(mockDbRead, mockDbWrite, "season-1");
   });
 
+  it("keeps the committed toggle and warns when the roster backfill fails", async () => {
+    // The UPDATE is committed before the backfill runs. A 500 would tell the
+    // admin the change failed, and their retry would find the flag already 1
+    // so the backfill would never fire again.
+    resolveAdmin.mockResolvedValueOnce(ADMIN);
+    const activeSeason = {
+      id: "season-1", name: "Active Season", slug: "s-active",
+      start_date: "2020-01-01T00:00:00Z", end_date: "2099-12-31T23:59:00Z",
+      created_at: "2020-01-01T00:00:00Z", updated_at: "2026-03-16T00:00:00Z",
+      allow_late_registration: 0, allow_roster_changes: 0, allow_late_withdrawal: 0,
+    };
+    mockDbRead.getSeasonById
+      .mockResolvedValueOnce(activeSeason)
+      .mockResolvedValueOnce({ ...activeSeason, allow_roster_changes: 1 });
+    mockDbWrite.execute.mockResolvedValue({ changes: 1, duration: 0.01 });
+    syncAllRostersForSeason.mockRejectedValueOnce(new Error("read replica unavailable"));
+
+    const res = await PATCH(
+      makeJsonRequest("PATCH", "/api/admin/seasons", { allow_roster_changes: true }),
+      { params: patchParams }
+    );
+    const json = await res.json();
+    expect(res.status).toBe(200);
+    expect(json.allow_roster_changes).toBe(true);
+    expect(json.warning).toMatch(/Sync Rosters/);
+  });
+
   it("should NOT trigger roster backfill when toggle stays on (1→1)", async () => {
     resolveAdmin.mockResolvedValueOnce(ADMIN);
 
