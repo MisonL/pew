@@ -22,6 +22,7 @@ const { getDbRead } = (await import("@/lib/db")) as unknown as {
 
 import { createMockDbRead, loadMockedAuthHelpers } from "./test-utils";
 import { resetPricingMapCache } from "@/lib/load-pricing-map";
+import { PRICING_RATE_LIMIT, inMemoryRateLimiter } from "@/lib/rate-limit";
 
 // ---------------------------------------------------------------------------
 // GET /api/pricing
@@ -33,6 +34,9 @@ describe("GET /api/pricing", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    // The limiter is module-global; reset it so the rate-limit case cannot
+    // drain a bucket a neighbouring test relies on.
+    inMemoryRateLimiter.reset();
     resetPricingMapCache();
     mockDbRead = createMockDbRead();
     mockDbRead.getDynamicPricing.mockResolvedValue({
@@ -107,5 +111,19 @@ describe("GET /api/pricing", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(typeof body).toBe("object");
+  });
+
+  it("rate limits anonymous catalogue reads", async () => {
+    // ~0.5 MB of JSON per call with no auth in front of it: an anonymous loop
+    // otherwise repeats the whole serialization for free. Same shape as the
+    // public leaderboard's bound, with its own bucket.
+    vi.mocked(resolveUser).mockResolvedValue(null);
+    const make = () => new Request("http://localhost:7020/api/pricing");
+    for (let i = 0; i < PRICING_RATE_LIMIT.maxRequests; i++) {
+      expect((await GET(make())).status).toBe(200);
+    }
+    const limited = await GET(make());
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("Retry-After")).toMatch(/^\d+$/);
   });
 });
