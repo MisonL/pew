@@ -58,6 +58,14 @@ export function setScryptSlotForced(value: boolean): void { forceSlotExhausted =
  */
 export const DERIVATION_BUSY_ERROR = "Too many concurrent requests";
 
+/**
+ * The message the registration paths use when the address already exists.
+ * Matching the raw SQLite text at the route would repeat the bug this list
+ * exists to prevent (any internal error passing a substring check), so the
+ * cause is named here, at the statement that knows it.
+ */
+export const EMAIL_ALREADY_REGISTERED = "This email address is already registered";
+
 /** Test-only introspection: current number of in-flight derivations. */
 export function scryptInFlightCount(): number {
   return scryptInFlight;
@@ -252,6 +260,14 @@ export async function registerWithInvite(input: {
       } catch {
         // Ignore: the original error is what matters.
       }
+    }
+    // Name the cause without leaking whether the address exists to an
+    // anonymous caller: the message is the same shape the invite pre-check
+    // uses, and the route maps it to 409. Registration for an existing email
+    // is a common, non-faulty outcome — 500 pointed operators at a server
+    // bug and polluted error monitoring.
+    if (/UNIQUE constraint failed.*users\.email/i.test(err instanceof Error ? err.message : "")) {
+      throw new Error(EMAIL_ALREADY_REGISTERED);
     }
     throw err;
   }

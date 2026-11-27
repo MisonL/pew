@@ -240,6 +240,45 @@ describe("GET /api/admin/usage/compare", () => {
     expect(usageCall![3]).toMatchObject({ tzOffset: 480 });
   });
 
+  it("reports the window length so a one-day history is not a one-day average", async () => {
+    // `daily` only carries dates that have rows. Averaging over its length
+    // told an admin with 31x usage on one day of a 31-day window that their
+    // daily average was that whole month's total.
+    mockDbRead.getAdminUsersByIds.mockResolvedValueOnce([
+      { id: "u1", name: "A", email: "a@a.com", image: null, slug: null },
+      { id: "u2", name: "B", email: "b@b.com", image: null, slug: null },
+    ]);
+    mockDbRead.getAdminUsageComparison.mockResolvedValueOnce([
+      { date: "2026-04-05", user_id: "u1", total_tokens: 3100, source: "claude-code", model: "opus" },
+    ]);
+
+    const res = await GET(makeGetRequest(BASE_PATH, {
+      userIds: "u1,u2", from: "2026-04-01", to: "2026-05-01",
+    }));
+    const body = await res.json();
+    expect(body.daily).toHaveLength(1);
+    expect(body.windowDays).toBe(31);
+  });
+
+  it("counts window days in the viewer's local days", async () => {
+    // The query groups by local date via tzOffset, so the denominator has to
+    // count local calendar days too. [04-01, 04-04) UTC spans local days
+    // 04-01 through 04-04 for a UTC+8 viewer (the last one partially),
+    // which is exactly the set of date keys the chart can contain — where
+    // counting UTC days would say 3 and understate by a day.
+    mockDbRead.getAdminUsersByIds.mockResolvedValueOnce([
+      { id: "u1", name: "A", email: "a@a.com", image: null, slug: null },
+      { id: "u2", name: "B", email: "b@b.com", image: null, slug: null },
+    ]);
+    mockDbRead.getAdminUsageComparison.mockResolvedValueOnce([]);
+
+    const res = await GET(makeGetRequest(BASE_PATH, {
+      userIds: "u1,u2", from: "2026-04-01", to: "2026-04-03", tzOffset: "-480",
+    }));
+    const body = await res.json();
+    expect(body.windowDays).toBe(4);
+  });
+
   it("aggregates multiple rows for same user/date", async () => {
     mockDbRead.getAdminUsersByIds.mockResolvedValueOnce([
       { id: "u1", name: "A", email: "a@a.com", image: null, slug: null },
