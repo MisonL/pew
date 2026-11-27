@@ -132,6 +132,16 @@ export function useLeaderboard(
   const requestIdRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
   const snapshotRef = useRef<{ filterKey: string; id: string } | null>(null);
+  // Mirrors `entries` for computations that need the current length outside
+  // a state updater. The load-more append used to read `prev.length` inside
+  // setEntries() and call setAnimationStartIndex() from there — updaters must
+  // be pure, and StrictMode/concurrent rendering may invoke them more than
+  // once, firing the side effect repeatedly. The effect keeps the mirror in
+  // step with every committed change (append, replace, reset alike).
+  const entriesRef = useRef<LeaderboardEntry[]>([]);
+  useEffect(() => {
+    entriesRef.current = entries;
+  }, [entries]);
 
   // Track last fetched filter key to detect changes
   const lastFilterKeyRef = useRef<string | null>(null);
@@ -195,11 +205,10 @@ export function useLeaderboard(
         snapshotRef.current = { filterKey, id: json.snapshotId };
         setOffset(restarted ? 0 : pageOffset);
         if (isLoadMore && !restarted) {
-          // Append to existing entries
-          setEntries((prev) => {
-            setAnimationStartIndex(prev.length);
-            return [...prev, ...json.entries];
-          });
+          // Append to existing entries. The animation index reads the mirror
+          // (last committed length) here, outside the state updater.
+          setAnimationStartIndex(entriesRef.current.length);
+          setEntries((prev) => [...prev, ...json.entries]);
         } else {
           // Replace entries
           setAnimationStartIndex(0);
