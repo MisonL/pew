@@ -403,6 +403,22 @@ export function fmtHour(hour: number): string {
   return `${hour - 12}p`;
 }
 
+/**
+ * The rolling window "the last N hours", anchored to a half-hour boundary.
+ *
+ * Anchoring matters for SWR keys: a window computed from `new Date()` is a
+ * new key on every render, so the page would either refetch constantly or —
+ * as it did — freeze the window at mount and keep calling it "the last 72
+ * hours" hours later. Aligned to the half-hour (the API's finest bucket),
+ * the key is stable for 30 minutes and then advances, taking the page's own
+ * focus revalidation with it.
+ */
+export function trailingHoursWindow(hours: number, now = Date.now()): { from: string; to: string } {
+  const bucketMs = 30 * 60_000;
+  const to = Math.ceil(now / bucketMs) * bucketMs;
+  return { from: new Date(to - hours * 3_600_000).toISOString(), to: new Date(to).toISOString() };
+}
+
 // ---------------------------------------------------------------------------
 // aggregateHourlyTokens — 24-bucket histogram of total tokens by local hour
 // ---------------------------------------------------------------------------

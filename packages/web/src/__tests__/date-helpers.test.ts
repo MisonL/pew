@@ -12,6 +12,7 @@ import {
   detectPeakHours,
   getLocalToday,
   trailingLocalDays,
+  trailingHoursWindow,
   localDayRangeToUtc,
   formatDuration,
   fillDateRange,
@@ -768,5 +769,28 @@ describe("aggregateHourlyTokens", () => {
     const rows = [makeRow({ hour_start: "2026-03-09T10:00:00.000Z", total_tokens: 100 })];
     const out = aggregateHourlyTokens(rows, 480);
     expect(out[2]).toBe(100);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// trailingHoursWindow
+// ---------------------------------------------------------------------------
+
+describe("trailingHoursWindow", () => {
+  it("spans exactly the requested hours, anchored to the half hour", () => {
+    // `to` rounds up to the next boundary so the window always reaches past
+    // "now"; the hour buckets it selects are complete either way.
+    const w = trailingHoursWindow(72, Date.parse("2026-04-10T12:34:56.000Z"));
+    expect(w.to).toBe("2026-04-10T13:00:00.000Z");
+    expect(w.from).toBe("2026-04-07T13:00:00.000Z");
+  });
+
+  it("is stable within a half-hour bucket so SWR keys do not churn", () => {
+    const a = trailingHoursWindow(72, Date.parse("2026-04-10T12:05:00.000Z"));
+    const b = trailingHoursWindow(72, Date.parse("2026-04-10T12:29:59.999Z"));
+    expect(b).toEqual(a);
+    const c = trailingHoursWindow(72, Date.parse("2026-04-10T12:30:00.000Z"));
+    expect(c.to).toBe("2026-04-10T12:30:00.000Z");
+    expect(c.from).toBe("2026-04-07T12:30:00.000Z");
   });
 });
