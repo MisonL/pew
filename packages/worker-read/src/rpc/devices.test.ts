@@ -82,6 +82,18 @@ describe("devices RPC handlers", () => {
 
       expect(response.status).toBe(400);
     });
+
+    it("computes first/last seen by epoch, not by raw text", async () => {
+      // A legacy row carrying a non-UTC offset would win a text MIN/MAX over
+      // a newer UTC hour; epoch aggregation cannot be fooled that way.
+      db.all.mockResolvedValue({ results: [] });
+      await handleDevicesRpc({ method: "devices.list", userId: "u1" }, db);
+
+      const sql = String(db.prepare.mock.calls.at(-1)?.[0]);
+      expect(sql).toContain("MIN(julianday(hour_start))");
+      expect(sql).toContain("MAX(julianday(hour_start))");
+      expect(sql).not.toMatch(/MIN\(hour_start\)|MAX\(hour_start\)/);
+    });
   });
 
   // -------------------------------------------------------------------------

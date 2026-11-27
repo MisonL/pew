@@ -81,8 +81,11 @@ async function handleListDevices(
       ), usage AS (
         SELECT
           device_id,
-          MIN(hour_start) AS first_seen,
-          MAX(hour_start) AS last_seen,
+          -- Epoch-first, same as usage.getDeviceSummary and admin storage
+          -- stats: a legacy row carrying a non-UTC offset would win a text
+          -- MIN/MAX over a newer UTC hour.
+          strftime('%Y-%m-%dT%H:%M:%fZ', MIN(julianday(hour_start))) AS first_seen,
+          strftime('%Y-%m-%dT%H:%M:%fZ', MAX(julianday(hour_start))) AS last_seen,
           SUM(total_tokens) AS total_tokens,
           GROUP_CONCAT(DISTINCT source) AS sources,
           COUNT(DISTINCT model) AS model_count

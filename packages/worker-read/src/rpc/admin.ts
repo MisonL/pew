@@ -303,8 +303,10 @@ async function handleGetStorageStats(db: D1Database): Promise<Response> {
         COUNT(*)                        AS session_count,
         SUM(total_messages)            AS total_messages,
         SUM(duration_seconds)          AS total_duration_seconds,
-        MIN(started_at)               AS first_seen,
-        MAX(last_message_at)          AS last_seen
+        -- Epoch-first like the token side above and rpc/live.ts: session
+        -- timestamps pre-dating canonicalUtcTimestamp can carry an offset.
+        strftime('%Y-%m-%dT%H:%M:%fZ', MIN(julianday(started_at))) AS first_seen,
+        strftime('%Y-%m-%dT%H:%M:%fZ', MAX(julianday(last_message_at))) AS last_seen
       FROM session_records
       GROUP BY user_id
     ) sess ON sess.user_id = u.id
