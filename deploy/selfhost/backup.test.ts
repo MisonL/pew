@@ -661,11 +661,25 @@ describe("backup.sh", () => {
 
   it("cleans the in-container archive on a successful run", async () => {
     const r = await run({});
-    // Two rm calls: the pre-.backup clear and the EXIT-trap cleanup. A single
-    // occurrence would be satisfied by the pre-rm alone (mutation-verified:
-    // removing the cleanup rm from the trap passed a count-1 assertion).
+    // Two rm calls: the pre-.backup clear and the cleanup that runs after the
+    // body exits. A single occurrence would be satisfied by the pre-rm alone
+    // (mutation-verified: removing the cleanup rm passed a count-1 assertion).
     const rmCalls = r.log.split("\nARGV\n").filter((c) => argLines(c).join(" ") === "[compose] [exec] [-T] [rqlite] [rm] [-f] [/rqlite/file/backup.db]");
     expect(rmCalls.length).toBe(2);
+  });
+
+  it("has no EXIT trap a background child could inherit", async () => {
+    // Bash executes an inherited EXIT trap in background subshells that end
+    // on their own. A trap-based cleanup was observed on bash 5.2 (Linux CI,
+    // under load) running inside a background subshell MID-RUN, deleting the
+    // staging directory and the in-container archive so the copy died with
+    // "Could not find the file" — an intermittent, machine-dependent failure
+    // no per-test assertion can reproduce reliably. The design now keeps the
+    // run body in a child shell and calls cleanup exactly once in the parent;
+    // this static guard fails if an inheritable EXIT trap is reintroduced.
+    // Any `trap` line that names EXIT anywhere counts, quoted command or not.
+    const script = readFileSync(SCRIPT, "utf8");
+    expect(script).not.toMatch(/^\s*trap\b.*\bEXIT\b/m);
   });
 });
 

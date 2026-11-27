@@ -781,6 +781,18 @@ is the one that explains it.
     from a focus revalidation that can carry the pre-PUT value.
 - 2026-11-27 — removed `useFetchData`'s `initialLoading` option, documented
     but never read.
+- 2026-11-27 — `backup.sh` no longer carries an EXIT trap for a background
+    child to inherit. Bash executes an inherited EXIT trap in background
+    subshells that end on their own, and on bash 5.2 under load the cleanup
+    trap ran inside one mid-run, deleting the staging directory and the
+    in-container archive so the copy died with "Could not find the file"
+    (intermittent CI failures across different cases). The run body now
+    executes as a child shell; the parent waits for it, cleans up exactly
+    once and mirrors the exit status, and signals are handled in the parent.
+    The watchdog is an external `sh` launched with descriptors 3–9 closed —
+    nothing to inherit, and its `sleep` never holds the caller's flock (a
+    probe confirms the lock is free right after both successful and failed
+    runs). A static test rejects reintroducing an EXIT trap.
 
 ## v3.5.1
 
