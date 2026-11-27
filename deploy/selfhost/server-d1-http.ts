@@ -14,7 +14,11 @@ import { registerShutdownSignals, requireSecret } from "./node-runtime";
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
 export interface D1HttpNodeHandlerOptions {
-  d1: { handle(request: Request): Promise<Response> };
+  d1: {
+    handle(request: Request): Promise<Response>;
+    /** Present on the real d1-http server; when absent, `handle` alone enforces auth. */
+    isAuthorized?(authorizationHeader: string | null): boolean;
+  };
   rqliteUrl: string;
   basicAuth?: BasicAuth;
   /** Injectable for tests; defaults to global fetch. */
@@ -30,29 +34,9 @@ export function createD1HttpNodeHandler(options: D1HttpNodeHandlerOptions) {
   const doFetch = options.fetchImpl ?? fetch;
   return (req: IncomingMessage, res: ServerResponse): void => {
     void (async () => {
-      const chunks: Buffer[] = [];
-      let total = 0;
-      for await (const chunk of req) {
-        const buf = chunk as Buffer;
-        total += buf.length;
-        if (total > MAX_BODY_BYTES) {
-          // Close the connection: the unread remainder of the aborted body
-          // would otherwise be re-parsed as the next keep-alive request.
-          res.setHeader("Connection", "close");
-          res.writeHead(413, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: false, errors: [{ message: "Request body too large" }] }), () => req.destroy());
-          return;
-        }
-        chunks.push(buf);
-      }
-      const body = Buffer.concat(chunks);
-      const request = new Request(`${`http://${req.headers.host ?? "localhost"}`}${req.url ?? "/"}`, {
-        method: req.method ?? "GET",
-        headers: req.headers as Record<string, string>,
-        body: body.length > 0 ? body : undefined,
-      });
+      const url = new URL(`http://${req.headers.host ?? "localhost"}${req.url ?? "/"}`);
 
-      if (request.method === "GET" && new URL(request.url).pathname === "/health") {
+      if (req.method === "GET" && url.pathname === "/health") {
         // Probe rqlite too: a process-only health check reports "ok" while the
         // write path is down, and web (which waits on this being healthy) would
         // start against a dead database.
@@ -87,6 +71,43 @@ export function createD1HttpNodeHandler(options: D1HttpNodeHandlerOptions) {
         res.end(JSON.stringify({ status: dbOk ? "ok" : "degraded", database: { connected: dbOk } }));
         return;
       }
+
+      // Reject an unauthenticated caller BEFORE reading its body. The old
+      // order buffered up to 8MB and only then let handle() check the token,
+      // so any process able to open a socket to this service could make it
+      // read megabytes per connection for free. Close the connection, or the
+      // unread body would be parsed as the next keep-alive request.
+      if (options.d1.isAuthorized && !options.d1.isAuthorized(req.headers.authorization ?? null)) {
+        res.setHeader("Connection", "close");
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({ success: false, result: [], errors: [{ message: "Unauthorized" }] }),
+          () => req.destroy()
+        );
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for await (const chunk of req) {
+        const buf = chunk as Buffer;
+        total += buf.length;
+        if (total > MAX_BODY_BYTES) {
+          // Close the connection: the unread remainder of the aborted body
+          // would otherwise be re-parsed as the next keep-alive request.
+          res.setHeader("Connection", "close");
+          res.writeHead(413, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, errors: [{ message: "Request body too large" }] }), () => req.destroy());
+          return;
+        }
+        chunks.push(buf);
+      }
+      const body = Buffer.concat(chunks);
+      const request = new Request(url.toString(), {
+        method: req.method ?? "GET",
+        headers: req.headers as Record<string, string>,
+        body: body.length > 0 ? body : undefined,
+      });
 
       const response = await options.d1.handle(request);
       // appendHeader BEFORE writeHead: after writeHead the header block is

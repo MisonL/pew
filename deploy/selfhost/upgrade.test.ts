@@ -301,6 +301,31 @@ describe("selfhost upgrade.sh", () => {
     expect(existsSync(f.argvLog)).toBe(false);
   });
 
+  it("refuses before taking the backup, not after writing it", async () => {
+    // The auth guard used to sit below the backup block: an operator with an
+    // unrendered auth file learned that only after backup.sh had already
+    // paused the stack, copied 30 MB out of the container and resumed it —
+    // side effects from a run that was going to abort anyway.
+    const f = fixture({});
+    writeFileSync(join(f.selfhost, ".env"), "RQLITE_USERNAME=someone\n");
+    const { code, out } = await f.run([]);
+    expect(code).not.toBe(0);
+    expect(out).toContain(".rqlite-auth.json is missing");
+    expect(existsSync(join(f.root, "backup.log"))).toBe(false);
+  });
+
+  it("catches an exported RQLITE_USERNAME in .env", async () => {
+    // A shell-sourced .env may be written with `export ` or an indented
+    // continuation; the anchored `^RQLITE_USERNAME=` silently missed both and
+    // the stack came up unauthenticated — the exact failure this guard exists
+    // for.
+    const f = fixture({});
+    writeFileSync(join(f.selfhost, ".env"), "  export RQLITE_USERNAME=someone\n");
+    const { code, out } = await f.run(["--skip-backup"]);
+    expect(code).not.toBe(0);
+    expect(out).toContain(".rqlite-auth.json is missing");
+  });
+
   it("proceeds when the auth file exists", async () => {
     const f = fixture({});
     writeFileSync(join(f.selfhost, ".env"), "RQLITE_USERNAME=someone\n");
