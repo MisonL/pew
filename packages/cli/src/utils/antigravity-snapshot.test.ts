@@ -73,6 +73,24 @@ describe("Antigravity absolute source partitions", () => {
     ]);
   });
 
+  it("keeps the prior value of a shared bucket when the snapshot is incomplete", () => {
+    // A skipped corrupt step lowers that hour's computed total. The partial
+    // scan must not overwrite the already-uploaded value with the smaller
+    // one — "prior buckets survive untouched" has to cover same-key values,
+    // not only absent keys.
+    const lowered = [{ ...record(), input_tokens: 30, total_tokens: 1030 }];
+    const result = replaceAntigravityPartition([record()], [], lowered, "device", { allowRemovals: false });
+    expect(result.records).toEqual([record()]);
+    expect(result.tombstones).toEqual([]);
+  });
+
+  it("still accepts buckets an incomplete snapshot newly produced", () => {
+    const fresh = { ...record(), hour_start: "2026-10-01T13:00:00.000Z", model: "new-model" };
+    const result = replaceAntigravityPartition([record()], [], [fresh], "device", { allowRemovals: false });
+    expect(result.records).toContainEqual(record());
+    expect(result.records).toContainEqual(fresh);
+  });
+
   it("rejects invalid timestamps, cross-source data and unsafe aggregate counts", () => {
     for (const d of [{ ...delta(), timestamp: "bad" }, { ...delta(), source: "pi" as const },
       delta(-1), delta(Number.MAX_SAFE_INTEGER)]) {

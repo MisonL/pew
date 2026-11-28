@@ -97,7 +97,17 @@ export function replaceAntigravityPartition(
   const tombstones = !allowRemovals ? [] : prior.filter((r) => !keys.has(tokenRecordKey(r))).map((r) => ({
     ...r, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0,
   }));
-  const carried = allowRemovals ? incoming : [...incoming, ...prior.filter((r) => !keys.has(tokenRecordKey(r)))];
+  // A partial scan also computes LOWER values for buckets it saw only partly
+  // (a skipped corrupt step drops that hour's total), so "prior buckets
+  // survive untouched" must cover shared keys as well: keep the prior record
+  // for any key it already had, and take fresh records only for keys this
+  // scan newly produced. A complete scan (allowRemovals) replaces wholesale.
+  const priorKeys = new Set(prior.map(tokenRecordKey));
+  const carried = allowRemovals
+    ? incoming
+    : fresh === null
+      ? prior
+      : [...fresh.filter((r) => !priorKeys.has(tokenRecordKey(r))), ...prior];
   const snapshots = [...carried, ...tombstones];
   const old = new Map(prior.map((r) => [tokenRecordKey(r), r]));
   const fields = ["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"] as const;
