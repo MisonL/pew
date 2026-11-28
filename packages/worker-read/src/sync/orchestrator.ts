@@ -27,7 +27,7 @@ import { mergePricingSources } from "./merge";
 import { parseModelsDev } from "./models-dev";
 import { parseOpenRouter } from "./openrouter";
 import {
-  readDynamic,
+  readDynamicResult,
   readLastFetch,
   readMeta,
   writeDynamicOrThrow,
@@ -198,7 +198,33 @@ export async function syncDynamicPricing(
   mdRes.error !== null ||
   orRes.preservePrevious === true ||
   mdRes.preservePrevious === true;
-  const previousDynamic = sourceFailed ? ((await readDynamic(deps.kv)) ?? []) : [];
+  // The failure-preservation merge below rebuilds a failed source's layer from
+  // the stored catalogue. If that read itself errors, an empty layer would
+  // publish baseline + cache over history and lose every price the store had
+  // learned. Refuse to publish instead — the stored catalogue stays intact and
+  // the next run retries.
+  let previousDynamic: DynamicPricingEntry[] = [];
+  if (sourceFailed) {
+    const stored = await readDynamicResult(deps.kv);
+    if (stored.status === "error") {
+      const message = "dynamic pricing kv read error key=pricing:dynamic";
+      const skippedReason = "the stored pricing layer could not be read (KV error); the published catalogue was left untouched";
+      const published = await readMeta(deps.kv);
+      return {
+        ok: false,
+        entriesWritten: 0,
+        meta: published ?? {
+          lastSyncedAt: now, modelCount: 0, baselineCount: (baseline as DynamicPricingEntry[]).length,
+          openRouterCount: 0, modelsDevCount: 0,
+          lastErrors: [...errors.map((e) => ({ ...e, at: now })), { source: "kv" as const, at: now, message }],
+        },
+        warnings: [`pricing: ${skippedReason}`],
+        errors: [...errors, { source: "kv", message }],
+        skippedReason,
+      };
+    }
+    previousDynamic = stored.value ?? [];
+  }
   const priorLayer = (origin: DynamicPricingEntry["origin"]) =>
   previousDynamic.filter((entry) => entry.origin === origin);
   const layerFor = (
