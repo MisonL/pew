@@ -73,7 +73,7 @@ export function inclusiveAccounting(tokens: TokenDelta, raw: RawCounts, opts: Gr
     diagnostics.push({ code: "total_mismatch", raw_total_tokens: optionalToken(opts.rawTotal) });
   }
   if (opts.aggregate) diagnostics.push({ code: "aggregate_context", raw_total_tokens: null });
-  return { basis, counts, origin: usageLabel(opts.origin), model: usageLabel(opts.model),
+  return { basis, counts, origin: usageLabel(opts.origin), model: opts.model,
     provider: accountingLabel(opts.provider), route: accountingLabel(opts.route), service_tier: accountingLabel(opts.service_tier),
     context_tokens_min: opts.aggregate || !counts ? null : input,
     context_tokens_max: opts.aggregate || !counts ? null : input,
@@ -84,7 +84,7 @@ export function inclusiveAccounting(tokens: TokenDelta, raw: RawCounts, opts: Gr
 export function unknownAccounting(basis: LegacyTokenCounts, model: string): AccountingGroup {
   return { basis: { input_tokens: basis.input_tokens, cached_input_tokens: basis.cached_input_tokens, output_tokens: basis.output_tokens,
     reasoning_output_tokens: basis.reasoning_output_tokens, total_tokens: basis.total_tokens },
-    model: usageLabel(model), counts: null, origin: "legacy", quality: "legacy", provider: null, route: null,
+    model, counts: null, origin: "legacy", quality: "legacy", provider: null, route: null,
     service_tier: null, context_tokens_min: null, context_tokens_max: null, request_count: null, reported_costs: [], diagnostics: [] };
 }
 

@@ -39,13 +39,18 @@ const TOKEN_FIELDS = new Set(("input_tokens cached_input_tokens output_tokens re
   "output_total_tokens context_tokens_min context_tokens_max raw_total_tokens").split(" "));
 const NUMBER_FIELDS = new Set(("details_version evidence_snapshot_seq source_revision parser_revision detail_revision " +
   "request_count scale").split(" "));
-const LABEL_FIELDS = new Set("source model origin provider route service_tier quality currency kind status code".split(" "));
+const LABEL_FIELDS = new Set("source origin provider route service_tier quality currency kind status code".split(" "));
+// Mirrors the token endpoint's model rule and core/accounting.ts `modelName`:
+// the detail model must equal the token row's model exactly, so it cannot be
+// restricted to ASCII labels the token row may not carry.
+const MODEL_MAX_LENGTH = 1024;
 function boundedToken(value: unknown, cap: number): boolean {
   const n = optionalToken(value);
   return n !== null && n <= cap;
 }
 function safeTree(value: unknown, key = "record"): boolean {
   if (TOKEN_FIELDS.has(key)) return value === null || boundedToken(value, MAX_RECORD_TOKENS);
+  if (key === "model") return typeof value === "string" && value.length > 0 && value.length <= MODEL_MAX_LENGTH;
   if (key === "request_count") return value === null || boundedToken(value, MAX_RECORD_MESSAGES);
   if (NUMBER_FIELDS.has(key)) return value === null || optionalToken(value) !== null;
   if (LABEL_FIELDS.has(key)) return value === null || (typeof value === "string" && usageLabel(value) === value);
@@ -208,19 +213,15 @@ export function planAccountingUpdates(opts: {
   const incoming = new Map<string, { ref: Omit<AccountingRecord, "groups" | "basis" | "source_revision" | "parser_revision" | "detail_revision">; groups: AccountingGroup[]; hasDetails: boolean }>();
   for (const d of opts.deltas) {
     const hour = toUtcHalfHourStart(d.timestamp); if (!hour) continue;
-    // The accounting endpoint validates `model` with the strict label rule
-    // (ASCII, ≤128) even though the token endpoint accepts any non-empty
-    // string up to 1024. A model that passes the token upload but not the
-    // accounting one would make the details upload 400 forever (no retry on
-    // 4xx, dirty keys never clear), and checkedRecord below would drop the
-    // record locally with only a per-source warning. Normalize every record —
-    // evidence or not — through usageLabel; a plain ASCII model is unchanged.
-    // Ported from the combined line's c84b0342.
-    const ref = { details_version: 1 as const, source: d.source, model: usageLabel(d.model), device_id: opts.deviceId,
+    // Keep the model verbatim. The server's detail base lookup is an exact
+    // `model = ?` against the token bucket, which uploads `d.model` as-is, and
+    // the accounting boundary now accepts the token endpoint's model domain
+    // (non-empty, ≤1024). Normalizing here (the c84b0342 behavior) broke the
+    // ledger key, reset evidence revisions to 1, and answered `base_mismatch`
+    // forever for every non-ASCII model.
+    const ref = { details_version: 1 as const, source: d.source, model: d.model, device_id: opts.deviceId,
       hour_start: hour, event_id: d.evidence?.eventId ?? null, evidence_snapshot_seq: d.evidence?.snapshotSeq ?? null };
-    // The token bucket keeps its own key (the token record uploads with the
-    // raw model), so the basis lookup uses the un-normalized model.
-    const key = accountingKey({ ...ref, model: d.model }); const old = incoming.get(key);
+    const key = accountingKey(ref); const old = incoming.get(key);
     const g = d.accounting ?? unknownAccounting(legacyCounts(d.tokens), d.model);
     if (d.evidence) {
       // Absolute evidence can be seen in several fork files. Never SUM it.
