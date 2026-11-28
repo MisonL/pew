@@ -30,6 +30,7 @@ import {
   readDynamicResult,
   readLastFetch,
   readMeta,
+  readMetaResult,
   writeDynamicOrThrow,
   writeLastFetch,
   writeMetaOrThrow,
@@ -283,7 +284,28 @@ export async function syncDynamicPricing(
   // the meta, and both are last-write-wins, so this is a read-then-write guard
   // that narrows the window to the gap between the read and the put rather
   // than eliminating it; it is a strict improvement and cheap.
-  const published = await readMeta(deps.kv);
+  const publishedResult = await readMetaResult(deps.kv);
+  if (publishedResult.status === "error") {
+    // The guard exists to stop an older run from replacing a newer catalogue;
+    // an unreadable meta cannot prove there is no newer publication, so this
+    // run must not publish. Collapsing the error to "never published" was the
+    // same outage-shaped hole the dynamic-layer read above already refuses.
+    const message = "dynamic pricing kv read error key=pricing:dynamic:meta";
+    const skippedReason = "the stored pricing metadata could not be read (KV error); the published catalogue was left untouched";
+    return {
+      ok: false,
+      entriesWritten: 0,
+      meta: {
+        lastSyncedAt: now, modelCount: 0, baselineCount: (baseline as DynamicPricingEntry[]).length,
+        openRouterCount: 0, modelsDevCount: 0,
+        lastErrors: [...errors.map((e) => ({ ...e, at: now })), { source: "kv" as const, at: now, message }],
+      },
+      warnings: [`pricing: ${skippedReason}`],
+      errors: [...errors, { source: "kv", message }],
+      skippedReason,
+    };
+  }
+  const published = publishedResult.value;
   if (published?.lastSyncedAt && Date.parse(published.lastSyncedAt) > Date.parse(now)) {
     const skippedReason = `a newer sync (${published.lastSyncedAt}) is already published; this run's result was discarded`;
     const warnings = [`pricing: ${skippedReason}`];

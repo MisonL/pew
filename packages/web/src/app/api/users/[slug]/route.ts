@@ -21,7 +21,7 @@ import { NextResponse } from "next/server";
 import { sumCounts, VALID_SOURCES } from "@pew/core";
 import { getDbRead } from "@/lib/db";
 import { resolveUser } from "@/lib/auth-helpers";
-import { canBypassPublic } from "@/lib/profile-access";
+import { canBypassPublic, ProfileAccessUnavailableError } from "@/lib/profile-access";
 import { jsonResponse } from "@/lib/json-response";
 import { isBareDate, isDateParam } from "@/lib/date-params";
 import { trailingLocalDays } from "@/lib/date-helpers";
@@ -81,7 +81,17 @@ export async function GET(
   // Return 404 if user is not public — unless caller has access
   if (!user.is_public) {
     const viewer = await resolveUser(request);
-    const allowed = viewer ? await canBypassPublic(viewer, db, user.id) : false;
+    let allowed = false;
+    try {
+      allowed = viewer ? await canBypassPublic(viewer, db, user.id) : false;
+    } catch (err) {
+      // Inconclusive is not "not found": answering 404 told a teammate the
+      // profile was gone whenever the read worker hiccupped.
+      if (err instanceof ProfileAccessUnavailableError) {
+        return NextResponse.json({ error: "User lookup is temporarily unavailable" }, { status: 503 });
+      }
+      throw err;
+    }
     if (!allowed) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }

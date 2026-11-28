@@ -294,6 +294,41 @@ describe("syncDynamicPricing", () => {
     expect(r.skippedReason).toMatch(/newer/i);
   });
 
+  // The newer-run guard is only as good as the meta read behind it. A KV
+  // outage on the meta key used to collapse to "never published" (readMeta
+  // swallows errors), so a slow stale run sailed past the guard and replaced
+  // the newer catalogue it could not see.
+  it("refuses to publish when the publication metadata cannot be read", async () => {
+    await kv.put(KEY_DYNAMIC_META, JSON.stringify({
+      lastSyncedAt: "2026-04-30T00:05:00.000Z", modelCount: 1, baselineCount: 0,
+      openRouterCount: 1, modelsDevCount: 0, lastErrors: null,
+    }));
+    await kv.put(KEY_DYNAMIC, JSON.stringify([
+      { model: "anthropic/claude-sonnet-4-20250514", provider: "anthropic", displayName: null,
+        inputPerMillion: 3, outputPerMillion: 15, cachedPerMillion: null, contextWindow: 200000,
+        origin: "openrouter", updatedAt: "2026-04-30T00:05:00.000Z", aliases: [] },
+    ]));
+    const fetchImpl = mockFetch({
+      [OPENROUTER_URL]: { status: 200, body: { data: [{ ...OPENROUTER_OK.data[0],
+        pricing: { prompt: "0.000001", completion: "0.000002" } }] } },
+      [MODELS_DEV_URL]: { status: 200, body: MODELS_DEV_OK },
+    });
+    const impl = kv.get.getMockImplementation() as ((key: string, type?: string) => Promise<unknown>) | undefined;
+    kv.get.mockImplementation(async (key: string, type?: string) => {
+      if (key === KEY_DYNAMIC_META) throw new Error("KV unavailable");
+      return impl?.(key, type);
+    });
+
+    const r = await syncDynamicPricing({ db, kv, fetchImpl }, NOW);
+
+    const stored = JSON.parse(kv.store.get(KEY_DYNAMIC)!) as DynamicPricingEntry[];
+    const entry = stored.find((e) => e.model === "anthropic/claude-sonnet-4-20250514");
+    expect(entry?.inputPerMillion).toBe(3);
+    expect(r.entriesWritten).toBe(0);
+    expect(r.ok).toBe(false);
+    expect(r.skippedReason).toMatch(/metadata could not be read/i);
+  });
+
   it("still replaces a preserved entry once that source succeeds again", async () => {
     await kv.put(KEY_DYNAMIC, JSON.stringify([
       { model: "vendor/only-on-openrouter", provider: "vendor", displayName: null,

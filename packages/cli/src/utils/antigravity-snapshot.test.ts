@@ -91,6 +91,26 @@ describe("Antigravity absolute source partitions", () => {
     expect(result.records).toContainEqual(fresh);
   });
 
+  it("takes growth on a shared bucket from an incomplete snapshot", () => {
+    // A partial scan is not evidence of removal, but a bucket it saw can be
+    // HIGHER than the prior value (a concurrent session added usage). Keeping
+    // the prior record unconditionally froze that growth for as long as any
+    // step kept failing to parse; the larger snapshot is safe to take because
+    // a partial scan can only under-count, never over-count.
+    const grown = { ...record(), input_tokens: 160, total_tokens: 1160 };
+    const result = replaceAntigravityPartition([record()], [], [grown], "device", { allowRemovals: false });
+    expect(result.records).toEqual([grown]);
+    expect(result.tombstones).toEqual([]);
+    expect(result.changedKeys).toEqual(["antigravity|test-model|2026-10-01T12:00:00.000Z|device"]);
+  });
+
+  it("keeps the prior record when an incomplete snapshot is not strictly larger", () => {
+    const same = [{ ...record() }];
+    expect(replaceAntigravityPartition([record()], [], same, "device", { allowRemovals: false }).records)
+      .toEqual([record()]);
+  });
+
+
   it("rejects invalid timestamps, cross-source data and unsafe aggregate counts", () => {
     for (const d of [{ ...delta(), timestamp: "bad" }, { ...delta(), source: "pi" as const },
       delta(-1), delta(Number.MAX_SAFE_INTEGER)]) {

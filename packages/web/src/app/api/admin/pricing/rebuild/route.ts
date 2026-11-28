@@ -27,9 +27,11 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const outcome = await dbRead.rebuildDynamicPricing({ forceRefetch: true });
-    // The catalogue just changed; serve it on the next request rather than
-    // from a map built up to a minute ago.
-    if (outcome.ok) resetPricingMapCache();
+    // The catalogue may have changed even on a 207: a partial run still
+    // publishes the sources that succeeded (entriesWritten > 0). Gating the
+    // reset on `ok` served the old price map for up to a minute after the
+    // operator was told the refresh ran.
+    if (outcome.entriesWritten > 0) resetPricingMapCache();
     return NextResponse.json(outcome, {
       status: outcome.ok ? 200 : 207,
       headers: { "Cache-Control": "private, no-store" },

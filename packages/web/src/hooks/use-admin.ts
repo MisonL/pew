@@ -2,9 +2,17 @@
 
 import { useEffect, useState } from "react";
 
+/**
+ * `unavailable` means the check could not answer (5xx, network failure, no
+ * session lookup). A definitive "not an admin" is `ok` + isAdmin false; the
+ * two were conflated, so a blip redirected admins home with no explanation.
+ */
+export type AdminCheckStatus = "ok" | "unavailable";
+
 interface UseAdminResult {
   isAdmin: boolean;
   loading: boolean;
+  status: AdminCheckStatus;
 }
 
 /**
@@ -31,37 +39,46 @@ interface CacheState {
   at: number;
 }
 
-let cache: CacheState | null = null;
-let inflight: Promise<boolean> | null = null;
+export interface AdminCheckState {
+  status: AdminCheckStatus;
+  isAdmin: boolean;
+}
 
-async function fetchIsAdmin(): Promise<boolean | null> {
+let cache: CacheState | null = null;
+let inflight: Promise<AdminCheckState> | null = null;
+
+async function fetchIsAdmin(): Promise<AdminCheckState> {
   try {
     const res = await fetch("/api/admin/check");
     // null = "could not confirm". A200 with { isAdmin: false } is the
     // authoritative denial; anything else is a transient failure.
-    if (!res.ok) return null;
+    if (!res.ok) return { status: "unavailable", isAdmin: false };
     const json = (await res.json()) as { isAdmin: boolean };
-    return json.isAdmin;
+    return { status: "ok", isAdmin: json.isAdmin };
   } catch {
-    return null;
+    return { status: "unavailable", isAdmin: false };
   }
 }
 
-function loadIsAdmin(): Promise<boolean> {
+function loadIsAdminState(): Promise<AdminCheckState> {
   if (cache && Date.now() - cache.at < CACHE_MS) {
-    return Promise.resolve(cache.isAdmin);
+    return Promise.resolve({ status: "ok", isAdmin: cache.isAdmin });
   }
-  inflight ??= fetchIsAdmin().then((isAdmin) => {
+  inflight ??= fetchIsAdmin().then((state) => {
     // Caching a failure as `false` for 5 minutes logged admins out of the
     // admin UI on one network blip: the redirect home is a client-side
     // navigation, so the poisoned module cache kept hiding the sidebar
     // entries and re-redirecting every admin page with no message. Do not
     // store an unconfirmed answer — the next mount asks again.
-    if (isAdmin !== null) cache = { isAdmin, at: Date.now() };
+    if (state.status === "ok") cache = { isAdmin: state.isAdmin, at: Date.now() };
     inflight = null;
-    return isAdmin ?? false;
+    return state;
   });
   return inflight;
+}
+
+function loadIsAdmin(): Promise<boolean> {
+  return loadIsAdminState().then((state) => state.isAdmin);
 }
 
 function resetAdminCache(): void {
@@ -71,14 +88,16 @@ function resetAdminCache(): void {
 
 export function useAdmin(): UseAdminResult {
   const [isAdmin, setIsAdmin] = useState(false);
+  const [status, setStatus] = useState<AdminCheckStatus>("ok");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
 
-    loadIsAdmin().then((next) => {
+    loadIsAdminState().then((state) => {
       if (!cancelled) {
-        setIsAdmin(next);
+        setIsAdmin(state.isAdmin);
+        setStatus(state.status);
         setLoading(false);
       }
     });
@@ -88,7 +107,7 @@ export function useAdmin(): UseAdminResult {
     };
   }, []);
 
-  return { isAdmin, loading };
+  return { isAdmin, loading, status };
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +117,11 @@ export function useAdmin(): UseAdminResult {
 /** @internal Trigger a load mimicking the hook's guard. Test use only. */
 export function __loadIsAdminForTests(): Promise<boolean> {
   return loadIsAdmin();
+}
+
+/** @internal Tri-state loader for tests that assert the unavailable branch. */
+export function __loadIsAdminStateForTests(): Promise<AdminCheckState> {
+  return loadIsAdminState();
 }
 
 /** @internal Drop the module-level cache. Test use only. */

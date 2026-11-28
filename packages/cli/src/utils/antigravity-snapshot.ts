@@ -99,15 +99,26 @@ export function replaceAntigravityPartition(
   }));
   // A partial scan also computes LOWER values for buckets it saw only partly
   // (a skipped corrupt step drops that hour's total), so "prior buckets
-  // survive untouched" must cover shared keys as well: keep the prior record
-  // for any key it already had, and take fresh records only for keys this
-  // scan newly produced. A complete scan (allowRemovals) replaces wholesale.
-  const priorKeys = new Set(prior.map(tokenRecordKey));
+  // survive untouched" must cover shared keys as well. A partial scan can only
+  // under-count — it never invents usage — so a fresh record is taken when it
+  // is strictly larger (real growth from a concurrent session), and the prior
+  // record survives when it is not (the partial-scan artifact, or no change).
+  // Keeping the prior value unconditionally froze all growth on every existing
+  // bucket for as long as one step kept failing to parse. A complete scan
+  // (allowRemovals) replaces wholesale.
+  const priorByKey = new Map(prior.map((r) => [tokenRecordKey(r), r]));
+  const freshKeys = new Set(fresh?.map(tokenRecordKey) ?? []);
   const carried = allowRemovals
     ? incoming
     : fresh === null
       ? prior
-      : [...fresh.filter((r) => !priorKeys.has(tokenRecordKey(r))), ...prior];
+      : [
+        ...fresh.map((r) => {
+          const p = priorByKey.get(tokenRecordKey(r));
+          return p && r.total_tokens <= p.total_tokens ? p : r;
+        }),
+        ...prior.filter((r) => !freshKeys.has(tokenRecordKey(r))),
+      ];
   const snapshots = [...carried, ...tombstones];
   const old = new Map(prior.map((r) => [tokenRecordKey(r), r]));
   const fields = ["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"] as const;

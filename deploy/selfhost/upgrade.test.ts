@@ -27,6 +27,13 @@ function fixture(opts: {
   reportedRevision?: string;
   reportedVersion?: string;
   neverHealthy?: boolean;
+  /**
+   * Number of `compose ps` polls that report "starting" before "healthy".
+   * A positive value makes the health deadline get evaluated, which is what
+   * proves the timeout parsed at all (a container that is healthy on the
+   * first poll never touches `deadline`).
+   */
+  healthyAfter?: number;
   /** Value of services.web.image the fake `docker compose config` reports. */
   webImage?: string;
   /** Label values the fake `docker image inspect` reports for the built image. */
@@ -70,7 +77,12 @@ case "$1 $2" in
     if [ "\${3:-}" = "-q" ]; then
       echo ${JSON.stringify(containerId)}
     else
-      echo "web ${opts.neverHealthy ? "starting" : "healthy"}"
+      polls=$(cat ${JSON.stringify(join(root, "ps-polls"))} 2>/dev/null || echo 0); polls=$((polls + 1)); echo "$polls" > ${JSON.stringify(join(root, "ps-polls"))}
+      if [ ${JSON.stringify(opts.neverHealthy ?? false)} = "true" ] || [ "$polls" -lt ${JSON.stringify(opts.healthyAfter ?? 0)} ]; then
+        echo "web starting"
+      else
+        echo "web healthy"
+      fi
     fi
     exit 0 ;;
   "inspect ${containerId}")
@@ -347,11 +359,16 @@ describe("selfhost upgrade.sh", () => {
     // `$(( ... + HEALTH_TIMEOUT_S ))` as octal ("value too great for base") —
     // after the build and restart, skipping the health wait and the
     // provenance check the script exists to run.
-    const f = fixture({});
+    // The container becomes healthy on the SECOND poll so `deadline` is
+    // actually evaluated: an immediately-healthy container never touches it,
+    // and on bash 3.2 an arithmetic error in the assignment prints a message
+    // but does not abort — the test passed even with the normalization
+    // removed until this poll pattern was used.
+    const f = fixture({ healthyAfter: 2 });
     const { code, out } = await f.run(["--skip-backup"], { PEW_UPGRADE_HEALTH_TIMEOUT_S: "08" });
     expect(code, out).toBe(0);
     expect(out).toContain("provenance verified");
-  });
+  }, 30_000);
 
   it("times out rather than hanging when the container never becomes healthy", async () => {
     const f = fixture({ neverHealthy: true });

@@ -576,6 +576,7 @@ describe("GET /api/seasons/[seasonId]/leaderboard", () => {
       expect(res.status).toBe(200);
       expect(data.entries[0].session_count).toBe(42);
       expect(data.entries[0].total_duration_seconds).toBe(3600);
+      expect(data.session_stats_unavailable).toBe(false);
     });
 
     it("should enrich member entries with session stats when expand=members", async () => {
@@ -736,8 +737,10 @@ describe("GET /api/seasons/[seasonId]/leaderboard", () => {
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      // Session stats default to 0
+      // Session stats default to 0, but the response must say so — rendering
+      // "0 sessions / 0s" is indistinguishable from a team that used none.
       expect(data.entries[0].session_count).toBe(0);
+      expect(data.session_stats_unavailable).toBe(true);
     });
   });
 
@@ -774,6 +777,7 @@ describe("GET /api/seasons/[seasonId]/leaderboard", () => {
         // A missing table is survivable, so the page still renders.
         expect(res.status).toBe(200);
         expect(data.entries[0].session_count).toBe(0);
+        expect(data.session_stats_unavailable).toBe(true);
         // But the failure is no longer silent.
         expect(logged.some((args) => args.some((a) => a instanceof Error && a.message === "read worker unavailable"))).toBe(true);
       } finally {

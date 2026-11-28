@@ -11,6 +11,7 @@ import {
   Search,
   X,
   Users,
+  RefreshCw,
 } from "lucide-react";
 import { cn, formatTokens, formatTokensFull } from "@/lib/utils";
 import { useAdmin } from "@/hooks/use-admin";
@@ -137,7 +138,7 @@ function ComparePageContent() {
   const searchParams = useSearchParams();
   const { isAdmin, loading: adminLoading } = useAdmin();
 
-  const { data, error: swrError, isLoading } = useSWR<{
+  const { data, error: swrError, isLoading, isValidating, mutate } = useSWR<{
     users: StorageUserRow[];
     summary: StorageSummary;
   }>(isAdmin ? "/api/admin/storage" : null, fetcher, { revalidateOnFocus: false });
@@ -284,6 +285,25 @@ function ComparePageContent() {
           title="Compare Users"
           description="Select 2-10 users to compare their token usage trends."
         />
+
+        {/* Focus revalidation is off here (a refresh racing a write landed a
+            pre-write snapshot), and this page has no writes, so the user list
+            only changes through this explicit refresh. */}
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => void mutate()}
+            disabled={isValidating}
+          >
+            <RefreshCw
+              className={cn("h-3 w-3", isValidating && "animate-spin")}
+              strokeWidth={1.5}
+            />
+            Refresh users
+          </Button>
+        </div>
 
         {/* Selected user chips */}
         {selectedUsers.length > 0 && (

@@ -217,6 +217,10 @@ if [ "$actual" != "$REVISION" ]; then
   echo "upgrade.sh: running image revision is '${actual:-<empty>}', expected '$REVISION'" >&2
   echo "  The image was probably built without PEW_REVISION. Rebuild and redeploy:" >&2
   echo "    PEW_REVISION=$(git -C "$REPO_ROOT" rev-parse HEAD) PEW_VERSION=$VERSION docker compose build && docker compose up -d" >&2
+  # A service that failed to start (typically migrate) makes compose leave the
+  # dependent web container on its OLD image; the mismatch then blames the
+  # build even though the build was fine. Point at the real cause.
+  echo "  If 'docker compose ps' shows a failed service (e.g. migrate), the old web container is still serving — fix it and re-run." >&2
   exit 1
 fi
 

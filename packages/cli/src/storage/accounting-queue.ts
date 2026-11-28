@@ -5,6 +5,7 @@ import { legacyCounts, mergeAccountingGroups, optionalToken, unknownAccounting }
 import { toUtcHalfHourStart } from "../utils/buckets.js";
 import { usageLabel } from "../utils/usage-evidence.js";
 import { BaseQueue } from "./base-queue.js";
+import { ledgerRecoveryMessage } from "./ledger-error.js";
 
 export const ACCOUNTING_PARSER_REVISION = 1;
 export const accountingKey = (r: Pick<AccountingRecord, "source" | "model" | "device_id" | "hour_start" | "event_id">): string =>
@@ -96,9 +97,9 @@ function validBasis(v: LegacyTokenCounts): boolean {
 }
 
 export function checkedRecord(value: AccountingRecord): AccountingRecord {
-  const invalid = () => { throw new Error("Invalid accounting ledger"); };
+  const invalid = () => { throw new Error(ledgerRecoveryMessage("accounting")); };
   if (!safeTree(value) || value.details_version !== 1 || !value.basis || !Array.isArray(value.groups) || value.groups.length === 0 ||
-    ![value.source_revision, value.parser_revision, value.detail_revision].every((n) => optionalToken(n) !== null && n > 0)) throw new Error("Invalid accounting ledger");
+    ![value.source_revision, value.parser_revision, value.detail_revision].every((n) => optionalToken(n) !== null && n > 0)) throw new Error(ledgerRecoveryMessage("accounting"));
   if (!hasKeys(value, "details_version source model device_id hour_start event_id evidence_snapshot_seq source_revision parser_revision detail_revision basis groups") ||
     !validBasis(value.basis) || typeof value.model !== "string" ||
     !["antigravity", "claude-code", "codex", "copilot-cli", "gemini-cli", "grok", "hermes", "kosmos", "omp", "opencode", "openclaw", "pi", "pmstudio", "vscode-copilot", "zcode"].includes(value.source) ||
@@ -130,7 +131,7 @@ export function checkedRecord(value: AccountingRecord): AccountingRecord {
       !["total_mismatch", "invalid_counts", "aggregate_context"].includes(d.code))) invalid();
     for (const k of Object.keys(sums) as Array<keyof LegacyTokenCounts>) sums[k] += g.basis[k];
   }
-  if (!Object.values(sums).every((n) => optionalToken(n) !== null) || !sameBasis(sums, value.basis)) throw new Error("Invalid accounting ledger");
+  if (!Object.values(sums).every((n) => optionalToken(n) !== null) || !sameBasis(sums, value.basis)) throw new Error(ledgerRecoveryMessage("accounting"));
   return value;
 }
 
@@ -143,7 +144,7 @@ export class AccountingQueue extends BaseQueue<AccountingRecord> {
     try { raw = await readFile(this.queuePath); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { records: [], newOffset: 0 };
-      throw new Error("Invalid accounting ledger");
+      throw new Error(ledgerRecoveryMessage("accounting"));
     }
     // Same invariant as BaseQueue: an offset past EOF means the file shrank
     // under the cursor (restored backup, compaction crash). Slicing there
@@ -152,7 +153,7 @@ export class AccountingQueue extends BaseQueue<AccountingRecord> {
     // below, which derives the dirty set from exactly this read.
     const start = offset > raw.byteLength ? 0 : offset;
     try { return { records: raw.subarray(start).toString("utf8").split("\n").filter(Boolean).map((line) => checkedRecord(JSON.parse(line))), newOffset: raw.byteLength }; }
-    catch { throw new Error("Invalid accounting ledger"); }
+    catch { throw new Error(ledgerRecoveryMessage("accounting")); }
   }
 
   async merge(incoming: AccountingRecord[], replay = false, preserveSources: Source[] = [],

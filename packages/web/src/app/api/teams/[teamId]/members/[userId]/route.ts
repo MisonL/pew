@@ -57,13 +57,18 @@ export async function DELETE(
     );
 
     // Sync season rosters if any active season allows roster changes
+    let rosterWarning: string | null = null;
     try {
       await syncSeasonRosters(dbRead, dbWrite, teamId);
     } catch (err) {
+      // The membership row is gone, but the removed member's season seat
+      // still counts their usage. Returning plain success left the operator
+      // with no signal that the seat lags until a roster sync succeeds.
       console.error("Failed to sync season rosters after kick:", err);
+      rosterWarning = "Member removed, but the season roster could not be refreshed. An admin can retry with Sync Rosters.";
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, ...(rosterWarning === null ? {} : { warning: rosterWarning }) });
   } catch (err) {
     console.error("Failed to kick member:", err);
     return NextResponse.json({ error: "Failed to remove member" }, { status: 500 });

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   __loadIsAdminForTests,
   __resetAdminCacheForTests,
+  __loadIsAdminStateForTests,
 } from "@/hooks/use-admin";
 
 // useAdmin is a React hook, so the interesting logic (single-flight + TTL) is
@@ -95,5 +96,19 @@ describe("useAdmin — module cache behaviour", () => {
     const ok = mockAdminCheck({ isAdmin: true });
     vi.stubGlobal("fetch", ok);
     await expect(__loadIsAdminForTests()).resolves.toBe(true);
+  });
+
+  it("marks an unconfirmable answer as unavailable, not as 'not admin'", async () => {
+    // The admin pages gate on `isAdmin` and redirect home on a definitive
+    // denial; a 5xx or network failure is not a denial, and treating it as
+    // one bounced an admin out with no explanation.
+    vi.stubGlobal("fetch", mockAdminCheck({ error: "Internal error" }, false));
+    await expect(__loadIsAdminStateForTests()).resolves.toEqual({ status: "unavailable", isAdmin: false });
+
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new TypeError("fetch failed")));
+    await expect(__loadIsAdminStateForTests()).resolves.toEqual({ status: "unavailable", isAdmin: false });
+
+    vi.stubGlobal("fetch", mockAdminCheck({ isAdmin: false }));
+    await expect(__loadIsAdminStateForTests()).resolves.toEqual({ status: "ok", isAdmin: false });
   });
 });

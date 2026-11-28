@@ -36,6 +36,18 @@ describe("Pi compaction accounting", () => {
     expect(result.skippedNoTimestamp).toBe(1);
   });
   
+  it("counts a historical bad compaction only on the scan that discovers it", async () => {
+    // Pi rereads the whole file from byte 0 each sync, so a bad entry above
+    // the cursor used to increment skippedNoTimestamp again every run.
+    await fixture([header, model, { ...compact, id: "compact-no-ts", timestamp: "not-a-date" }, compact]);
+    const bytes = (await import("node:fs/promises")).stat(filePath).then((s) => s.size);
+    const full = await parsePiFile({ filePath, startOffset: 0 });
+    expect(full.skippedNoTimestamp).toBe(1);
+    const startOffset = (await bytes) - Buffer.byteLength(`${JSON.stringify(compact)}\n`);
+    const resumed = await parsePiFile({ filePath, startOffset });
+    expect(resumed.skippedNoTimestamp).toBe(0);
+  });
+
   it("does not count a zero-usage compaction without timestamp", async () => {
     await fixture([header, model, { ...compact, id: "zero-no-ts", usage: { input: 0, output: 0 }, timestamp: undefined }]);
     const result = await parsePiFile({ filePath, startOffset: 0 });

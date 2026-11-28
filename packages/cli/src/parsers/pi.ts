@@ -175,6 +175,9 @@ export async function parsePiFile(opts: {
           if (compactionAt === null) {
             // Same honesty as the message branch: a billed compaction whose
             // instant cannot be read is a counted skip, not a silent drop.
+            // Entries below the cursor were counted on an earlier run; counting
+            // them again warned on every sync for one historical bad line.
+            if (beforeCursor) continue;
             if (!isAllZero(normalizePiUsage(obj.usage as Record<string, unknown>))) {
               skippedNoTimestamp++;
             }

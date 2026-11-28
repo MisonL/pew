@@ -98,6 +98,9 @@ describe("GET /api/organizations", () => {
       memberCount: 5,
     });
     expect(json.organizations[1].memberCount).toBe(10);
+    // Authenticated, user-scoped JSON: without this header a shared proxy may
+    // heuristically cache it and hand the org directory to an anonymous caller.
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 
   it("should reject unauthenticated requests", async () => {

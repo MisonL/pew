@@ -24,3 +24,23 @@ export function describeSyncOutcome(status: number, body: RebuildBody): SyncOutc
   if (skipped !== null) return { kind: "skipped", reason: skipped };
   return status === 200 ? { kind: "ok" } : { kind: "partial" };
 }
+
+/**
+ * One-line banner text for a skipped run.
+ *
+ * The run refused to publish for one of several reasons: an older run losing
+ * to a newer publication (the catalogue is fine), or a KV failure meaning the
+ * stored catalogue could not be read or verified. Rendering the "newer update"
+ * sentence for all of them told the operator the catalogue was current when a
+ * read failure had just prevented a write.
+ */
+export function describeSkippedHint(reason: string): string {
+  if (reason === "") return "No prices were published by this run";
+  if (/newer sync|newer .*already published/i.test(reason)) {
+    return "No change: a newer price update is already published";
+  }
+  if (/could not be read/i.test(reason)) {
+    return "No prices published: the stored pricing data could not be read. Try again later.";
+  }
+  return `No prices published: ${reason}`;
+}

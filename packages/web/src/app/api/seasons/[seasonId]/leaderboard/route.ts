@@ -148,6 +148,10 @@ export async function GET(
       members?: EntryMember[];
     };
     let entries: Entry[] = [];
+    // Session counters default to 0; whether that 0 means "no sessions" or
+    // "the stats query failed" is only knowable here. The UI renders "—"
+    // when this is true instead of a confident zero.
+    let sessionStatsUnavailable = false;
 
     if (hasSnapshot) {
       // Read from frozen snapshot tables
@@ -252,7 +256,8 @@ export async function GET(
           // predates session_records. Anything else (a read Worker that is
           // down, a renamed column, a query budget) used to look identical —
           // session_count 0 on every row and nothing in the logs. Keep
-          // rendering, but say so.
+          // rendering, but say so in the body so the page can render "—".
+          sessionStatsUnavailable = true;
           logSessionEnrichmentFailure(err);
         }
       }
@@ -363,7 +368,8 @@ export async function GET(
           // predates session_records. Anything else (a read Worker that is
           // down, a renamed column, a query budget) used to look identical —
           // session_count 0 on every row and nothing in the logs. Keep
-          // rendering, but say so.
+          // rendering, but say so in the body so the page can render "—".
+          sessionStatsUnavailable = true;
           logSessionEnrichmentFailure(err);
         }
       }
@@ -380,6 +386,7 @@ export async function GET(
         is_snapshot: hasSnapshot,
       },
       entries,
+      session_stats_unavailable: sessionStatsUnavailable,
     }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

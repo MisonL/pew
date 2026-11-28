@@ -62,4 +62,19 @@ describe("canBypassPublic", () => {
     db.checkSharedSeason.mockRejectedValue(new Error("no such table: season_teams"));
     await expect(canBypassPublic(SESSION, db, "target")).resolves.toBe(false);
   });
+
+  it("reports a read failure as inconclusive instead of denying", async () => {
+    // Swallowing every error told a real teammate the private profile did not
+    // exist (404) whenever the read worker hiccupped. Only a missing table is
+    // a legitimate "fall through"; anything else propagates so the caller can
+    // answer 503 and the viewer can retry.
+    db.checkSharedTeam.mockRejectedValue(new Error("read worker unavailable"));
+    await expect(canBypassPublic(SESSION, db, "target")).rejects.toThrow(/inconclusive/i);
+  });
+
+  it("uses the later check's denial only after the earlier one said no", async () => {
+    db.checkSharedTeam.mockResolvedValue(false);
+    db.checkSharedSeason.mockRejectedValue(new TypeError("fetch failed"));
+    await expect(canBypassPublic(SESSION, db, "target")).rejects.toThrow(/inconclusive/i);
+  });
 });

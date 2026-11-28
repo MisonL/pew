@@ -331,7 +331,9 @@ async function handleGetSeasonById(
   req: GetSeasonByIdRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.seasonId) {
+  // isId, not a truthiness check: a truthy non-string used to reach .bind(),
+  // throw there, and surface as a 500 instead of a 400.
+  if (!isId(req.seasonId)) {
     return Response.json({ error: "seasonId is required" }, { status: 400 });
   }
 
@@ -352,7 +354,7 @@ async function handleGetSeasonBySlug(
   req: GetSeasonBySlugRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.slug) {
+  if (!isId(req.slug)) {
     return Response.json({ error: "slug is required" }, { status: 400 });
   }
 
@@ -373,7 +375,7 @@ async function handleGetSeasonRegistration(
   req: GetSeasonRegistrationRequest,
   db: D1Database
 ): Promise<Response> {
-  if (!req.seasonId || !req.teamId) {
+  if (!isId(req.seasonId) || !isId(req.teamId)) {
     return Response.json(
       { error: "seasonId and teamId are required" },
       { status: 400 }

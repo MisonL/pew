@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAdmin } from "@/hooks/use-admin";
+import { AdminAvailabilityNotice } from "@/components/ui/admin-availability-notice";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { Banner } from "@nocoo/basalt/components/banner";
 import { Button } from "@nocoo/basalt/components/button";
@@ -35,7 +36,8 @@ import { RowListSkeleton } from "@/components/ui/row-list-skeleton";
 import { MessageBanner, type MessageBannerMsg } from "@/components/ui/message-banner";
 import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
 import { toErrorMessage } from "@/lib/error-message";
-import { seasonUpdatedMessage } from "@/lib/season-save-message";
+import { seasonCreatedMessage, seasonUpdatedMessage } from "@/lib/season-save-message";
+import { buildSeasonPatch, type SeasonToggleField } from "@/lib/season-edit-payload";
 import { formatSeasonDate } from "@/lib/seasons";
 import { utcToLocalDatetimeValue, localDatetimeValueToUtc } from "@/lib/date-helpers";
 import type { SeasonStatus } from "@pew/core";
@@ -168,7 +170,7 @@ function CreateSeasonForm({
   onCreated,
   onCancel,
 }: {
-  onCreated: (msg: string) => void;
+  onCreated: (msg: MessageBannerMsg) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState("");
@@ -217,8 +219,10 @@ function CreateSeasonForm({
         };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      const data = (await res.json()) as { name: string };
-      onCreated(`Season "${data.name}" created.`);
+      // The route creates the season and reports a failed best-effort
+      // auto-registration as a `warning` on the 201 body.
+      const data = (await res.json()) as { name: string; warning?: unknown };
+      onCreated(seasonCreatedMessage(data.name, data.warning));
     } catch (err) {
       setError(toErrorMessage(err, "Failed to create."));
     } finally {
@@ -337,6 +341,13 @@ function EditSeasonRow({
   const [allowLateRegistration, setAllowLateRegistration] = useState(season.allow_late_registration);
   const [allowRosterChanges, setAllowRosterChanges] = useState(season.allow_roster_changes);
   const [allowLateWithdrawal, setAllowLateWithdrawal] = useState(season.allow_late_withdrawal);
+  // Which toggles the operator actually touched. The season prop updates when
+  // SWR revalidates while this row is open (another admin's save, a
+  // reconnect); local toggle state does not. Diffing untouched toggles against
+  // the moving prop wrote the stale value back over the other admin's change.
+  const [touchedToggles, setTouchedToggles] = useState<Set<SeasonToggleField>>(new Set());
+  const touchToggle = (field: SeasonToggleField) =>
+    setTouchedToggles((prev) => (prev.has(field) ? prev : new Set(prev).add(field)));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const uid = useId();
@@ -349,18 +360,12 @@ function EditSeasonRow({
     setSubmitting(true);
     setError(null);
     try {
-      const payload: Record<string, string | boolean> = {};
-      if (name.trim() !== season.name) payload.name = name.trim();
-      if (isUpcoming && localDatetimeValueToUtc(startDate) !== season.start_date)
-        payload.start_date = localDatetimeValueToUtc(startDate);
-      if (isUpcoming && localDatetimeValueToUtc(endDate) !== season.end_date)
-        payload.end_date = localDatetimeValueToUtc(endDate);
-      if (allowLateRegistration !== season.allow_late_registration)
-        payload.allow_late_registration = allowLateRegistration;
-      if (allowRosterChanges !== season.allow_roster_changes)
-        payload.allow_roster_changes = allowRosterChanges;
-      if (allowLateWithdrawal !== season.allow_late_withdrawal)
-        payload.allow_late_withdrawal = allowLateWithdrawal;
+      const payload = buildSeasonPatch(
+        season,
+        { name, startDate, endDate, allowLateRegistration, allowRosterChanges, allowLateWithdrawal },
+        touchedToggles,
+        isUpcoming,
+      );
 
       if (Object.keys(payload).length === 0) {
         onCancel();
@@ -438,9 +443,12 @@ function EditSeasonRow({
             ...(allowLateWithdrawal ? ["late-wd"] : []),
           ]}
           onValueChange={(next) => {
-            setAllowLateRegistration(next.includes("late-reg"));
-            setAllowRosterChanges(next.includes("roster"));
-            setAllowLateWithdrawal(next.includes("late-wd"));
+            const nextLate = next.includes("late-reg");
+            const nextRoster = next.includes("roster");
+            const nextWd = next.includes("late-wd");
+            if (nextLate !== allowLateRegistration) { setAllowLateRegistration(nextLate); touchToggle("allow_late_registration"); }
+            if (nextRoster !== allowRosterChanges) { setAllowRosterChanges(nextRoster); touchToggle("allow_roster_changes"); }
+            if (nextWd !== allowLateWithdrawal) { setAllowLateWithdrawal(nextWd); touchToggle("allow_late_withdrawal"); }
           }}
         >
           <Checkbox.Legend className="text-xs font-medium text-muted-foreground">
@@ -489,7 +497,7 @@ function autoSlug(name: string): string {
 
 export default function AdminSeasonsPage() {
   const router = useRouter();
-  const { isAdmin, loading: adminLoading } = useAdmin();
+  const { isAdmin, loading: adminLoading, status: adminStatus } = useAdmin();
 
   const {
     data: seasonData,
@@ -735,6 +743,10 @@ export default function AdminSeasonsPage() {
   // Guard: loading or not admin
   // ---------------------------------------------------------------------------
 
+  if (!adminLoading && adminStatus === "unavailable") {
+    return <AdminAvailabilityNotice />;
+  }
+
   if (adminLoading) {
     return (
       <div className="space-y-4 md:space-y-6">
@@ -782,7 +794,7 @@ export default function AdminSeasonsPage() {
         <CreateSeasonForm
           onCreated={(msg) => {
             setShowCreate(false);
-            setMessage({ type: "success", text: msg });
+            setMessage(msg);
             fetchRows();
           }}
           onCancel={() => setShowCreate(false)}

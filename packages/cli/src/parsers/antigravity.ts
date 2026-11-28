@@ -290,22 +290,36 @@ async function readDatabase(path: string, opener: (path: string) => SqliteDb, sn
 export async function readAntigravitySource(
   rootDir: string,
   opener: (path: string) => SqliteDb = openSqlite,
-): Promise<{ deltas: ParsedDelta[]; snapshots: SessionSnapshot[]; dbCount: number; skipped: { steps: number; sessions: number } }> {
+): Promise<{ deltas: ParsedDelta[]; snapshots: SessionSnapshot[]; dbCount: number; failed: string[];
+  skipped: { steps: number; sessions: number; files: number } }> {
   const names = (await readdir(rootDir)).filter((name) => name.endsWith(".db")).sort();
   const deltas: ParsedDelta[] = [];
   const snapshots: SessionSnapshot[] = [];
-  const skipped = { steps: 0, sessions: 0 };
+  const failed: string[] = [];
+  const skipped = { steps: 0, sessions: 0, files: 0 };
   const signatures = new Map<string, Array<string | null>>();
   const snapshotAt = new Date().toISOString();
   for (const name of names) {
     signatures.set(name, await Promise.all([fingerprint(join(rootDir, name)), fingerprint(join(rootDir, `${name}-wal`))]));
   }
   for (const name of names) {
-    const result = await readDatabase(join(rootDir, name), opener, snapshotAt, signatures.get(name) as Array<string | null>);
-    appendAll(deltas, result.deltas);
-    appendAll(snapshots, result.snapshots);
-    skipped.steps += result.skipped.steps;
-    skipped.sessions += result.skipped.sessions;
+    try {
+      const result = await readDatabase(join(rootDir, name), opener, snapshotAt, signatures.get(name) as Array<string | null>);
+      appendAll(deltas, result.deltas);
+      appendAll(snapshots, result.snapshots);
+      skipped.steps += result.skipped.steps;
+      skipped.sessions += result.skipped.sessions;
+    } catch (err) {
+      // One unreadable database must cost that database, not the source: when
+      // the whole read threw, the caller preserved every previous record, so
+      // the readable files' new usage never uploaded while the bad file sat on
+      // disk. A file that changed under us is different — the scan is not a
+      // snapshot of anything and the next sync must retry it.
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code === "ENOENT" || err instanceof Error && (err.message.startsWith("Unstable Antigravity") || err.message.includes("regular file"))) throw err;
+      failed.push(name);
+      skipped.files += 1;
+    }
   }
   const current = (await readdir(rootDir)).filter((name) => name.endsWith(".db")).sort();
   if (JSON.stringify(current) !== JSON.stringify(names)) throw new Error("Unstable Antigravity source discovery");
@@ -315,5 +329,5 @@ export async function readAntigravitySource(
       if (file !== signatures.get(name)?.[index]) throw new Error("Unstable Antigravity source snapshot");
     }
   }
-  return { deltas, snapshots, dbCount: names.length, skipped };
+  return { deltas, snapshots, dbCount: names.length, failed, skipped };
 }

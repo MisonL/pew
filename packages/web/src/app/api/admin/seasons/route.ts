@@ -178,11 +178,17 @@ export async function POST(request: Request) {
     // Auto-register teams that have opted in (best-effort, don't fail the request)
     // Auto-registration only applies before the season starts.
     let autoRegistered = 0;
+    let autoRegistrationWarning: string | null = null;
     try {
       const result = await autoRegisterTeamsForSeason(dbRead, dbWrite, id);
       autoRegistered = result.registered;
     } catch (err) {
+      // Best-effort, but not silent: an empty roster is exactly the state a
+      // future sync-rosters run cannot fix for an upcoming season, and a bare
+      // 201 told the admin the teams were in.
       console.error("Auto-registration failed (non-fatal):", err);
+      autoRegistrationWarning =
+        "Season created, but automatic team registration failed. Register the teams manually before it starts.";
     }
 
     // The season row is committed; a failed invalidation only leaves the list
@@ -203,6 +209,7 @@ export async function POST(request: Request) {
         allow_roster_changes,
         allow_late_withdrawal,
         auto_registered_teams: autoRegistered,
+        ...(autoRegistrationWarning === null ? {} : { warning: autoRegistrationWarning }),
       },
       { status: 201 }
     );
