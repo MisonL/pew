@@ -498,7 +498,10 @@ export default function AdminSeasonsPage() {
     mutate: mutateRows,
   } = useSWR<{ seasons: SeasonRow[] }>(
     isAdmin ? "/api/admin/seasons" : null,
-    fetcher
+    fetcher,
+    // Writes mutate after they finish; a focus revalidation racing a write can
+    // overwrite the cache with its pre-write snapshot (58ba9644, invites page).
+    { revalidateOnFocus: false }
   );
   const rows = seasonData?.seasons ?? [];
   const error = swrError
