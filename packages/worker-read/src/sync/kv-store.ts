@@ -82,6 +82,21 @@ export async function readDynamic(kv: KVNamespace): Promise<DynamicPricingEntry[
   return Array.isArray(v) ? v : null;
 }
 
+/**
+ * Status-aware read of the published catalogue. `readDynamic` collapses a KV
+ * outage to null ("nothing stored"), which is acceptable for the baseline
+ * fallback but not for the failure-preservation path: an orchestrator run
+ * whose upstream failed rebuilds from the stored layer, and treating an
+ * unreadable store as empty publishes a reduced catalogue over history.
+ */
+export async function readDynamicResult(
+  kv: KVNamespace,
+): Promise<JsonReadResult<DynamicPricingEntry[]>> {
+  const r = await readJsonResult<DynamicPricingEntry[]>(kv, KEY_DYNAMIC);
+  if (r.status === "ok" && !Array.isArray(r.value)) return { status: "missing", value: null };
+  return r;
+}
+
 export async function writeDynamicOrThrow(
   kv: KVNamespace,
   entries: DynamicPricingEntry[]

@@ -37,3 +37,25 @@ export function readTeamMembers<M>(
   return entry?.members ?? null;
 }
 
+/**
+ * Whether an expanded team row should (re)load its members.
+ *
+ * A row keeps its `expanded` state across a season switch (the key is the
+ * team id), but the hook clears the member cache for the new season, so the
+ * expanded row had no members, was not loading and was not failed — it
+ * rendered "No members to display" for a team whose members were simply
+ * never fetched for this season, and nothing would fetch them until the user
+ * collapsed and re-expanded. `loaded` marks a team whose fetch answered
+ * (including an empty answer), so an actually empty team does not refetch in
+ * a loop.
+ */
+export function shouldAutoLoadMembers(state: {
+  expanded: boolean;
+  hasMembers: boolean;
+  loading: boolean;
+  failed: boolean;
+  loaded: boolean;
+}): boolean {
+  return state.expanded && !state.hasMembers && !state.loading && !state.failed && !state.loaded;
+}
+

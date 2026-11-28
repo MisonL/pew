@@ -140,7 +140,7 @@ function ComparePageContent() {
   const { data, error: swrError, isLoading } = useSWR<{
     users: StorageUserRow[];
     summary: StorageSummary;
-  }>(isAdmin ? "/api/admin/storage" : null, fetcher);
+  }>(isAdmin ? "/api/admin/storage" : null, fetcher, { revalidateOnFocus: false });
   const users = data?.users ?? EMPTY_USERS;
   const loading = isAdmin ? isLoading : false;
   const error = swrError

@@ -496,6 +496,37 @@ describe("syncDynamicPricing", () => {
     expect(orCached.fetchedAt).toBe("2026-04-29T00:00:00.000Z");
   });
 
+  it("does not publish a reduced catalogue when the stored layer cannot be read", async () => {
+    // A source failed, so the merge depends on the stored layer to preserve
+    // entries this run cannot see. If that read itself fails, an empty layer
+    // silently replaces history with baseline + cache, and publishing loses
+    // prices until the next success. Skip publication instead.
+    const stored = [
+      { model: "vendor/only-in-store", provider: "vendor", displayName: null,
+        inputPerMillion: 1, outputPerMillion: 2, cachedPerMillion: null, contextWindow: 1000,
+        origin: "openrouter", updatedAt: NOW, aliases: [] },
+    ];
+    kv.store.set(KEY_DYNAMIC, JSON.stringify(stored));
+    const failingKv = {
+      ...kv,
+      get: vi.fn(async (key: string, type?: string) => {
+        if (key === KEY_DYNAMIC) throw new Error("kv read 503");
+        return (kv.get as unknown as (k: string, t?: string) => Promise<unknown>)(key, type);
+      }),
+      store: kv.store,
+    } as unknown as typeof kv;
+    const fetchImpl = mockFetch({
+      [OPENROUTER_URL]: { status: 500 },
+      [MODELS_DEV_URL]: { status: 200, body: MODELS_DEV_OK },
+    });
+    const r = await syncDynamicPricing({ db, kv: failingKv, fetchImpl }, NOW);
+    expect(r.ok).toBe(false);
+    expect(r.skippedReason).toMatch(/stored pricing layer/i);
+    expect(r.entriesWritten).toBe(0);
+    expect(r.errors.some((e) => e.source === "kv")).toBe(true);
+    expect(JSON.parse(kv.store.get(KEY_DYNAMIC)!)).toEqual(stored);
+  });
+
   it("restores the published alternate-route price over a stale cache fallback", async () => {
     await kv.put(KEY_DYNAMIC, JSON.stringify([
       { model: "openai/only-via-route", provider: "openai", displayName: null,

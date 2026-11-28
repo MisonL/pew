@@ -35,6 +35,7 @@ import { RowListSkeleton } from "@/components/ui/row-list-skeleton";
 import { MessageBanner, type MessageBannerMsg } from "@/components/ui/message-banner";
 import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
 import { toErrorMessage } from "@/lib/error-message";
+import { seasonUpdatedMessage } from "@/lib/season-save-message";
 import { formatSeasonDate } from "@/lib/seasons";
 import { utcToLocalDatetimeValue, localDatetimeValueToUtc } from "@/lib/date-helpers";
 import type { SeasonStatus } from "@pew/core";
@@ -321,7 +322,7 @@ function EditSeasonRow({
   onCancel,
 }: {
   season: SeasonRow;
-  onSaved: (msg: string) => void;
+  onSaved: (message: MessageBannerMsg) => void;
   onCancel: () => void;
 }) {
   const isUpcoming = season.status === "upcoming";
@@ -377,7 +378,11 @@ function EditSeasonRow({
         };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      onSaved(`Season "${name.trim()}" updated.`);
+      // The route commits the update and reports a failed roster backfill as
+      // a `warning` on the 200 body; claiming plain success here hid the one
+      // case that needs the admin to run Sync Rosters.
+      const data = (await res.json().catch(() => ({}))) as { warning?: unknown };
+      onSaved(seasonUpdatedMessage(name.trim(), data.warning));
     } catch (err) {
       setError(toErrorMessage(err, "Failed to update."));
     } finally {
@@ -493,7 +498,10 @@ export default function AdminSeasonsPage() {
     mutate: mutateRows,
   } = useSWR<{ seasons: SeasonRow[] }>(
     isAdmin ? "/api/admin/seasons" : null,
-    fetcher
+    fetcher,
+    // Writes mutate after they finish; a focus revalidation racing a write can
+    // overwrite the cache with its pre-write snapshot (58ba9644, invites page).
+    { revalidateOnFocus: false }
   );
   const rows = seasonData?.seasons ?? [];
   const error = swrError
@@ -828,7 +836,7 @@ export default function AdminSeasonsPage() {
                         season={row}
                         onSaved={(msg) => {
                           setEditingId(null);
-                          setMessage({ type: "success", text: msg });
+                          setMessage(msg);
                           fetchRows();
                         }}
                         onCancel={() => setEditingId(null)}

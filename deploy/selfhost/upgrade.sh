@@ -68,6 +68,11 @@ HEALTH_TIMEOUT_S="${PEW_UPGRADE_HEALTH_TIMEOUT_S:-300}"
 case "$HEALTH_TIMEOUT_S" in
   ''|*[!0-9]*) echo "upgrade.sh: PEW_UPGRADE_HEALTH_TIMEOUT_S must be a positive integer" >&2; exit 1 ;;
 esac
+# Normalize to base 10 BEFORE any arithmetic: the decimal `[ -le ]` above
+# accepts "08", but `$(( ... + 08 ))` later reads it as octal and aborts with
+# "value too great for base" after the build and restart, skipping the health
+# wait and the provenance check this script exists to run.
+HEALTH_TIMEOUT_S=$((10#$HEALTH_TIMEOUT_S))
 if [ "$HEALTH_TIMEOUT_S" -le 0 ]; then
   echo "upgrade.sh: PEW_UPGRADE_HEALTH_TIMEOUT_S must be a positive integer" >&2
   exit 1

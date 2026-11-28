@@ -342,6 +342,17 @@ describe("selfhost upgrade.sh", () => {
     expect(out).toContain("WARNING: .env is 644");
   });
 
+  it("accepts a leading-zero health timeout without failing after the restart", async () => {
+    // "08" passes the decimal precheck but used to explode in
+    // `$(( ... + HEALTH_TIMEOUT_S ))` as octal ("value too great for base") —
+    // after the build and restart, skipping the health wait and the
+    // provenance check the script exists to run.
+    const f = fixture({});
+    const { code, out } = await f.run(["--skip-backup"], { PEW_UPGRADE_HEALTH_TIMEOUT_S: "08" });
+    expect(code, out).toBe(0);
+    expect(out).toContain("provenance verified");
+  });
+
   it("times out rather than hanging when the container never becomes healthy", async () => {
     const f = fixture({ neverHealthy: true });
     const { code, out } = await f.run(["--skip-backup"], { PEW_UPGRADE_HEALTH_TIMEOUT_S: "1" });

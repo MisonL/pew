@@ -707,6 +707,50 @@ is the one that explains it.
 - 2026-11-26 — clarify the CLI ingest mirror's deliberate `workbuddy` superset
     and the auth-code route's session-or-Bearer contract
 
+### Review round 60 (2026-11-28)
+
+- 2026-11-28 — accounting detail records normalize every model through
+    `usageLabel`, not only evidence rows. A unicode / over-128-char /
+    secret-shaped model failed the local label gate, was dropped with only a
+    per-source warning, and its cost details never uploaded (a codex
+    zero-value tombstone with such a model wedged `base_mismatch` forever).
+    Ported from the combined line's c84b0342.
+- 2026-11-28 — the OpenCode SQLite queries guard `json_extract` with
+    `json_valid`: one corrupt `data` blob used to raise "malformed JSON" and
+    fail the whole statement, so the driver skipped OpenCode on every run
+    (cursor never advanced) and the row-level `skippedCorrupt` counter added
+    in round 59 could never see the row. Corrupt rows now come back with
+    `role = NULL` and are counted and warned about.
+- 2026-11-28 — an incomplete Antigravity snapshot keeps the prior value of
+    every bucket it already had, not only of absent keys: a skipped corrupt
+    step lowered that hour's computed total, and the partial scan used to
+    overwrite the already-uploaded (higher) value. New buckets still land; a
+    complete scan still replaces wholesale and tombstones removals.
+- 2026-11-28 — the season admin surfaces a failed roster backfill. The route
+    commits the toggle and reports "run Sync Rosters" as `warning` on the
+    200; the edit form read only `error` and claimed plain success, so the
+    one case needing admin action was invisible. The composed message is a
+    pure, tested helper.
+- 2026-11-28 — a season switch no longer leaves expanded team rows claiming
+    "No members to display": the row keeps its expanded state across the
+    slug change while the hook clears the member cache. The row now
+    auto-loads once (`shouldAutoLoadMembers`, tested), and an empty answer
+    marks the team loaded so it cannot refetch in a loop.
+- 2026-11-28 — `upgrade.sh` normalizes `PEW_UPGRADE_HEALTH_TIMEOUT_S` to base
+    10 before arithmetic: "08" passed the decimal precheck but `$(( … + 08 ))`
+    aborted as octal after the build and restart, skipping the health wait
+    and the provenance check.
+- 2026-11-28 — dynamic pricing refuses to publish when the stored catalogue
+    cannot be read during a source failure: the empty layer would have been
+    rebuilt from baseline + cache and written over history. A status-aware
+    `readDynamicResult` distinguishes "nothing stored" from "KV did not
+    answer"; the skipped run reports `ok=false`, `skippedReason` and a kv
+    error.
+- 2026-11-28 — admin storage / compare / organizations / seasons disable
+    SWR focus revalidation: a focus refresh racing an in-flight write could
+    land its pre-write snapshot after the write's `mutate` and revert the
+    cache (the race 58ba9644 closed on the invite page).
+
 ### Review round 59 (2026-11-27)
 - 2026-11-26 — a partial Antigravity snapshot no longer zeroes history: a
     corrupt step or out-of-range session dropped keys from the fresh set, and

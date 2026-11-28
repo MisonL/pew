@@ -109,8 +109,14 @@ export function openMessageDb(
     return null;
   }
 
+  // A corrupt `data` blob must not throw here: SQLite raises "malformed JSON"
+  // from json_extract for an invalid blob, which aborted the whole statement
+  // and made the driver skip OpenCode forever (the cursor never advanced, and
+  // the row-level skippedCorrupt counter the token driver reports could never
+  // see the row). json_valid guards the extraction so the row comes back with
+  // role=NULL, the shape the row-level code already counts and warns about.
   const MESSAGE_COLUMNS =
-    `id, session_id, time_created, json_extract(data, '$.role') as role, data`;
+    `id, session_id, time_created, CASE WHEN json_valid(data) THEN json_extract(data, '$.role') END as role, data`;
 
   const stmt = db.prepare(
     `SELECT ${MESSAGE_COLUMNS}
@@ -200,7 +206,11 @@ export function openSessionDb(
         const chunk = sessionIds.slice(i, i + CHUNK_SIZE);
         const placeholders = chunk.map(() => "?").join(",");
         const stmt = db.prepare(
-          `SELECT session_id, json_extract(data, '$.role') as role, time_created, data
+          // Same json_valid guard as MESSAGE_COLUMNS: a corrupt blob yields a
+          // NULL role instead of failing the statement for every session in
+          // the chunk. collectOpenCodeSqliteSessions already tolerates a row
+          // whose data does not parse.
+          `SELECT session_id, CASE WHEN json_valid(data) THEN json_extract(data, '$.role') END as role, time_created, data
            FROM message
            WHERE session_id IN (${placeholders})
            ORDER BY time_created ASC`,

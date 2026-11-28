@@ -229,7 +229,11 @@ export default function AdminStoragePage() {
     isLoading: storageLoading,
   } = useSWR<{ users: StorageUserRow[]; summary: StorageSummary }>(
     isAdmin ? "/api/admin/storage" : null,
-    fetcher
+    fetcher,
+    // Writes refetch through the SWR mutate below; a focus revalidation racing
+    // a write otherwise lands its pre-write snapshot after the mutate and
+    // reverts the cache (the race 58ba9644 closed on the invites page).
+    { revalidateOnFocus: false }
   );
   const users = storageData?.users ?? EMPTY_USERS;
   const summary = storageData?.summary ?? null;
@@ -258,7 +262,10 @@ export default function AdminStoragePage() {
     mutate: mutateCache,
   } = useSWR<CacheListResponse>(
     isAdmin ? "/api/admin/cache" : null,
-    fetcher
+    fetcher,
+    // Same focus-revalidation race as the storage table: cache actions mutate
+    // explicitly, so a concurrent focus refresh can land a stale list.
+    { revalidateOnFocus: false }
   );
   const cacheKeys = cacheData?.keys ?? EMPTY_KEYS;
   const cacheCount = cacheData?.count ?? 0;

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { memoryKv } from "../__test-helpers__/memory-kv";
 import {
   readDynamic,
+  readDynamicResult,
   writeDynamicOrThrow,
   readMeta,
   writeMeta,
@@ -69,6 +70,20 @@ describe("kv-store", () => {
   it("readDynamic returns null when stored value is not an array", async () => {
     kv.store.set(KEY_DYNAMIC, JSON.stringify({ wrong: "shape" }));
     expect(await readDynamic(kv)).toBeNull();
+  });
+
+  it("readDynamicResult keeps the three states apart", async () => {
+    expect(await readDynamicResult(kv)).toEqual({ status: "missing", value: null });
+    kv.store.set(KEY_DYNAMIC, JSON.stringify([ENTRY]));
+    expect(await readDynamicResult(kv)).toEqual({ status: "ok", value: [ENTRY] });
+    kv.store.set(KEY_DYNAMIC, JSON.stringify({ wrong: "shape" }));
+    expect(await readDynamicResult(kv)).toEqual({ status: "missing", value: null });
+    const failing = {
+      ...kv,
+      get: vi.fn(async () => { throw new Error("kv 503"); }),
+      store: kv.store,
+    } as unknown as typeof kv;
+    expect((await readDynamicResult(failing)).status).toBe("error");
   });
 
   it("readMeta returns null on malformed JSON", async () => {
