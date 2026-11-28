@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useParams } from "next/navigation";
 import {
   Users,
@@ -25,6 +25,7 @@ import {
   type SeasonTeamEntry,
   type SeasonMember,
 } from "@/hooks/use-season-leaderboard";
+import { shouldAutoLoadMembers } from "@/lib/season-leaderboard";
 import { CheckRuling } from "@/components/leaderboard/check-ruling";
 import { SeasonCountdown } from "@/components/leaderboard/season-countdown";
 import { RankBadge } from "@/components/leaderboard/rank-badge";
@@ -85,6 +86,7 @@ function TeamRow({
   onExpand,
   membersLoading,
   membersFailed,
+  membersLoaded,
 }: {
   entry: SeasonTeamEntry;
   index: number;
@@ -92,11 +94,26 @@ function TeamRow({
   onExpand?: () => void;
   membersLoading?: boolean;
   membersFailed?: boolean;
+  membersLoaded?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const members = entry.members ?? [];
   const hasMembers = members.length > 0;
   const canExpand = hasMembers || membersLoading !== undefined || membersFailed === true;
+  // A row keeps its expanded state across a season switch while the hook
+  // clears the member cache for the new season; reload instead of leaving an
+  // expanded row that claims "No members to display" for never-fetched data.
+  useEffect(() => {
+    if (shouldAutoLoadMembers({
+      expanded,
+      hasMembers,
+      loading: membersLoading === true,
+      failed: membersFailed === true,
+      loaded: membersLoaded === true,
+    })) {
+      onExpand?.();
+    }
+  }, [expanded, hasMembers, membersLoading, membersFailed, membersLoaded, onExpand]);
   const tc = teamColor(entry.team.name);
 
   const handleToggle = () => {
@@ -300,7 +317,7 @@ export default function SeasonLeaderboardPage() {
   const { slug } = useParams<{ slug: string }>();
 
   // Pass slug directly to the API (supports both UUID and slug since Phase 3)
-  const { data, loading, refreshing, error, loadTeamMembers, loadingTeamIds, failedTeamIds } =
+  const { data, loading, refreshing, error, loadTeamMembers, loadingTeamIds, failedTeamIds, loadedTeamIds } =
     useSeasonLeaderboard(slug);
 
   const isLoading = loading && !data;
@@ -399,6 +416,7 @@ export default function SeasonLeaderboardPage() {
                   onExpand={() => loadTeamMembers(entry.team.id)}
                   membersLoading={loadingTeamIds.has(entry.team.id)}
                   membersFailed={failedTeamIds.has(entry.team.id)}
+                  membersLoaded={loadedTeamIds.has(entry.team.id)}
                 />
               ))
             )}

@@ -61,6 +61,8 @@ interface UseSeasonLeaderboardResult {
   loadingTeamIds: Set<string>;
   /** Teams whose member fetch failed; "no members" and "load failed" differ */
   failedTeamIds: Set<string>;
+  /** Teams whose member fetch answered (including an empty list) */
+  loadedTeamIds: Set<string>;
 }
 
 export function useSeasonLeaderboard(
@@ -175,6 +177,8 @@ export function useSeasonLeaderboard(
     };
   }, [data, membersByTeam]);
 
+  const loadedTeamIds = useMemo(() => new Set(membersByTeam.keys()), [membersByTeam]);
+
   return {
     data: mergedData,
     loading: isLoading,
@@ -187,5 +191,6 @@ export function useSeasonLeaderboard(
     loadTeamMembers,
     loadingTeamIds,
     failedTeamIds,
+    loadedTeamIds,
   };
 }

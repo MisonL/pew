@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeSeasonMembers, readTeamMembers } from "@/lib/season-leaderboard";
+import { mergeSeasonMembers, readTeamMembers, shouldAutoLoadMembers } from "@/lib/season-leaderboard";
 
 interface Entry {
   rank: number;
@@ -79,3 +79,24 @@ describe("readTeamMembers", () => {
   });
 });
 
+
+describe("shouldAutoLoadMembers", () => {
+  const base = { expanded: true, hasMembers: false, loading: false, failed: false, loaded: false };
+
+  it("loads an expanded row whose members were never fetched for this season", () => {
+    // The row stayed expanded across a season switch; the hook cleared the
+    // member cache, so without this the row claims "No members to display".
+    expect(shouldAutoLoadMembers(base)).toBe(true);
+  });
+
+  it("does not refetch a loaded-but-empty team in a loop", () => {
+    expect(shouldAutoLoadMembers({ ...base, loaded: true })).toBe(false);
+  });
+
+  it("does not load while loading, after a failure, when collapsed, or with members present", () => {
+    expect(shouldAutoLoadMembers({ ...base, loading: true })).toBe(false);
+    expect(shouldAutoLoadMembers({ ...base, failed: true })).toBe(false);
+    expect(shouldAutoLoadMembers({ ...base, expanded: false })).toBe(false);
+    expect(shouldAutoLoadMembers({ ...base, hasMembers: true })).toBe(false);
+  });
+});
