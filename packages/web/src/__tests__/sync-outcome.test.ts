@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeSyncOutcome } from "@/lib/sync-outcome";
+import { describeSkippedHint, describeSyncOutcome } from "@/lib/sync-outcome";
 
 describe("describeSyncOutcome", () => {
   it("calls a 200 with no skip a success", () => {
@@ -19,6 +19,18 @@ describe("describeSyncOutcome", () => {
     // still needs to know the sources failed, not just that nothing landed.
     expect(describeSyncOutcome(207, { ok: false, skippedReason: "a newer sync" }).kind).toBe("skipped");
     expect(describeSyncOutcome(207, { ok: false }).kind).toBe("partial");
+  });
+
+  it("describes a skipped run by what actually happened, not a fixed sentence", () => {
+    // The skip reason is now more than "a newer run won": a KV read failure
+    // also refuses to publish. The button rendered one hardcoded sentence for
+    // every skip and told the operator the catalogue was fresh.
+    expect(describeSkippedHint("a newer sync (2026-09-01T00:00:00.000Z) is already published; this run's result was discarded"))
+      .toBe("No change: a newer price update is already published");
+    expect(describeSkippedHint("the stored pricing metadata could not be read (KV error); the published catalogue was left untouched"))
+      .toBe("No prices published: the stored pricing data could not be read. Try again later.");
+    expect(describeSkippedHint("something else")).toBe("No prices published: something else");
+    expect(describeSkippedHint("")).toBe("No prices were published by this run");
   });
 
   it("treats every non-2xx as an error, including a 502 body that looks clean", () => {

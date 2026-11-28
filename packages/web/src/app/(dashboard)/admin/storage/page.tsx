@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatTokens, formatTokensFull, formatDuration } from "@/lib/format";
+import { AdminAvailabilityNotice } from "@/components/ui/admin-availability-notice";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { Banner } from "@nocoo/basalt/components/banner";
 import { Button } from "@nocoo/basalt/components/button";
@@ -220,13 +221,15 @@ function SortHeader({
 
 export default function AdminStoragePage() {
   const router = useRouter();
-  const { isAdmin, loading: adminLoading } = useAdmin();
+  const { isAdmin, loading: adminLoading, status: adminStatus } = useAdmin();
 
   // DB data — SWR
   const {
     data: storageData,
     error: storageError,
     isLoading: storageLoading,
+    isValidating: storageValidating,
+    mutate: mutateStorage,
   } = useSWR<{ users: StorageUserRow[]; summary: StorageSummary }>(
     isAdmin ? "/api/admin/storage" : null,
     fetcher,
@@ -422,6 +425,10 @@ export default function AdminStoragePage() {
   // Guard
   // ---------------------------------------------------------------------------
 
+  if (!adminLoading && adminStatus === "unavailable") {
+    return <AdminAvailabilityNotice />;
+  }
+
   if (adminLoading) {
     return (
       <div className="space-y-4 md:space-y-6">
@@ -450,6 +457,26 @@ export default function AdminStoragePage() {
 
         {/* Error */}
         <ErrorBanner messagePrefix="Failed to load storage stats" error={error} />
+
+        {/* The usage table below intentionally has no focus revalidation
+            (a write-vs-refresh race), and this page has no other write to
+            trigger a mutate. Usage grows on its own as users sync, so the
+            reader needs an explicit, deliberate refresh. */}
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => void mutateStorage()}
+            disabled={storageValidating}
+          >
+            <RefreshCw
+              className={cn("h-3 w-3", storageValidating && "animate-spin")}
+              strokeWidth={1.5}
+            />
+            Refresh stats
+          </Button>
+        </div>
 
         {/* Loading */}
         {loading && <StorageSkeleton />}

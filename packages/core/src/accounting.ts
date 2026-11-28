@@ -1,4 +1,4 @@
-import { MAX_RECORD_TOKENS, MAX_RECORD_MESSAGES } from "./constants.js";
+import { MAX_RECORD_TOKENS, MAX_RECORD_MESSAGES, MAX_STRING_LENGTH } from "./constants.js";
 import type { AccountingAck, AccountingCounts, AccountingGroup, AccountingRecord, LegacyTokenCounts } from "./accounting-types.js";
 import { isRetiredSourceRecord, isValidSource, type ValidationResult } from "./validation.js";
 
@@ -8,6 +8,12 @@ const tokenCount = (v: unknown): v is number => count(v) && v <= MAX_RECORD_TOKE
 const optionalCount = (v: unknown) => v === null || tokenCount(v);
 const label = (v: unknown) => typeof v === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._/+:-]{0,127}$/.test(v) &&
   !/^(?:sk-|sk_|pk_|Bearer|eyJ)/i.test(v) && !v.includes("://");
+// Detail models ride on the token bucket's key: the server's base lookup is an
+// exact `model = ?` against `usage_records`. The token endpoint accepts any
+// non-empty string up to MAX_STRING_LENGTH, so this boundary takes the same
+// domain. A stricter label rule here silently made every non-ASCII model
+// un-matchable (and is why the CLI once normalized them to "unknown").
+const modelName = (v: unknown) => typeof v === "string" && v.length > 0 && v.length <= MAX_STRING_LENGTH;
 const keys = (v: Record<string, unknown>, names: string) => {
   const allowed = names.split(" ");
   return Object.keys(v).length === allowed.length && Object.keys(v).every((k) => allowed.includes(k));
@@ -31,7 +37,7 @@ function validCounts(v: unknown): v is AccountingCounts {
 
 function validGroup(g: unknown, source: string): g is AccountingGroup {
   if (!object(g) || !keys(g, "basis counts origin model provider route service_tier context_tokens_min context_tokens_max request_count quality reported_costs diagnostics")) return false;
-  if (!validBasis(g.basis) || !label(g.origin) || !label(g.model) ||
+  if (!validBasis(g.basis) || !label(g.origin) || !modelName(g.model) ||
     ![g.provider, g.route, g.service_tier].every((v) => v === null || label(v)) ||
     !["reported", "derived", "legacy", "invalid"].includes(String(g.quality))) return false;
   if (g.counts !== null) {
@@ -56,7 +62,7 @@ function validGroup(g: unknown, source: string): g is AccountingGroup {
 export function validateAccountingRecord(value: unknown, index: number): ValidationResult<AccountingRecord> {
   const invalid = (): ValidationResult<AccountingRecord> => ({ valid: false, error: `record[${index}]: invalid accounting details` });
   if (!object(value) || !keys(value, "details_version source model device_id hour_start event_id evidence_snapshot_seq source_revision parser_revision detail_revision basis groups")) return invalid();
-  if (value.details_version !== 1 || !isValidSource(value.source) || !label(value.model) ||
+  if (value.details_version !== 1 || !isValidSource(value.source) || !modelName(value.model) ||
     typeof value.device_id !== "string" || !/^[\w.-]{1,128}$/.test(value.device_id)) return invalid();
   if (typeof value.hour_start !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:(00|30):00\.000Z$/.test(value.hour_start) ||
     !Number.isFinite(Date.parse(value.hour_start)) || new Date(value.hour_start).toISOString() !== value.hour_start) return invalid();
@@ -83,7 +89,7 @@ export function validateAccountingRecord(value: unknown, index: number): Validat
 }
 
 export function retiredAccountingAcknowledgment(value: unknown): AccountingAck | null {
-  if (!object(value) || !isRetiredSourceRecord(value) || !label(value.model) ||
+  if (!object(value) || !isRetiredSourceRecord(value) || !modelName(value.model) ||
     typeof value.device_id !== "string" || !/^[\w.-]{1,128}$/.test(value.device_id) ||
     typeof value.hour_start !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:(00|30):00\.000Z$/.test(value.hour_start) ||
     !Number.isFinite(Date.parse(value.hour_start)) || new Date(value.hour_start).toISOString() !== value.hour_start ||

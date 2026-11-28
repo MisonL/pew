@@ -110,6 +110,21 @@ export async function autoRegisterTeamsForSeason(
         if (result[0]?.meta.changes === 1) registered++;
         else skipped++;
       } catch (err) {
+        // Hosted D1's REST batch atomicity is not part of its contract (only
+        // the selfhost runtime passes ?transaction=true), so a failed batch
+        // can leave the season_teams row or part of the roster committed;
+        // UNIQUE(season_id, user_id) then blocks those members' later
+        // registration and an upcoming season cannot repair it through Sync
+        // Rosters. Roll the residue back by the fresh ids this attempt
+        // generated — never a (season, team) sweep, which could delete a
+        // registration that already existed.
+        const memberDeletes = memberIds.map(() => "?").join(",");
+        await dbWrite
+          .execute(`DELETE FROM season_team_members WHERE id IN (${memberDeletes})`, memberIds)
+          .catch(() => undefined);
+        await dbWrite
+          .execute("DELETE FROM season_teams WHERE id = ?", [regId])
+          .catch(() => undefined);
         console.error(`Auto-registration failed for team ${team.id}:`, err);
         skipped++;
       }

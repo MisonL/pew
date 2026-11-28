@@ -245,10 +245,13 @@ describe("POST /api/admin/seasons", () => {
         end_date: "2099-06-30T23:59:00Z",
       })
     );
-    // Should still succeed — auto-registration is best-effort
+    // Should still succeed — auto-registration is best-effort — but the
+    // admin must learn that the roster was not filled; "created" alone reads
+    // as "teams were auto-registered".
     expect(res.status).toBe(201);
     const json = await res.json();
     expect(json.auto_registered_teams).toBe(0);
+    expect(json.warning).toMatch(/automatic team registration failed/i);
   });
 
   it("still returns the created season when the cache invalidation fails", async () => {

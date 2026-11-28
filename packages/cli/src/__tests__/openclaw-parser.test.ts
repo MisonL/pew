@@ -165,6 +165,23 @@ describe("parseOpenClawFile", () => {
     expect(result.deltas).toHaveLength(0);
   });
 
+  it("counts a usage line whose schema dropped totalTokens", async () => {
+    // The fast-path filtered whole lines on the literal "totalTokens" before
+    // parsing, so a writer version that stopped emitting that field had every
+    // token record silently dropped — no delta, no skipped counter. The field
+    // is only a cross-check for accounting, never needed for the token counts.
+    const filePath = join(tempDir, "session.jsonl");
+    const noTotal = JSON.stringify({
+      type: "message",
+      timestamp: "2026-03-07T10:15:00.000Z",
+      message: { model: "claude-sonnet-4", usage: { input: 100, output: 50 } },
+    });
+    await writeFile(filePath, `${noTotal}\n`);
+    const result = await parseOpenClawFile({ filePath, startOffset: 0 });
+    expect(result.deltas).toHaveLength(1);
+    expect(result.deltas[0].tokens).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+  });
+
   it("should skip lines missing timestamp", async () => {
     const filePath = join(tempDir, "session.jsonl");
     const noTs = JSON.stringify({

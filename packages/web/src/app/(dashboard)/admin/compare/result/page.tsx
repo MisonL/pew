@@ -10,6 +10,7 @@ import { formatTokens, formatTokensFull } from "@/lib/utils";
 import { useAdmin } from "@/hooks/use-admin";
 import { useTzOffset } from "@/hooks/use-tz-offset";
 import { localDayRangeToUtc, trailingLocalDays } from "@/lib/date-helpers";
+import { AdminAvailabilityNotice } from "@/components/ui/admin-availability-notice";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { Button } from "@nocoo/basalt/components/button";
 import { Empty } from "@nocoo/basalt/components/empty";
@@ -153,7 +154,7 @@ function CompareTooltipContent({
 function CompareResultContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { isAdmin, loading: adminLoading } = useAdmin();
+  const { isAdmin, loading: adminLoading, status: adminStatus } = useAdmin();
 
   // Get userIds from URL
   const userIdsParam = searchParams.get("userIds") ?? "";
@@ -281,6 +282,10 @@ function CompareResultContent() {
   // ---------------------------------------------------------------------------
   // Guard
   // ---------------------------------------------------------------------------
+
+  if (!adminLoading && adminStatus === "unavailable") {
+    return <AdminAvailabilityNotice />;
+  }
 
   if (adminLoading) {
     return (

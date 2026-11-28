@@ -500,7 +500,10 @@ export default function TeamDetailPage() {
       });
 
       if (res.ok) {
-        setMessage({ type: "success", text: `${displayName} removed.` });
+        const data = (await res.json().catch(() => ({}))) as { warning?: unknown };
+        setMessage(typeof data.warning === "string" && data.warning.length > 0
+          ? { type: "warning", text: `${displayName} removed. ${data.warning}` }
+          : { type: "success", text: `${displayName} removed.` });
         fetchTeam();
       } else {
         const data = await res.json().catch(() => ({}));

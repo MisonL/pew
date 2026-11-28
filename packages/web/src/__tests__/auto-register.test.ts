@@ -235,16 +235,35 @@ describe("autoRegisterTeamsForSeason", () => {
     expect(result.skipped).toBe(1);
   });
 
-  it("counts an atomic batch failure as skipped without compensation", async () => {
+  it("rolls a failed batch back by its fresh ids so no half-registered seat survives", async () => {
+    // Hosted D1's REST batch atomicity is not part of its contract (the
+    // selfhost runtime passes ?transaction=true, hosted does not), so a
+    // failed batch can leave the season_teams row or part of the roster
+    // committed. UNIQUE(season_id, user_id) then blocks every affected
+    // member's later registration, and an upcoming season cannot be repaired
+    // through Sync Rosters. Compensation must target exactly the ids this
+    // attempt generated — never a (season, team) sweep, which could delete a
+    // registration that already existed.
     mockDbRead.getSeasonById.mockResolvedValueOnce(mockUpcomingSeason());
     mockDbRead.getTeamOwner.mockResolvedValueOnce("owner-1");
     mockDbRead.listAutoRegisterTeams.mockResolvedValueOnce([{ id: "team-1", created_by: "owner-1" }]);
-    mockDbRead.getTeamMemberUserIds.mockResolvedValueOnce(["u1"]);
+    mockDbRead.getTeamMemberUserIds.mockResolvedValueOnce(["u1", "u2"]);
     mockDbWrite.batch.mockRejectedValueOnce(new Error("D1 batch failed"));
+    mockDbWrite.execute.mockResolvedValue(undefined);
+
     const result = await autoRegisterTeamsForSeason(mockDbRead, mockDbWrite, "season-1");
+
     expect(result.registered).toBe(0);
     expect(result.skipped).toBe(1);
-    expect(mockDbWrite.execute).not.toHaveBeenCalled();
+    const statements = mockDbWrite.batch.mock.calls[0]![0] as Array<{ sql: string; params: unknown[] }>;
+    const regId = statements[0]!.params[0] as string;
+    const memberIds = statements.slice(1).map((s) => s.params[0]);
+    expect(mockDbWrite.execute).toHaveBeenCalledTimes(2);
+    const [membersDelete, teamDelete] = mockDbWrite.execute.mock.calls;
+    expect(membersDelete![0]).toContain("DELETE FROM season_team_members");
+    expect(membersDelete![1]).toEqual(memberIds);
+    expect(teamDelete![0]).toContain("DELETE FROM season_teams");
+    expect(teamDelete![1]).toEqual([regId]);
   });
 
   it.each([false, true])("enforces upcoming at the database write (crossed start: %s)", async (crossedStart) => {

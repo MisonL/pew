@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Plus, Trash2 } from "lucide-react";
 
 import { useAdmin } from "@/hooks/use-admin";
+import { AdminAvailabilityNotice } from "@/components/ui/admin-availability-notice";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RowListSkeleton } from "@/components/ui/row-list-skeleton";
@@ -68,7 +69,7 @@ function StatusBadge({ usedBy }: { usedBy: string | null }) {
 
 export default function AdminInvitesPage() {
   const router = useRouter();
-  const { isAdmin, loading: adminLoading } = useAdmin();
+  const { isAdmin, loading: adminLoading, status: adminStatus } = useAdmin();
 
   const {
     data: rowsData,
@@ -283,6 +284,10 @@ export default function AdminInvitesPage() {
   // ---------------------------------------------------------------------------
   // Guard: loading or not admin
   // ---------------------------------------------------------------------------
+
+  if (!adminLoading && adminStatus === "unavailable") {
+    return <AdminAvailabilityNotice />;
+  }
 
   if (adminLoading) {
     return (

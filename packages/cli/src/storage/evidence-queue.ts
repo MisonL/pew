@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import type { EvidenceRecord } from "@pew/core";
 import { BaseQueue } from "./base-queue.js";
 import { evidenceKey, toEvidenceRecord } from "../utils/usage-evidence.js";
+import { ledgerRecoveryMessage } from "./ledger-error.js";
 
 export function checkedRecord(r: EvidenceRecord): EvidenceRecord {
   try {
@@ -14,7 +15,7 @@ export function checkedRecord(r: EvidenceRecord): EvidenceRecord {
     const { evidence: projectedEvidence, ...projectedFields } = projected;
     if (!sameFields(fields, projectedFields) || !sameFields(evidence, projectedEvidence)) throw new Error();
     return projected;
-  } catch { throw new Error("Invalid usage evidence ledger"); }
+  } catch { throw new Error(ledgerRecoveryMessage("usage evidence")); }
 }
 
 /**
@@ -33,7 +34,7 @@ export class EvidenceQueue extends BaseQueue<EvidenceRecord> {
       raw = await readFile(this.queuePath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { records: [], newOffset: 0 };
-      throw new Error("Invalid usage evidence ledger");
+      throw new Error(ledgerRecoveryMessage("usage evidence"));
     }
     try {
       // Same invariant as BaseQueue: an offset past EOF means the file shrank
@@ -44,7 +45,7 @@ export class EvidenceQueue extends BaseQueue<EvidenceRecord> {
       const records = raw.subarray(start).toString("utf8").split("\n").filter(Boolean).map((line) => checkedRecord(JSON.parse(line)));
       return { records, newOffset: raw.byteLength };
     } catch {
-      throw new Error("Invalid usage evidence ledger");
+      throw new Error(ledgerRecoveryMessage("usage evidence"));
     }
   }
 

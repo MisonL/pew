@@ -751,6 +751,55 @@ is the one that explains it.
     land its pre-write snapshot after the write's `mutate` and revert the
     cache (the race 58ba9644 closed on the invite page).
 
+### Review round 61 (2026-11-28)
+
+- 2026-11-28 — accounting details keep the raw model, and the server's
+    accounting boundary accepts the token endpoint's model domain (non-empty,
+    ≤1024) instead of the ASCII label rule. Round 60's normalization split the
+    detail from the token bucket (the base lookup is an exact `model = ?`), so
+    every non-ASCII model's detail answered `base_mismatch` forever, the ledger
+    key missed `previous` and evidence revisions reset to 1; two such models in
+    one hour could also collide on one key.
+- 2026-11-28 — the pricing newer-run guard reads the publication metadata with
+    the tri-state `readMetaResult`: a KV error used to collapse to "never
+    published" and let a slow stale run replace a newer catalogue.
+- 2026-11-28 — the season edit form submits a toggle only when the operator
+    touched it. The local toggle state is initialized once while the season
+    prop updates on SWR revalidation, so diffing against the moving prop let a
+    name-only edit write a stale toggle back over another admin's change.
+- 2026-11-28 — an incomplete Antigravity snapshot now takes a shared bucket's
+    fresh value when it is strictly larger (real growth from a concurrent
+    session). Keeping the prior value unconditionally froze all growth on every
+    existing bucket while any step kept failing to parse.
+- 2026-11-28 — season leaderboard session counters report
+    `session_stats_unavailable` and render "—" when the stats query failed,
+    instead of a confident "0 sessions / 0s"; creating a season surfaces a
+    failed best-effort auto-registration as a `warning` and rolls a failed
+    batch back by the fresh ids it generated (hosted D1 batches are not
+    documented atomic); joining or kicking a member surfaces a failed roster
+    sync as a `warning` on the 200.
+- 2026-11-28 — admin pages show a retryable notice when `/api/admin/check`
+    cannot answer instead of redirecting home as if the caller were not an
+    admin. Private-profile access checks distinguish a missing table from a
+    read failure: the latter answers 503 instead of 404 for a real teammate.
+- 2026-11-28 — `/api/organizations` sends `private, no-store`; a 207 pricing
+    rebuild that wrote entries resets the in-memory price map; the price
+    refresh banner describes a skipped run by its actual reason; season RPC
+    identifiers are validated as strings (400, not 500); admin storage/compare
+    regained explicit refresh buttons (their focus revalidation is off and they
+    have no writes).
+- 2026-11-28 — CLI: one unreadable Antigravity database is isolated (`failed`,
+    counted as a partial scan) instead of failing the whole source and freezing
+    the readable files' uploads; the OpenClaw fast-path no longer requires the
+    literal `totalTokens`; a historical Pi compaction with a bad timestamp is
+    counted once, not on every sync; an invalid evidence/accounting ledger
+    error explains how to recover (`pew reset` keeps both files on purpose).
+- 2026-11-28 — the leading-zero `upgrade.sh` test now waits two health polls so
+    the health deadline is actually evaluated; on bash 3.2 the previous test
+    passed with the normalization removed (an arithmetic error there prints but
+    does not abort). The provenance-mismatch message also points at a failed
+    compose service (e.g. migrate) leaving the old web container running.
+
 ### Review round 59 (2026-11-27)
 - 2026-11-26 — a partial Antigravity snapshot no longer zeroes history: a
     corrupt step or out-of-range session dropped keys from the fresh set, and

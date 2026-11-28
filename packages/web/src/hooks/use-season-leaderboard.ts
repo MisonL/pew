@@ -47,6 +47,8 @@ interface SeasonLeaderboardData {
     is_snapshot: boolean;
   };
   entries: SeasonTeamEntry[];
+  /** True when the session counters below are zeros of failure, not zero usage. */
+  session_stats_unavailable?: boolean;
 }
 
 interface UseSeasonLeaderboardResult {

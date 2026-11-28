@@ -111,16 +111,21 @@ export async function POST(request: Request) {
     }
 
     // Sync season rosters if any active season allows roster changes
+    let rosterWarning: string | null = null;
     try {
       await syncSeasonRosters(dbRead, dbWrite, team.id);
     } catch (err) {
+      // The join committed; only the season seat did not. Plain success hid
+      // that the member's usage would not count for the season.
       console.error("Failed to sync season rosters after join:", err);
+      rosterWarning = "Joined, but the season roster could not be refreshed. An admin can retry with Sync Rosters.";
     }
 
     return NextResponse.json({
       team_id: team.id,
       team_name: team.name,
       team_slug: team.slug,
+      ...(rosterWarning === null ? {} : { warning: rosterWarning }),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";

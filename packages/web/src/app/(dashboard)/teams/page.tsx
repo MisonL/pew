@@ -282,9 +282,12 @@ export default function TeamsPage() {
       });
 
       if (res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { warning?: unknown };
         setInviteCode("");
         setShowJoinTeam(false);
-        setTeamMessage({ type: "success", text: "Joined team!" });
+        setTeamMessage(typeof data.warning === "string" && data.warning.length > 0
+          ? { type: "warning", text: `Joined team! ${data.warning}` }
+          : { type: "success", text: "Joined team!" });
         fetchTeams();
       } else {
         const data = await res.json().catch(() => ({}));

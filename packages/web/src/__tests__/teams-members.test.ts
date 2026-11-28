@@ -115,6 +115,7 @@ describe("DELETE /api/teams/[teamId]/members/[userId]", () => {
     expect(response.status).toBe(200);
     const data = await response.json();
     expect(data.ok).toBe(true);
+    expect(data.warning).toBeUndefined();
     expect(mockExecute).toHaveBeenCalled();
     expect(mockSyncSeasonRosters).toHaveBeenCalled();
   });
@@ -132,6 +133,11 @@ describe("DELETE /api/teams/[teamId]/members/[userId]", () => {
     });
 
     expect(response.status).toBe(200);
+    // The membership row is gone, but the season seat still counts the
+    // removed member's usage. The caller has to learn that.
+    const data = await response.json();
+    expect(data.ok).toBe(true);
+    expect(data.warning).toMatch(/season roster/i);
     expect(consoleSpy).toHaveBeenCalled();
     consoleSpy.mockRestore();
   });

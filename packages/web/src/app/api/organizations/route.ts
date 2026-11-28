@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { resolveUser } from "@/lib/auth-helpers";
 import { getDbRead } from "@/lib/db";
+import { privateJson } from "@/lib/private-json";
 
 export async function GET(request: Request) {
   const authResult = await resolveUser(request);
@@ -26,11 +27,11 @@ export async function GET(request: Request) {
       memberCount: r.member_count,
     }));
 
-    return NextResponse.json({ organizations });
+    return privateJson({ organizations });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     if (msg.includes("no such table")) {
-      return NextResponse.json({ organizations: [] });
+      return privateJson({ organizations: [] });
     }
     console.error("Failed to list organizations:", err);
     return NextResponse.json(

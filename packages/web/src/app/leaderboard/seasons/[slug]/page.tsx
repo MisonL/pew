@@ -87,6 +87,7 @@ function TeamRow({
   membersLoading,
   membersFailed,
   membersLoaded,
+  sessionsUnavailable,
 }: {
   entry: SeasonTeamEntry;
   index: number;
@@ -95,6 +96,8 @@ function TeamRow({
   membersLoading?: boolean;
   membersFailed?: boolean;
   membersLoaded?: boolean;
+  /** Session counters are failure-zeros: render "—", not a confident 0. */
+  sessionsUnavailable?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const members = entry.members ?? [];
@@ -183,15 +186,17 @@ function TeamRow({
 
         {/* Session count (hidden on mobile) */}
         <div className="hidden sm:block w-24 shrink-0 text-right">
-          <span className="text-xs tabular-nums text-chart-2" title="Sessions">
-            {entry.session_count.toLocaleString("en-US")}
+          <span className="text-xs tabular-nums text-chart-2"
+            title={sessionsUnavailable ? "Session stats unavailable" : "Sessions"}>
+            {sessionsUnavailable ? "—" : entry.session_count.toLocaleString("en-US")}
           </span>
         </div>
 
         {/* Duration (hidden on mobile) */}
         <div className="hidden sm:block w-24 shrink-0 text-right">
-          <span className="text-xs tabular-nums text-chart-7" title="Total duration">
-            {formatDuration(entry.total_duration_seconds)}
+          <span className="text-xs tabular-nums text-chart-7"
+            title={sessionsUnavailable ? "Session stats unavailable" : "Total duration"}>
+            {sessionsUnavailable ? "—" : formatDuration(entry.total_duration_seconds)}
           </span>
         </div>
 
@@ -277,14 +282,14 @@ function TeamRow({
                 {/* Session count — same width as team row */}
                 <div className="hidden sm:block w-24 shrink-0 text-right">
                   <span className="text-xs tabular-nums text-chart-2">
-                    {member.session_count.toLocaleString("en-US")}
+                    {sessionsUnavailable ? "—" : member.session_count.toLocaleString("en-US")}
                   </span>
                 </div>
 
                 {/* Duration — same width as team row */}
                 <div className="hidden sm:block w-24 shrink-0 text-right">
                   <span className="text-xs tabular-nums text-chart-7">
-                    {formatDuration(member.total_duration_seconds)}
+                    {sessionsUnavailable ? "—" : formatDuration(member.total_duration_seconds)}
                   </span>
                 </div>
 
@@ -417,6 +422,7 @@ export default function SeasonLeaderboardPage() {
                   membersLoading={loadingTeamIds.has(entry.team.id)}
                   membersFailed={failedTeamIds.has(entry.team.id)}
                   membersLoaded={loadedTeamIds.has(entry.team.id)}
+                  sessionsUnavailable={data.session_stats_unavailable === true}
                 />
               ))
             )}

@@ -14,9 +14,20 @@ describe("accounting annotations", () => {
     });
     expect(retiredAccountingAcknowledgment({ ...record, event_id: "a".repeat(64) })).not.toBeNull();
     for (const value of [null, {}, { ...record, source: "pi" }, { ...record, device_id: "../PRIVATE" },
-      { ...record, model: "sk-PRIVATE" }, { ...record, hour_start: "bad" }, { ...record, event_id: "bad" },
+      { ...record, model: "" }, { ...record, hour_start: "bad" }, { ...record, event_id: "bad" },
       { ...record, source_revision: 0 }, { ...record, parser_revision: "private" }, { ...record, detail_revision: -1 }]) {
       expect(retiredAccountingAcknowledgment(value)).toBeNull();
+    }
+  });
+  it("accepts the token endpoint's model domain so details can base-match their token bucket", () => {
+    // The token endpoint takes any non-empty string up to MAX_STRING_LENGTH.
+    // A detail normalized to "unknown" can never match a base row stored under
+    // the raw model, so the accounting boundary mirrors the token rule instead
+    // of the stricter ASCII label rule.
+    const r = accountingFixture();
+    for (const model of ["模型-hunyuan-x1", "sk-abc123", "m".repeat(1024)]) {
+      const result = validateAccountingRecord({ ...r, model, groups: [{ ...r.groups[0], model }] }, 0);
+      expect(result.valid).toBe(true);
     }
   });
   it("accepts Antigravity accounting with disjoint cache reads and reasoning", () => {

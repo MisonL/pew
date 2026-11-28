@@ -230,6 +230,19 @@ describe("seasons RPC handlers", () => {
   // seasons.getRegistration
   // -------------------------------------------------------------------------
 
+  it("getById and getBySlug reject non-string identifiers with 400", async () => {
+    for (const request of [
+      { method: "seasons.getById", seasonId: { nested: true } },
+      { method: "seasons.getById", seasonId: 42 },
+      { method: "seasons.getBySlug", slug: ["season-1"] },
+      { method: "seasons.getBySlug", slug: 42 },
+    ]) {
+      const response = await handleSeasonsRpc(request as never, db, kv);
+      expect(response.status, JSON.stringify(request)).toBe(400);
+    }
+    expect(db.bind).not.toHaveBeenCalled();
+  });
+
   describe("seasons.getRegistration", () => {
     it("should return registration when exists", async () => {
       const mockRegistration = {
@@ -289,6 +302,23 @@ describe("seasons RPC handlers", () => {
       const response = await handleSeasonsRpc(request, db, kv);
 
       expect(response.status).toBe(400);
+    });
+
+    it("rejects non-string ids before they reach the SQL binding", async () => {
+      // A truthy non-string (object, number) used to pass the `!req.x` check
+      // and then threw inside .bind(), surfacing as a 500.
+      for (const bad of [
+        { seasonId: { id: "x" }, teamId: "t1" },
+        { seasonId: 7, teamId: "t1" },
+        { seasonId: "s1", teamId: [] },
+      ]) {
+        const response = await handleSeasonsRpc(
+          { method: "seasons.getRegistration", ...bad } as unknown as GetSeasonRegistrationRequest,
+          db,
+          kv,
+        );
+        expect(response.status, JSON.stringify(bad)).toBe(400);
+      }
     });
   });
 

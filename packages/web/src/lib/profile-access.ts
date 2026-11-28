@@ -36,16 +36,35 @@ export async function canBypassPublic(
   // Teammate check — caller and target share at least one team
   try {
     if (await db.checkSharedTeam(auth.userId, targetUserId)) return true;
-  } catch {
-    // team_members table may not exist — graceful fallthrough
+  } catch (err) {
+    // team_members may not exist (pre-migration) — fall through. Anything
+    // else is a read failure, not a denial: swallowing it answered 404 for a
+    // real teammate while the read worker was down.
+    if (!isMissingTable(err)) throw inconclusive(err);
   }
 
   // Same-season check — both users belong to teams registered in the same season
   try {
     if (await db.checkSharedSeason(auth.userId, targetUserId)) return true;
-  } catch {
-    // season_teams table may not exist — graceful fallthrough
+  } catch (err) {
+    if (!isMissingTable(err)) throw inconclusive(err);
   }
 
   return false;
+}
+
+export class ProfileAccessUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super("profile access check is inconclusive: " + (cause instanceof Error ? cause.message : String(cause)));
+    this.name = "ProfileAccessUnavailableError";
+  }
+}
+
+function isMissingTable(err: unknown): boolean {
+  return err instanceof Error && /no such table/i.test(err.message);
+}
+
+function inconclusive(err: unknown): ProfileAccessUnavailableError {
+  if (err instanceof Error) console.error("profile access check failed:", err);
+  return new ProfileAccessUnavailableError(err);
 }

@@ -68,6 +68,8 @@ export default async function PublicProfilePage({
     const viewer = await resolveSessionUser();
     if (!viewer) notFound();
     const db = await getDbRead();
+    // A read failure surfaces as ProfileAccessUnavailableError and reaches the
+    // error boundary's retryable page: "inconclusive" is not "does not exist".
     if (!(await canBypassPublic(viewer, db, user.id))) notFound();
   }
 

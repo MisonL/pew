@@ -11,8 +11,13 @@ vi.mock("@/lib/admin", () => ({
   resolveAdmin: vi.fn(),
 }));
 
+vi.mock("@/lib/load-pricing-map", () => ({
+  resetPricingMapCache: vi.fn(),
+}));
+
 import { getDbRead } from "@/lib/db";
 import { resolveAdmin } from "@/lib/admin";
+import { resetPricingMapCache } from "@/lib/load-pricing-map";
 
 const META = {
   lastSyncedAt: "2026-04-30T00:00:00.000Z",
@@ -65,6 +70,7 @@ describe("POST /api/admin/pricing/rebuild", () => {
     expect(await res.json()).toEqual(OK_OUTCOME);
     expect(mockDbRead.rebuildDynamicPricing).toHaveBeenCalledWith({ forceRefetch: true });
     expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(resetPricingMapCache).toHaveBeenCalled();
   });
 
   it("returns 207 Multi-Status on partial failure", async () => {
@@ -75,6 +81,10 @@ describe("POST /api/admin/pricing/rebuild", () => {
     expect(body.ok).toBe(false);
     expect(body.errors).toHaveLength(1);
     expect(body.errors[0]?.source).toBe("openrouter");
+    // A 207 can still have written the catalogue (entriesWritten 9): not
+    // resetting the map served the old price map for up to a minute after
+    // the operator was told the refresh happened.
+    expect(resetPricingMapCache).toHaveBeenCalled();
   });
 
   it("returns 502 + { error, fallback: null } when RPC throws", async () => {

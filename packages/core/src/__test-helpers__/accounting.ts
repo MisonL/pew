@@ -43,7 +43,8 @@ export function invalidAccountingCases(): Array<[string, unknown]> {
   return [
     ["null envelope", null], ["array envelope", []], ["future version", { ...r, details_version: 2 }],
     ["raw body", { ...r, prompt: "PRIVATE" }], ["unknown source", { ...r, source: "synthetic-source" }],
-    ["private model", { ...r, model: "sk-PRIVATE" }], ["device path", { ...r, device_id: "/private/device" }],
+    ["empty model", { ...r, model: "" }], ["non-string model", { ...r, model: 42 }],
+    ["oversized model", { ...r, model: "m".repeat(1025) }], ["device path", { ...r, device_id: "/private/device" }],
     ["local timestamp", { ...r, hour_start: "2026-09-01T00:00:00+08:00" }],
     ["impossible date", { ...r, hour_start: "2026-02-30T00:00:00.000Z" }],
     ["unaligned bucket", { ...r, hour_start: "2026-09-01T00:01:00.000Z" }],

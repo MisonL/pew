@@ -16,6 +16,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { AdminAvailabilityNotice } from "@/components/ui/admin-availability-notice";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { Banner } from "@nocoo/basalt/components/banner";
 import { Button } from "@nocoo/basalt/components/button";
@@ -710,7 +711,7 @@ function autoSlug(name: string): string {
 
 export default function AdminOrganizationsPage() {
   const router = useRouter();
-  const { isAdmin, loading: adminLoading } = useAdmin();
+  const { isAdmin, loading: adminLoading, status: adminStatus } = useAdmin();
 
   const {
     data: orgData,
@@ -802,6 +803,10 @@ export default function AdminOrganizationsPage() {
   };
 
   // Guard
+  if (!adminLoading && adminStatus === "unavailable") {
+    return <AdminAvailabilityNotice />;
+  }
+
   if (adminLoading) {
     return (
       <div className="space-y-4 md:space-y-6">

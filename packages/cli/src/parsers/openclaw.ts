@@ -64,8 +64,11 @@ export async function parseOpenClawFile(opts: {
   try {
     for await (const line of rl) {
       if (!line) continue;
-      // Fast-path: OpenClaw messages include "usage" and "totalTokens"
-      if (!line.includes('"usage"') || !line.includes("totalTokens")) continue;
+      // Fast-path: OpenClaw messages include "usage". "totalTokens" is only
+      // an accounting cross-check, not a token source — requiring its literal
+      // presence here silently dropped every message from a writer version
+      // that stopped emitting it.
+      if (!line.includes('"usage"')) continue;
 
       let obj: Record<string, unknown>;
       try {

@@ -302,5 +302,9 @@ describe("POST /api/teams/join", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.team_id).toBe("t1");
+    // The join itself committed; the season seat did not get refreshed. Saying
+    // plain success hides that the member's usage will not count for the
+    // season until someone runs the roster sync.
+    expect(body.warning).toMatch(/season roster/i);
   });
 });

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Banner } from "@nocoo/basalt/components/banner";
 import { Button } from "@/components/ui/button";
-import { describeSyncOutcome } from "@/lib/sync-outcome";
+import { describeSkippedHint, describeSyncOutcome } from "@/lib/sync-outcome";
 import type { SyncOutcomeDto } from "@/lib/rpc-types";
 
 interface Props {
@@ -15,7 +15,7 @@ type State =
   | { kind: "syncing" }
   | { kind: "ok"; outcome: SyncOutcomeDto }
   | { kind: "partial"; outcome: SyncOutcomeDto }
-  | { kind: "skipped"; outcome: SyncOutcomeDto }
+  | { kind: "skipped"; outcome: SyncOutcomeDto; hint: string }
   | { kind: "error"; message: string };
 
 const AUTO_DISMISS_MS = 4000;
@@ -51,7 +51,7 @@ export function ForceSyncButton({ onComplete }: Props) {
         return;
       }
       if (view.kind === "skipped") {
-        setState({ kind: "skipped", outcome });
+        setState({ kind: "skipped", outcome, hint: describeSkippedHint(view.reason) });
         onComplete?.(outcome);
         return;
       }
@@ -84,12 +84,13 @@ export function ForceSyncButton({ onComplete }: Props) {
         />
       )}
       {state.kind === "skipped" && (
-        // Not "Prices updated": this run wrote nothing because a newer result
-        // was already published. The current catalogue is the newer one.
+        // Not "Prices updated": this run wrote nothing. Why varies — a newer
+        // result already published, or a KV read failure — and a single
+        // sentence for both misreported the KV case.
         <Banner
           variant="secondary"
           size="sm"
-          description="No change: a newer price update is already published"
+          description={state.hint}
         />
       )}
       {state.kind === "error" && (

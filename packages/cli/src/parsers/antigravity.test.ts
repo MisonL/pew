@@ -168,10 +168,15 @@ describe("Antigravity private SQLite snapshot", () => {
   it("uses private 0600 copies, never copies shm, and removes copies after open failures", async () => {
     const f = await fixture(true);
     let copy = "";
-    await expect(readAntigravitySource(f.root, (path) => {
+    // A database that cannot be opened is now isolated to that file (see
+    // "keeps the readable databases when one file is corrupt"); the copy must
+    // still be removed and the opening still happens on a 0600 copy.
+    const failed = await readAntigravitySource(f.root, (path) => {
       copy = path;
       throw new Error("injected open failure");
-    })).rejects.toThrow("injected open failure");
+    });
+    expect(failed.failed).toEqual(["conversation.db"]);
+    expect(failed.deltas).toEqual([]);
     await expect(readFile(copy)).rejects.toMatchObject({ code: "ENOENT" });
     await chmod(f.path, 0o644);
     await readAntigravitySource(f.root, (path) => {
@@ -185,6 +190,9 @@ describe("Antigravity private SQLite snapshot", () => {
   });
 
   it("rejects database directories and symlinks without opening them", async () => {
+    // A non-regular .db is not a corrupt file to skip — following a symlink or
+    // reading a FIFO silently would break the read-only guarantee — so it
+    // stays a hard failure for the whole source.
     const f = await fixture();
     await mkdir(join(f.root, "bad.db"));
     await expect(readAntigravitySource(f.root)).rejects.toThrow(/regular file/i);
@@ -200,7 +208,7 @@ describe("Antigravity private SQLite snapshot", () => {
     writers.splice(writers.indexOf(f.db), 1);
     await rm(f.path);
     await writeFile(join(f.root, "unrelated.txt"), "ignored");
-    expect(await readAntigravitySource(f.root)).toEqual({ deltas: [], snapshots: [], dbCount: 0, skipped: { steps: 0, sessions: 0 } });
+    expect(await readAntigravitySource(f.root)).toEqual({ deltas: [], snapshots: [], dbCount: 0, failed: [], skipped: { steps: 0, sessions: 0, files: 0 } });
     expect(await readdir(f.root)).toEqual(["unrelated.txt"]);
   });
 
@@ -211,8 +219,12 @@ describe("Antigravity private SQLite snapshot", () => {
     const isolated = await readAntigravitySource(f.root);
     expect(isolated.deltas).toEqual([]);
     expect(isolated.skipped.steps).toBe(1);
+    // A database with an unsupported schema is unreadable; isolation costs
+    // that file, and the failure is still reported.
     f.db.exec("DROP TABLE gen_metadata");
-    await expect(readAntigravitySource(f.root)).rejects.toThrow();
+    const unsupported = await readAntigravitySource(f.root);
+    expect(unsupported.deltas).toEqual([]);
+    expect(unsupported.failed).toEqual(["conversation.db"]);
   });
 
   it("rejects conflicting actual model names for the same usage step", async () => {
@@ -220,7 +232,9 @@ describe("Antigravity private SQLite snapshot", () => {
     f.step(1, metadata(1_700_000_000, { 2: 10, 3: 5 }));
     f.gen(80, [1], "first");
     f.gen(81, [1], "second");
-    await expect(readAntigravitySource(f.root)).rejects.toThrow(/model/i);
+    const conflicting = await readAntigravitySource(f.root);
+    expect(conflicting.deltas).toEqual([]);
+    expect(conflicting.failed).toEqual(["conversation.db"]);
   });
 
   it.each([
@@ -235,13 +249,12 @@ describe("Antigravity private SQLite snapshot", () => {
     const f = await fixture();
     f.step(1, metadata(1_700_000_000, { 2: 10, 3: 5 }));
     f.db.prepare("INSERT INTO gen_metadata VALUES (?,?)").run(1, data);
-    // A malformed generation entry either fails the database decode or leaves
-    // the step without a model; either way no usage is emitted.
-    const result = await readAntigravitySource(f.root).catch(() => null);
-    if (result) {
-      expect(result.deltas).toEqual([]);
-      expect(result.skipped.steps).toBeGreaterThan(0);
-    }
+    // A malformed generation entry either fails the database decode (the
+    // file is isolated) or leaves the step without a model (the step is
+    // skipped); either way no usage is emitted.
+    const result = await readAntigravitySource(f.root);
+    expect(result.deltas).toEqual([]);
+    expect(result.skipped.steps + result.failed.length).toBeGreaterThan(0);
   });
 
   it("rejects usage without timestamps and ignores completed zero-token steps", async () => {
@@ -287,10 +300,14 @@ describe("Antigravity private SQLite snapshot", () => {
     expect((await readAntigravitySource(f.root)).snapshots[0].projectRef).toBeNull();
   });
 
-  it("rejects malformed workspace references", async () => {
+  it("is a hard failure for malformed workspace references only at the source level", async () => {
+    // The workspace decode is per-database, so a malformed reference now costs
+    // that database and is reported; the source keeps reading the others.
     const f = await fixture();
     f.db.prepare("UPDATE trajectory_metadata_blob SET data = ?").run(scalar(7, 1));
-    await expect(readAntigravitySource(f.root)).rejects.toThrow(/workspace/i);
+    const result = await readAntigravitySource(f.root);
+    expect(result.failed).toEqual(["conversation.db"]);
+    expect(result.deltas).toEqual([]);
   });
 
   it("counts nullable metadata steps without inventing times or usage", async () => {
@@ -391,5 +408,27 @@ describe("Antigravity Protobuf metadata validation", () => {
       varint(51 * 8 + 1), Buffer.alloc(8), varint(52 * 8 + 5), Buffer.alloc(4), scalar(53, 1),
     ]));
     expect(decoded.usage?.input).toBe(10);
+  });
+});
+
+describe("readAntigravitySource per-file isolation", () => {
+  it("keeps the readable databases when one file is corrupt", async () => {
+    // One unreadable .db used to fail the whole source, and the caller then
+    // preserved ALL previous records — the good file's new usage never
+    // uploaded, forever, as long as the bad file stayed on disk.
+    const f = await fixture();
+    f.step(3, metadata(1_700_000_003, { 2: 100, 3: 30 }));
+    f.gen(90, [3]);
+    f.db.close();
+    writers.splice(0);
+    await writeFile(join(f.root, "broken.db"), "this is not a sqlite database");
+
+    const result = await readAntigravitySource(f.root);
+
+    expect(result.dbCount).toBe(2);
+    expect(result.deltas.length).toBeGreaterThan(0);
+    expect(result.failed).toEqual(["broken.db"]);
+    // The failure makes the scan partial: no removals may be inferred.
+    expect(result.skipped.files).toBe(1);
   });
 });
